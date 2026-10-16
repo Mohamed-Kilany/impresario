@@ -1,0 +1,9 @@
+# impresario does not use `buf generate` for codegen:
+#   * Rust   -> crates/impresario-proto/build.rs (tonic-prost-build)
+#   * Kotlin -> agents/android (protobuf-gradle-plugin), see scripts/gen-kotlin.sh
+#   * Swift  -> agents/apple (protoc + swift plugins), see scripts/gen-swift.sh
+#
+# This file exists so the buf workflows (`buf lint`, `buf breaking`) have a
+# home, and so a future remote-plugin pipeline can be added without churn.
+version: v2
+plugins: []

@@ -1,0 +1,29 @@
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::todo,
+        clippy::unreachable
+    )
+)]
+
+//! impresario-core: configuration, the impresario DSL, selectors, keys and
+//! diagnostics. This crate has no async or gRPC dependencies (D-16).
+
+pub mod ast;
+pub mod config;
+pub mod diag;
+pub mod duration;
+pub mod keys;
+pub mod parser;
+pub mod platforms;
+pub mod scanner;
+pub mod selectors;
+pub mod span;
+pub mod strings;
+pub mod support;
+pub mod validation;
+pub mod workspace;

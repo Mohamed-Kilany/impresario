@@ -1,0 +1,14 @@
+version: v2
+name: impresario/impresario
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_RESPONSE_STANDARD_NAME
+    - SERVICE_SUFFIX
+    - ENUM_VALUE_PREFIX
+breaking:
+  use:
+    - FILE

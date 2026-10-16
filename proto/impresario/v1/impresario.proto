@@ -1,0 +1,143 @@
+// impresario wire protocol v1.
+//
+// This file is the complete, normative contract between the master (gRPC
+// client, D-01) and every executor (gRPC server): the connector and the
+// native agents. Extend only backward-compatibly.
+syntax = "proto3";
+
+package impresario.v1;
+
+service Agent {
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  rpc Session(stream Command) returns (stream Event);
+  rpc CaptureScreenshot(ScreenshotRequest) returns (ScreenshotResponse);   // out-of-band; may overlap an in-flight command
+  rpc StreamLogs(LogRequest) returns (stream LogEntry);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+enum Platform { PLATFORM_UNSPECIFIED = 0; WEB = 1; WEBOS = 2; TIZEN = 3; ANDROID = 4; ANDROID_TV = 5; IOS = 6; TVOS = 7; }
+
+message HandshakeRequest {
+  string protocol_version = 1;           // "1.0.0"
+  string master_version = 2;
+  string device_name = 3;
+  Platform platform = 4;
+  string target_endpoint = 5;
+  string app_id = 6;
+  string app_url = 7;
+  map<string, string> options = 8;
+  string auth_token = 9;                 // required when the executor is configured with a token
+}
+message HandshakeResponse {
+  bool accepted = 1;
+  string session_id = 2;
+  string agent_version = 3;
+  string protocol_version = 4;
+  repeated Capability capabilities = 5;
+  DeviceInfo device = 6;
+  ErrorInfo error = 7;                   // set iff !accepted
+}
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0; MULTI_SESSION = 1; LOGS = 2; SCREENSHOT = 3;
+  TOUCH_GESTURES = 4; DPAD_FOCUS = 5; PROGRAMMATIC_FOCUS = 6; KEY_EVENTS = 7; APP_CONTROL = 8;
+}
+message DeviceInfo {
+  string model = 1; string os_name = 2; string os_version = 3;
+  uint32 screen_width_px = 4; uint32 screen_height_px = 5; float pixel_ratio = 6;
+  string runtime = 7;                    // e.g. "Chromium/79", "UiAutomator2", "XCUITest"
+}
+
+enum SelectorStrategy {
+  SELECTOR_STRATEGY_UNSPECIFIED = 0;
+  CSS = 1; XPATH = 2; TEXT = 3; TEXT_CONTAINS = 4;
+  ANDROID_ID = 5; ANDROID_DESC = 6; ANDROID_CLASS = 7;
+  ACCESSIBILITY_ID = 8; LABEL = 9; LABEL_CONTAINS = 10; PREDICATE = 11; IOS_TYPE = 12;
+}
+message Selector { SelectorStrategy strategy = 1; string value = 2; uint32 index = 3; }
+
+enum ActionType {
+  ACTION_TYPE_UNSPECIFIED = 0;
+  CLICK = 1; TYPE = 2; APPEND = 3; CLEAR = 4; LONG_PRESS = 5; FOCUS = 6;
+  SELECT = 7; SCROLL = 8; SCROLL_TO = 9; SWIPE = 10; BACK = 11;
+}
+// TYPE replaces content (clear, then enter). APPEND keeps content. CLEAR leaves "".
+enum Direction { DIRECTION_UNSPECIFIED = 0; UP = 1; DOWN = 2; LEFT = 3; RIGHT = 4; }
+
+message RunAction {
+  ActionType type = 1;
+  Selector selector = 2;                 // absent only for SCROLL/SWIPE (screen-level) and BACK
+  string text = 3;                       // TYPE, APPEND, SELECT (option text)
+  Direction direction = 4;               // SCROLL, SWIPE
+  uint32 count = 5;                      // SCROLL steps (default 1)
+  uint32 duration_ms = 6;                // LONG_PRESS (default 1000)
+}
+
+enum CheckKind {
+  CHECK_KIND_UNSPECIFIED = 0;
+  VISIBLE = 1; HIDDEN = 2; ENABLED = 3; DISABLED = 4; FOCUSED = 5;
+  TEXT_EQUALS = 6; TEXT_CONTAINS_CHECK = 7; COUNT = 8;
+}
+message ValidateCheck {
+  Selector selector = 1; CheckKind kind = 2; string expected_text = 3; uint32 expected_count = 4;
+}
+
+enum RemoteKey {
+  REMOTE_KEY_UNSPECIFIED = 0;
+  KEY_OK = 1; KEY_ENTER = 2; KEY_BACK = 3; KEY_UP = 4; KEY_DOWN = 5; KEY_LEFT = 6; KEY_RIGHT = 7;
+  KEY_HOME = 8; KEY_MENU = 9; KEY_PLAY = 10; KEY_PAUSE = 11; KEY_PLAYPAUSE = 12;
+  KEY_REWIND = 13; KEY_FASTFORWARD = 14; KEY_RED = 15; KEY_GREEN = 16; KEY_YELLOW = 17; KEY_BLUE = 18;
+  KEY_BACKSPACE = 19;
+}
+message KeyPress { RemoteKey key = 1; uint32 repeat = 2; uint32 interval_ms = 3; }   // repeat default 1, interval default 100
+
+message Screenshot { string label = 1; }
+
+enum AppOp { APP_OP_UNSPECIFIED = 0; LAUNCH = 1; TERMINATE = 2; RESTART = 3; }
+message AppControl { AppOp op = 1; bool clear_data = 2; }
+
+message Cancel { string target_command_id = 1; }
+
+message Command {
+  string command_id = 1;                 // unique within the session; echoed in the result
+  uint32 timeout_ms = 2;                 // element/condition wait budget enforced by the executor
+  oneof body {
+    RunAction run_action = 10;
+    ValidateCheck validate_check = 11;
+    KeyPress key_press = 12;
+    Screenshot screenshot = 13;
+    AppControl app_control = 14;
+    Cancel cancel = 15;
+  }
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ELEMENT_NOT_FOUND = 1; TIMEOUT = 2; NOT_INTERACTABLE = 3; STALE_ELEMENT = 4;
+  FOCUS_UNREACHABLE = 5; UNSUPPORTED_ACTION = 6; INVALID_SELECTOR = 7; CHECK_FAILED = 8;
+  APP_CRASHED = 9; CANCELLED = 10; TRANSPORT = 11; PROTOCOL = 12; INTERNAL = 13;
+  ALREADY_IN_USE = 14; DEVICE_UNAVAILABLE = 15; UNAUTHENTICATED = 16;
+}
+message ErrorInfo { ErrorCode code = 1; string message = 2; map<string, string> details = 3; }
+
+message CommandResult {
+  string command_id = 1;
+  bool ok = 2;
+  uint32 duration_ms = 3;
+  ErrorInfo error = 4;                   // set iff !ok
+  bytes screenshot_png = 5;              // set for Screenshot commands
+  string observed_text = 6;
+  uint32 observed_count = 7;
+}
+message Heartbeat { uint64 seq = 1; uint64 unix_ms = 2; string current_command_id = 3; }
+message SessionClosed { string reason = 1; ErrorInfo error = 2; }
+message Event { oneof body { CommandResult result = 1; Heartbeat heartbeat = 2; SessionClosed closed = 3; } }
+
+message ScreenshotRequest {}
+message ScreenshotResponse { bytes png = 1; uint32 width = 2; uint32 height = 3; ErrorInfo error = 4; }
+
+enum LogLevel { LOG_LEVEL_UNSPECIFIED = 0; DEBUG = 1; INFO = 2; WARN = 3; ERROR = 4; }
+message LogRequest { LogLevel min_level = 1; }
+message LogEntry { int64 unix_ms = 1; LogLevel level = 2; string source = 3; string message = 4; }  // source: "agent", "console", ...
+
+message ShutdownRequest { bool terminate_app = 1; }
+message ShutdownResponse {}

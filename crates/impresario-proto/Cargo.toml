@@ -1,0 +1,16 @@
+[package]
+name = "impresario-proto"
+description = "Generated prost/tonic code for the impresario wire protocol (no logic)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+prost.workspace = true
+tonic = { workspace = true }
+tonic-prost.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+protoc-bin-vendored.workspace = true

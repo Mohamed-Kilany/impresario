@@ -1,0 +1,46 @@
+[package]
+name = "impresario-connector"
+description = "Host-side gRPC daemon that drives Chromium-based TVs and browsers over CDP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "impresario-connector"
+path = "src/main.rs"
+
+[lib]
+name = "impresario_connector"
+path = "src/lib.rs"
+
+[features]
+default = []
+chromiumoxide-backend = ["dep:chromiumoxide"]
+
+[dependencies]
+impresario-core = { path = "../impresario-core" }
+impresario-proto = { path = "../impresario-proto" }
+tonic.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+tokio-tungstenite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+url.workspace = true
+chromiumoxide = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+serde.workspace = true

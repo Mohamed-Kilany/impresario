@@ -1,0 +1,26 @@
+[package]
+name = "impresario-clients"
+description = "AgentClient, device transports, core<->proto conversions, MockAgent."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+impresario-core = { path = "../impresario-core" }
+impresario-proto = { path = "../impresario-proto" }
+tonic.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

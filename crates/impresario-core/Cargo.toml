@@ -1,0 +1,21 @@
+[package]
+name = "impresario-core"
+description = "Config, DSL (scanner/parser/AST/validation), selectors, keys, durations, diagnostics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+thiserror.workspace = true
+miette.workspace = true
+winnow.workspace = true
+regex.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
+serde_json.workspace = true

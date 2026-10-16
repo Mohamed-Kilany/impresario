@@ -1,0 +1,32 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Gradle / Android
+.gradle/
+agents/android/build/
+agents/android/**/build/
+local.properties
+*.iml
+.idea/
+captures/
+
+# Xcode / Swift
+agents/apple/.build/
+agents/apple/**/xcuserdata/
+agents/apple/**/DerivedData/
+agents/apple/.swiftpm/
+*.xcuserstate
+
+# Node / editors
+editors/vscode/node_modules/
+editors/vscode/out/
+editors/vscode/*.vsix
+
+# Reports and run artefacts
+/reports/
+docs/status-logs/
+
+# OS noise
+.DS_Store
+Thumbs.db
