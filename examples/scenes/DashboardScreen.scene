@@ -1,0 +1,6 @@
+Scene: DashboardScreen
+Platform: cross-platform
+
+Pieces:
+    WelcomeBanner: web="h2.welcome", android="id:welcome_banner", ios="accessibilityId:welcome_banner"
+    LogoutButton:  web="#logout",    android="id:logout_btn",      ios="accessibilityId:logout"

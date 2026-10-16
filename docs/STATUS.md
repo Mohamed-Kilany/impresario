@@ -22,10 +22,10 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
 |---|---|---|
 | `proto/impresario/v1` + `crates/impresario-proto` | done | codegen verified via `cargo build` (vendored protoc fallback exercised) |
 | `impresario-core` config (`config.rs`) | done | unit tests: spec examples, unknown keys w/ hints, ranges, endpoints per platform, options applicability, duplicates |
-| `impresario-core` scanner/parser/AST | done | 60+ unit tests; recovering; no panics |
+| `impresario-core` scanner/parser/AST | done | 111 lib tests; 94-case negative matrix (`tests/negative_cases.rs`, one per IMP-DSL code + edges); proptest never-panics suite (3 generators + nasty corpus); `insta` snapshots of the example ASTs and of a multi-error file |
 | `impresario-core` semantic validation | done | unit tests: 008/009/012/013/014/017/019/020/021 with device awareness |
 | `impresario-core` workspace loader | done | unit tests incl. duplicate scenes 006 |
-| `impresario init` / `validate` / `parse` / `devices list` | done | CLI unit tests + manual end-to-end run: `init` then `validate` exits 0 on the generated example workspace |
+| `impresario init` / `validate` / `parse` / `devices list` | done | CLI unit tests + integration test against the committed `examples/` workspace (`tests/parse_json.rs`: JSON stdout snapshot, exit codes) |
 | `impresario devices check` | not implemented yet | fails loudly (exit 2) |
 | `impresario run` (planner/executor) | not implemented yet | fails loudly (exit 2) |
 | `impresario lsp` | not implemented yet | fails loudly (exit 2) |
@@ -34,7 +34,7 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
 | Android agent (Kotlin) | not started | — |
 | Apple agent (Swift) | not started | — |
 | Reporters (console/junit/json/html) | not started | — |
-| Docs (`docs/*.md`, examples, fixtures) | partially (DECISIONS, STATUS, ERRORS) | — |
+| Docs (`docs/*.md`, examples, fixtures) | partially (DSL, DECISIONS, STATUS, ERRORS) | DSL.md covers syntax, semantics and selectors; PROTOCOL/DEVICES/PARITY/LSP pending later phases |
 | CI workflows | not started | — |
 
 ## Known gaps and risks
@@ -47,3 +47,8 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
    (present on this machine) using the fixtures in `fixtures/web`.
 4. Tizen/webOS hardware is not available; the connector's CDP layer is tested
    against Chrome and the protocol-relevant fake (recorded in tests).
+5. The `cargo-fuzz` target (`fuzz/fuzz_targets/parse.rs`) needs a nightly
+   toolchain and `cargo-fuzz`, which are not installed here; it is shipped
+   unverified. The stable-toolchain proptest suite
+   (`crates/impresario-core/tests/parser_fuzz.rs`) covers the same
+   never-panics property on every `cargo test`.

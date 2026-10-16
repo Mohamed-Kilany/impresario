@@ -1,0 +1,154 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: ast
+---
+path: examples/scenes/LoginScreen.scene
+name: LoginScreen
+name_span:
+  file: examples/scenes/LoginScreen.scene
+  line: 1
+  col: 8
+  len: 11
+platforms: ~
+platforms_span:
+  file: examples/scenes/LoginScreen.scene
+  line: 2
+  col: 11
+  len: 14
+pieces:
+  - name: LoginTitle
+    name_span:
+      file: examples/scenes/LoginScreen.scene
+      line: 5
+      col: 5
+      len: 10
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 5
+      col: 5
+      len: 92
+    selectors:
+      - key: web
+        raw: h1.title
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 5
+          col: 24
+          len: 10
+      - key: android
+        raw: "id:login_title"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 5
+          col: 45
+          len: 16
+      - key: ios
+        raw: "accessibilityId:login_title"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 5
+          col: 68
+          len: 29
+    index: 0
+  - name: UsernameInput
+    name_span:
+      file: examples/scenes/LoginScreen.scene
+      line: 6
+      col: 5
+      len: 13
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 6
+      col: 5
+      len: 89
+    selectors:
+      - key: web
+        raw: "#username"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 6
+          col: 24
+          len: 11
+      - key: android
+        raw: "id:username"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 6
+          col: 45
+          len: 13
+      - key: ios
+        raw: "accessibilityId:username"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 6
+          col: 68
+          len: 26
+    index: 0
+  - name: PasswordInput
+    name_span:
+      file: examples/scenes/LoginScreen.scene
+      line: 7
+      col: 5
+      len: 13
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 7
+      col: 5
+      len: 89
+    selectors:
+      - key: web
+        raw: "#password"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 7
+          col: 24
+          len: 11
+      - key: android
+        raw: "id:password"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 7
+          col: 45
+          len: 13
+      - key: ios
+        raw: "accessibilityId:password"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 7
+          col: 68
+          len: 26
+    index: 0
+  - name: SubmitButton
+    name_span:
+      file: examples/scenes/LoginScreen.scene
+      line: 8
+      col: 5
+      len: 12
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 8
+      col: 5
+      len: 95
+    selectors:
+      - key: web
+        raw: "button[type='submit']"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 8
+          col: 24
+          len: 23
+      - key: android
+        raw: "id:login_btn"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 8
+          col: 57
+          len: 14
+      - key: ios
+        raw: "accessibilityId:login"
+        span:
+          file: examples/scenes/LoginScreen.scene
+          line: 8
+          col: 77
+          len: 23
+    index: 0

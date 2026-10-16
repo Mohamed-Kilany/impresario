@@ -1,0 +1,86 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: ast
+---
+path: examples/scenes/DashboardScreen.scene
+name: DashboardScreen
+name_span:
+  file: examples/scenes/DashboardScreen.scene
+  line: 1
+  col: 8
+  len: 15
+platforms: ~
+platforms_span:
+  file: examples/scenes/DashboardScreen.scene
+  line: 2
+  col: 11
+  len: 14
+pieces:
+  - name: WelcomeBanner
+    name_span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 5
+      col: 5
+      len: 13
+    span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 5
+      col: 5
+      len: 98
+    selectors:
+      - key: web
+        raw: h2.welcome
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 5
+          col: 24
+          len: 12
+      - key: android
+        raw: "id:welcome_banner"
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 5
+          col: 46
+          len: 19
+      - key: ios
+        raw: "accessibilityId:welcome_banner"
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 5
+          col: 71
+          len: 32
+    index: 0
+  - name: LogoutButton
+    name_span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 6
+      col: 5
+      len: 12
+    span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 6
+      col: 5
+      len: 91
+    selectors:
+      - key: web
+        raw: "#logout"
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 6
+          col: 24
+          len: 9
+      - key: android
+        raw: "id:logout_btn"
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 6
+          col: 46
+          len: 15
+      - key: ios
+        raw: "accessibilityId:logout"
+        span:
+          file: examples/scenes/DashboardScreen.scene
+          line: 6
+          col: 72
+          len: 24
+    index: 0

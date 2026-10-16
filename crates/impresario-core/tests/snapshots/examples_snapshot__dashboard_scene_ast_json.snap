@@ -1,0 +1,119 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: json
+---
+{
+  "name": "DashboardScreen",
+  "name_span": {
+    "col": 8,
+    "file": "examples/scenes/DashboardScreen.scene",
+    "len": 15,
+    "line": 1
+  },
+  "path": "examples/scenes/DashboardScreen.scene",
+  "pieces": [
+    {
+      "index": 0,
+      "name": "WelcomeBanner",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 13,
+        "line": 5
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "h2.welcome",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 12,
+            "line": 5
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:welcome_banner",
+          "span": {
+            "col": 46,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 19,
+            "line": 5
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:welcome_banner",
+          "span": {
+            "col": 71,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 32,
+            "line": 5
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 98,
+        "line": 5
+      }
+    },
+    {
+      "index": 0,
+      "name": "LogoutButton",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 12,
+        "line": 6
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "#logout",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 9,
+            "line": 6
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:logout_btn",
+          "span": {
+            "col": 46,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 15,
+            "line": 6
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:logout",
+          "span": {
+            "col": 72,
+            "file": "examples/scenes/DashboardScreen.scene",
+            "len": 24,
+            "line": 6
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 91,
+        "line": 6
+      }
+    }
+  ],
+  "platforms": null,
+  "platforms_span": {
+    "col": 11,
+    "file": "examples/scenes/DashboardScreen.scene",
+    "len": 14,
+    "line": 2
+  }
+}

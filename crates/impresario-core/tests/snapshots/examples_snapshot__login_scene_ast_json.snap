@@ -1,0 +1,215 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: json
+---
+{
+  "name": "LoginScreen",
+  "name_span": {
+    "col": 8,
+    "file": "examples/scenes/LoginScreen.scene",
+    "len": 11,
+    "line": 1
+  },
+  "path": "examples/scenes/LoginScreen.scene",
+  "pieces": [
+    {
+      "index": 0,
+      "name": "LoginTitle",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 10,
+        "line": 5
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "h1.title",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 10,
+            "line": 5
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:login_title",
+          "span": {
+            "col": 45,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 16,
+            "line": 5
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:login_title",
+          "span": {
+            "col": 68,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 29,
+            "line": 5
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 92,
+        "line": 5
+      }
+    },
+    {
+      "index": 0,
+      "name": "UsernameInput",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 13,
+        "line": 6
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "#username",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 11,
+            "line": 6
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:username",
+          "span": {
+            "col": 45,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 13,
+            "line": 6
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:username",
+          "span": {
+            "col": 68,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 26,
+            "line": 6
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 89,
+        "line": 6
+      }
+    },
+    {
+      "index": 0,
+      "name": "PasswordInput",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 13,
+        "line": 7
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "#password",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 11,
+            "line": 7
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:password",
+          "span": {
+            "col": 45,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 13,
+            "line": 7
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:password",
+          "span": {
+            "col": 68,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 26,
+            "line": 7
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 89,
+        "line": 7
+      }
+    },
+    {
+      "index": 0,
+      "name": "SubmitButton",
+      "name_span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 12,
+        "line": 8
+      },
+      "selectors": [
+        {
+          "key": "web",
+          "raw": "button[type='submit']",
+          "span": {
+            "col": 24,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 23,
+            "line": 8
+          }
+        },
+        {
+          "key": "android",
+          "raw": "id:login_btn",
+          "span": {
+            "col": 57,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 14,
+            "line": 8
+          }
+        },
+        {
+          "key": "ios",
+          "raw": "accessibilityId:login",
+          "span": {
+            "col": 77,
+            "file": "examples/scenes/LoginScreen.scene",
+            "len": 23,
+            "line": 8
+          }
+        }
+      ],
+      "span": {
+        "col": 5,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 95,
+        "line": 8
+      }
+    }
+  ],
+  "platforms": null,
+  "platforms_span": {
+    "col": 11,
+    "file": "examples/scenes/LoginScreen.scene",
+    "len": 14,
+    "line": 2
+  }
+}

@@ -6,6 +6,9 @@
 
 mod grammar;
 
+#[cfg(test)]
+mod tests;
+
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
@@ -144,7 +147,7 @@ impl<'a> Cursor<'a> {
                 self.rest = self.rest.get(byte_len..).unwrap_or("");
                 Ok(parsed)
             }
-            Err(diag) => Err(diag.one_line()),
+            Err(diag) => Err(diag.message),
         }
     }
 
@@ -206,7 +209,7 @@ impl<'a> Cursor<'a> {
         let span = self.span(col, word.chars().count());
         match crate::duration::parse(word, Some(span)) {
             Ok(duration) => Ok(duration),
-            Err(diag) => Err(diag.one_line()),
+            Err(diag) => Err(diag.message),
         }
     }
 }
@@ -247,6 +250,13 @@ pub fn parse_scene(source: &str, path: &Path) -> ParseOutcome<SceneFile> {
                 Cursor::new(body, path, line.line, body_col + leading_ws(line, "Scene:"));
             match cursor.ident() {
                 Ok(ident) => {
+                    if !cursor.at_end() {
+                        diagnostics.push(diag_at(
+                            Code::DslUnknownKeyword,
+                            "unexpected input after the scene name",
+                            cursor.span(cursor.col(), 1),
+                        ));
+                    }
                     name = Some(ident.name);
                     name_span = Some(ident.span);
                 }
@@ -1181,6 +1191,7 @@ fn parse_scene_block(
     };
 
     let mut steps: Vec<Step> = Vec::new();
+    let mut saw_step_line = false;
     loop {
         let Some(line) = lines.get(start + consumed) else {
             break;
@@ -1199,11 +1210,13 @@ fn parse_scene_block(
         }
         consumed += 1;
         if line.content.starts_with("Action:") {
+            saw_step_line = true;
             match parse_action_line(line, path) {
                 Ok(step) => steps.push(step),
                 Err(diag) => diagnostics.push(diag),
             }
         } else if line.content.starts_with("Check:") {
+            saw_step_line = true;
             match parse_check_line(line, path) {
                 Ok(step) => steps.push(step),
                 Err(diag) => diagnostics.push(diag),
@@ -1229,7 +1242,7 @@ fn parse_scene_block(
         }
     }
 
-    if steps.is_empty() {
+    if steps.is_empty() && !saw_step_line {
         diagnostics.push(diag_at(
             Code::DslMissingHeader,
             "a Scene block needs at least one step",
@@ -1260,7 +1273,7 @@ fn parse_action_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<
         let duration = cursor.duration().map_err(|reason| {
             diag_at(
                 Code::DslInvalidDuration,
-                format!("invalid timeout ({reason})"),
+                reason,
                 cursor.span(cursor.col(), 1),
             )
         })?;
@@ -1654,15 +1667,6 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
                 ));
             }
         }
-    } else if cursor.try_lit("text") {
-        let text = cursor.quoted().map_err(|reason| {
-            diag_at(
-                Code::DslUnterminatedString,
-                format!("text needs a quoted string ({reason})"),
-                cursor.span(cursor.col(), 1),
-            )
-        })?;
-        CheckCondition::TextEquals { text }
     } else if cursor.try_lit("textContains") {
         let text = cursor.quoted().map_err(|reason| {
             diag_at(
@@ -1672,6 +1676,15 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
             )
         })?;
         CheckCondition::TextContains { text }
+    } else if cursor.try_lit("text") {
+        let text = cursor.quoted().map_err(|reason| {
+            diag_at(
+                Code::DslUnterminatedString,
+                format!("text needs a quoted string ({reason})"),
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        CheckCondition::TextEquals { text }
     } else if cursor.try_lit("count") {
         let count = cursor.uint().map_err(|_| {
             diag_at(
@@ -1690,7 +1703,7 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
         let duration = cursor.duration().map_err(|reason| {
             diag_at(
                 Code::DslInvalidDuration,
-                format!("invalid timeout ({reason})"),
+                reason,
                 cursor.span(cursor.col(), 1),
             )
         })?;
@@ -1718,6 +1731,7 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
 
 /// Parse the `AppOp` from an action body (helper so `app` above stays flat).
 fn parse_app_op(cursor: &mut Cursor<'_>) -> Result<AppOp, String> {
+    cursor.skip_ws();
     let mut input = cursor.rest;
     match grammar::app_op.parse_next(&mut input) {
         Ok(op) => {

@@ -1,0 +1,37 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: "outcome.diagnostics.iter().cloned().collect::<Vec<_>>()"
+---
+- code: DslUnterminatedString
+  severity: error
+  message: Var value must be a quoted string (unterminated string literal)
+  span:
+    file: examples/plays/broken.play
+    line: 2
+    col: 14
+    len: 1
+- code: DslInvalidDuration
+  severity: error
+  message: "duration '0ms' is out of range"
+  span:
+    file: examples/plays/broken.play
+    line: 7
+    col: 14
+    len: 3
+  help: durations are between 1ms and 10m
+- code: DslUnknownAction
+  severity: error
+  message: "unknown action 'tap'; did you mean 'type'?"
+  span:
+    file: examples/plays/broken.play
+    line: 9
+    col: 17
+    len: 3
+- code: DslUnterminatedString
+  severity: error
+  message: text needs a quoted string (unterminated string literal)
+  span:
+    file: examples/plays/broken.play
+    line: 10
+    col: 26
+    len: 1

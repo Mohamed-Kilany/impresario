@@ -1,0 +1,8 @@
+Scene: LoginScreen
+Platform: cross-platform
+
+Pieces:
+    LoginTitle:    web="h1.title",  android="id:login_title",  ios="accessibilityId:login_title"
+    UsernameInput: web="#username", android="id:username",     ios="accessibilityId:username"
+    PasswordInput: web="#password", android="id:password",     ios="accessibilityId:password"
+    SubmitButton:  web="button[type='submit']", android="id:login_btn", ios="accessibilityId:login"
