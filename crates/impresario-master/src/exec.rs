@@ -361,6 +361,7 @@ async fn establish(
     params.app_id = device.app_id.clone();
     params.app_url = device.app_url.clone();
     params.auth_token = shared.options.token.clone();
+    params.options = device_wire_options(device, &shared.options.config);
     let handshake = client
         .handshake(&params)
         .await
@@ -401,6 +402,52 @@ async fn establish(
         handshake,
         log_task,
     })
+}
+
+/// Options sent to the executor in the handshake (spec 7.1 `options` map,
+/// decision I-34): the device's own documented options plus the polling and
+/// loop bounds executors enforce (5.6) which `Command` does not carry.
+fn device_wire_options(
+    device: &DeviceConfig,
+    config: &ImpresarioConfig,
+) -> BTreeMap<String, String> {
+    let mut options = BTreeMap::new();
+    let device_options = &device.options;
+    options.insert(
+        "cdp_backend".to_string(),
+        device_options.cdp_backend.as_str().to_string(),
+    );
+    options.insert(
+        "key_dispatch".to_string(),
+        device_options.key_dispatch.as_str().to_string(),
+    );
+    options.insert(
+        "clear_app_data".to_string(),
+        device_options.clear_app_data.to_string(),
+    );
+    options.insert(
+        "animations_disabled".to_string(),
+        device_options.animations_disabled.to_string(),
+    );
+    if let Some(page_match) = &device_options.page_match {
+        options.insert("page_match".to_string(), page_match.clone());
+    }
+    if let Some(port) = device_options.agent_port {
+        options.insert("agent_port".to_string(), port.to_string());
+    }
+    options.insert(
+        "poll_interval_ms".to_string(),
+        config.poll_interval_ms.to_string(),
+    );
+    options.insert(
+        "scroll_max_attempts".to_string(),
+        config.scroll_max_attempts.to_string(),
+    );
+    options.insert(
+        "focus_max_steps".to_string(),
+        config.focus_max_steps.to_string(),
+    );
+    options
 }
 
 fn needs_app_control(plan: &DevicePlan, config: &ImpresarioConfig) -> bool {

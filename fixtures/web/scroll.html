@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Impresario scroll fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  section { margin-bottom: 12px; }
+  h2 { font-size: 14px; margin: 8px 0 4px; }
+  .mirror { color: #555; font-size: 12px; }
+  #scroller { height: 120px; width: 320px; overflow-y: auto; border: 1px solid #999; }
+  #inner-spacer { height: 600px; }
+  #tall-spacer { height: 1400px; }
+</style>
+</head>
+<body>
+<h1 id="scroll-title">Impresario scroll fixture</h1>
+
+<section id="list-section">
+  <h2>Scrolling list</h2>
+  <div id="scroller">
+    <div id="inner-spacer"></div>
+    <div id="inner-target">inner-target-reached</div>
+  </div>
+  <div id="scroller-state" class="mirror">-</div>
+</section>
+
+<div id="tall-spacer"></div>
+
+<section id="window-section">
+  <h2>Window scroll</h2>
+  <div id="window-target">window-target-reached</div>
+  <div id="window-scroll-state" class="mirror">-</div>
+</section>
+
+<script>
+(function () {
+  function mirror(id, text) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = text; }
+  }
+  document.getElementById('scroller').addEventListener('scroll', function () {
+    mirror('scroller-state', 'scrolled');
+  });
+  window.addEventListener('scroll', function () {
+    mirror('window-scroll-state', 'scrolled');
+  });
+})();
+</script>
+</body>
+</html>

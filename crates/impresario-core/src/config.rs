@@ -156,6 +156,17 @@ pub enum CdpBackend {
     Chromiumoxide,
 }
 
+impl CdpBackend {
+    /// The YAML/wire spelling of the option value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CdpBackend::Raw => "raw",
+            CdpBackend::Chromiumoxide => "chromiumoxide",
+        }
+    }
+}
+
 /// `key_dispatch` option (spec 4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -163,6 +174,17 @@ pub enum KeyDispatch {
     #[default]
     Cdp,
     Js,
+}
+
+impl KeyDispatch {
+    /// The YAML/wire spelling of the option value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KeyDispatch::Cdp => "cdp",
+            KeyDispatch::Js => "js",
+        }
+    }
 }
 
 /// Per-device `options` map (spec 4.3); every option is optional and carries

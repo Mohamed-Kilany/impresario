@@ -17,6 +17,8 @@ path = "src/lib.rs"
 [features]
 default = []
 chromiumoxide-backend = ["dep:chromiumoxide"]
+# TLS for `serve --tls-cert/--tls-key` (tonic's rustls/ring backend).
+tls = ["tonic/tls-ring"]
 
 [dependencies]
 impresario-core = { path = "../impresario-core" }
@@ -38,9 +40,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 url.workspace = true
+tempfile.workspace = true
 chromiumoxide = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 serde.workspace = true

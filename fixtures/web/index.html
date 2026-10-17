@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Impresario fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  section { margin-bottom: 12px; }
+  h2 { font-size: 14px; margin: 8px 0 4px; }
+  .mirror { color: #555; font-size: 12px; }
+  #obscure-wrap { position: relative; width: 180px; height: 40px; }
+  #obscured-button { position: relative; z-index: 1; width: 100%; height: 100%; }
+  #obscurer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: 2; background: #ddd; }
+  .grid { display: flex; flex-wrap: wrap; width: 240px; }
+  .grid button { width: 76px; height: 36px; }
+  #shadow-input { display: inline-block; min-width: 120px; border: 1px solid #999; padding: 4px; }
+  #tall-spacer { height: 1400px; }
+</style>
+</head>
+<body>
+<h1 id="fixture-title">Impresario web fixture</h1>
+
+<section id="inputs">
+  <h2>Inputs (framework-style listeners)</h2>
+  <label>replace <input id="replace-input" value="old"></label>
+  <div id="replace-state" class="mirror">-</div>
+  <label>append <input id="append-input" value="old"></label>
+  <div id="append-state" class="mirror">-</div>
+  <label>clear <input id="clear-input" value="old"></label>
+  <div id="clear-state" class="mirror">-</div>
+  <label>keys <input id="keys-input" value=""></label>
+  <label>readonly <input id="readonly-input" value="locked" readonly></label>
+</section>
+
+<section id="buttons">
+  <h2>Buttons</h2>
+  <button id="click-button">Click me</button>
+  <div id="click-result" class="mirror">-</div>
+  <button id="long-press-button">Hold me</button>
+  <div id="long-press-result" class="mirror">-</div>
+  <button id="log-button">Log</button>
+  <a id="anchor-link" href="#two">Anchor</a>
+  <div id="hash-state" class="mirror">-</div>
+</section>
+
+<section id="states">
+  <h2>States</h2>
+  <div id="hidden-panel" style="display: none;"><button id="hidden-child">Hidden</button></div>
+  <button id="disabled-button" disabled>Disabled</button>
+  <div id="obscure-wrap">
+    <button id="obscured-button">Obscured</button>
+    <div id="obscurer"></div>
+  </div>
+  <div id="text-marker">fixture-marker-text</div>
+</section>
+
+<section id="delayed">
+  <h2>Delayed</h2>
+  <div id="delayed-box"></div>
+</section>
+
+<section id="select">
+  <h2>Select</h2>
+  <select id="fruit">
+    <option value="apple">Apple</option>
+    <option value="banana">Banana</option>
+    <option value="cherry">Cherry</option>
+  </select>
+  <div id="fruit-state" class="mirror">-</div>
+</section>
+
+<section id="count">
+  <h2>Count</h2>
+  <div class="bullet">one</div>
+  <div class="bullet">two</div>
+  <div class="bullet">three</div>
+</section>
+
+<section id="grid-section">
+  <h2>D-pad focus grid</h2>
+  <div class="grid">
+    <button id="grid-1" tabindex="0">1</button>
+    <button id="grid-2" tabindex="0">2</button>
+    <button id="grid-3" tabindex="0">3</button>
+    <button id="grid-4" tabindex="0">4</button>
+    <button id="grid-5" tabindex="0">5</button>
+    <button id="grid-6" tabindex="0">6</button>
+    <button id="grid-7" tabindex="0">7</button>
+    <button id="grid-8" tabindex="0">8</button>
+    <button id="grid-9" tabindex="0">9</button>
+  </div>
+  <div id="focus-state" class="mirror">-</div>
+  <div id="clicked-state" class="mirror">-</div>
+</section>
+
+<section id="shadow">
+  <h2>Shadow contenteditable</h2>
+  <shadow-editable id="shadow-host"></shadow-editable>
+  <div id="shadow-state" class="mirror">-</div>
+</section>
+
+<div id="tall-spacer"></div>
+
+<section id="scroll">
+  <h2>Scroll</h2>
+  <div id="scroll-target">scroll-target-reached</div>
+  <div id="window-scroll-state" class="mirror">-</div>
+</section>
+
+<script>
+(function () {
+  function mirror(id, text) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = text; }
+  }
+
+  function watchInput(id, stateId) {
+    var input = document.getElementById(id);
+    var events = [];
+    input.addEventListener('input', function () {
+      events.push('input');
+      mirror(stateId, 'input=' + input.value + ' events=' + events.join(','));
+    });
+    input.addEventListener('change', function () {
+      events.push('change');
+      mirror(stateId, 'input=' + input.value + ' events=' + events.join(','));
+    });
+  }
+  watchInput('replace-input', 'replace-state');
+  watchInput('append-input', 'append-state');
+  watchInput('clear-input', 'clear-state');
+
+  document.getElementById('click-button').addEventListener('click', function () {
+    mirror('click-result', 'clicked');
+  });
+
+  var pressStart = 0;
+  var longButton = document.getElementById('long-press-button');
+  longButton.addEventListener('mousedown', function () { pressStart = Date.now(); });
+  longButton.addEventListener('mouseup', function () {
+    var held = Date.now() - pressStart;
+    mirror('long-press-result', held >= 400 ? 'long' : 'short');
+  });
+
+  document.getElementById('log-button').addEventListener('click', function () {
+    console.warn('fixture-log-message');
+  });
+
+  window.addEventListener('hashchange', function () {
+    mirror('hash-state', location.hash);
+  });
+
+  document.getElementById('fruit').addEventListener('change', function () {
+    mirror('fruit-state', 'value=' + this.value);
+  });
+
+  var grid = document.querySelectorAll('.grid button');
+  for (var i = 0; i < grid.length; i++) {
+    grid[i].addEventListener('focus', function () { mirror('focus-state', this.id); });
+    grid[i].addEventListener('click', function () { mirror('clicked-state', this.id); });
+  }
+
+  window.setTimeout(function () {
+    document.getElementById('delayed-box').textContent = 'delayed-ready';
+  }, 1200);
+
+  window.addEventListener('scroll', function () { mirror('window-scroll-state', 'scrolled'); });
+
+  class ShadowEditable extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<div id="shadow-input" contenteditable="true">seed</div>';
+      const input = root.querySelector('#shadow-input');
+      input.addEventListener('input', function () {
+        mirror('shadow-state', 'input=' + input.textContent);
+      });
+    }
+  }
+  customElements.define('shadow-editable', ShadowEditable);
+})();
+</script>
+</body>
+</html>

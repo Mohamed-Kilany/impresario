@@ -10,13 +10,22 @@
     )
 )]
 
-//! impresario-connector CLI entry point.
+//! `impresario-connector` entry point (spec 10): `serve`, `ping`, `pages`.
+//! Exit codes: 0 success, 1 runtime failure, 2 usage error (decision I-36).
 
-fn main() -> std::process::ExitCode {
-    // The connector server is implemented in a later phase; until then the
-    // binary explains itself. Spec section 10.
-    eprintln!(
-        "impresario-connector: the CDP connector server is not built yet (see docs/CONNECTOR.md)"
-    );
-    std::process::ExitCode::FAILURE
+use std::process::ExitCode;
+
+use clap::Parser;
+
+use impresario_connector::cli::Cli;
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match impresario_connector::cli::run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("impresario-connector: {}", error.message());
+            ExitCode::from(error.exit_code())
+        }
+    }
 }
