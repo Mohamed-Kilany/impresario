@@ -1,0 +1,98 @@
+---
+source: crates/impresario-master/tests/reporters.rs
+expression: text
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>impresario run 20261016-120000-abcd</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 70rem; padding: 0 1rem; }
+h1 { font-size: 1.4rem; } h2 { font-size: 1.15rem; margin-top: 1.5rem; border-bottom: 1px solid #8884; padding-bottom: .2rem; }
+h3 { font-size: 1rem; margin: 1rem 0 .4rem; } h4, h5 { font-size: .95rem; margin: .8rem 0 .3rem; }
+code, pre { font-family: ui-monospace, monospace; font-size: .9em; }
+.meta { color: #888; } .dim { color: #888; }
+.badge { display: inline-block; padding: 0 .5em; border-radius: .6em; font-size: .8em; font-weight: 600; }
+.passed { background: #1a7f3722; color: #1a7f37; } .failed { background: #cf222e22; color: #cf222e; }
+.skipped { background: #9a670022; color: #9a6700; } .aborted { background: #8250df22; color: #8250df; }
+.run-passed { background: #1a7f37; color: #fff; } .run-failed, .run-error { background: #cf222e; color: #fff; }
+.run-interrupted { background: #8250df; color: #fff; }
+table { border-collapse: collapse; width: 100%; margin: .3rem 0 .8rem; }
+th, td { text-align: left; border-bottom: 1px solid #8884; padding: .2rem .5rem; vertical-align: top; }
+details.act { margin: .3rem 0 .3rem 1rem; } details.act > summary { cursor: pointer; }
+.attempt { margin: .4rem 0 .4rem 1rem; } .stage { margin-left: 1rem; }
+.failure { border: 1px solid #cf222e55; border-radius: .4rem; padding: .5rem .8rem; margin: .5rem 0 .5rem 1rem; }
+.device-error { border: 1px solid #cf222e55; border-radius: .4rem; padding: .5rem .8rem; }
+img.screenshot { max-width: 100%; border: 1px solid #8884; border-radius: .4rem; }
+dl.details { display: grid; grid-template-columns: max-content 1fr; gap: 0 .8rem; margin: .3rem 0; }
+dl.details dt { font-weight: 600; } dl.details dd { margin: 0; }
+footer { color: #888; margin-top: 2rem; font-size: .85em; }
+</style>
+</head>
+<body>
+<h1>impresario run <code>20261016-120000-abcd</code> <span class="badge run-failed">failed</span></h1>
+<p class="meta">started 2026-10-16T12:00:00.000Z · 12.3 s · exit code 1</p>
+<section class="device">
+<h2>pixel-8 <span class="dim">· android</span></h2>
+<p class="meta">Pixel 8 · Android 14 · 1080x2400 px @2.625x</p>
+<section class="play">
+<h3>Login <span class="dim">(plays/login.play)</span></h3>
+<details class="act"><summary><span class="badge passed">passed</span> Sign in <span class="dim">850 ms</span></summary>
+<div class="stage"><h5><span class="badge passed">passed</span> Stage: Login</h5>
+<table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
+<tr class="passed"><td><code>Check: email</code><br><span class="dim">plays/login.play:4:9</span></td><td><span class="badge passed">passed</span></td><td>120 ms</td><td></td></tr>
+<tr class="passed"><td><code>Action: click =&gt; submit</code><br><span class="dim">plays/login.play:5:9</span></td><td><span class="badge passed">passed</span></td><td>700 ms</td><td></td></tr>
+</table>
+</div>
+</details>
+<details class="act" open><summary><span class="badge failed">failed</span> Wrong password <span class="dim">1.25 s</span></summary>
+<div class="stage"><h5><span class="badge failed">failed</span> Stage: Login</h5>
+<table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
+<tr class="failed"><td><code>Check: welcome</code><br><span class="dim">plays/login.play:11:9</span></td><td><span class="badge failed">failed</span></td><td>1.10 s</td><td>CHECK_FAILED: expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</td></tr>
+<tr class="skipped"><td><code>Action: click =&gt; retry</code><br><span class="dim">plays/login.play:12:9</span></td><td><span class="badge skipped">skipped</span></td><td></td><td></td></tr>
+</table>
+</div>
+<div class="failure">
+<p><span class="badge failed">CHECK_FAILED</span> expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</p>
+<p class="meta">step 1 · plays/login.play:11:9</p>
+<dl class="details"><dt>observed_text</dt><dd>Invalid credentials</dd></dl><img class="screenshot" alt="screenshots/pixel-8/failure-1.png" src="data:image/png;base64,UE5HLURBVEE=">
+<details><summary>2 log entries</summary><pre>[INFO] agent: form submitted
+[ERROR] agent: login rejected</pre></details>
+</div>
+</details>
+</section>
+<section class="play">
+<h3>Checkout <span class="dim">(plays/checkout.play)</span></h3>
+<details class="act"><summary><span class="badge passed">passed</span> Pay <span class="dim">1.30 s, 2 attempts</span> <span class="badge skipped">flaky</span></summary>
+<p class="meta">tags: smoke</p>
+<div class="attempt"><span class="badge failed">failed</span> <span class="dim">attempt 1 · 400 ms</span></div>
+<div class="stage"><h5><span class="badge failed">failed</span> Stage: Checkout</h5>
+<table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
+<tr class="failed"><td><code>Check: receipt</code><br><span class="dim">plays/login.play:3:9</span></td><td><span class="badge failed">failed</span></td><td>380 ms</td><td>CHECK_FAILED: expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</td></tr>
+</table>
+</div>
+<div class="failure">
+<p><span class="badge failed">CHECK_FAILED</span> expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</p>
+<p class="meta">step 1 · plays/login.play:3:9</p>
+<dl class="details"><dt>observed_text</dt><dd>Invalid credentials</dd></dl><p class="meta">screenshot: screenshots/pixel-8/missing.png</p>
+<details><summary>2 log entries</summary><pre>[INFO] agent: form submitted
+[ERROR] agent: login rejected</pre></details>
+</div>
+<div class="attempt"><span class="badge passed">passed</span> <span class="dim">attempt 2 · 900 ms</span></div>
+<div class="stage"><h5><span class="badge passed">passed</span> Stage: Checkout</h5>
+<table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
+<tr class="passed"><td><code>Check: receipt</code><br><span class="dim">plays/login.play:3:9</span></td><td><span class="badge passed">passed</span></td><td>300 ms</td><td></td></tr>
+<tr class="passed"><td><code>Action: click =&gt; done</code><br><span class="dim">plays/login.play:4:9</span></td><td><span class="badge passed">passed</span></td><td>500 ms</td><td></td></tr>
+</table>
+</div>
+</details>
+<details class="act" open><summary><span class="badge skipped">skipped</span> Refund <span class="dim">0 ms</span></summary>
+</details>
+</section>
+</section>
+<footer>2 passed · 1 failed · 1 skipped · 0 aborted acts · 7 steps (2 failed)</footer>
+</body>
+</html>

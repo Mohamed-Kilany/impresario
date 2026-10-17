@@ -10,4 +10,23 @@
     )
 )]
 
-//! impresario-clients: gRPC client, device transports, conversions, mock agent.
+//! impresario-clients: the master-side gRPC client for the `Agent` service
+//! (spec 7.2/7.3), one device transport per platform family (section 9),
+//! core<->proto conversions (D-16) and the in-process `MockAgent` used by
+//! orchestrator integration tests.
+
+pub mod agent_client;
+pub mod convert;
+pub mod log;
+pub mod testing;
+pub mod transport;
+
+pub use agent_client::{
+    AgentClient, AgentSession, Capability, CaptureOutcome, ClientError, DeviceInfo,
+    HandshakeOutcome, HandshakeParams, SessionOptions, PROTOCOL_VERSION,
+};
+pub use log::{LogBuffer, LogLevel, LogRecord, LogStream};
+pub use transport::{
+    transport_for, AdbTransport, AppleTransport, ConnectorTransport, DeviceTransport, Endpoint,
+    LogSource, LogSourceKind, TransportError,
+};

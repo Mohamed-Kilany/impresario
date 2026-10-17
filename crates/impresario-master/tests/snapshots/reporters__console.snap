@@ -1,0 +1,37 @@
+---
+source: crates/impresario-master/tests/reporters.rs
+expression: "console::render(&report(), false)"
+---
+▶ pixel-8 · android
+  Pixel 8 · Android 14 · 1080x2400 @2.62x
+  Play: Login (plays/login.play)
+    ✔ Act: Sign in (850 ms)
+      ✔ Stage: Login
+        ✔ Check: email (120 ms)
+        ✔ Action: click => submit (700 ms)
+    ✖ Act: Wrong password (1.25 s)
+      ✖ Stage: Login
+        ✖ Check: welcome (1.10 s)
+        ○ Action: click => retry
+      ✖ CHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'
+        (step 1, plays/login.play:11:9)
+        details: (observed_text=Invalid credentials)
+        screenshot: screenshots/pixel-8/failure-1.png
+        2 log entries attached
+  Play: Checkout (plays/checkout.play)
+    ✔ Act: Pay (1.30 s, 2 attempts, flaky)
+      ✖ Attempt 1: (400 ms)
+      ✖ Stage: Checkout
+        ✖ Check: receipt (380 ms)
+      ✖ CHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'
+        (step 1, plays/login.play:3:9)
+        details: (observed_text=Invalid credentials)
+        screenshot: screenshots/pixel-8/missing.png
+        2 log entries attached
+      ✔ Attempt 2: (900 ms)
+      ✔ Stage: Checkout
+        ✔ Check: receipt (300 ms)
+        ✔ Action: click => done (500 ms)
+    ○ Act: Refund (0 ms)
+run 20261016-120000-abcd: failed (12.3 s, exit 1)
+1 device · 2 plays · 2 passed, 1 failed, 1 skipped, 0 aborted · 7 steps, 2 failed

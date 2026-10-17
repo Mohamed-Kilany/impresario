@@ -19,7 +19,7 @@ authors = ["impresario contributors"]
 # async runtime
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "net", "process", "io-util", "sync", "signal", "fs"] }
 tokio-util = { version = "0.7.20", features = ["rt"] }
-tokio-stream = "0.1.17"
+tokio-stream = { version = "0.1.17", features = ["net"] }
 futures = "0.3.34"
 async-trait = "0.1.89"
 

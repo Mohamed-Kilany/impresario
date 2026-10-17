@@ -376,40 +376,11 @@ fn step_strings(step: &Step) -> Vec<&ParsedString> {
 }
 
 fn verb_of(verb: &ActionVerb) -> Verb {
-    match verb {
-        ActionVerb::Type { .. } => Verb::Type,
-        ActionVerb::Append { .. } => Verb::Append,
-        ActionVerb::Clear { .. } => Verb::Clear,
-        ActionVerb::Click { .. } => Verb::Click,
-        ActionVerb::LongPress { .. } => Verb::LongPress,
-        ActionVerb::Focus { .. } => Verb::Focus,
-        ActionVerb::Select { .. } => Verb::Select,
-        ActionVerb::Scroll { .. } => Verb::Scroll,
-        ActionVerb::ScrollTo { .. } => Verb::ScrollTo,
-        ActionVerb::Swipe { .. } => Verb::Swipe,
-        ActionVerb::Key { .. } => Verb::Key,
-        ActionVerb::Back => Verb::Back,
-        ActionVerb::Wait { .. } => Verb::Wait,
-        ActionVerb::Screenshot { .. } => Verb::Screenshot,
-        ActionVerb::App { op } => match op {
-            crate::ast::AppOp::Launch => Verb::AppLaunch,
-            crate::ast::AppOp::Terminate => Verb::AppTerminate,
-            crate::ast::AppOp::Restart => Verb::AppRestart,
-        },
-    }
+    support::verb_of_action(verb)
 }
 
 fn check_verb_of(condition: &CheckCondition) -> CheckVerb {
-    match condition {
-        CheckCondition::IsVisible => CheckVerb::Visible,
-        CheckCondition::IsHidden => CheckVerb::Hidden,
-        CheckCondition::IsEnabled => CheckVerb::Enabled,
-        CheckCondition::IsDisabled => CheckVerb::Disabled,
-        CheckCondition::IsFocused => CheckVerb::Focused,
-        CheckCondition::TextEquals { .. } => CheckVerb::TextEquals,
-        CheckCondition::TextContains { .. } => CheckVerb::TextContains,
-        CheckCondition::Count { .. } => CheckVerb::Count,
-    }
+    support::verb_of_check(condition)
 }
 
 /// The `IMP-DSL-013` diagnostic for a step on one platform, if any.

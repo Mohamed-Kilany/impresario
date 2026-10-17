@@ -225,6 +225,50 @@ pub fn key_support(platform: Platform, key: RemoteKey) -> Support {
     }
 }
 
+/// The support-matrix verb of an AST action (shared by validation and the
+/// master planner; single source of truth for `IMP-DSL-013`).
+#[must_use]
+pub fn verb_of_action(verb: &crate::ast::ActionVerb) -> Verb {
+    use crate::ast::ActionVerb as A;
+    match verb {
+        A::Type { .. } => Verb::Type,
+        A::Append { .. } => Verb::Append,
+        A::Clear { .. } => Verb::Clear,
+        A::Click { .. } => Verb::Click,
+        A::LongPress { .. } => Verb::LongPress,
+        A::Focus { .. } => Verb::Focus,
+        A::Select { .. } => Verb::Select,
+        A::Scroll { .. } => Verb::Scroll,
+        A::ScrollTo { .. } => Verb::ScrollTo,
+        A::Swipe { .. } => Verb::Swipe,
+        A::Key { .. } => Verb::Key,
+        A::Back => Verb::Back,
+        A::Wait { .. } => Verb::Wait,
+        A::Screenshot { .. } => Verb::Screenshot,
+        A::App { op } => match op {
+            crate::ast::AppOp::Launch => Verb::AppLaunch,
+            crate::ast::AppOp::Terminate => Verb::AppTerminate,
+            crate::ast::AppOp::Restart => Verb::AppRestart,
+        },
+    }
+}
+
+/// The support-matrix verb of an AST check condition.
+#[must_use]
+pub fn verb_of_check(condition: &crate::ast::CheckCondition) -> CheckVerb {
+    use crate::ast::CheckCondition as C;
+    match condition {
+        C::IsVisible => CheckVerb::Visible,
+        C::IsHidden => CheckVerb::Hidden,
+        C::IsEnabled => CheckVerb::Enabled,
+        C::IsDisabled => CheckVerb::Disabled,
+        C::IsFocused => CheckVerb::Focused,
+        C::TextEquals { .. } => CheckVerb::TextEquals,
+        C::TextContains { .. } => CheckVerb::TextContains,
+        C::Count { .. } => CheckVerb::Count,
+    }
+}
+
 /// Check support per the second table of 6.1.
 #[must_use]
 pub fn check_support(platform: Platform, check: CheckVerb) -> Support {

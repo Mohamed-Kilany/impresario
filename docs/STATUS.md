@@ -26,15 +26,15 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
 | `impresario-core` semantic validation | done | unit tests: 008/009/012/013/014/017/019/020/021 with device awareness |
 | `impresario-core` workspace loader | done | unit tests incl. duplicate scenes 006 |
 | `impresario init` / `validate` / `parse` / `devices list` | done | CLI unit tests + integration test against the committed `examples/` workspace (`tests/parse_json.rs`: JSON stdout snapshot, exit codes) |
-| `impresario devices check` | not implemented yet | fails loudly (exit 2) |
-| `impresario run` (planner/executor) | not implemented yet | fails loudly (exit 2) |
+| `impresario devices check` | done | `tests/devices_check.rs`: DeviceInfo line + summary via the real binary, name selection, unknown name → 2, rejected handshake → 3, missing configs → 2; mock rows assert handshake/shutdown with no `Session` stream |
+| `impresario run` (planner/executor) | done | planner: 20 unit tests (compilation, selectors, timeouts, secrets, bounds); executor: `tests/run_mock.rs` (16 scenarios against `MockAgent`: pass/fail exit codes, timeout+cancel by id, dropped-stream reconnect, retries/flaky with LAUNCH→RESTART, fail-fast across devices, parallel vs serial timing, `app_reset` never/per_act/per_play, tag/act selection, screenshot files, capability gaps, secret redaction, Ctrl-C → 130); CLI: `tests/run_cli.rs` (default reporters, html base64, no secret in any artifact, missing workspace → 2) |
 | `impresario lsp` | not implemented yet | fails loudly (exit 2) |
-| `impresario-clients` (transports, AgentClient) | stub | — |
+| `impresario-clients` (transports, AgentClient) | web-family + mock done | `agent_client` (handshake/deadline/cancel/in-flight id/out-of-band screenshot), `convert`, `log` and `testing::MockAgent` unit-tested; `ConnectorTransport` verified via loopback mock agents; Adb/Apple transports land in later phases |
 | `impresario-connector` (raw CDP) | stub | — |
 | Android agent (Kotlin) | not started | — |
 | Apple agent (Swift) | not started | — |
-| Reporters (console/junit/json/html) | not started | — |
-| Docs (`docs/*.md`, examples, fixtures) | partially (DSL, DECISIONS, STATUS, ERRORS) | DSL.md covers syntax, semantics and selectors; PROTOCOL/DEVICES/PARITY/LSP pending later phases |
+| Reporters (console/junit/json/html) | done | `tests/reporters.rs` insta snapshots (console plain + color, junit.xml, report.json, report.html with base64 embed and missing-file fallback) |
+| Docs (`docs/*.md`, examples, fixtures) | partially (DSL, DECISIONS, STATUS, ERRORS) | DSL.md covers syntax, semantics and selectors; DECISIONS.md now holds I-01..I-33; PROTOCOL/DEVICES/PARITY/LSP pending later phases |
 | CI workflows | not started | — |
 
 ## Known gaps and risks

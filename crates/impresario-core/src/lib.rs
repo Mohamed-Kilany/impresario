@@ -14,6 +14,7 @@
 //! diagnostics. This crate has no async or gRPC dependencies (D-16).
 
 pub mod ast;
+pub mod command;
 pub mod config;
 pub mod diag;
 pub mod duration;

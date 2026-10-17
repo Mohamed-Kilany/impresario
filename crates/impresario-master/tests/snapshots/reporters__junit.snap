@@ -1,0 +1,37 @@
+---
+source: crates/impresario-master/tests/reporters.rs
+expression: xml
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="impresario 20261016-120000-abcd" tests="4" skipped="1" failures="1" errors="0" time="12.345">
+    <testsuite name="pixel-8 · Login" tests="2" skipped="0" errors="0" failures="1" time="2.100">
+        <testcase name="Sign in" classname="plays/login.play" time="0.850">
+            <properties>
+                <property name="attempts" value="1"/>
+            </properties>
+        </testcase>
+        <testcase name="Wrong password" classname="plays/login.play" time="1.250">
+            <properties>
+                <property name="attempts" value="1"/>
+            </properties>
+            <failure message="CHECK_FAILED: expected &apos;Welcome&apos; but saw &apos;Invalid credentials&apos;" type="CHECK_FAILED"/>
+        </testcase>
+        <system-out>plays/login.play</system-out>
+    </testsuite>
+    <testsuite name="pixel-8 · Checkout" tests="2" skipped="1" errors="0" failures="0" time="1.300">
+        <testcase name="Pay" classname="plays/checkout.play" time="1.300">
+            <properties>
+                <property name="attempts" value="2"/>
+                <property name="flaky" value="true"/>
+                <property name="tags" value="smoke"/>
+            </properties>
+        </testcase>
+        <testcase name="Refund" classname="plays/checkout.play" time="0.000">
+            <properties>
+                <property name="attempts" value="0"/>
+            </properties>
+            <skipped message="not run"/>
+        </testcase>
+        <system-out>plays/checkout.play</system-out>
+    </testsuite>
+</testsuites>

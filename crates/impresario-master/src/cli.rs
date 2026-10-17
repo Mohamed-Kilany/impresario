@@ -7,15 +7,19 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
-use impresario_core::config;
-use impresario_core::diag::Diagnostics;
+use impresario_clients::agent_client::{AgentClient, DeviceInfo, HandshakeParams};
+use impresario_clients::transport::{transport_for, DeviceTransport};
+use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
+use impresario_core::diag::{Code, Diagnostic, Diagnostics};
 use impresario_core::parser::{parse_play, parse_scene};
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace;
+use tokio_util::sync::CancellationToken;
 
-use crate::render;
+use crate::{exec, plan, render, reporters, time_fmt};
 
 /// Exit codes (spec section 8.3): 0 pass · 1 test failure · 2 config/DSL ·
 /// 3 infrastructure · 130 interrupted.
@@ -160,9 +164,11 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
         Command::Devices { command } => match command {
             DevicesCommand::List => cmd_devices_list(&devices_path),
-            DevicesCommand::Check { names } => cmd_devices_check(names),
+            DevicesCommand::Check { names } => {
+                cmd_devices_check(&config_path, &devices_path, names)
+            }
         },
-        Command::Run(args) => cmd_run(args),
+        Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(),
     }
 }
@@ -538,24 +544,462 @@ fn cmd_devices_list(devices_path: &Path) -> i32 {
     EXIT_OK
 }
 
-fn cmd_devices_check(_names: &[String]) -> i32 {
-    eprintln!(
-        "devices check: device transports are not built yet; \
-         this command arrives with the clients crate (spec section 9) — see docs/STATUS.md"
+fn cmd_devices_check(config_path: &Path, devices_path: &Path, names: &[String]) -> i32 {
+    let config_outcome = config::load_config(config_path);
+    render::eprint_all(&config_outcome.diagnostics);
+    let Some(config) = config_outcome.config else {
+        eprintln!(
+            "devices check: configuration errors in {}",
+            config_path.display()
+        );
+        return EXIT_USAGE;
+    };
+    let outcome = config::load_devices(devices_path);
+    render::eprint_all(&outcome.diagnostics);
+    let Some(devices) = outcome.config else {
+        eprintln!(
+            "devices check: configuration errors in {}",
+            devices_path.display()
+        );
+        return EXIT_USAGE;
+    };
+    let selected = match select_devices(&devices.devices, names) {
+        Ok(selected) => selected,
+        Err(message) => {
+            eprintln!("devices check: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    if selected.is_empty() {
+        eprintln!(
+            "devices check: no devices configured (see {})",
+            devices_path.display()
+        );
+        return EXIT_USAGE;
+    }
+
+    let token = agent_token();
+    let master_version = env!("CARGO_PKG_VERSION").to_string();
+    let timeout_ms = config.agent_start_timeout_ms;
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("devices check: cannot start the async runtime: {err}");
+            return EXIT_INFRA;
+        }
+    };
+    let results: Vec<Result<DeviceInfo, String>> = runtime.block_on(async {
+        let mut results = Vec::new();
+        for device in &selected {
+            results.push(check_device(device, timeout_ms, token.as_deref(), &master_version).await);
+        }
+        results
+    });
+
+    let mut failures = 0usize;
+    for (device, result) in selected.iter().zip(results) {
+        match result {
+            Ok(info) => println!(
+                "{} ({}): {} · {} {} · {}x{} @{}x · {}",
+                device.name,
+                device.platform.as_str(),
+                info.model,
+                info.os_name,
+                info.os_version,
+                info.screen_width_px,
+                info.screen_height_px,
+                info.pixel_ratio,
+                info.runtime
+            ),
+            Err(message) => {
+                failures += 1;
+                eprintln!(
+                    "{} ({}): FAILED — {message}",
+                    device.name,
+                    device.platform.as_str()
+                );
+            }
+        }
+    }
+    if failures > 0 {
+        eprintln!(
+            "devices check: {failures} of {} device(s) failed",
+            selected.len()
+        );
+        return EXIT_INFRA;
+    }
+    println!("devices check: {} device(s) ok", selected.len());
+    EXIT_OK
+}
+
+/// Transport prepare → connect → handshake → `DeviceInfo` → session shutdown,
+/// then teardown (spec 8.1); every failure is a message, never a panic.
+async fn check_device(
+    device: &DeviceConfig,
+    timeout_ms: u64,
+    token: Option<&str>,
+    master_version: &str,
+) -> Result<DeviceInfo, String> {
+    let mut transport = transport_for(device.platform);
+    let outcome = check_transport(&mut *transport, device, timeout_ms, token, master_version).await;
+    let teardown = transport
+        .teardown()
+        .await
+        .map_err(|error| error.to_string());
+    match outcome {
+        Ok(info) => teardown.map(|()| info),
+        Err(message) => {
+            let _ = teardown;
+            Err(message)
+        }
+    }
+}
+
+async fn check_transport(
+    transport: &mut dyn DeviceTransport,
+    device: &DeviceConfig,
+    timeout_ms: u64,
+    token: Option<&str>,
+    master_version: &str,
+) -> Result<DeviceInfo, String> {
+    let endpoint = transport
+        .prepare(device)
+        .await
+        .map_err(|error| error.to_string())?;
+    let client = AgentClient::connect_retry(endpoint.address(), Duration::from_millis(timeout_ms))
+        .await
+        .map_err(|error| error.to_string())?;
+    let client = client.with_token(token.map(str::to_string));
+    let mut params = HandshakeParams::new(
+        device.name.clone(),
+        device.platform,
+        device.target_endpoint.clone(),
+        master_version,
     );
-    EXIT_USAGE
+    params.app_id = device.app_id.clone();
+    params.app_url = device.app_url.clone();
+    params.auth_token = token.map(str::to_string);
+    let handshake = client
+        .handshake(&params)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !handshake.accepted {
+        return Err(handshake
+            .error
+            .map(|error| format!("{}: {}", error.code.as_str(), error.message))
+            .unwrap_or_else(|| "the executor rejected the handshake".to_string()));
+    }
+    let _ = client.shutdown_session(&handshake.session_id, false).await;
+    handshake
+        .device
+        .ok_or_else(|| "the executor did not report DeviceInfo".to_string())
+}
+
+/// The devices an invocation selected: `all` (or nothing) means everything,
+/// otherwise the names in the order given (duplicates collapse).
+fn select_devices(
+    devices: &[DeviceConfig],
+    requested: &[String],
+) -> Result<Vec<DeviceConfig>, String> {
+    if requested.is_empty() || requested.iter().any(|name| name == "all") {
+        return Ok(devices.to_vec());
+    }
+    let mut selected: Vec<DeviceConfig> = Vec::new();
+    let mut unknown: Vec<&str> = Vec::new();
+    for name in requested {
+        match devices.iter().find(|device| &device.name == name) {
+            Some(device) => {
+                if !selected.iter().any(|chosen| chosen.name == device.name) {
+                    selected.push(device.clone());
+                }
+            }
+            None => unknown.push(name.as_str()),
+        }
+    }
+    if !unknown.is_empty() {
+        let known: Vec<&str> = devices.iter().map(|device| device.name.as_str()).collect();
+        return Err(format!(
+            "unknown device(s): {} (configured: {})",
+            unknown.join(", "),
+            if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.join(", ")
+            }
+        ));
+    }
+    Ok(selected)
+}
+
+/// `IMPRESARIO_AGENT_TOKEN` (spec 7.2.1); empty values count as unset.
+fn agent_token() -> Option<String> {
+    std::env::var("IMPRESARIO_AGENT_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+}
+
+/// First Ctrl-C cancels the run; a second one exits immediately (spec 8.3).
+async fn watch_interrupts(shutdown: CancellationToken) {
+    loop {
+        if tokio::signal::ctrl_c().await.is_err() {
+            tracing::debug!("Ctrl-C is unavailable; the watcher stops");
+            return;
+        }
+        if shutdown.is_cancelled() {
+            std::process::exit(EXIT_INTERRUPTED);
+        }
+        eprintln!("run: interrupted; cancelling in-flight commands (Ctrl-C again to exit now)");
+        shutdown.cancel();
+    }
 }
 
 // ---------------------------------------------------------------------------
-// run / lsp (wired, implemented by later phases)
+// run
 // ---------------------------------------------------------------------------
 
-fn cmd_run(_args: &RunArgs) -> i32 {
-    eprintln!(
-        "run: planning and execution are not built yet; \
-         this command arrives with the planner/executor (spec sections 8.2/8.3) — see docs/STATUS.md"
-    );
-    EXIT_USAGE
+fn cmd_run(
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    args: &RunArgs,
+    no_color: bool,
+) -> i32 {
+    use std::io::IsTerminal;
+
+    let config_outcome = config::load_config(config_path);
+    render::eprint_all(&config_outcome.diagnostics);
+    let Some(config) = config_outcome.config else {
+        eprintln!("run: configuration errors in {}", config_path.display());
+        return EXIT_USAGE;
+    };
+    let devices_outcome = config::load_devices(devices_path);
+    render::eprint_all(&devices_outcome.diagnostics);
+    let Some(device_list) = devices_outcome.config else {
+        eprintln!("run: configuration errors in {}", devices_path.display());
+        return EXIT_USAGE;
+    };
+
+    let reporter_list = match &args.reporter {
+        Some(spec) => match reporters::parse_list(spec) {
+            Ok(list) => list,
+            Err(message) => {
+                eprintln!("run: {message}");
+                return EXIT_USAGE;
+            }
+        },
+        None => config.reporters.clone(),
+    };
+    if let Some(timeout) = args.timeout {
+        if !plan::timeout_in_bounds(timeout) {
+            eprintln!("run: --timeout must be between 100 and 600000 ms (got {timeout})");
+            return EXIT_USAGE;
+        }
+    }
+    if let Some(retries) = args.retries {
+        if !plan::retries_in_bounds(retries) {
+            eprintln!("run: --retries must be between 0 and 5 (got {retries})");
+            return EXIT_USAGE;
+        }
+    }
+
+    let selected_devices = match select_devices(&device_list.devices, &args.device) {
+        Ok(selected) => selected,
+        Err(message) => {
+            eprintln!("run: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    if selected_devices.is_empty() {
+        eprintln!(
+            "run: no devices configured (see {})",
+            devices_path.display()
+        );
+        return EXIT_USAGE;
+    }
+    if let Some(diagnostic) = config::check_report_output(&base.join(&config.report_output)) {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.push(diagnostic);
+        render::eprint_all(&diagnostics);
+        eprintln!("run: report_output is not usable; nothing was executed");
+        return EXIT_USAGE;
+    }
+
+    // Workspace: scenes come from the configured scenes_dir, plays from
+    // --play patterns or plays_dir (spec 8.1).
+    let scenes = workspace::load_scenes(&base.join(&config.scenes_dir));
+    let plays = load_play_selection(base, &config, &args.play);
+    let mut load_diagnostics = scenes.diagnostics;
+    load_diagnostics.extend(plays.diagnostics);
+    let ws = workspace::Workspace {
+        scenes: scenes.workspace.scenes,
+        plays: plays.workspace.plays,
+    };
+    render::eprint_all(&load_diagnostics);
+    if load_diagnostics.has_errors() {
+        eprintln!(
+            "run: {} workspace error(s); nothing was executed",
+            load_diagnostics.errors().count()
+        );
+        return EXIT_USAGE;
+    }
+
+    let selection = plan::Selection {
+        tags: args.tag.clone(),
+        exclude_tags: args.exclude_tag.clone(),
+        acts: args.act.clone(),
+    };
+    let cli_vars = match plan::parse_cli_vars(&args.var) {
+        Ok(vars) => vars,
+        Err(diagnostics) => {
+            render::eprint_all(&diagnostics);
+            eprintln!("run: invalid --var; nothing was executed");
+            return EXIT_USAGE;
+        }
+    };
+    let input = plan::PlanInput {
+        config: &config,
+        workspace: &ws,
+        devices: &selected_devices,
+        plays: &ws.plays,
+        selection: &selection,
+        cli_vars: &cli_vars,
+        cli_timeout: args.timeout,
+    };
+    let plan = match plan::build_plan(&input) {
+        Ok(plan) => plan,
+        Err(diagnostics) => {
+            render::eprint_all(&diagnostics);
+            eprintln!(
+                "run: {} planning error(s); nothing was executed",
+                diagnostics.errors().count()
+            );
+            return EXIT_USAGE;
+        }
+    };
+
+    let run_id = time_fmt::run_id(std::time::SystemTime::now());
+    let report_dir = base.join(&config.report_output);
+    let options = exec::ExecOptions {
+        config: config.clone(),
+        run_id: run_id.clone(),
+        report_dir: report_dir.clone(),
+        retries: args.retries.unwrap_or(config.retries),
+        fail_fast: args.fail_fast,
+        token: agent_token(),
+        shutdown: CancellationToken::new(),
+        master_version: env!("CARGO_PKG_VERSION").to_string(),
+        session_options: impresario_clients::agent_client::SessionOptions::default(),
+    };
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("run: cannot start the async runtime: {err}");
+            return EXIT_INFRA;
+        }
+    };
+    let shutdown = options.shutdown.clone();
+    let outcome = runtime.block_on(async move {
+        let watcher = tokio::spawn(watch_interrupts(shutdown));
+        let outcome = exec::execute(&plan, &options).await;
+        watcher.abort();
+        outcome
+    });
+
+    let color = !no_color && std::io::stdout().is_terminal();
+    let run_dir = report_dir.join(&run_id);
+    let reporter_errors = reporters::write(&outcome.report, &run_dir, &reporter_list, color);
+    for message in &reporter_errors {
+        eprintln!("run: {message}");
+    }
+    let mut code = outcome.exit_code;
+    if !reporter_errors.is_empty() && code == EXIT_OK {
+        code = EXIT_INFRA;
+    }
+    code
+}
+
+/// Expand `--play` file/dir/glob patterns (default: the configured
+/// `plays_dir`) into loaded Plays. The loader sorts and dedups paths, so the
+/// run order is deterministic.
+fn load_play_selection(
+    base: &Path,
+    config: &ImpresarioConfig,
+    patterns: &[String],
+) -> workspace::LoadedWorkspace {
+    if patterns.is_empty() {
+        return workspace::load_plays(&base.join(&config.plays_dir));
+    }
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let mut diagnostics = Diagnostics::new();
+    for pattern in patterns {
+        let normalized = pattern.replace('\\', "/");
+        if is_glob_pattern(&normalized) {
+            let expanded = base.join(&normalized);
+            let text = expanded.to_string_lossy().replace('\\', "/");
+            match glob::glob(&text) {
+                Ok(entries) => {
+                    let mut matched = 0usize;
+                    for entry in entries {
+                        match entry {
+                            Ok(path) => {
+                                matched += 1;
+                                push_unique(&mut targets, path);
+                            }
+                            Err(err) => diagnostics.push(Diagnostic::error(
+                                Code::CfgInvalidValue,
+                                format!("--play '{pattern}': {err}"),
+                            )),
+                        }
+                    }
+                    if matched == 0 {
+                        diagnostics.push(Diagnostic::error(
+                            Code::CfgInvalidValue,
+                            format!("--play '{pattern}' matched no files"),
+                        ));
+                    }
+                }
+                Err(err) => diagnostics.push(Diagnostic::error(
+                    Code::CfgInvalidValue,
+                    format!("--play '{pattern}' is not a valid glob: {err}"),
+                )),
+            }
+        } else {
+            let path = if Path::new(pattern).is_absolute() {
+                PathBuf::from(pattern)
+            } else {
+                base.join(pattern)
+            };
+            if path.exists() {
+                push_unique(&mut targets, path);
+            } else {
+                diagnostics.push(Diagnostic::error(
+                    Code::CfgInvalidValue,
+                    format!("--play '{pattern}' does not exist"),
+                ));
+            }
+        }
+    }
+    let mut loaded = workspace::load_paths(&targets);
+    loaded.diagnostics.extend(diagnostics);
+    loaded
+}
+
+fn is_glob_pattern(pattern: &str) -> bool {
+    pattern.contains(['*', '?', '['])
+}
+
+fn push_unique(targets: &mut Vec<PathBuf>, path: PathBuf) {
+    if !targets.contains(&path) {
+        targets.push(path);
+    }
 }
 
 fn cmd_lsp() -> i32 {
@@ -677,11 +1121,77 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_commands_fail_loudly() {
-        let dir = temp_workspace("stubs");
-        assert_eq!(run_with(&argv(&dir, &["devices", "check"])), EXIT_USAGE);
+    fn run_and_devices_check_require_configs() {
+        let dir = temp_workspace("no-config");
+        // No impresario.config: these commands fail with a config error.
         assert_eq!(run_with(&argv(&dir, &["run"])), EXIT_USAGE);
+        assert_eq!(run_with(&argv(&dir, &["devices", "check"])), EXIT_USAGE);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lsp_is_the_only_stub() {
+        let dir = temp_workspace("stubs");
         assert_eq!(run_with(&argv(&dir, &["lsp"])), EXIT_USAGE);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn select_devices_all_names_and_unknown() {
+        use impresario_core::platforms::Platform;
+        let device = |name: &str| DeviceConfig {
+            name: name.to_string(),
+            platform: Platform::Android,
+            target_endpoint: "emulator-5554".to_string(),
+            app_id: None,
+            app_url: None,
+            agent_address: None,
+            connector: None,
+            options: Default::default(),
+        };
+        let devices = vec![device("a"), device("b")];
+        assert_eq!(select_devices(&devices, &[]).expect("all").len(), 2);
+        assert_eq!(
+            select_devices(&devices, &["all".to_string()])
+                .expect("all")
+                .len(),
+            2
+        );
+        let chosen = select_devices(&devices, &["b".to_string(), "a".to_string()]).expect("named");
+        assert_eq!(
+            chosen.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+        // Duplicates collapse.
+        assert_eq!(
+            select_devices(&devices, &["a".to_string(), "a".to_string()])
+                .expect("named")
+                .len(),
+            1
+        );
+        assert!(select_devices(&devices, &["nope".to_string()]).is_err());
+    }
+
+    #[test]
+    fn play_patterns_are_glob_expanded() {
+        let dir = temp_workspace("play-glob");
+        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        std::fs::write(
+            dir.join("plays/extra.play"),
+            "Play: Extra\n\nAct: A\n\nStage: S\n    Scene: LoginScreen\n        Check: LoginTitle\n",
+        )
+        .expect("write");
+        let config = config::load_config(&dir.join("impresario.config"))
+            .config
+            .expect("config loads");
+        let all = load_play_selection(&dir, &config, &[]);
+        assert_eq!(all.workspace.plays.len(), 2);
+        let globbed = load_play_selection(&dir, &config, &["plays/*.play".to_string()]);
+        assert_eq!(globbed.workspace.plays.len(), 2);
+        let single = load_play_selection(&dir, &config, &["plays/login.play".to_string()]);
+        assert_eq!(single.workspace.plays.len(), 1);
+        let none = load_play_selection(&dir, &config, &["plays/nope.play".to_string()]);
+        assert!(none.diagnostics.has_errors());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

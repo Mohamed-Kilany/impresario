@@ -1,0 +1,250 @@
+---
+source: crates/impresario-master/tests/reporters.rs
+expression: text
+---
+{
+  "run_id": "20261016-120000-abcd",
+  "started_at": "2026-10-16T12:00:00.000Z",
+  "duration_ms": 12345,
+  "status": "failed",
+  "exit_code": 1,
+  "devices": [
+    {
+      "name": "pixel-8",
+      "platform": "android",
+      "device_info": {
+        "model": "Pixel 8",
+        "os_name": "Android",
+        "os_version": "14",
+        "runtime": "MockAgent 0.1.0",
+        "screen_width_px": 1080,
+        "screen_height_px": 2400,
+        "pixel_ratio": 2.625
+      },
+      "error": null,
+      "plays": [
+        {
+          "name": "Login",
+          "file": "plays/login.play",
+          "acts": [
+            {
+              "name": "Sign in",
+              "tags": [],
+              "status": "passed",
+              "flaky": false,
+              "attempts": [
+                {
+                  "n": 1,
+                  "status": "passed",
+                  "duration_ms": 850,
+                  "stages": [
+                    {
+                      "name": "Login",
+                      "status": "passed",
+                      "steps": [
+                        {
+                          "source": "Check: email",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 4,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "passed",
+                          "duration_ms": 120,
+                          "error": null
+                        },
+                        {
+                          "source": "Action: click => submit",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 5,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "passed",
+                          "duration_ms": 700,
+                          "error": null
+                        }
+                      ]
+                    }
+                  ],
+                  "failure": null
+                }
+              ]
+            },
+            {
+              "name": "Wrong password",
+              "tags": [],
+              "status": "failed",
+              "flaky": false,
+              "attempts": [
+                {
+                  "n": 1,
+                  "status": "failed",
+                  "duration_ms": 1250,
+                  "stages": [
+                    {
+                      "name": "Login",
+                      "status": "failed",
+                      "steps": [
+                        {
+                          "source": "Check: welcome",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 11,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "failed",
+                          "duration_ms": 1100,
+                          "error": {
+                            "code": "CHECK_FAILED",
+                            "message": "expected 'Welcome' but saw 'Invalid credentials'",
+                            "details": {
+                              "observed_text": "Invalid credentials"
+                            }
+                          }
+                        },
+                        {
+                          "source": "Action: click => retry",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 12,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "skipped",
+                          "duration_ms": 0,
+                          "error": null
+                        }
+                      ]
+                    }
+                  ],
+                  "failure": {
+                    "step_index": 0,
+                    "code": "CHECK_FAILED",
+                    "message": "expected 'Welcome' but saw 'Invalid credentials'",
+                    "details": {
+                      "observed_text": "Invalid credentials"
+                    },
+                    "screenshot": "screenshots/pixel-8/failure-1.png",
+                    "log_tail": [
+                      "[INFO] agent: form submitted",
+                      "[ERROR] agent: login rejected"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Checkout",
+          "file": "plays/checkout.play",
+          "acts": [
+            {
+              "name": "Pay",
+              "tags": [
+                "smoke"
+              ],
+              "status": "passed",
+              "flaky": true,
+              "attempts": [
+                {
+                  "n": 1,
+                  "status": "failed",
+                  "duration_ms": 400,
+                  "stages": [
+                    {
+                      "name": "Checkout",
+                      "status": "failed",
+                      "steps": [
+                        {
+                          "source": "Check: receipt",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 3,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "failed",
+                          "duration_ms": 380,
+                          "error": {
+                            "code": "CHECK_FAILED",
+                            "message": "expected 'Welcome' but saw 'Invalid credentials'",
+                            "details": {
+                              "observed_text": "Invalid credentials"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "failure": {
+                    "step_index": 0,
+                    "code": "CHECK_FAILED",
+                    "message": "expected 'Welcome' but saw 'Invalid credentials'",
+                    "details": {
+                      "observed_text": "Invalid credentials"
+                    },
+                    "screenshot": "screenshots/pixel-8/missing.png",
+                    "log_tail": [
+                      "[INFO] agent: form submitted",
+                      "[ERROR] agent: login rejected"
+                    ]
+                  }
+                },
+                {
+                  "n": 2,
+                  "status": "passed",
+                  "duration_ms": 900,
+                  "stages": [
+                    {
+                      "name": "Checkout",
+                      "status": "passed",
+                      "steps": [
+                        {
+                          "source": "Check: receipt",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 3,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "passed",
+                          "duration_ms": 300,
+                          "error": null
+                        },
+                        {
+                          "source": "Action: click => done",
+                          "span": {
+                            "file": "plays/login.play",
+                            "line": 4,
+                            "col": 9,
+                            "len": 27
+                          },
+                          "status": "passed",
+                          "duration_ms": 500,
+                          "error": null
+                        }
+                      ]
+                    }
+                  ],
+                  "failure": null
+                }
+              ]
+            },
+            {
+              "name": "Refund",
+              "tags": [],
+              "status": "skipped",
+              "flaky": false,
+              "attempts": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
