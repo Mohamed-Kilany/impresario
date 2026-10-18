@@ -300,6 +300,19 @@ per-class invocations above keep every process under that line:
 & $adb -s 192.168.93.84:5555 shell cmd appops set com.impresario.agent RUN_ANY_IN_BACKGROUND allow
 ```
 
+Revert them when the TV goes back to normal duty (restores the framework
+defaults — `settings delete` where a stock default exists, `0`/`default`
+otherwise):
+
+```powershell
+& $adb -s 192.168.93.84:5555 shell svc power stayon false
+& $adb -s 192.168.93.84:5555 shell settings put global stay_on_while_plugged_in 0
+& $adb -s 192.168.93.84:5555 shell settings delete system screen_off_timeout
+& $adb -s 192.168.93.84:5555 shell settings put secure screensaver_enabled 1
+& $adb -s 192.168.93.84:5555 shell dumpsys deviceidle whitelist -com.impresario.agent
+& $adb -s 192.168.93.84:5555 shell cmd appops set com.impresario.agent RUN_ANY_IN_BACKGROUND default
+```
+
 Diagnose a suspected freeze with
 `& $adb -s 192.168.93.84:5555 logcat -d -v time | Select-String 'FreezeManager'`:
 `doFreeze <pid> pro com.impresario.agent res true` means the vendor power
