@@ -388,6 +388,40 @@ class CommandExecutorTest {
     }
 
     @Test
+    fun scrollToReversesAsSoonAsTheEndIsReached() = runBlocking {
+        val driver = FakeDriver()
+        val row = driver.addNode("row29", visible = false, selector = "text:row 29")
+        driver.scrollMoves = false
+        driver.onScroll = { dir ->
+            if (dir == com.impresario.agent.Direction.UP) row.visible = true
+        }
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            actionCommand("c1", action(ActionType.SCROLL_TO, selector(SelectorStrategy.TEXT, "row 29")), timeoutMs = 1000),
+        )
+        assertTrue(result.ok)
+        assertEquals(
+            listOf("scroll:-:DOWN:1", "scroll:-:UP:1"),
+            driver.calls.filterNot { it.startsWith("find:") },
+        )
+    }
+
+    @Test
+    fun scrollToFailsFastWhenTheTopEndIsReached() = runBlocking {
+        val driver = FakeDriver()
+        driver.scrollMoves = false
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            actionCommand("c1", action(ActionType.SCROLL_TO, selector(SelectorStrategy.TEXT, "Ghost")), timeoutMs = 1000),
+        )
+        assertFalse(result.ok)
+        assertEquals(ErrorCode.ELEMENT_NOT_FOUND, result.error.code)
+        assertEquals("2", result.error.detailsMap["scroll_attempts"])
+        assertEquals(
+            listOf("scroll:-:DOWN:1", "scroll:-:UP:1"),
+            driver.calls.filterNot { it.startsWith("find:") },
+        )
+    }
+
+    @Test
     fun swipeIsTouchOnly() = runBlocking {
         val phoneDriver = FakeDriver()
         val phoneResult = CommandExecutor(phoneDriver, phoneOptions).execute(

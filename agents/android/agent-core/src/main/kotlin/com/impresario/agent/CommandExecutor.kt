@@ -302,20 +302,39 @@ class CommandExecutor(
         val deadline = now() + timeout
         var attempts = 0
         var scrollingUp = false
-        while (now() < deadline && attempts < options.scrollMaxAttempts) {
+        while (true) {
             val element = pick(spec, driver.find(lookup(spec), 0))
             if (element != null && driver.isVisible(element)) {
                 return Outcome.Ok()
             }
+            if (now() >= deadline || attempts >= options.scrollMaxAttempts) {
+                break
+            }
             val direction = if (scrollingUp) Direction.UP else Direction.DOWN
-            if (options.isTv) {
+            val moved = if (options.isTv) {
                 driver.pressKey(direction.keyCode, repeat = 1, intervalMs = 100)
+                // A key press gives no movement signal; the down phase runs
+                // half the budget and then reverses (docs/DECISIONS.md I-70).
+                true
             } else {
                 driver.scroll(null, direction, 1)
             }
             attempts += 1
-            if (!scrollingUp && attempts >= options.scrollMaxAttempts / 2) {
-                // Down phase exhausted: try upwards for the rest of the budget.
+            if (!moved && direction == Direction.UP) {
+                // The upward search cannot advance either: the element is not
+                // above the top end. Give the just-finished step a chance to
+                // have revealed it, then fail fast instead of looping until
+                // the deadline (docs/DECISIONS.md I-75).
+                val revealed = pick(spec, driver.find(lookup(spec), 0))
+                if (revealed != null && driver.isVisible(revealed)) {
+                    return Outcome.Ok()
+                }
+                break
+            }
+            if (!moved || (!scrollingUp && attempts >= options.scrollMaxAttempts / 2)) {
+                // Down scrolling no longer moves the content (end of the
+                // container reached, I-75) or the down phase exhausted its
+                // half of the budget (I-70): search upwards from here.
                 scrollingUp = true
             }
         }

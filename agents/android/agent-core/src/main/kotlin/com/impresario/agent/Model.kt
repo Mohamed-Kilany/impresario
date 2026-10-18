@@ -119,7 +119,14 @@ interface UiDriver {
     fun focusedBounds(): Rect?
     fun pressKey(code: Int, repeat: Int, intervalMs: Long)
     fun pressBack()
-    fun scroll(container: ElementHandle?, dir: Direction, steps: Int)
+
+    /**
+     * Runs [steps] scroll steps inside `container` (the primary scrollable of
+     * the screen when `null`). Returns `false` when no step moved the
+     * content - the container already sits at that end - and `true` when it
+     * moved or the driver cannot observe movement (docs/DECISIONS.md I-75).
+     */
+    fun scroll(container: ElementHandle?, dir: Direction, steps: Int): Boolean
     fun swipe(e: ElementHandle?, dir: Direction)
     fun screenshotPng(): ByteArray
     fun launch(appId: String, tv: Boolean)

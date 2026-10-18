@@ -36,7 +36,8 @@ class UiHandle(internal val object2: UiObject2) : ElementHandle
  *   `isVisible`);
  * - `scroll` uses `UiObject2.scroll(dir, 0.8)` on a scrollable (the first
  *   scrollable of the screen when no container is given), falling back to a
- *   screen swipe;
+ *   screen swipe when no scrollable exists; it reports whether the content
+ *   actually moved via uiautomator's scroll-finished signal (I-75);
  * - `input text` escapes spaces as `%s` and only accepts printable ASCII;
  * - `text` treats a field's hint as empty content: an empty EditText reports
  *   its hint through the a11y text (framework behavior), so text that equals
@@ -108,21 +109,34 @@ class UiAutomatorDriver(
         device.pressBack()
     }
 
-    override fun scroll(container: ElementHandle?, dir: Direction, steps: Int) {
+    override fun scroll(container: ElementHandle?, dir: Direction, steps: Int): Boolean {
         val target = container?.let { obj(it) } ?: primaryScrollable()
         val times = steps.coerceAtLeast(1)
+        var moved = false
         repeat(times) {
-            val scrolled = target?.let { node ->
-                try {
-                    node.scroll(direction(dir), SCROLL_PERCENT)
-                } catch (error: Exception) {
-                    false
-                }
-            } ?: false
-            if (!scrolled) {
+            val node = target
+            if (node == null || !tolerant(false) { node.isScrollable }) {
+                // Nothing scrollable to drive: fall back to a blind screen
+                // swipe, whose effect this driver cannot observe (I-75).
                 screenSwipe(dir, SCROLL_PERCENT)
+                moved = true
+                return@repeat
             }
+            val scrolled = try {
+                node.scroll(direction(dir), SCROLL_PERCENT)
+            } catch (error: Exception) {
+                false
+            }
+            if (!scrolled) {
+                // `UiObject2.scroll` waits for the accessibility
+                // scroll-finished event; none arrived, so the content did
+                // not move - the container sits at that end and further
+                // steps cannot advance it (I-75).
+                return moved
+            }
+            moved = true
         }
+        return moved
     }
 
     override fun swipe(e: ElementHandle?, dir: Direction) {

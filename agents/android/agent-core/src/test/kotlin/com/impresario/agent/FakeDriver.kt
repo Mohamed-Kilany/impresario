@@ -118,8 +118,16 @@ class FakeDriver(
         calls.add("back")
     }
 
-    override fun scroll(container: ElementHandle?, dir: Direction, steps: Int) {
+    /** Result of `scroll` calls; `false` models a container at its end. */
+    var scrollMoves: Boolean = true
+
+    /** Hook invoked for every `scroll`, so tests can reveal elements. */
+    var onScroll: ((Direction) -> Unit)? = null
+
+    override fun scroll(container: ElementHandle?, dir: Direction, steps: Int): Boolean {
         calls.add("scroll:${(container as? Handle)?.key ?: "-"}:${dir.name}:$steps")
+        onScroll?.invoke(dir)
+        return scrollMoves
     }
 
     override fun swipe(e: ElementHandle?, dir: Direction) {

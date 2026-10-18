@@ -400,7 +400,47 @@ devices:
   level …" immediately, and the master gives up after `LOG_STREAM_OPEN_TIMEOUT`
   (5 s) and continues without agent logs.
 
-### 2.7 Platform notes
+### 2.7 Android phone (Samsung Galaxy A51, verified on this host)
+
+The same three APKs serve phones; the platform comes from the handshake
+(`android` selects the touch path: no D-pad, `swipe` allowed, `focus`
+unsupported — D-13/I-57).
+
+```yaml
+devices:
+  - name: pocket_phone
+    platform: android
+    target_endpoint: 192.168.93.76:39373  # wireless-debugging adb serial
+    app_id: com.impresario.stub
+    options:
+      clear_app_data: true
+```
+
+- Connect first: `adb connect 192.168.93.76:39373`. Wireless-debugging ports
+  are random and rotate per session, so re-read the port on the phone when
+  the connection drops. Verified device: SM-A515F, Android 13 (SDK 33),
+  1080×2400 @ 420 dpi.
+- Touch semantics on this path: `click`/`longpress` tap the element,
+  `scroll`/`swipe` are real gestures, `scrollto` searches down and reverses
+  as soon as the container stops moving (I-75: the driver reports movement
+  from uiautomator's scroll-finished signal), `key backspace`/`back`/`home`
+  dispatch KeyEvents, `app background` presses HOME.
+- Keep the screen unlocked for a run (the app must be visible); the stock
+  10-minute screen-off timeout is ample for a ≈2-minute play.
+- Verified end-to-end on 2026-10-18: `impresario run` drove the full touch
+  smoke play over Wi-Fi — `run 20261018-103702-ee29: passed (1m53s, exit 0)`,
+  1 device, 1 play, 2 acts, 86 steps, 0 failed. Act 1 "Scenario tour"
+  (1m19s) covers basic controls, flags, the touch scroller (`scroll down 2`,
+  `swipe up`/`swipe down`, `scrollto` to row 29 and back to row 0), text
+  entry (`type`/`append`/`clear`, `key backspace` with echo checks),
+  selection, hardware keys (`key back`, `key home` + relaunch) and device
+  info (`tv=false`); Act 2 "App control lifecycle" (16.3s) covers
+  `background`/`launch`, `restart` (counter reset) and `terminate`/relaunch.
+  The first phone attempts failed `scrollto` both ways and produced the I-75
+  fix (the TV regression was re-run green afterwards: wire suite 26+2, TV
+  E2E `run 20261018-104405-4f10`).
+
+### 2.8 Platform notes
 
 - Phone vs TV behaviour is chosen at runtime from the handshake platform
   (D-13): `androidtv` adds `DPAD_FOCUS` and routes `click`/`focus` through the
