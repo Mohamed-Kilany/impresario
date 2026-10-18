@@ -19,7 +19,7 @@ class InfoActivity : ScenarioActivity() {
             append("model=").append(Build.MODEL).append("; ")
             append("tv=").append(uiMode.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION)
         }
-        column.addView(
+        column.addStacked(
             TextView(this).apply {
                 id = R.id.stub_info
                 this.text = text

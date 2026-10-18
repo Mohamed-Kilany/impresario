@@ -19,7 +19,6 @@ class KeysActivity : ScenarioActivity() {
             id = R.id.stub_key_log
             text = "key=none"
             textSize = 18f
-            setPadding(0, dp(12), 0, 0)
         }
         val alpha = actionButton(R.id.stub_key_a, "Alpha").apply {
             setOnClickListener { log.text = "clicked=Alpha" }
@@ -30,10 +29,10 @@ class KeysActivity : ScenarioActivity() {
         val charlie = actionButton(R.id.stub_key_c, "Charlie").apply {
             setOnClickListener { log.text = "clicked=Charlie" }
         }
-        column.addView(alpha)
-        column.addView(bravo)
-        column.addView(charlie)
-        column.addView(log)
+        column.addStacked(alpha)
+        column.addStacked(bravo)
+        column.addStacked(charlie)
+        column.addStacked(log)
         alpha.requestFocus()
     }
 

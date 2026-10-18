@@ -2,6 +2,7 @@ package com.impresario.stub
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -27,7 +28,8 @@ class MainActivity : Activity() {
             TextView(this).apply {
                 id = R.id.stub_title
                 text = "Impresario stub"
-                textSize = 22f
+                textSize = 24f
+                setTypeface(typeface, Typeface.BOLD)
                 contentDescription = "stub badge"
             },
         )
@@ -35,7 +37,7 @@ class MainActivity : Activity() {
             TextView(this).apply {
                 text = "One screen per test scenario."
                 textSize = 15f
-                setPadding(0, 0, 0, dp(12))
+                alpha = 0.8f
             },
         )
         var first: Button? = null
@@ -44,15 +46,22 @@ class MainActivity : Activity() {
                 this.id = id
                 text = label
                 textSize = 18f
+                minHeight = dp(48)
                 setPadding(dp(12), dp(6), dp(12), dp(6))
                 // Stable fixture text on every theme (docs/DECISIONS.md I-64).
                 isAllCaps = false
                 setOnClickListener { startActivity(Intent(this@MainActivity, screen)) }
             }
             if (first == null) first = row
-            column.addView(row)
+            column.addStacked(row)
         }
-        setContentView(ScrollView(this).apply { addView(column) })
+        setContentView(
+            ScrollView(this).apply {
+                // A scrollbar thumb is noise in failure screenshots.
+                isVerticalScrollBarEnabled = false
+                addView(column)
+            },
+        )
         first?.requestFocus()
     }
 

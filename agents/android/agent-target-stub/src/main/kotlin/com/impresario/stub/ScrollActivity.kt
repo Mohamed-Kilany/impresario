@@ -29,7 +29,11 @@ class ScrollActivity : ScenarioActivity() {
         }
         column.addView(
             scroller,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ).apply { topMargin = (STACK_GAP_DP * resources.displayMetrics.density).toInt() },
         )
         scroller.requestFocus()
     }

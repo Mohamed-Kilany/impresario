@@ -15,16 +15,16 @@ class FlagsActivity : ScenarioActivity() {
         val disabled = actionButton(R.id.stub_disabled, "Disabled").apply {
             isEnabled = false
         }
-        column.addView(enabled)
-        column.addView(disabled)
-        column.addView(
+        column.addStacked(enabled)
+        column.addStacked(disabled)
+        column.addStacked(
             TextView(this).apply {
                 id = R.id.stub_visible
                 text = "visible text"
                 textSize = 18f
             },
         )
-        column.addView(
+        column.addStacked(
             TextView(this).apply {
                 id = R.id.stub_hidden
                 text = "hidden text"

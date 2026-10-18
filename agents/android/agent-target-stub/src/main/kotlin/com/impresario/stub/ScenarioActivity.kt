@@ -1,6 +1,7 @@
 package com.impresario.stub
 
 import android.app.Activity
+import android.graphics.Typeface
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -24,9 +25,9 @@ abstract class ScenarioActivity : Activity() {
             TextView(this).apply {
                 id = R.id.stub_title
                 text = scenarioTitle()
-                textSize = 22f
+                textSize = 24f
+                setTypeface(typeface, Typeface.BOLD)
                 contentDescription = "stub badge"
-                setPadding(0, 0, 0, dp(12))
             },
         )
         buildScenario(column)
@@ -34,9 +35,9 @@ abstract class ScenarioActivity : Activity() {
             id = R.id.stub_status
             text = "status=idle"
             textSize = 16f
-            setPadding(0, dp(12), 0, 0)
+            alpha = 0.85f
         }
-        column.addView(status)
+        column.addStacked(status)
         setContentView(column)
     }
 
@@ -50,6 +51,7 @@ abstract class ScenarioActivity : Activity() {
         this.id = id
         text = label
         textSize = 18f
+        minHeight = dp(48)
         setPadding(dp(12), dp(6), dp(12), dp(6))
         // TV themes force button labels to ALL CAPS; `getText()` then reports
         // the uppercase form in the accessibility tree, which breaks exact

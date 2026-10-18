@@ -30,8 +30,8 @@ class TextActivity : ScenarioActivity() {
                 }
             })
         }
-        column.addView(input)
-        column.addView(echo)
+        column.addStacked(input)
+        column.addStacked(echo)
         input.requestFocus()
     }
 }

@@ -17,7 +17,7 @@ class SelectActivity : ScenarioActivity() {
                     .show()
             }
         }
-        column.addView(trigger)
+        column.addStacked(trigger)
         trigger.requestFocus()
     }
 }

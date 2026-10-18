@@ -27,8 +27,8 @@ class BasicActivity : ScenarioActivity() {
                 true
             }
         }
-        column.addView(button)
-        column.addView(counter)
+        column.addStacked(button)
+        column.addStacked(counter)
         button.requestFocus()
     }
 }
