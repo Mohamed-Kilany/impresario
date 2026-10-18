@@ -318,7 +318,7 @@ action       = string , "=>" , piece , [ tmo ]                        (* shortha
              | "back"
              | "wait"      , duration
              | "screenshot", string
-             | "app"       , ( "launch" | "terminate" | "restart" ) ;
+             | "app"       , ( "launch" | "terminate" | "restart" | "background" ) ;
 check-line   = "Check:" , piece , [ cond ] , [ tmo ] , EOL ;
 cond         = "is" , ( "visible" | "hidden" | "enabled" | "disabled" | "focused" )
              | "text" , string | "textContains" , string | "count" , integer ;
@@ -384,7 +384,7 @@ Legend: ✅ full · ◐ limited (see note) · ✖ unsupported (`UNSUPPORTED_ACTI
 |---|---|---|---|---|---|---|---|
 | `click` | ✅ | ✅ focus+OK | ✅ focus+OK | ✅ | ✅ focus+OK | ✅ | ✅ focus+select |
 | `type` / `append` / `clear` | ✅ | ✅ programmatic | ✅ programmatic | ✅ | ✅ | ✅ | ◐ requires focus + keyboard |
-| `longpress` | ◐ mouse hold | ◐ OK held | ◐ OK held | ✅ | ◐ shell long-press key | ✅ | ✅ `press(.select, forDuration:)` |
+| `longpress` | ◐ mouse hold | ◐ OK held | ◐ OK held | ✅ | ◐ injected OK hold | ✅ | ✅ `press(.select, forDuration:)` |
 | `focus` | ✅ | ✅ | ✅ | ✖ | ◐ D-pad only | ✖ | ◐ D-pad only |
 | `select` | ✅ native `<select>` | ✅ | ✅ | ◐ | ◐ | ◐ | ✖ |
 | `scroll` | ✅ | ✅ | ✅ | ✅ | ◐ D-pad | ✅ | ◐ D-pad |
@@ -396,6 +396,7 @@ Legend: ✅ full · ◐ limited (see note) · ✖ unsupported (`UNSUPPORTED_ACTI
 | `app launch` | ✅ navigate | ✅ navigate | ✅ navigate | ✅ | ✅ | ✅ | ✅ |
 | `app terminate` | ✖ | ✖ | ✖ | ✅ | ✅ | ✅ | ✅ |
 | `app restart` | ✅ reload/navigate | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `app background` | ✖ | ✖ | ✖ | ✅ | ✅ | ✅ | ✅ |
 
 | Check | web | webos | tizen | android | androidtv | ios | tvos |
 |---|---|---|---|---|---|---|---|
@@ -753,7 +754,7 @@ interface UiDriver {
 - **Find.** Poll every `poll_interval_ms` until found or timeout. Mapping: `ANDROID_ID` → `By.res(pkg, name)` (short names expanded with `app_id`), `TEXT` → `By.text`, `TEXT_CONTAINS` → `By.textContains`, `ANDROID_DESC` → `By.desc`, `ANDROID_CLASS` → `By.clazz`. Apply `index`. A `StaleObjectException` triggers one re-find; a second consecutive one → `STALE_ELEMENT`.
 - **click.** Phone: wait visible+enabled → `click()`. TV: focus per 6.3 via `FocusNavigator` (using `By.focused(true)` and `visibleBounds`), then `pressKey(DPAD_CENTER)`.
 - **type (replace) / append / clear.** `type`: click to focus (phone) or D-pad focus (TV), then `setText(text)` (this REPLACES). `append`: `setText(current + text)`. `clear`: `clear()`/`setText("")`. After the call, read the text back; mismatch → fallback (ASCII only): select all via key events, delete, send characters with `UiDevice.executeShellCommand("input text ...")` with strict escaping; non-ASCII content with no working `setText` → `UNSUPPORTED_ACTION` with an explanation. Read-back mismatch after fallback → `NOT_INTERACTABLE`.
-- **longpress** phone: `UiObject2.longClick`-style gesture honoring `duration_ms`; TV: `input keyevent --longpress 23` through shell after focusing.
+- **longpress** phone: `UiObject2.longClick`-style gesture honoring `duration_ms`; TV: focus per 6.3, then inject a real key hold (`UiAutomation.injectInputEvent`: down → `FLAG_LONG_PRESS` repeat → up, ≥ 600 ms) so the focused view's long-press timer fires and no trailing click is delivered (I-66).
 - **select.** Click the spinner/dropdown, then click the element whose text equals the option; failure → `ELEMENT_NOT_FOUND` with `details.option`.
 - **scroll / swipe / scrollto.** Phone: `UiObject2.scroll/fling` or `Gestures`, with `UiScrollable` as helper; swipe via `UiObject2.swipe` or screen-level `UiDevice.swipe`. TV: D-pad presses. `scrollto` per 5.6.
 - **back.** `pressBack()`.

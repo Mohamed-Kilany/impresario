@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Stable view ids. At runtime resource ids resolve under the installed
+  applicationId (`com.impresario.stub`), not the Kotlin namespace
+  (docs/DECISIONS.md I-58).
+-->
+<resources>
+    <item name="stub_title" type="id" />
+    <item name="stub_status" type="id" />
+    <item name="stub_button" type="id" />
+    <item name="stub_counter" type="id" />
+    <item name="stub_input" type="id" />
+    <item name="stub_echo" type="id" />
+    <item name="stub_select" type="id" />
+    <item name="stub_enabled" type="id" />
+    <item name="stub_disabled" type="id" />
+    <item name="stub_visible" type="id" />
+    <item name="stub_hidden" type="id" />
+    <item name="stub_scroller" type="id" />
+    <item name="stub_list" type="id" />
+    <item name="stub_key_log" type="id" />
+    <item name="stub_key_a" type="id" />
+    <item name="stub_key_b" type="id" />
+    <item name="stub_key_c" type="id" />
+    <item name="stub_info" type="id" />
+    <item name="stub_scenario_basic" type="id" />
+    <item name="stub_scenario_text" type="id" />
+    <item name="stub_scenario_scroll" type="id" />
+    <item name="stub_scenario_select" type="id" />
+    <item name="stub_scenario_flags" type="id" />
+    <item name="stub_scenario_keys" type="id" />
+    <item name="stub_scenario_info" type="id" />
+</resources>

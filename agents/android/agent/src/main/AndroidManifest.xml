@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      The agent serves gRPC itself (bind + accept, including over the local
+      network), so *this* app holds INTERNET. The app under test never does
+      (docs/DECISIONS.md I-59, I-62).
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      The agent launches and inspects *any* app under test. Since it is now a
+      separate package (docs/DECISIONS.md I-62), Android 11+ package
+      visibility would hide the target from `getLaunchIntentForPackage`; the
+      automation tool is exactly the use case QUERY_ALL_PACKAGES covers (same
+      approach as Appium's UiAutomator2 server).
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!--
+      The session guard (docs/DECISIONS.md I-68): a foreground service keeps
+      this process out of the vendor power freezers while an instrumentation
+      session runs. `specialUse` + the property satisfy the Android 14+ FGS
+      rules; older releases ignore both.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Serves phone and TV; the agent has no touch requirement of its own. -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="Impresario Agent"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".ProcessGuardService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="ui-test-agent" />
+        </service>
+    </application>
+
+</manifest>

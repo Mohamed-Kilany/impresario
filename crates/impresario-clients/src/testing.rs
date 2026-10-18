@@ -61,6 +61,10 @@ pub struct MockScript {
     pub logs: Vec<LogRecord>,
     /// Close `StreamLogs` after this many entries (default: keep it open).
     pub log_stream_stops_after: Option<usize>,
+    /// Withhold the `StreamLogs` response (no headers) for this long: models
+    /// executors that send response headers only with their first message,
+    /// like grpc-java (decision I-74).
+    pub log_stream_delay: Option<Duration>,
 }
 
 impl Default for MockScript {
@@ -94,6 +98,7 @@ impl Default for MockScript {
             screenshot_height: 1920,
             logs: Vec::new(),
             log_stream_stops_after: None,
+            log_stream_delay: None,
         }
     }
 }
@@ -363,6 +368,14 @@ impl MockAgentBuilder {
         self
     }
 
+    /// Withhold the `StreamLogs` response for `delay`: a lazy executor that
+    /// sends response headers only with its first message (decision I-74).
+    #[must_use]
+    pub fn delay_log_stream(mut self, delay: Duration) -> Self {
+        self.script.log_stream_delay = Some(delay);
+        self
+    }
+
     /// Bind `127.0.0.1:0` and serve until the [`MockAgent`] is dropped.
     pub async fn start(self) -> std::io::Result<MockAgent> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -566,6 +579,9 @@ impl AgentService for MockService {
         require_token(&self.state, request.metadata(), true)?;
         self.state.log_streams.fetch_add(1, Ordering::SeqCst);
         let script = self.state.script.clone();
+        if let Some(delay) = script.log_stream_delay {
+            tokio::time::sleep(delay).await;
+        }
         let (tx, rx) = mpsc::channel::<Result<pb::LogEntry, Status>>(64);
         for record in &script.logs {
             let entry = pb::LogEntry {

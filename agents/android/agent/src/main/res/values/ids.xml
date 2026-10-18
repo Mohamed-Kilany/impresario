@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stable view ids of the agent landing screen. -->
+<resources>
+    <item name="agent_title" type="id" />
+    <item name="agent_info" type="id" />
+</resources>

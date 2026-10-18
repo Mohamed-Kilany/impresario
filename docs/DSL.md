@@ -209,7 +209,7 @@ action       = string , "=>" , piece , [ tmo ]                        (* shortha
              | "back"
              | "wait"      , duration
              | "screenshot", string
-             | "app"       , ( "launch" | "terminate" | "restart" ) ;
+             | "app"       , ( "launch" | "terminate" | "restart" | "background" ) ;
 check-line   = "Check:" , piece , [ cond ] , [ tmo ] , EOL ;
 cond         = "is" , ( "visible" | "hidden" | "enabled" | "disabled" | "focused" )
              | "text" , string | "textContains" , string | "count" , integer ;

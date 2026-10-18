@@ -1738,6 +1738,6 @@ fn parse_app_op(cursor: &mut Cursor<'_>) -> Result<AppOp, String> {
             cursor.rest = input;
             Ok(op)
         }
-        Err(_) => Err("app needs one of: launch, terminate, restart".to_string()),
+        Err(_) => Err("app needs one of: launch, terminate, restart, background".to_string()),
     }
 }

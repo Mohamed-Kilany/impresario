@@ -45,6 +45,12 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Log entries attached to a failure (spec 8.3: "the last 200 log entries").
 const LOG_TAIL: usize = 200;
 
+/// How long the master waits for `StreamLogs` to open before it continues
+/// without agent logs (decision I-74: grpc-java sends response headers only
+/// with the first message, so awaiting the open blocks forever on an idle
+/// executor whose log bus never replays).
+const LOG_STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Agent log ring kept per device (host-side logs live in the transport).
 const DEVICE_LOG_CAPACITY: usize = 2000;
 
@@ -374,8 +380,13 @@ async fn establish(
         .await
         .map_err(|error| phase(error.to_wire(), "session"))?;
     let log_task = if handshake.has_capability(Capability::Logs) {
-        match session.stream_logs(LogLevel::Debug).await {
-            Ok(mut stream) => {
+        match tokio::time::timeout(
+            LOG_STREAM_OPEN_TIMEOUT,
+            session.stream_logs(LogLevel::Debug),
+        )
+        .await
+        {
+            Ok(Ok(mut stream)) => {
                 let buffer = agent_logs.clone();
                 Some(tokio::spawn(async move {
                     while let Some(entry) = stream.next().await {
@@ -389,8 +400,15 @@ async fn establish(
                     }
                 }))
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::debug!(%error, "StreamLogs is unavailable; continuing without agent logs");
+                None
+            }
+            Err(_) => {
+                tracing::debug!(
+                    "StreamLogs did not open within {} ms; continuing without agent logs",
+                    LOG_STREAM_OPEN_TIMEOUT.as_millis()
+                );
                 None
             }
         }

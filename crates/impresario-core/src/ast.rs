@@ -303,13 +303,14 @@ impl Direction {
     }
 }
 
-/// `app launch | terminate | restart`
+/// `app launch | terminate | restart | background`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AppOp {
     Launch,
     Terminate,
     Restart,
+    Background,
 }
 
 impl AppOp {
@@ -319,6 +320,7 @@ impl AppOp {
             AppOp::Launch => "launch",
             AppOp::Terminate => "terminate",
             AppOp::Restart => "restart",
+            AppOp::Background => "background",
         }
     }
 }

@@ -817,6 +817,7 @@ fn compile_step(
                     AppOp::Launch => support::Verb::AppLaunch,
                     AppOp::Terminate => support::Verb::AppTerminate,
                     AppOp::Restart => support::Verb::AppRestart,
+                    AppOp::Background => support::Verb::AppBackground,
                 };
                 check_verb_support(verb, &action.span, ctx, &mut diagnostics);
                 Ok(PlannedStep {

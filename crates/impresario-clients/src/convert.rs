@@ -168,6 +168,7 @@ pub fn app_op_to_proto(op: AppOp) -> pb::AppOp {
         AppOp::Launch => pb::AppOp::Launch,
         AppOp::Terminate => pb::AppOp::Terminate,
         AppOp::Restart => pb::AppOp::Restart,
+        AppOp::Background => pb::AppOp::Background,
     }
 }
 

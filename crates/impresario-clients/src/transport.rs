@@ -497,8 +497,10 @@ impl DeviceTransport for ConnectorTransport {
 // ---------------------------------------------------------------------------
 
 /// Android-family transport (spec section 9): adb checks, agent APK
-/// install/refresh, port forward, instrumentation runner and host-side
-/// logcat. Every adb invocation uses argument arrays, never a shell string.
+/// install/refresh, instrumentation runner and host-side logcat. The master
+/// dials the agent over the network whenever the device has a discoverable
+/// address; `adb forward` is only the fallback (docs/DECISIONS.md I-62).
+/// Every adb invocation uses argument arrays, never a shell string.
 pub struct AdbTransport {
     adb: String,
     serial: Option<String>,
@@ -605,7 +607,8 @@ impl AdbTransport {
             }
             return Err(TransportError::DeviceUnavailable(
                 "no impresario Android agent APK found: build agents/android or set \
-                 IMPRESARIO_ANDROID_AGENT_APK / IMPRESARIO_ANDROID_STUB_APK"
+                 IMPRESARIO_ANDROID_AGENT_APK / IMPRESARIO_ANDROID_AGENT_TEST_APK / \
+                 IMPRESARIO_ANDROID_STUB_APK"
                     .to_string(),
             ));
         }
@@ -667,6 +670,58 @@ impl AdbTransport {
             );
         }
         Ok(())
+    }
+
+    /// `adb forward tcp:<free local> tcp:<device_port>`, remembered so
+    /// teardown removes it. Idempotent.
+    async fn forward_port(&mut self, serial: &str) -> Result<(), TransportError> {
+        if self.forwarded {
+            return Ok(());
+        }
+        let local_port = free_local_port().await?;
+        let forward = format!("tcp:{local_port}");
+        let remote = format!("tcp:{}", self.device_port);
+        let output = self
+            .adb_output(
+                &["-s", serial, "forward", &forward, &remote],
+                ADB_QUERY_TIMEOUT,
+            )
+            .await?;
+        if !output.status.success() {
+            return Err(TransportError::Transport(format!(
+                "adb forward {forward} {remote} failed: {}",
+                output_text(&output).trim()
+            )));
+        }
+        self.local_port = Some(local_port);
+        self.forwarded = true;
+        Ok(())
+    }
+
+    /// Best-effort reachable address of the device itself: the adb serial's
+    /// host when it is an `ip:port` (adb over TCP), else the source address
+    /// of the device's default route.
+    async fn network_address(&self, serial: &str) -> Option<String> {
+        if let Some(host) = serial_host(serial) {
+            if !is_loopback_address(&host) {
+                return Some(format!("{host}:{}", self.device_port));
+            }
+        }
+        let route = self
+            .adb_output(&["-s", serial, "shell", "ip", "route"], ADB_QUERY_TIMEOUT)
+            .await
+            .ok()?;
+        if let Some(ip) = parse_route_source(&output_text(&route)) {
+            return Some(format!("{ip}:{}", self.device_port));
+        }
+        let addr = self
+            .adb_output(
+                &["-s", serial, "shell", "ip", "-f", "inet", "addr", "show"],
+                ADB_QUERY_TIMEOUT,
+            )
+            .await
+            .ok()?;
+        parse_inet_address(&output_text(&addr)).map(|ip| format!("{ip}:{}", self.device_port))
     }
 
     /// Spawn `adb -s S shell am instrument -w -r ...` as a monitored child
@@ -746,27 +801,39 @@ impl DeviceTransport for AdbTransport {
         self.ensure_agent_installed(&serial).await?;
         self.maybe_clear_data(&serial, device).await?;
 
-        let local_port = free_local_port().await?;
-        let forward = format!("tcp:{local_port}");
-        let remote = format!("tcp:{}", self.device_port);
-        let output = self
-            .adb_output(
-                &["-s", &serial, "forward", &forward, &remote],
-                ADB_QUERY_TIMEOUT,
-            )
-            .await?;
-        if !output.status.success() {
-            return Err(TransportError::Transport(format!(
-                "adb forward {forward} {remote} failed: {}",
-                output_text(&output).trim()
-            )));
+        // The master dials the agent's own network address whenever the
+        // device has one (`agent_address` config first, else the adb serial's
+        // host, else `ip route` on the device); `adb forward` is only the
+        // fallback. The agent binds every interface, so the fallback can be
+        // taken even after the session has started (docs/DECISIONS.md I-62).
+        let network = match device.agent_address() {
+            Some(configured) => Some(configured.to_string()),
+            None => self.network_address(&serial).await,
+        };
+        if network.is_none() {
+            self.forward_port(&serial).await?;
         }
-        self.local_port = Some(local_port);
-        self.forwarded = true;
 
         self.spawn_instrumentation(&serial).await?;
         self.spawn_logcat(&serial, device).await?;
 
+        if let Some(address) = network {
+            match wait_for_port(&address, start_timeout()).await {
+                Ok(()) => return Ok(Endpoint::new(address)),
+                Err(e) => {
+                    tracing::warn!(
+                        serial,
+                        address,
+                        "the Android agent is not reachable over the network ({e}); using adb forward"
+                    );
+                    self.forward_port(&serial).await?;
+                }
+            }
+        }
+
+        let local_port = self.local_port.ok_or_else(|| {
+            TransportError::Transport("no local port for adb forward".to_string())
+        })?;
         let address = format!("127.0.0.1:{local_port}");
         wait_for_port(&address, start_timeout())
             .await
@@ -841,14 +908,62 @@ fn package_installed_in(listing: &str, package: &str) -> bool {
         .any(|line| line.trim() == format!("package:{package}"))
 }
 
+/// The host of an `ip:port` adb serial (adb over TCP) when it is an IPv4
+/// literal; `None` for USB serials and mDNS hostnames.
+fn serial_host(serial: &str) -> Option<String> {
+    let (host, port) = serial.rsplit_once(':')?;
+    if !port.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    host.parse::<std::net::Ipv4Addr>()
+        .ok()
+        .map(|_| host.to_string())
+}
+
+/// Source address of the default route in `ip route` output.
+fn parse_route_source(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let mut tokens = line.split_whitespace();
+        while let Some(token) = tokens.next() {
+            if token == "src" {
+                if let Some(address) = tokens.next() {
+                    if address.parse::<std::net::Ipv4Addr>().is_ok() && !address.starts_with("127.")
+                    {
+                        return Some(address.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// First non-loopback `inet` address in `ip addr` output.
+fn parse_inet_address(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let mut tokens = line.split_whitespace();
+        if tokens.next() == Some("inet") {
+            if let Some(cidr) = tokens.next() {
+                let host = cidr.split('/').next().unwrap_or("");
+                if host.parse::<std::net::Ipv4Addr>().is_ok() && !host.starts_with("127.") {
+                    return Some(host.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Local agent APKs: env overrides first, then the Gradle debug outputs of
-/// the `:agent-instrumentation` and `:agent-target-stub` modules.
+/// the `:agent` app (the instrumentation target), the `:agent-instrumentation`
+/// test APK and the `:agent-target-stub` app under test.
 fn resolve_android_apks() -> Vec<(String, PathBuf)> {
     let mut apks = Vec::new();
     for (label, env_key, module) in [
+        ("agent", "IMPRESARIO_ANDROID_AGENT_APK", "agent"),
         (
             "instrumentation",
-            "IMPRESARIO_ANDROID_AGENT_APK",
+            "IMPRESARIO_ANDROID_AGENT_TEST_APK",
             "agent-instrumentation",
         ),
         ("stub", "IMPRESARIO_ANDROID_STUB_APK", "agent-target-stub"),
@@ -1089,6 +1204,39 @@ mod tests {
             Some("offline")
         );
         assert_eq!(devices.len(), 2);
+    }
+
+    #[test]
+    fn device_network_address_parsing() {
+        let route = "192.168.93.0/24 dev wlan0 proto kernel scope link src 192.168.93.84\n\
+                     10.0.0.0/8 dev eth0 proto kernel scope link src 10.0.1.5\n";
+        assert_eq!(parse_route_source(route).as_deref(), Some("192.168.93.84"));
+        assert_eq!(parse_route_source("no routes"), None);
+        assert_eq!(
+            parse_route_source("192.168.0.0/16 dev wlan0 src 127.0.0.1"),
+            None
+        );
+
+        let inet = "2: wlan0: <BROADCAST,MULTICAST,UP> mtu 1500\n    \
+                    inet 192.168.93.84/24 brd 192.168.93.255 scope global wlan0\n";
+        assert_eq!(parse_inet_address(inet).as_deref(), Some("192.168.93.84"));
+        assert_eq!(
+            parse_inet_address("    inet 127.0.0.1/8 scope host lo"),
+            None
+        );
+        assert_eq!(parse_inet_address("no addresses"), None);
+    }
+
+    #[test]
+    fn serial_host_detection() {
+        assert_eq!(
+            serial_host("192.168.93.84:5555").as_deref(),
+            Some("192.168.93.84")
+        );
+        assert_eq!(serial_host("NR9T6TS4MJVSAEIB"), None);
+        assert_eq!(serial_host("emulator-5554"), None);
+        assert_eq!(serial_host("adb-1234._adb-tls-connect._tcp:5555"), None);
+        assert_eq!(serial_host("192.168.93.84:notaport"), None);
     }
 
     #[test]

@@ -1311,6 +1311,9 @@ return {ok:true, complete:(info.max - info.top) <= 1};
             pb::AppOp::Terminate => Err(ConnectorError::unsupported_action(
                 "app terminate is not supported on web platforms (spec 6.1)",
             )),
+            pb::AppOp::Background => Err(ConnectorError::unsupported_action(
+                "app background is not supported on web platforms (spec 6.1)",
+            )),
             pb::AppOp::Unspecified => Err(ConnectorError::protocol(
                 "app op is unspecified".to_string(),
             )),

@@ -507,6 +507,7 @@ fn key_wait_screenshot_and_app_verbs() {
         "Action: app launch",
         "Action: app terminate",
         "Action: app restart",
+        "Action: app background",
     ]));
     let all = steps(&play);
     match action(all[0]) {
@@ -542,6 +543,10 @@ fn key_wait_screenshot_and_app_verbs() {
     }
     match action(all[7]) {
         ActionVerb::App { op } => assert_eq!(*op, AppOp::Restart),
+        other => panic!("expected App, got {other:?}"),
+    }
+    match action(all[8]) {
+        ActionVerb::App { op } => assert_eq!(*op, AppOp::Background),
         other => panic!("expected App, got {other:?}"),
     }
 }

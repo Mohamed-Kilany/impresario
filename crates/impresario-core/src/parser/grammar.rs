@@ -88,6 +88,7 @@ pub fn app_op(input: &mut &str) -> winnow::Result<AppOp> {
         "terminate".value(AppOp::Terminate),
         "restart".value(AppOp::Restart),
         "launch".value(AppOp::Launch),
+        "background".value(AppOp::Background),
     ))
     .parse_next(input)
 }

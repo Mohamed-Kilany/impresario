@@ -92,7 +92,7 @@ message KeyPress { RemoteKey key = 1; uint32 repeat = 2; uint32 interval_ms = 3;
 
 message Screenshot { string label = 1; }
 
-enum AppOp { APP_OP_UNSPECIFIED = 0; LAUNCH = 1; TERMINATE = 2; RESTART = 3; }
+enum AppOp { APP_OP_UNSPECIFIED = 0; LAUNCH = 1; TERMINATE = 2; RESTART = 3; BACKGROUND = 4; }
 message AppControl { AppOp op = 1; bool clear_data = 2; }
 
 message Cancel { string target_command_id = 1; }

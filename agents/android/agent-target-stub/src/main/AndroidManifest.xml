@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      The app under test: deliberately declares no permissions. The agent
+      runs in its own process (`:agent`); this app only needs to be
+      launchable and drivable (docs/DECISIONS.md I-62).
+    -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:label="Impresario Stub"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".BasicActivity"
+            android:exported="false" />
+        <activity
+            android:name=".TextActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ScrollActivity"
+            android:exported="false" />
+        <activity
+            android:name=".SelectActivity"
+            android:exported="false" />
+        <activity
+            android:name=".FlagsActivity"
+            android:exported="false" />
+        <activity
+            android:name=".KeysActivity"
+            android:exported="false" />
+        <activity
+            android:name=".InfoActivity"
+            android:exported="false" />
+    </application>
+
+</manifest>

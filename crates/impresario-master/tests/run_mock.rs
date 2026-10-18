@@ -610,6 +610,34 @@ async fn token_is_sent_on_every_rpc() {
     );
 }
 
+/// A lazy `StreamLogs` (response headers only with the first message, like
+/// grpc-java) must not wedge the run: the master stops waiting after
+/// `LOG_STREAM_OPEN_TIMEOUT` and continues without agent logs (decision I-74).
+#[tokio::test]
+async fn lazy_log_stream_does_not_wedge_the_run() {
+    let agent = TestAgent::start(
+        MockAgentBuilder::new()
+            // Exec tests use a 5 s heartbeat timeout: beat well under it so
+            // the log-stream stall cannot race the watchdog into a reconnect.
+            .heartbeat_interval(Duration::from_secs(1))
+            .delay_log_stream(Duration::from_secs(8)),
+    );
+    let temp = tempfile::tempdir().expect("tempdir");
+    let config = test_config("");
+    let devices = vec![device("web1", &agent.address)];
+    let plan = build_test_plan(&config, &devices, PLAY_BASIC);
+    let options = exec_options(&temp, config, "run-lazy-logs");
+    let outcome = execute(&plan, &options).await;
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.report.status, RunStatus::Passed);
+    assert_eq!(
+        agent.state.log_streams(),
+        1,
+        "the master attempted StreamLogs before giving up"
+    );
+}
+
 #[tokio::test]
 async fn missing_app_control_is_unsupported_at_device_level() {
     let mut script = MockScript::default();

@@ -26,6 +26,7 @@ pub enum Verb {
     AppLaunch,
     AppTerminate,
     AppRestart,
+    AppBackground,
 }
 
 impl Verb {
@@ -49,6 +50,7 @@ impl Verb {
             Verb::AppLaunch => "app launch",
             Verb::AppTerminate => "app terminate",
             Verb::AppRestart => "app restart",
+            Verb::AppBackground => "app background",
         }
     }
 
@@ -212,6 +214,10 @@ pub fn action_support(platform: Platform, verb: Verb) -> Support {
             Web | WebOs | Tizen => Limited(RELOAD_NAV),
             _ => Full,
         },
+        Verb::AppBackground => match platform {
+            Web | WebOs | Tizen => Unsupported,
+            _ => Full,
+        },
     }
 }
 
@@ -249,6 +255,7 @@ pub fn verb_of_action(verb: &crate::ast::ActionVerb) -> Verb {
             crate::ast::AppOp::Launch => Verb::AppLaunch,
             crate::ast::AppOp::Terminate => Verb::AppTerminate,
             crate::ast::AppOp::Restart => Verb::AppRestart,
+            crate::ast::AppOp::Background => Verb::AppBackground,
         },
     }
 }
@@ -319,8 +326,13 @@ mod tests {
                 action_support(web, Verb::AppRestart),
                 Support::Limited(RELOAD_NAV)
             );
+            assert_eq!(
+                action_support(web, Verb::AppBackground),
+                Support::Unsupported
+            );
         }
         assert!(action_support(Platform::Ios, Verb::AppTerminate).is_supported());
+        assert!(action_support(Platform::AndroidTv, Verb::AppBackground).is_supported());
 
         // select unsupported on tvos
         assert_eq!(
