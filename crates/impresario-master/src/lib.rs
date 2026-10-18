@@ -14,6 +14,7 @@
 
 pub mod cli;
 pub mod exec;
+pub mod lsp;
 pub mod plan;
 pub mod redact;
 pub mod render;

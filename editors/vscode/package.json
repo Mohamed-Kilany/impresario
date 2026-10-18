@@ -1,0 +1,87 @@
+{
+  "name": "impresario",
+  "displayName": "Impresario",
+  "description": "Impresario DSL support for .play and .scene files: diagnostics, completion, hover, definitions and outline, served by `impresario lsp`.",
+  "version": "0.1.0",
+  "publisher": "impresario",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:impresario-play",
+    "onLanguage:impresario-scene",
+    "workspaceContains:impresario.config"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "impresario-play",
+        "aliases": [
+          "Impresario Play",
+          "impresario-play"
+        ],
+        "extensions": [
+          ".play"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "impresario-scene",
+        "aliases": [
+          "Impresario Scene",
+          "impresario-scene"
+        ],
+        "extensions": [
+          ".scene"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "impresario-play",
+        "scopeName": "source.impresario",
+        "path": "./syntaxes/impresario.tmLanguage.json"
+      },
+      {
+        "language": "impresario-scene",
+        "scopeName": "source.impresario",
+        "path": "./syntaxes/impresario.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Impresario",
+      "properties": {
+        "impresario.serverPath": {
+          "type": "string",
+          "default": "impresario",
+          "description": "Path of the impresario binary that serves `impresario lsp` (PATH name or absolute path)."
+        },
+        "impresario.workspace": {
+          "type": "string",
+          "default": "",
+          "description": "Workspace root passed as --workspace (default: the first workspace folder)."
+        },
+        "impresario.config": {
+          "type": "string",
+          "default": "impresario.config",
+          "description": "impresario.config passed as --config (resolved against the workspace) and as the `impresario.config` setting."
+        },
+        "impresario.devices": {
+          "type": "string",
+          "default": "impresario.devices.config",
+          "description": "devices file passed as --devices-config (resolved against the workspace) and as the `impresario.devices` setting."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Impresario",
+  "scopeName": "source.impresario",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#sections" },
+    { "include": "#steps" },
+    { "include": "#selectors" },
+    { "include": "#conditions" },
+    { "include": "#remote-keys" },
+    { "include": "#action-verbs" },
+    { "include": "#strings" },
+    { "include": "#durations" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.impresario"
+    },
+    "sections": {
+      "patterns": [
+        {
+          "match": "^\\s*(Play|Act|Stage|Scene|Pieces|Var)\\s*:",
+          "name": "keyword.control.section.impresario"
+        },
+        {
+          "match": "^\\s*(Description|Tags|Platforms|Platform)\\s*:",
+          "name": "keyword.other.section.impresario"
+        },
+        {
+          "match": "\\bcross-platform\\b",
+          "name": "constant.language.impresario"
+        }
+      ]
+    },
+    "steps": {
+      "patterns": [
+        {
+          "match": "^\\s*(Action|Check)\\s*:",
+          "name": "keyword.control.step.impresario"
+        }
+      ]
+    },
+    "selectors": {
+      "patterns": [
+        {
+          "match": "\\b(web|webos|tizen|android|androidtv|ios|tvos)\\b(?=\\s*=)",
+          "name": "constant.language.platform.impresario"
+        },
+        {
+          "match": "\\b(id|textContains|text|desc|class|accessibilityId|labelContains|label|predicate|type|css|xpath)(?=:)",
+          "name": "support.function.selector.impresario"
+        }
+      ]
+    },
+    "conditions": {
+      "patterns": [
+        {
+          "match": "\\bis\\s+(visible|hidden|enabled|disabled|focused)\\b",
+          "name": "keyword.operator.condition.impresario"
+        },
+        {
+          "match": "\\b(textContains|text|count|timeout)\\b",
+          "name": "keyword.operator.condition.impresario"
+        }
+      ]
+    },
+    "remote-keys": {
+      "match": "(?<=\\bkey\\s)(ok|enter|back|up|down|left|right|home|menu|playpause|play|pause|rewind|fastforward|red|green|yellow|blue|backspace)\\b",
+      "name": "constant.other.key.impresario"
+    },
+    "action-verbs": {
+      "match": "\\b(click|longpress|focus|type|append|clear|select|scrollto|scroll|swipe|key|wait|screenshot|app|launch|terminate|restart|background|pressed|direction)\\b",
+      "name": "support.function.action.impresario"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "'",
+          "end": "'",
+          "name": "string.quoted.single.impresario"
+        },
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.impresario"
+        }
+      ]
+    },
+    "durations": {
+      "match": "\\b\\d+(ms|s)\\b",
+      "name": "constant.numeric.duration.impresario"
+    },
+    "numbers": {
+      "match": "\\b\\d+(\\.\\d+)?\\b",
+      "name": "constant.numeric.impresario"
+    },
+    "operators": {
+      "match": "=>",
+      "name": "keyword.operator.arrow.impresario"
+    }
+  }
+}

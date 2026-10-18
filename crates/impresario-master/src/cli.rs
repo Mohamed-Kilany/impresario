@@ -169,7 +169,7 @@ pub fn run_with(argv: &[String]) -> i32 {
             }
         },
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
-        Command::Lsp => cmd_lsp(),
+        Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
     }
 }
 
@@ -1002,12 +1002,23 @@ fn push_unique(targets: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-fn cmd_lsp() -> i32 {
-    eprintln!(
-        "lsp: the embedded language server is not built yet \
-         (spec section 13) — see docs/STATUS.md"
-    );
-    EXIT_USAGE
+fn cmd_lsp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("lsp: cannot start the async runtime: {err}");
+            return EXIT_INFRA;
+        }
+    };
+    runtime.block_on(crate::lsp::run_stdio(
+        base.to_path_buf(),
+        config_path.to_path_buf(),
+        devices_path.to_path_buf(),
+    ));
+    EXIT_OK
 }
 
 #[cfg(test)]
@@ -1126,13 +1137,6 @@ mod tests {
         // No impresario.config: these commands fail with a config error.
         assert_eq!(run_with(&argv(&dir, &["run"])), EXIT_USAGE);
         assert_eq!(run_with(&argv(&dir, &["devices", "check"])), EXIT_USAGE);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn lsp_is_the_only_stub() {
-        let dir = temp_workspace("stubs");
-        assert_eq!(run_with(&argv(&dir, &["lsp"])), EXIT_USAGE);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

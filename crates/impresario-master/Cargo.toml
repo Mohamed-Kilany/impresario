@@ -19,7 +19,7 @@ impresario-core = { path = "../impresario-core" }
 impresario-clients = { path = "../impresario-clients" }
 impresario-proto = { path = "../impresario-proto" }
 clap.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
