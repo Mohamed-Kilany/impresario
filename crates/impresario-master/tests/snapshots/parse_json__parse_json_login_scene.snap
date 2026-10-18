@@ -6,7 +6,7 @@ expression: value
   "name": "LoginScreen",
   "name_span": {
     "col": 8,
-    "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+    "file": "examples/scenes/LoginScreen.scene",
     "len": 11,
     "line": 1
   },
@@ -17,7 +17,7 @@ expression: value
       "name": "LoginTitle",
       "name_span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 10,
         "line": 5
       },
@@ -27,7 +27,7 @@ expression: value
           "raw": "h1.title",
           "span": {
             "col": 24,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 10,
             "line": 5
           }
@@ -37,7 +37,7 @@ expression: value
           "raw": "id:login_title",
           "span": {
             "col": 45,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 16,
             "line": 5
           }
@@ -47,7 +47,7 @@ expression: value
           "raw": "accessibilityId:login_title",
           "span": {
             "col": 68,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 29,
             "line": 5
           }
@@ -55,7 +55,7 @@ expression: value
       ],
       "span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 92,
         "line": 5
       }
@@ -65,7 +65,7 @@ expression: value
       "name": "UsernameInput",
       "name_span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 13,
         "line": 6
       },
@@ -75,7 +75,7 @@ expression: value
           "raw": "#username",
           "span": {
             "col": 24,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 11,
             "line": 6
           }
@@ -85,7 +85,7 @@ expression: value
           "raw": "id:username",
           "span": {
             "col": 45,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 13,
             "line": 6
           }
@@ -95,7 +95,7 @@ expression: value
           "raw": "accessibilityId:username",
           "span": {
             "col": 68,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 26,
             "line": 6
           }
@@ -103,7 +103,7 @@ expression: value
       ],
       "span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 89,
         "line": 6
       }
@@ -113,7 +113,7 @@ expression: value
       "name": "PasswordInput",
       "name_span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 13,
         "line": 7
       },
@@ -123,7 +123,7 @@ expression: value
           "raw": "#password",
           "span": {
             "col": 24,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 11,
             "line": 7
           }
@@ -133,7 +133,7 @@ expression: value
           "raw": "id:password",
           "span": {
             "col": 45,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 13,
             "line": 7
           }
@@ -143,7 +143,7 @@ expression: value
           "raw": "accessibilityId:password",
           "span": {
             "col": 68,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 26,
             "line": 7
           }
@@ -151,7 +151,7 @@ expression: value
       ],
       "span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 89,
         "line": 7
       }
@@ -161,7 +161,7 @@ expression: value
       "name": "SubmitButton",
       "name_span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 12,
         "line": 8
       },
@@ -171,7 +171,7 @@ expression: value
           "raw": "button[type='submit']",
           "span": {
             "col": 24,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 23,
             "line": 8
           }
@@ -181,7 +181,7 @@ expression: value
           "raw": "id:login_btn",
           "span": {
             "col": 57,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 14,
             "line": 8
           }
@@ -191,7 +191,7 @@ expression: value
           "raw": "accessibilityId:login",
           "span": {
             "col": 77,
-            "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+            "file": "examples/scenes/LoginScreen.scene",
             "len": 23,
             "line": 8
           }
@@ -199,7 +199,7 @@ expression: value
       ],
       "span": {
         "col": 5,
-        "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+        "file": "examples/scenes/LoginScreen.scene",
         "len": 95,
         "line": 8
       }
@@ -208,7 +208,7 @@ expression: value
   "platforms": null,
   "platforms_span": {
     "col": 11,
-    "file": "D:\\Projects\\impresario\\examples\\scenes/LoginScreen.scene",
+    "file": "examples/scenes/LoginScreen.scene",
     "len": 14,
     "line": 2
   }

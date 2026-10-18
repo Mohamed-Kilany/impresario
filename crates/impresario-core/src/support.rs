@@ -130,7 +130,7 @@ impl fmt::Display for Support {
 
 const MOUSE_HOLD: &str = "mouse hold";
 const OK_HELD: &str = "OK held";
-const SHELL_LONG_PRESS: &str = "shell long-press key";
+const INJECTED_OK_HOLD: &str = "injected OK hold";
 const DPAD_ONLY: &str = "D-pad only";
 const DPAD: &str = "D-pad";
 const SAME_AS_FOCUS: &str = "same as focus";
@@ -166,7 +166,7 @@ pub fn action_support(platform: Platform, verb: Verb) -> Support {
             Web => Limited(MOUSE_HOLD),
             WebOs | Tizen => Limited(OK_HELD),
             Android | Ios | Tvos => Full,
-            AndroidTv => Limited(SHELL_LONG_PRESS),
+            AndroidTv => Limited(INJECTED_OK_HOLD),
         },
         Verb::Focus => match platform {
             Web | WebOs | Tizen => Full,

@@ -1,9 +1,8 @@
 //! The `impresario` CLI (spec sections 4.4 and 8.1).
 //!
-//! This module owns argument parsing, exit codes and the Phase-1 commands
-//! (`init`, `validate`, `parse`, `devices list`). The executor-facing
-//! commands (`devices check`, `run`, `lsp`) are wired here and filled in by
-//! later phases; until then they fail loudly instead of pretending.
+//! This module owns argument parsing, exit codes and every command:
+//! `init`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, and the
+//! development-only `mock-agent` (decision I-77).
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -84,6 +83,16 @@ pub enum Command {
     Run(RunArgs),
     /// Run the embedded language server on stdio (spec section 13).
     Lsp,
+    /// Serve the scripted mock device on loopback (no hardware needed).
+    ///
+    /// Development aid for the README quick start (decision I-77): point a
+    /// `web`/`webos`/`tizen` device at it via `connector`/`agent_address`
+    /// and `impresario run` exercises the whole pipeline hardware-free.
+    MockAgent {
+        /// Loopback port to listen on (0 = any free port, printed on start).
+        #[arg(long, default_value_t = 50071)]
+        port: u16,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -170,6 +179,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         },
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
+        Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }
 
@@ -1019,6 +1029,48 @@ fn cmd_lsp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
         devices_path.to_path_buf(),
     ));
     EXIT_OK
+}
+
+/// `impresario mock-agent` (decision I-77, not in the spec CLI list): serve
+/// the scripted `MockAgent` so a clean clone can exercise `impresario run`
+/// end to end without hardware. The "listening on" line goes to stdout (the
+/// README and tests parse it); logs and errors stay on stderr.
+fn cmd_mock_agent(port: u16) -> i32 {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("mock-agent: cannot start the async runtime: {err}");
+            return EXIT_INFRA;
+        }
+    };
+    runtime.block_on(async move {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let agent = match impresario_clients::testing::MockAgent::builder()
+            .bind(address)
+            .start()
+            .await
+        {
+            Ok(agent) => agent,
+            Err(err) => {
+                eprintln!("mock-agent: cannot listen on {address}: {err}");
+                return EXIT_INFRA;
+            }
+        };
+        println!("impresario: mock device listening on {}", agent.address());
+        eprintln!(
+            "mock-agent: point a device here (connector: {}) and press Ctrl-C to stop",
+            agent.address()
+        );
+        if tokio::signal::ctrl_c().await.is_err() {
+            eprintln!("mock-agent: cannot install the Ctrl-C handler");
+            return EXIT_INFRA;
+        }
+        eprintln!("mock-agent: shutting down");
+        EXIT_OK
+    })
 }
 
 #[cfg(test)]

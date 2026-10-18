@@ -238,6 +238,7 @@ pub fn command_kind(command: &pb::Command) -> &'static str {
 /// Builder for a [`MockAgent`].
 pub struct MockAgentBuilder {
     script: MockScript,
+    bind_addr: Option<std::net::SocketAddr>,
 }
 
 impl Default for MockAgentBuilder {
@@ -251,7 +252,16 @@ impl MockAgentBuilder {
     pub fn new() -> Self {
         Self {
             script: MockScript::default(),
+            bind_addr: None,
         }
+    }
+
+    /// Listen on `address` instead of a random `127.0.0.1` port (the
+    /// `impresario mock-agent` command holds a fixed loopback port this way).
+    #[must_use]
+    pub fn bind(mut self, address: std::net::SocketAddr) -> Self {
+        self.bind_addr = Some(address);
+        self
     }
 
     #[must_use]
@@ -376,9 +386,13 @@ impl MockAgentBuilder {
         self
     }
 
-    /// Bind `127.0.0.1:0` and serve until the [`MockAgent`] is dropped.
+    /// Bind the configured address (default `127.0.0.1:0`) and serve until
+    /// the [`MockAgent`] is dropped.
     pub async fn start(self) -> std::io::Result<MockAgent> {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+        let listener = match self.bind_addr {
+            Some(address) => TcpListener::bind(address).await?,
+            None => TcpListener::bind(("127.0.0.1", 0)).await?,
+        };
         let address = listener.local_addr()?;
         let state = Arc::new(MockState::new(self.script));
         let service = pb::agent_server::AgentServer::new(MockService {

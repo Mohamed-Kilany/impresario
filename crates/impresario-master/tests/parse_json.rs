@@ -1,14 +1,37 @@
 //! `impresario parse --json` at the CLI boundary (Phase 2 acceptance).
 //!
 //! Runs the real binary against the committed `examples/` workspace and
-//! snapshots the stdout document. The AST `path` field is normalized to a
-//! fixed relative string so the snapshot does not depend on the machine.
+//! snapshots the stdout document. Every absolute `path`/`file` field is
+//! normalized to a fixed relative string so the snapshot does not depend on
+//! the machine (CI-friendly since Phase 8).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Rewrite every `"file"` string in the document (spans nest deeply) to
+/// `normalized`, so no absolute path leaks into the snapshot.
+fn normalize_files(value: &mut serde_json::Value, normalized: &str) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object.iter_mut() {
+                if key == "file" && child.is_string() {
+                    *child = serde_json::Value::String(normalized.to_string());
+                } else {
+                    normalize_files(child, normalized);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                normalize_files(item, normalized);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_json(file: &str, normalized_path: &str) -> serde_json::Value {
@@ -25,6 +48,7 @@ fn parse_json(file: &str, normalized_path: &str) -> serde_json::Value {
     let mut value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is a JSON document");
     value["path"] = serde_json::Value::String(normalized_path.to_string());
+    normalize_files(&mut value, normalized_path);
     value
 }
 

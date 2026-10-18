@@ -8,7 +8,7 @@ expression: value
       "name": "Successful Login Flow",
       "name_span": {
         "col": 6,
-        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+        "file": "examples/plays/login.play",
         "len": 21,
         "line": 5
       },
@@ -17,7 +17,7 @@ expression: value
           "name": "android",
           "span": {
             "col": 13,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 7,
             "line": 7
           }
@@ -26,7 +26,7 @@ expression: value
           "name": "ios",
           "span": {
             "col": 22,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 3,
             "line": 7
           }
@@ -35,7 +35,7 @@ expression: value
           "name": "webos",
           "span": {
             "col": 27,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 5,
             "line": 7
           }
@@ -46,7 +46,7 @@ expression: value
           "name": "Navigate and Login",
           "name_span": {
             "col": 8,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 18,
             "line": 9
           },
@@ -55,7 +55,7 @@ expression: value
               "scene_name": "LoginScreen",
               "scene_span": {
                 "col": 12,
-                "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                "file": "examples/plays/login.play",
                 "len": 11,
                 "line": 11
               },
@@ -68,7 +68,7 @@ expression: value
                     "name": "LoginTitle",
                     "span": {
                       "col": 16,
-                      "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                      "file": "examples/plays/login.play",
                       "len": 10,
                       "line": 12
                     }
@@ -76,7 +76,7 @@ expression: value
                   "source_text": "Check: LoginTitle",
                   "span": {
                     "col": 16,
-                    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                    "file": "examples/plays/login.play",
                     "len": 10,
                     "line": 12
                   },
@@ -87,7 +87,7 @@ expression: value
                   "source_text": "Action: '${var.USER}' => UsernameInput",
                   "span": {
                     "col": 17,
-                    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                    "file": "examples/plays/login.play",
                     "len": 30,
                     "line": 13
                   },
@@ -99,7 +99,7 @@ expression: value
                       "name": "UsernameInput",
                       "span": {
                         "col": 34,
-                        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                        "file": "examples/plays/login.play",
                         "len": 13,
                         "line": 13
                       }
@@ -111,7 +111,7 @@ expression: value
                             "name": "USER",
                             "span": {
                               "col": 18,
-                              "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                              "file": "examples/plays/login.play",
                               "len": 11,
                               "line": 13
                             }
@@ -121,7 +121,7 @@ expression: value
                       "raw": "${var.USER}",
                       "span": {
                         "col": 17,
-                        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                        "file": "examples/plays/login.play",
                         "len": 13,
                         "line": 13
                       }
@@ -132,7 +132,7 @@ expression: value
                   "source_text": "Action: '${env.TEST_PASSWORD}' => PasswordInput",
                   "span": {
                     "col": 17,
-                    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                    "file": "examples/plays/login.play",
                     "len": 39,
                     "line": 14
                   },
@@ -144,7 +144,7 @@ expression: value
                       "name": "PasswordInput",
                       "span": {
                         "col": 43,
-                        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                        "file": "examples/plays/login.play",
                         "len": 13,
                         "line": 14
                       }
@@ -156,7 +156,7 @@ expression: value
                             "name": "TEST_PASSWORD",
                             "span": {
                               "col": 18,
-                              "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                              "file": "examples/plays/login.play",
                               "len": 20,
                               "line": 14
                             }
@@ -166,7 +166,7 @@ expression: value
                       "raw": "${env.TEST_PASSWORD}",
                       "span": {
                         "col": 17,
-                        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                        "file": "examples/plays/login.play",
                         "len": 22,
                         "line": 14
                       }
@@ -177,7 +177,7 @@ expression: value
                   "source_text": "Action: click => SubmitButton",
                   "span": {
                     "col": 17,
-                    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                    "file": "examples/plays/login.play",
                     "len": 21,
                     "line": 15
                   },
@@ -189,7 +189,7 @@ expression: value
                       "name": "SubmitButton",
                       "span": {
                         "col": 26,
-                        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                        "file": "examples/plays/login.play",
                         "len": 12,
                         "line": 15
                       }
@@ -202,7 +202,7 @@ expression: value
           "timeout": 15000,
           "timeout_span": {
             "col": 14,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 3,
             "line": 10
           }
@@ -211,7 +211,7 @@ expression: value
           "name": "Verify Outcome",
           "name_span": {
             "col": 8,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 14,
             "line": 17
           },
@@ -220,7 +220,7 @@ expression: value
               "scene_name": "DashboardScreen",
               "scene_span": {
                 "col": 12,
-                "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                "file": "examples/plays/login.play",
                 "len": 15,
                 "line": 18
               },
@@ -233,7 +233,7 @@ expression: value
                     "name": "WelcomeBanner",
                     "span": {
                       "col": 16,
-                      "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                      "file": "examples/plays/login.play",
                       "len": 13,
                       "line": 19
                     }
@@ -241,7 +241,7 @@ expression: value
                   "source_text": "Check: WelcomeBanner is visible timeout 20s",
                   "span": {
                     "col": 16,
-                    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+                    "file": "examples/plays/login.play",
                     "len": 36,
                     "line": 19
                   },
@@ -260,7 +260,7 @@ expression: value
           "name": "smoke",
           "span": {
             "col": 8,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 5,
             "line": 6
           }
@@ -269,7 +269,7 @@ expression: value
           "name": "auth",
           "span": {
             "col": 15,
-            "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+            "file": "examples/plays/login.play",
             "len": 4,
             "line": 6
           }
@@ -281,7 +281,7 @@ expression: value
   "name": "User Authentication Feature",
   "name_span": {
     "col": 7,
-    "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+    "file": "examples/plays/login.play",
     "len": 27,
     "line": 1
   },
@@ -291,7 +291,7 @@ expression: value
       "name": "USER",
       "name_span": {
         "col": 6,
-        "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+        "file": "examples/plays/login.play",
         "len": 4,
         "line": 3
       },
@@ -304,7 +304,7 @@ expression: value
         "raw": "test_user_impresario",
         "span": {
           "col": 13,
-          "file": "D:\\Projects\\impresario\\examples\\plays/login.play",
+          "file": "examples/plays/login.play",
           "len": 22,
           "line": 3
         }
