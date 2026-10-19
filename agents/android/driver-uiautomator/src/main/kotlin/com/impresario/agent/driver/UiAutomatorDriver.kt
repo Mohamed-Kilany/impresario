@@ -185,10 +185,13 @@ class UiAutomatorDriver(
         wasLaunched = false
     }
 
-    override fun clearData(appId: String) {
+    override fun clearData(appId: String): Boolean {
         requirePackageName(appId)
-        device.executeShellCommand("pm clear $appId")
+        val output = device.executeShellCommand("pm clear $appId")
         wasLaunched = false
+        // `pm clear` prints `Success`; anything else (including the
+        // SecurityException text some ROMs return) means the data survives.
+        return output.contains("Success")
     }
 
     override fun deviceInfo(): DeviceInfoData = DeviceInfoData(

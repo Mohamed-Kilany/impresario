@@ -644,6 +644,83 @@ class CommandExecutorTest {
     }
 
     @Test
+    fun launchClearsDataWhenRequested() = runBlocking {
+        val driver = FakeDriver()
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            Command.newBuilder().setCommandId("a")
+                .setAppControl(AppControl.newBuilder().setOp(AppOp.LAUNCH).setClearData(true))
+                .build(),
+        )
+        assertTrue(result.ok)
+        assertEquals(
+            listOf("clearData:com.example.app", "launch:com.example.app:tv=false"),
+            driver.calls.toList(),
+        )
+    }
+
+    @Test
+    fun clearDataOptionAppliesToLaunch() = runBlocking {
+        val driver = FakeDriver()
+        val options = phoneOptions.copy(clearAppDataOnRestart = true)
+        val result = CommandExecutor(driver, options).execute(
+            Command.newBuilder().setCommandId("a")
+                .setAppControl(AppControl.newBuilder().setOp(AppOp.LAUNCH))
+                .build(),
+        )
+        assertTrue(result.ok)
+        assertEquals(
+            listOf("clearData:com.example.app", "launch:com.example.app:tv=false"),
+            driver.calls.toList(),
+        )
+    }
+
+    @Test
+    fun refusedClearFallsBackToTerminateAndWarns() = runBlocking {
+        val driver = FakeDriver()
+        driver.clearDataSucceeds = false
+        val warnings = mutableListOf<String>()
+        val executor = CommandExecutor(driver, phoneOptions) { level, source, message ->
+            warnings.add("$level $source $message")
+        }
+        val result = executor.execute(
+            Command.newBuilder().setCommandId("a")
+                .setAppControl(AppControl.newBuilder().setOp(AppOp.LAUNCH).setClearData(true))
+                .build(),
+        )
+        assertTrue(result.ok)
+        assertEquals(
+            listOf(
+                "clearData:com.example.app",
+                "terminate:com.example.app",
+                "launch:com.example.app:tv=false",
+            ),
+            driver.calls.toList(),
+        )
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single(), warnings.single().contains("pm clear"))
+    }
+
+    @Test
+    fun refusedClearOnRestartStillLaunches() = runBlocking {
+        val driver = FakeDriver()
+        driver.clearDataSucceeds = false
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            Command.newBuilder().setCommandId("a")
+                .setAppControl(AppControl.newBuilder().setOp(AppOp.RESTART).setClearData(true))
+                .build(),
+        )
+        assertTrue(result.ok)
+        assertEquals(
+            listOf(
+                "terminate:com.example.app",
+                "clearData:com.example.app",
+                "launch:com.example.app:tv=false",
+            ),
+            driver.calls.toList(),
+        )
+    }
+
+    @Test
     fun backgroundPutsTheAppInTheBackground() = runBlocking {
         val driver = FakeDriver()
         val result = CommandExecutor(driver, phoneOptions).execute(

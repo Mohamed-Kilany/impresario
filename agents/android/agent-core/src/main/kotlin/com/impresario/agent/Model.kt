@@ -131,7 +131,15 @@ interface UiDriver {
     fun screenshotPng(): ByteArray
     fun launch(appId: String, tv: Boolean)
     fun terminate(appId: String)
-    fun clearData(appId: String)
+
+    /**
+     * Clears the app data of [appId] (`pm clear`); returns `false` when the
+     * device refused to clear it (some ROMs deny shell `pm clear`, e.g.
+     * Android 16 builds; docs/DECISIONS.md I-82). Callers must treat `false`
+     * as a degraded reset, never as success.
+     */
+    fun clearData(appId: String): Boolean
+
     fun deviceInfo(): DeviceInfoData
 }
 

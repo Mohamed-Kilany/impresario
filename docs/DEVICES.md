@@ -460,6 +460,17 @@ devices:
   86 steps, 0 failed; the screenshot came back through
   `impresario_artifact_get` as an image and the report through
   `impresario_report_get`.
+- **`pm clear` is denied on this ROM** (found on the Realme while re-running a
+  smoke play): `pm clear com.impresario.stub` answers
+  `SecurityException: PID … does not have permission
+  android.permission.CLEAR_APP_USER_DATA to clear data of package …` for
+  *every* package, debuggable included; `cmd package clear`, `pm clear
+  --user 0` and clear-after-force-stop behave identically, so the device
+  policy (not the package) is the cause. The agent treats a refused clear as
+  a WARN on the log stream plus a force-stop cold start (I-82): the
+  `clear_app_data: true` option still relaunches the app but cannot guarantee
+  empty data on this device. `run 20261019-064750-dca4` (the build with the
+  I-82 fix) passed through MCP afterwards.
 
 ### 2.8 Platform notes
 

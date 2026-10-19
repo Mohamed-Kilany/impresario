@@ -127,7 +127,7 @@ class AgentState(
             val created = SessionState(
                 id = UUID.randomUUID().toString(),
                 options = options,
-                executor = CommandExecutor(driver, options),
+                executor = CommandExecutor(driver, options, log = logBus::log),
             )
             session = created
             logBus.log(

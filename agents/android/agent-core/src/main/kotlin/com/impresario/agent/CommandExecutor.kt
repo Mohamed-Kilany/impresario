@@ -1,11 +1,13 @@
 package com.impresario.agent
 
 import impresario.v1.Impresario.ActionType
+import impresario.v1.Impresario.AppControl
 import impresario.v1.Impresario.CheckKind
 import impresario.v1.Impresario.Command
 import impresario.v1.Impresario.CommandResult
 import impresario.v1.Impresario.Direction as PbDirection
 import impresario.v1.Impresario.ErrorCode
+import impresario.v1.Impresario.LogLevel
 import impresario.v1.Impresario.SelectorStrategy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -23,6 +25,7 @@ class CommandExecutor(
     private val driver: UiDriver,
     private val options: ExecutorOptions,
     private val now: () -> Long = System::currentTimeMillis,
+    private val log: (LogLevel, String, String) -> Unit = { _, _, _ -> },
 ) {
     private val extras: DriverExtras? = driver as? DriverExtras
 
@@ -490,9 +493,35 @@ class CommandExecutor(
         return Outcome.Ok(png = png)
     }
 
-    private fun appControl(control: impresario.v1.Impresario.AppControl): Outcome {
+    /**
+     * Spec 9.2: `clear_app_data` runs `pm clear <app_id>` before each
+     * (re)launch, for every op that launches the app (I-18). Returns `true`
+     * when no clear was requested or the device actually cleared the data.
+     * When the device refuses (some ROMs deny shell `pm clear`; observed on
+     * Android 16), a WARN goes to the log stream and the reset degrades to a
+     * cold start with the old on-disk state (docs/DECISIONS.md I-82).
+     */
+    private fun clearDataIfRequested(control: AppControl): Boolean {
+        if (!control.clearData && !options.clearAppDataOnRestart) return true
+        if (driver.clearData(options.appId)) return true
+        log(
+            LogLevel.WARN,
+            "agent",
+            "could not clear app data for '${options.appId}': the device refused 'pm clear' " +
+                "(shell lacks CLEAR_APP_USER_DATA on some ROMs); the app starts cold with the " +
+                "old on-disk state",
+        )
+        return false
+    }
+
+    private fun appControl(control: AppControl): Outcome {
         return when (control.op) {
             impresario.v1.Impresario.AppOp.LAUNCH -> {
+                if (!clearDataIfRequested(control)) {
+                    // The clear was refused: force-stop anyway so the launch
+                    // is a cold start (docs/DECISIONS.md I-82).
+                    driver.terminate(options.appId)
+                }
                 driver.launch(options.appId, options.isTv)
                 Outcome.Ok()
             }
@@ -502,9 +531,7 @@ class CommandExecutor(
             }
             impresario.v1.Impresario.AppOp.RESTART -> {
                 driver.terminate(options.appId)
-                if (control.clearData || options.clearAppDataOnRestart) {
-                    driver.clearData(options.appId)
-                }
+                clearDataIfRequested(control)
                 driver.launch(options.appId, options.isTv)
                 Outcome.Ok()
             }

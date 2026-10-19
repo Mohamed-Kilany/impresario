@@ -428,7 +428,12 @@ class DriverInstrumentedTest {
         openScenario(0)
         activate("stub_button")
         assertEquals("taps=1", textOf("stub_counter"))
-        driver.clearData(STUB_PACKAGE)
+        val cleared = driver.clearData(STUB_PACKAGE)
+        if (!cleared) {
+            // Some ROMs deny shell `pm clear` (docs/DECISIONS.md I-82); the
+            // executor then force-stops so the launch is still a cold start.
+            driver.terminate(STUB_PACKAGE)
+        }
         driver.launch(STUB_PACKAGE, tv = isTv)
         awaitTitle("Impresario stub")
         openScenario(0)

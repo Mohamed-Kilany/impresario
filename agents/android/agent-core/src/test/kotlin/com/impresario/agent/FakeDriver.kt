@@ -144,8 +144,12 @@ class FakeDriver(
         calls.add("terminate:$appId")
     }
 
-    override fun clearData(appId: String) {
+    /** When `false`, [clearData] reports that the device refused to clear (I-82). */
+    var clearDataSucceeds = true
+
+    override fun clearData(appId: String): Boolean {
         calls.add("clearData:$appId")
+        return clearDataSucceeds
     }
 
     override fun deviceInfo(): DeviceInfoData = device
