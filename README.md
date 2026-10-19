@@ -20,6 +20,9 @@ target* (or next to it) instead of shelling out screen taps from the host.
   self-contained HTML report (screenshots inlined).
 - **A language server** (`impresario lsp`) with diagnostics, completion,
   hover, definitions and a shipped VS Code client — `docs/LSP.md`.
+- **A Model Context Protocol server** (`impresario mcp`): any MCP-capable AI
+  agent can validate workspaces, check or list devices, run plays on real
+  hardware and read reports plus screenshots over stdio — `docs/MCP.md`.
 
 ## Repository layout
 
@@ -29,7 +32,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-proto` | generated gRPC bindings (vendored protoc) |
 | `crates/impresario-clients` | master-side `AgentClient`, device transports, `MockAgent` |
 | `crates/impresario-connector` | web/webOS/Tizen executor over CDP (raw + chromiumoxide backends) |
-| `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP |
+| `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub` |
 | `agents/apple` | Swift agent (deferred: not built on this host, see `docs/STATUS.md`) |
 | `editors/vscode` | VS Code client + TextMate grammar |
@@ -123,6 +126,28 @@ You get the console tree on stdout and `reports/<run-id>/report.json` +
 Any LSP-capable editor works — `docs/LSP.md` has VS Code and Neovim
 recipes, the settings shapes, and the completion/diagnostic feature table.
 
+## Connect an AI agent (MCP)
+
+`impresario mcp` serves a Model Context Protocol server over stdio
+(newline-delimited JSON-RPC 2.0), so any MCP-capable agent — Claude Code,
+Claude Desktop, VS Code, Cursor, … — can work the workspace directly:
+validate plays, list and check devices, run plays against real hardware
+(Android phones/TVs through the agent), then read the report, logs and
+screenshots of a run. The server speaks both the current stateless protocol
+revision (per-request `_meta`, `server/discover`) and the legacy
+`initialize` handshake, so any client era connects.
+
+```json
+{
+  "mcpServers": {
+    "impresario": { "command": "impresario", "args": ["mcp"] }
+  }
+}
+```
+
+`docs/MCP.md` has per-client wiring plus the full tool and resource tables;
+the design is recorded as decision I-80 in `docs/DECISIONS.md`.
+
 ## Tests
 
 ```sh
@@ -150,6 +175,7 @@ cargo test --workspace          # mock-driven; no device required
 | `docs/DEVICES.md` | per-platform setup and recorded hardware evidence |
 | `docs/PARITY.md` | action/check/key support per platform, generated + reconciled |
 | `docs/LSP.md` | language server features, settings, editor setup |
+| `docs/MCP.md` | MCP server: tools, resources, per-client wiring |
 | `docs/ERRORS.md` | every `IMP-*` code with cause and fix |
 | `docs/DECISIONS.md` | the binding decision log (spec + implementation) |
 | `docs/STATUS.md` | what is done, verified where, and every known gap |

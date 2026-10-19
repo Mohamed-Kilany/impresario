@@ -10,11 +10,13 @@
     )
 )]
 
-//! impresario-master: CLI, planner, executor, reporters and the embedded LSP.
+//! impresario-master: CLI, planner, executor, reporters, the embedded LSP
+//! and the MCP server.
 
 pub mod cli;
 pub mod exec;
 pub mod lsp;
+pub mod mcp;
 pub mod plan;
 pub mod redact;
 pub mod render;

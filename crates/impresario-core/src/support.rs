@@ -59,6 +59,28 @@ impl Verb {
     pub fn is_master_side(self) -> bool {
         matches!(self, Verb::Wait)
     }
+
+    /// Every verb, in matrix order (iteration source for tooling).
+    pub const ALL: &'static [Verb] = &[
+        Verb::Click,
+        Verb::Type,
+        Verb::Append,
+        Verb::Clear,
+        Verb::LongPress,
+        Verb::Focus,
+        Verb::Select,
+        Verb::Scroll,
+        Verb::ScrollTo,
+        Verb::Swipe,
+        Verb::Back,
+        Verb::Key,
+        Verb::Wait,
+        Verb::Screenshot,
+        Verb::AppLaunch,
+        Verb::AppTerminate,
+        Verb::AppRestart,
+        Verb::AppBackground,
+    ];
 }
 
 /// Checks of the DSL (spec 5.6 and the second table of 6.1).
@@ -88,6 +110,18 @@ impl CheckVerb {
             CheckVerb::Count => "count",
         }
     }
+
+    /// Every check, in matrix order (iteration source for tooling).
+    pub const ALL: &'static [CheckVerb] = &[
+        CheckVerb::Visible,
+        CheckVerb::Hidden,
+        CheckVerb::Enabled,
+        CheckVerb::Disabled,
+        CheckVerb::Focused,
+        CheckVerb::TextEquals,
+        CheckVerb::TextContains,
+        CheckVerb::Count,
+    ];
 }
 
 /// Level of support for an action on a platform.

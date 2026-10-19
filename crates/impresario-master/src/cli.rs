@@ -1,8 +1,8 @@
 //! The `impresario` CLI (spec sections 4.4 and 8.1).
 //!
 //! This module owns argument parsing, exit codes and every command:
-//! `init`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, and the
-//! development-only `mock-agent` (decision I-77).
+//! `init`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, plus the
+//! development-only `mock-agent` (decision I-77) and `mcp` (decision I-80).
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -18,6 +18,7 @@ use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace;
 use tokio_util::sync::CancellationToken;
 
+use crate::report::RunReport;
 use crate::{exec, plan, render, reporters, time_fmt};
 
 /// Exit codes (spec section 8.3): 0 pass · 1 test failure · 2 config/DSL ·
@@ -83,6 +84,13 @@ pub enum Command {
     Run(RunArgs),
     /// Run the embedded language server on stdio (spec section 13).
     Lsp,
+    /// Serve the Model Context Protocol on stdio for AI agents (decision I-80).
+    ///
+    /// Exposes the workspace, the configured devices and the run pipeline as
+    /// MCP tools and resources, so an agent can author, run and debug plays
+    /// without shelling out. Stdout carries protocol messages only; every
+    /// log, diagnostic and progress note goes to stderr.
+    Mcp,
     /// Serve the scripted mock device on loopback (no hardware needed).
     ///
     /// Development aid for the README quick start (decision I-77): point a
@@ -179,6 +187,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         },
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
+        Command::Mcp => cmd_mcp(&base, &config_path, &devices_path),
         Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }
@@ -367,29 +376,51 @@ fn cmd_init(base: &Path, force: bool) -> i32 {
 // validate
 // ---------------------------------------------------------------------------
 
-fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[PathBuf]) -> i32 {
+/// Core of `validate`, shared by the CLI and the MCP server.
+#[derive(Debug)]
+pub(crate) struct ValidateOutcome {
+    pub diagnostics: Diagnostics,
+    /// False when `impresario.config` could not be read at all.
+    pub config_ok: bool,
+    /// False when `impresario.devices.config` could not be read at all.
+    pub devices_ok: bool,
+    pub scenes: usize,
+    pub plays: usize,
+    pub devices: usize,
+}
+
+pub(crate) fn validate_workspace(
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    paths: &[PathBuf],
+) -> ValidateOutcome {
     let mut all = Diagnostics::new();
 
     let cfg_outcome = config::load_config(config_path);
     all.extend(cfg_outcome.diagnostics.iter().cloned());
     let Some(cfg) = cfg_outcome.config else {
-        render::eprint_all(&all);
-        eprintln!(
-            "validate: configuration errors in {}",
-            config_path.display()
-        );
-        return EXIT_USAGE;
+        return ValidateOutcome {
+            diagnostics: all,
+            config_ok: false,
+            devices_ok: true,
+            scenes: 0,
+            plays: 0,
+            devices: 0,
+        };
     };
 
     let devices_outcome = config::load_devices(devices_path);
     all.extend(devices_outcome.diagnostics.iter().cloned());
     let Some(devices) = devices_outcome.config else {
-        render::eprint_all(&all);
-        eprintln!(
-            "validate: configuration errors in {}",
-            devices_path.display()
-        );
-        return EXIT_USAGE;
+        return ValidateOutcome {
+            diagnostics: all,
+            config_ok: true,
+            devices_ok: false,
+            scenes: 0,
+            plays: 0,
+            devices: 0,
+        };
     };
 
     if let Some(diag) = config::check_report_output(&base.join(&cfg.report_output)) {
@@ -429,19 +460,42 @@ fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[P
     let semantic = validation::validate(&loaded.workspace, &device_refs);
     all.extend(semantic.iter().cloned());
 
-    render::eprint_all(&all);
-    let errors = all.errors().count();
-    let warnings = all.warnings().count();
+    ValidateOutcome {
+        diagnostics: all,
+        config_ok: true,
+        devices_ok: true,
+        scenes: loaded.workspace.scenes.len(),
+        plays: loaded.workspace.plays.len(),
+        devices: devices.devices.len(),
+    }
+}
+
+fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[PathBuf]) -> i32 {
+    let outcome = validate_workspace(base, config_path, devices_path, paths);
+    render::eprint_all(&outcome.diagnostics);
+    if !outcome.config_ok {
+        eprintln!(
+            "validate: configuration errors in {}",
+            config_path.display()
+        );
+        return EXIT_USAGE;
+    }
+    if !outcome.devices_ok {
+        eprintln!(
+            "validate: configuration errors in {}",
+            devices_path.display()
+        );
+        return EXIT_USAGE;
+    }
+    let errors = outcome.diagnostics.errors().count();
+    let warnings = outcome.diagnostics.warnings().count();
     if errors > 0 {
         eprintln!("validate: {errors} error(s), {warnings} warning(s)");
         return EXIT_USAGE;
     }
     println!(
         "validate: ok ({} scene(s), {} play(s), {} device(s), {} warning(s))",
-        loaded.workspace.scenes.len(),
-        loaded.workspace.plays.len(),
-        devices.devices.len(),
-        warnings
+        outcome.scenes, outcome.plays, outcome.devices, warnings
     );
     EXIT_OK
 }
@@ -648,7 +702,7 @@ fn cmd_devices_check(config_path: &Path, devices_path: &Path, names: &[String]) 
 
 /// Transport prepare → connect → handshake → `DeviceInfo` → session shutdown,
 /// then teardown (spec 8.1); every failure is a message, never a panic.
-async fn check_device(
+pub(crate) async fn check_device(
     device: &DeviceConfig,
     timeout_ms: u64,
     token: Option<&str>,
@@ -711,7 +765,7 @@ async fn check_transport(
 
 /// The devices an invocation selected: `all` (or nothing) means everything,
 /// otherwise the names in the order given (duplicates collapse).
-fn select_devices(
+pub(crate) fn select_devices(
     devices: &[DeviceConfig],
     requested: &[String],
 ) -> Result<Vec<DeviceConfig>, String> {
@@ -746,7 +800,7 @@ fn select_devices(
 }
 
 /// `IMPRESARIO_AGENT_TOKEN` (spec 7.2.1); empty values count as unset.
-fn agent_token() -> Option<String> {
+pub(crate) fn agent_token() -> Option<String> {
     std::env::var("IMPRESARIO_AGENT_TOKEN")
         .ok()
         .filter(|token| !token.is_empty())
@@ -771,6 +825,29 @@ async fn watch_interrupts(shutdown: CancellationToken) {
 // run
 // ---------------------------------------------------------------------------
 
+/// Core of `run`, shared by the CLI and the MCP server.
+#[derive(Debug)]
+pub(crate) struct RunOutcome {
+    pub exit_code: i32,
+    pub run_id: Option<String>,
+    pub run_dir: Option<PathBuf>,
+    pub report: Option<RunReport>,
+    /// Pre-run refusals and reporter errors; the same text went to stderr.
+    pub messages: Vec<String>,
+}
+
+impl RunOutcome {
+    fn refusal(exit_code: i32, message: String) -> Self {
+        Self {
+            exit_code,
+            run_id: None,
+            run_dir: None,
+            report: None,
+            messages: vec![message],
+        }
+    }
+}
+
 fn cmd_run(
     base: &Path,
     config_path: &Path,
@@ -780,17 +857,35 @@ fn cmd_run(
 ) -> i32 {
     use std::io::IsTerminal;
 
+    let color = !no_color && std::io::stdout().is_terminal();
+    run_workspace(base, config_path, devices_path, args, color, true).exit_code
+}
+
+/// Plan and execute `args`. `color` styles the console reporter (the CLI
+/// prints it, the MCP server never selects it); `interrupts` installs the
+/// Ctrl-C watcher, which only the CLI wants (the MCP server's Ctrl-C keeps
+/// its default meaning for the whole session).
+pub(crate) fn run_workspace(
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    args: &RunArgs,
+    color: bool,
+    interrupts: bool,
+) -> RunOutcome {
     let config_outcome = config::load_config(config_path);
     render::eprint_all(&config_outcome.diagnostics);
     let Some(config) = config_outcome.config else {
-        eprintln!("run: configuration errors in {}", config_path.display());
-        return EXIT_USAGE;
+        let message = format!("run: configuration errors in {}", config_path.display());
+        eprintln!("{message}");
+        return RunOutcome::refusal(EXIT_USAGE, message);
     };
     let devices_outcome = config::load_devices(devices_path);
     render::eprint_all(&devices_outcome.diagnostics);
     let Some(device_list) = devices_outcome.config else {
-        eprintln!("run: configuration errors in {}", devices_path.display());
-        return EXIT_USAGE;
+        let message = format!("run: configuration errors in {}", devices_path.display());
+        eprintln!("{message}");
+        return RunOutcome::refusal(EXIT_USAGE, message);
     };
 
     let reporter_list = match &args.reporter {
@@ -798,21 +893,24 @@ fn cmd_run(
             Ok(list) => list,
             Err(message) => {
                 eprintln!("run: {message}");
-                return EXIT_USAGE;
+                return RunOutcome::refusal(EXIT_USAGE, format!("run: {message}"));
             }
         },
         None => config.reporters.clone(),
     };
     if let Some(timeout) = args.timeout {
         if !plan::timeout_in_bounds(timeout) {
-            eprintln!("run: --timeout must be between 100 and 600000 ms (got {timeout})");
-            return EXIT_USAGE;
+            let message =
+                format!("run: --timeout must be between 100 and 600000 ms (got {timeout})");
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
         }
     }
     if let Some(retries) = args.retries {
         if !plan::retries_in_bounds(retries) {
-            eprintln!("run: --retries must be between 0 and 5 (got {retries})");
-            return EXIT_USAGE;
+            let message = format!("run: --retries must be between 0 and 5 (got {retries})");
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
         }
     }
 
@@ -820,22 +918,24 @@ fn cmd_run(
         Ok(selected) => selected,
         Err(message) => {
             eprintln!("run: {message}");
-            return EXIT_USAGE;
+            return RunOutcome::refusal(EXIT_USAGE, format!("run: {message}"));
         }
     };
     if selected_devices.is_empty() {
-        eprintln!(
+        let message = format!(
             "run: no devices configured (see {})",
             devices_path.display()
         );
-        return EXIT_USAGE;
+        eprintln!("{message}");
+        return RunOutcome::refusal(EXIT_USAGE, message);
     }
     if let Some(diagnostic) = config::check_report_output(&base.join(&config.report_output)) {
         let mut diagnostics = Diagnostics::new();
         diagnostics.push(diagnostic);
         render::eprint_all(&diagnostics);
-        eprintln!("run: report_output is not usable; nothing was executed");
-        return EXIT_USAGE;
+        let message = "run: report_output is not usable; nothing was executed".to_string();
+        eprintln!("{message}");
+        return RunOutcome::refusal(EXIT_USAGE, message);
     }
 
     // Workspace: scenes come from the configured scenes_dir, plays from
@@ -850,11 +950,12 @@ fn cmd_run(
     };
     render::eprint_all(&load_diagnostics);
     if load_diagnostics.has_errors() {
-        eprintln!(
+        let message = format!(
             "run: {} workspace error(s); nothing was executed",
             load_diagnostics.errors().count()
         );
-        return EXIT_USAGE;
+        eprintln!("{message}");
+        return RunOutcome::refusal(EXIT_USAGE, message);
     }
 
     let selection = plan::Selection {
@@ -866,8 +967,9 @@ fn cmd_run(
         Ok(vars) => vars,
         Err(diagnostics) => {
             render::eprint_all(&diagnostics);
-            eprintln!("run: invalid --var; nothing was executed");
-            return EXIT_USAGE;
+            let message = "run: invalid --var; nothing was executed".to_string();
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
         }
     };
     let input = plan::PlanInput {
@@ -883,11 +985,12 @@ fn cmd_run(
         Ok(plan) => plan,
         Err(diagnostics) => {
             render::eprint_all(&diagnostics);
-            eprintln!(
+            let message = format!(
                 "run: {} planning error(s); nothing was executed",
                 diagnostics.errors().count()
             );
-            return EXIT_USAGE;
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
         }
     };
 
@@ -911,19 +1014,25 @@ fn cmd_run(
     {
         Ok(runtime) => runtime,
         Err(err) => {
-            eprintln!("run: cannot start the async runtime: {err}");
-            return EXIT_INFRA;
+            let message = format!("run: cannot start the async runtime: {err}");
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_INFRA, message);
         }
     };
     let shutdown = options.shutdown.clone();
     let outcome = runtime.block_on(async move {
-        let watcher = tokio::spawn(watch_interrupts(shutdown));
+        let watcher = if interrupts {
+            Some(tokio::spawn(watch_interrupts(shutdown)))
+        } else {
+            None
+        };
         let outcome = exec::execute(&plan, &options).await;
-        watcher.abort();
+        if let Some(watcher) = watcher {
+            watcher.abort();
+        }
         outcome
     });
 
-    let color = !no_color && std::io::stdout().is_terminal();
     let run_dir = report_dir.join(&run_id);
     let reporter_errors = reporters::write(&outcome.report, &run_dir, &reporter_list, color);
     for message in &reporter_errors {
@@ -933,7 +1042,13 @@ fn cmd_run(
     if !reporter_errors.is_empty() && code == EXIT_OK {
         code = EXIT_INFRA;
     }
-    code
+    RunOutcome {
+        exit_code: code,
+        run_id: Some(run_id),
+        run_dir: Some(run_dir),
+        report: Some(outcome.report),
+        messages: reporter_errors,
+    }
 }
 
 /// Expand `--play` file/dir/glob patterns (default: the configured
@@ -1029,6 +1144,17 @@ fn cmd_lsp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
         devices_path.to_path_buf(),
     ));
     EXIT_OK
+}
+
+/// `impresario mcp` (decision I-80, not in the spec CLI list): serve the
+/// Model Context Protocol on stdio so AI agents can validate, run and debug
+/// plays against the configured devices. Stdout is protocol-only.
+fn cmd_mcp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
+    crate::mcp::run_stdio(
+        base.to_path_buf(),
+        config_path.to_path_buf(),
+        devices_path.to_path_buf(),
+    )
 }
 
 /// `impresario mock-agent` (decision I-77, not in the spec CLI list): serve
