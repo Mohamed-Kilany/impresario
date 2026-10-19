@@ -84,7 +84,7 @@ fn readme_mock_quick_start_runs_green() {
 
     // README step 2: create and validate the workspace.
     let (code, stdout, stderr) = run_in(temp.path(), &["workspace", "new", "--example"], &[]);
-    assert_eq!(code, Some(0), "init failed\n{stdout}\n{stderr}");
+    assert_eq!(code, Some(0), "workspace new failed\n{stdout}\n{stderr}");
     let (code, stdout, stderr) = run_in(temp.path(), &["validate"], &[]);
     assert_eq!(code, Some(0), "validate failed\n{stdout}\n{stderr}");
 

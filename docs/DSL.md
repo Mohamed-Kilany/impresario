@@ -346,7 +346,7 @@ suite (`crates/impresario-core/tests/negative_cases.rs`).
 
 ## 7. A complete walk-through
 
-`impresario init` writes this workspace (also committed under `examples/`):
+`impresario workspace new --example` writes this workspace (also committed under `examples/`):
 
 ```text
 impresario.config

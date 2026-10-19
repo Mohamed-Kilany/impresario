@@ -37,7 +37,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
 | `editors/vscode` | VS Code client + TextMate grammar |
 | `docs/` | DSL, protocol, devices, parity, LSP, errors, decisions, status |
-| `examples/`, `fixtures/` | the example workspace written by `impresario init`, CDP fixture pages |
+| `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example`, CDP fixture pages |
 
 ## Requirements
 
@@ -64,7 +64,7 @@ cargo install --path crates/impresario-connector --locked
 
 ```sh
 mkdir demo && cd demo
-impresario init        # writes impresario.config, devices, scenes/ and plays/
+impresario workspace new --example  # writes impresario.config, devices, scenes/ and plays/
 impresario validate    # parse + resolve the whole workspace, no device touched
 ```
 

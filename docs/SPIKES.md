@@ -28,7 +28,7 @@ project/agent research whose artefact exists but which was not re-run here;
 |---|---|---|---|---|---|
 | S-1 | Android without `adb` (§6.1) | settled | **go** — `adb_client` covers the transport/commands; pairing is implemented by us from AOSP/BoringSSL (RustCrypto `spake2` is **incompatible**); phone validation pending | 1 | I-97 |
 | S-2 | iOS/tvOS without Xcode tools (§6.2) | settled | **go** with recorded constraints (no direct-USB in `idevice`; iOS 17+ tunnel needs OS plumbing; XCTest end-to-end unverified) | 1 | I-95 |
-| S-3 | webOS without `ares-*` (§6.3) | open | — | — | — |
+| S-3 | webOS without `ares-*` (§6.3) | settled | **go** — `russh`/`russh-sftp` build and pass a loopback probe on Windows; protocol facts cited from ares-cli 2.4.0/ares-cli-rs; no webOS TV to validate against | 1 | I-99 |
 | S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware validation pending | 1 | I-93 |
 | S-5 | CLI/TUI/daemon/IPC/lossless config (§3, §4.2, §3.5) | settled | **go** — 26/26 probe checks pass on Windows; config **stays YAML** | 1 | I-91, I-92 |
 | S-6 | Apple signing sources (§7.1) | settled | **go** for (a) local `.p12` re-sign (verified on Windows), **conditional go** for (b) ASC API and (c) free-Apple-ID sideloading (external services) | 1/3 | I-96 |
@@ -343,7 +343,59 @@ on this host.
 
 ## S-3 · webOS without `ares-*`
 
-*Open — research in flight.*
+**Verdict: go**, rung 1 (own Rust client; no `ssh`, `scp`, `openssl`, `ares-*`
+or `luna-send` process on the host). Probe: `%TEMP%\opencode\spike-webos\`
+(`FEASIBILITY.md`, `probe/`, `probe-default-nasm/`). There is **no webOS TV**
+on this host, so the client stack and the protocol facts are verified, while
+every TV-side behaviour stays unverified and is listed below. Decision I-99.
+
+**Dependency and probe (verified on this host).** `russh` 0.63.3 and
+`russh-sftp` 3.0.1, both Apache-2.0. With russh's default `aws-lc-rs` feature
+the build fails without NASM (`aws-lc-sys` panics in `nasm_builder.rs`);
+`default-features = false, features = ["ring", "rsa", "flate2"]` builds clean
+(30.9 s) and needs no C toolchain. The loopback probe proved: host-key pinning
+via `check_server_key`, Ed25519 auth, RSA-SHA2-256 auth with a key rebuilt from
+a legacy PEM, one exec channel with stdout + exit status, and an SFTP
+write/read + directory listing. This does **not** prove the TV's SSH server
+accepts russh's KEX/ciphers/host-key algorithms, or that it offers SFTP.
+
+**Device and key (verified from the reference implementations).** ares-cli
+2.4.0 ships **no `ares-novacom`**; the facts come from `ares-cli-rs` and LG's
+CLI guide. The dev-mode target is `prisoner@<tv>:9922`; the Developer Mode app
+must be running. The key is a plain HTTP/1.1 `GET http://<tv>:9991/webos_rsa`
+(no TLS); its passphrase is the code shown by the TV. `russh::decode_secret_key`
+handles the legacy encrypted PEM (AES-128-CBC, key =
+MD5(passphrase || IV[0..8])) with or without base64 `=`. A manual
+PKCS#5/AES-128-CBC + PKCS#1 fallback is recorded only for the case where the TV
+serves a cipher russh cannot parse; it is not on the default path.
+
+**Commands and install.** Command execution is a normal SSH exec. Luna calls
+are built as `/usr/bin/luna-send-pub -i luna://<service>/<folder>/<method>
+'<json>'`. Install uploads the `.ipk` to `/media/developer/temp` (SFTP; the
+reference falls back to `cat > "<path>"` over exec when SFTP is unavailable),
+then calls `com.webos.appInstallService/dev/install` with
+`{id, ipkUrl, subscribe:true}`; success is `return.details.state` matching
+`installed|^SUCCESS`, failure matches `FAILED`. Launch is
+`com.webos.applicationManager/launch` `{id, subscribe:false, params}`;
+terminate `.../dev/closeByAppId`; list `.../dev/listApps`; running
+`.../dev/running`. Inspect forwards remote 9998 through
+`channel_open_direct_tcpip`. An IPK is an `ar` archive with `debian-binary`
+(`2.0\n`), `control.tar.gz` and `data.tar.gz`; we build it in Rust, not with
+`ares-package`.
+
+**Licenses.** ares-cli, ares-cli-rs and dev-manager-desktop are Apache-2.0
+(reference/facts only); `react-tv/node-webos` has **no LICENSE file**, so it is
+reference-only. `ssh2`/libssh is rejected: it drags OpenSSL (and Perl/MSVC) into
+the Windows build, which is worse than the `ring` stack even if a TV cipher
+turns out to need the manual fallback.
+
+**Hardware-gated (recorded in `docs/STATUS.md`):** the exact PEM cipher/key
+size/padding, the SSH banner and algorithm negotiation, host-key type, SFTP
+availability and `/media/developer/temp` permissions, the 9991 response
+headers/chunking, whether `com.webos.appInstallService/dev/install` is still
+the right service on current firmware (vs `appinstalld2/install`), whether
+`luna-send-pub` is present and `-i`/`-n` behave over exec, and whether an
+unsigned/unencrypted IPK is accepted.
 
 ## S-8 · Standalone editor (WASM)
 

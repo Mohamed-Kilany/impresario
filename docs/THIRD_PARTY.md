@@ -42,6 +42,9 @@ facts only).
 | `tokio-rustls` | 0.26.6 | MIT OR Apache-2.0 | async TLS glue | chosen — I-97 |
 | `rcgen` | 0.14.10 | MIT OR Apache-2.0 | pairing self-signed certificate | chosen — I-97 |
 | `mdns-sd` | 0.21.6 | Apache-2.0 OR MIT | discovery of `_adb-tls-pairing` / `_adb-tls-connect` | chosen — I-97 |
+| `russh` | 0.63.3 | Apache-2.0 | webOS SSH transport (`ring` backend, no NASM/OpenSSL) | chosen — I-99 |
+| `russh-sftp` | 3.0.1 | Apache-2.0 | webOS SFTP upload (exec `cat` fallback) | chosen — I-99 |
+| `ssh2` | 0.9.6 | MIT OR Apache-2.0 | libssh2 binding; would drag OpenSSL/Perl into the Windows build | rejected — I-99 |
 
 ## Managed payloads (ladder rung 2/3, TASK-2 §6.0)
 
@@ -71,3 +74,7 @@ approved (§12 question 4).
 | `SideStore` / `Feather` | AGPL-3.0 / GPL-3.0 | free-Apple-ID flow limits (anisette, 7-day expiry) | S-6 — facts only |
 | `AOSP platform/packages/modules/adb` | Apache-2.0 | ADB pairing protocol (SPAKE2 over TLS 1.3, exporter `adb-label`, AES-GCM framing, PeerInfo), mDNS service names | S-1 |
 | `BoringSSL` | Apache-2.0 | `spake25519` = SPAKE2 draft-02 (M/N points, scalar hack, SHA-512 transcript) — ported to Rust, not linked | S-1 |
+| `webosose/ares-cli` | Apache-2.0 | webOS command strings (luna services), install/upload flow, IPK layout | S-3 |
+| `webosbrew/ares-cli-rs` | Apache-2.0 | webOS dev target (`prisoner:9922`), `/webos_rsa` getkey, luna over SSH | S-3 |
+| `webosbrew/dev-manager-desktop` | Apache-2.0 | webOS key validation and device setup prior art | S-3 |
+| `react-tv/node-webos` | **no license** | `GET /webos_rsa` reference | S-3 — facts only |
