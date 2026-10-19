@@ -87,3 +87,11 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
    commands here, `gradlew test` on this host, and the Apple job's
    `swift package resolve`/`build`/`test` through WSL (its `zlib1g-dev`
    step mirrors the dependency the WSL build needed, `docs/DEVICES.md` §3.1).
+8. Stub spacing on TV: the phone rhythm (one 10 dp vertical rhythm through
+   `Ui.addStacked`, I-81) was verified on the A51, but the same screens still
+   look too airy on a TV ("too spaced between buttons", user report). The fix
+   is a TV-profile gap in `agents/android/agent-target-stub/.../Ui.kt` plus a
+   `tv_smoke` re-run on the TV. Blocked: no TV or phone is reachable from the
+   current Wi-Fi here (host is on `10.102.93.101`; the known devices were on
+   `192.168.93.x`), so it stays open rather than shipping an unverified
+   change (the phone UI must not regress).
