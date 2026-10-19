@@ -26,14 +26,14 @@ project/agent research whose artefact exists but which was not re-run here;
 
 | ID | Capability (spec) | Status | Verdict | Rung | Decision |
 |---|---|---|---|---|---|
-| S-1 | Android without `adb` (§6.1) | open | — | — | — |
+| S-1 | Android without `adb` (§6.1) | settled | **go** — `adb_client` covers the transport/commands; pairing is implemented by us from AOSP/BoringSSL (RustCrypto `spake2` is **incompatible**); phone validation pending | 1 | I-97 |
 | S-2 | iOS/tvOS without Xcode tools (§6.2) | settled | **go** with recorded constraints (no direct-USB in `idevice`; iOS 17+ tunnel needs OS plumbing; XCTest end-to-end unverified) | 1 | I-95 |
 | S-3 | webOS without `ares-*` (§6.3) | open | — | — | — |
 | S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware validation pending | 1 | I-93 |
 | S-5 | CLI/TUI/daemon/IPC/lossless config (§3, §4.2, §3.5) | settled | **go** — 26/26 probe checks pass on Windows; config **stays YAML** | 1 | I-91, I-92 |
 | S-6 | Apple signing sources (§7.1) | settled | **go** for (a) local `.p12` re-sign (verified on Windows), **conditional go** for (b) ASC API and (c) free-Apple-ID sideloading (external services) | 1/3 | I-96 |
 | S-7 | Tizen certificates (§7.3) | settled | **go** for import/inspection; creation needs Samsung account services (external, optional) | 1/3 | I-94 |
-| S-8 | Standalone editor without LSP (§9.2) | open | — | — | — |
+| S-8 | Standalone editor without LSP (§9.2) | settled | **go** — `impresario-core` builds unchanged for `wasm32-unknown-unknown` | 1 | I-98 |
 
 ## Method
 
@@ -265,7 +265,81 @@ services, external). Evidence:
 
 ## S-1 · Android without `adb`
 
-*Open — protocol facts and the live probe are the next work item.*
+**Verdict: go** — rung 1. Two pieces: the transport/command layer is an existing
+crate; **pairing** is written by us.
+
+**Transport + commands.** `adb_client` 3.2.3 (MIT), used through
+`message_devices` (direct protocol, **no adb server**): TCP with `STLS` → TLS
+and adb-key certificate, token signing (`ADBRsaKey`, `read_adb_private_key`),
+AUTH, shell, sync push/pull, install/uninstall, framebuffer/screencap,
+reboot/root/verity/stat; mDNS discovery behind the `mdns` feature
+(`_adb-tls-connect._tcp.local.`); USB behind the `usb` feature (rusb). Its
+`server`/`server_device` modules (adb server on 5037) are **not** used —
+D-19 forbids the external daemon, and the direct client is the compliance path.
+The direct client does **not** pair: `pair.rs` lives under `server/commands/`
+(i.e. it is a wrapper around `host:pair` on an adb server).
+
+**Pairing (implemented by us), verified first-hand from
+`aosp-mirror`/`android.googlesource.com` `platform/packages/modules/adb`
+(Apache-2.0) and BoringSSL (Apache-2.0):**
+
+- Discovery: `_adb-tls-pairing._tcp` and `_adb-tls-connect._tcp`
+  (`adb_mdns.h`).
+- TLS: **TLS 1.3 only** (`tls_connection.cpp`: min = max = `TLS1_3_VERSION`),
+  self-signed cert on both sides, peer verification **accepts any certificate**
+  (`SetCertVerifyCallback([] { return 1; })` in `pairing_connection.cpp`);
+  64 bytes of exported keying material with label `"adb-label"` **including
+  its NUL** (`sizeof(kExportedKeyLabel) == 10`, `SSL_export_keying_material(...,
+  kExportedKeyLabel, sizeof(kExportedKeyLabel), nullptr, 0, false)`) are
+  **appended to the pairing password**.
+- SPAKE2: BoringSSL `SPAKE2_CTX` = **draft-irtf-cfrg-spake2-02**, roles
+  `alice` (client) / `bob` (server), names `"adb pair client\0"` /
+  `"adb pair server\0"` **including NUL** (AOSP passes `sizeof`, not `strlen`),
+  SHA-512, 32-byte messages, 64-byte key. Transcript =
+  `len64(my_name) || my_name || len64(their_name) || their_name ||
+  len64(my_msg) || my_msg || len64(their_msg) || their_msg ||
+  len64(dh_shared) || dh_shared || len64(password_hash) || password_hash`
+  (u64 little-endian lengths; order reverses for Bob), with
+  `password_hash = SHA-512(password)` and
+  `password_scalar = reduce(SHA-512(password))`; the **password scalar hack**
+  adds `l`, `2l`, `4l` (wrapping 32-byte adds) until the low 3 bits are zero so
+  torsion cancels. `M`/`N` are fixed Edwards points derived from the SHA-256
+  seeds `"edwards25519 point generation seed (M)"` / `"(N)"`
+  (`spake25519.cc` lines 40-113; encoded N =
+  `10e3df0ae37d8e7a99b5fe74b44672103dbddcbd06af680d71329a11693bc778`,
+  M = `5ada7e4bf6ddd9adb6626d32131c6b5c51a1e347a3478f53cfcf441b88eed12e`).
+- Cipher: AES-128-GCM. Key = `HKDF-SHA256(ikm = SPAKE2 key,
+  info = "adb pairing_auth aes-128-gcm key")`; nonce = 12 zero bytes with a
+  **u64 little-endian sequence counter in the first 8**, separate counters for
+  encrypt and decrypt, both starting at 0; 16-byte tag appended.
+- Framing: `PairingPacketHeader { u8 version = 1, u8 type, u32 payload_len
+  (LE) }`; types `SPAKE2_MSG = 0`, `PEER_INFO = 1`; payload cap
+  `kMaxPeerInfoSize * 2`.
+- PeerInfo: `{ u8 type; u8 data[8191]; }` = **8192 bytes**;
+  `ADB_RSA_PUB_KEY = 0`, `ADB_DEVICE_GUID = 1`; exchanged encrypted; the client
+  sends its ADB public key in `data`.
+- Password bytes: the 6-digit code as ASCII (AOSP's own tests pass raw password
+  bytes and append the exporter in `SetupTlsConnection`); the exact NUL
+  convention for the code is a hardware-verified detail, not assumed.
+
+**Crate incompatibility (verified, and the reason this is our code):**
+RustCrypto `spake2` 0.4.0 implements **RFC 9382** (SHA-256, 6 × 32-byte
+transcript, HKDF-SHA256 hash-to-scalar), while BoringSSL's `spake25519` is
+draft-02 with a SHA-512 length-prefixed transcript and the scalar hack. They
+are **not wire-compatible**; a pairing attempt would fail cleanly but not work.
+Plan: port BoringSSL's protocol logic (~200 lines) onto `curve25519-dalek`
+5.0 (BSD-3-Clause), `sha2`, `hkdf`, `aes-gcm`, and validate against the phone.
+Fallback if point/scalar edge cases do not line up: call BoringSSL's
+`SPAKE2_*` through `boring-sys` (the exact reference implementation; a C build
+dependency like aws-lc, licence-clean).
+TLS for the pairing channel: `rustls`/`tokio-rustls` with a verifier that
+accepts any peer (authenticity comes from SPAKE2), certificate via `rcgen`.
+
+**Hardware-gated (phone only, recorded in `docs/STATUS.md`):** end-to-end
+pairing, connect after pairing, `am instrument`, logcat, screencap, install,
+USB on Windows (driver), mDNS on the user's LAN. `adb_client`'s TCP/TLS path
+and token signing were read in source but have not been run against a device
+on this host.
 
 ## S-3 · webOS without `ares-*`
 
@@ -273,4 +347,12 @@ services, external). Evidence:
 
 ## S-8 · Standalone editor (WASM)
 
-*Open — `cargo build -p impresario-core --target wasm32-unknown-unknown` not yet run.*
+**Verdict: go** — rung 1. `cargo build -p impresario-core --target
+wasm32-unknown-unknown` succeeds on this host with **no changes** (29.7 s;
+`rustup target add wasm32-unknown-unknown`). The standalone editor therefore
+shares the exact parser/validator/formatter with the CLI and LSP
+(§9.2's "one source of truth" is achievable without a second implementation),
+served by the local HTTP server; no LSP process is needed in that mode.
+The wasm boundary (a thin `wasm-bindgen` wrapper) and the HTTP asset serving
+are work-package items, not feasibility risks.
+
