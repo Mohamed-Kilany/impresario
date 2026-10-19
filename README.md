@@ -9,7 +9,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
   expands a play per device and rejects anything the target cannot do before
   hardware is touched (`IMP-DSL-013`).
 - **Everything is gRPC to an executor.** The Android/TV agent, the Apple
-  agent (deferred, see `docs/STATUS.md`) and the web connector all speak the
+  agent (see `docs/STATUS.md`) and the web connector all speak the
   same `Agent` service (`proto/impresario/v1/impresario.proto`). `adb` /
   `xcodebuild` are used only to install and start the executor; every action
   then travels over the network (see `docs/PROTOCOL.md`).
@@ -34,7 +34,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-connector` | web/webOS/Tizen executor over CDP (raw + chromiumoxide backends) |
 | `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub` |
-| `agents/apple` | Swift agent (deferred: not built on this host, see `docs/STATUS.md`) |
+| `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
 | `editors/vscode` | VS Code client + TextMate grammar |
 | `docs/` | DSL, protocol, devices, parity, LSP, errors, decisions, status |
 | `examples/`, `fixtures/` | the example workspace written by `impresario init`, CDP fixture pages |
@@ -47,7 +47,8 @@ target* (or next to it) instead of shelling out screen taps from the host.
   - Chrome/Chromium for `web` runs (the connector launches or attaches to it),
   - JDK 17+ and the Android SDK (with `adb`) to build/install the Android
     agent — see `docs/DEVICES.md`,
-  - macOS + Xcode for the Apple agent (not built yet).
+  - macOS + Xcode to build the Apple agent's XCUITest runner (the Swift package
+  itself builds on Linux; `docs/DEVICES.md` §3).
 
 ## Quick start (works from a clean clone)
 
@@ -116,9 +117,9 @@ You get the console tree on stdout and `reports/<run-id>/report.json` +
 - **android / androidtv** — build/install the agent and run over Wi-Fi:
   `docs/DEVICES.md` §2.2–2.7 record the exact commands (verified on a
   Galaxy A51 and a TCL Android TV).
-- **iOS / tvOS** — deferred: no Swift/Xcode on the development host; see
-  `docs/STATUS.md` for the recorded gap and `docs/DEVICES.md` §3 for the
-  planned setup.
+- **iOS / tvOS** — the Swift agent package builds and unit-tests on Linux
+  (`docs/DEVICES.md` §3.1); the XCUITest runner targets need macOS + Xcode and
+  are written but unbuilt on this host (`docs/STATUS.md`, gaps 1–2).
 
 ## Editor support
 
