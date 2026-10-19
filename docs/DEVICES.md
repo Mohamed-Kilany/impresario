@@ -413,7 +413,7 @@ devices:
   level …" immediately, and the master gives up after `LOG_STREAM_OPEN_TIMEOUT`
   (5 s) and continues without agent logs.
 
-### 2.7 Android phone (Samsung Galaxy A51, verified on this host)
+### 2.7 Android phones (Samsung Galaxy A51 + Realme RMX3997, verified on this host)
 
 The same three APKs serve phones; the platform comes from the handshake
 (`android` selects the touch path: no D-pad, `swipe` allowed, `focus`
@@ -452,6 +452,14 @@ devices:
   The first phone attempts failed `scrollto` both ways and produced the I-75
   fix (the TV regression was re-run green afterwards: wire suite 26+2, TV
   E2E `run 20261018-104405-4f10`).
+- Second verified phone (2026-10-19): **Realme RMX3997, Android 16 (SDK 36)**,
+  720×1604 @ 2.0, wireless-debugging serial `10.102.93.196:42777`. Driven
+  end-to-end **through the MCP server alone** (decision I-80): `devices_check`
+  reported the device, then `run` of the bare play name `mobile_smoke.play`
+  passed — `run 20261019-061207-92f9: passed (1m43s, exit 0)`, 2 acts,
+  86 steps, 0 failed; the screenshot came back through
+  `impresario_artifact_get` as an image and the report through
+  `impresario_report_get`.
 
 ### 2.8 Platform notes
 

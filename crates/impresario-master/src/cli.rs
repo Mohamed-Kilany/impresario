@@ -834,6 +834,10 @@ pub(crate) struct RunOutcome {
     pub report: Option<RunReport>,
     /// Pre-run refusals and reporter errors; the same text went to stderr.
     pub messages: Vec<String>,
+    /// Diagnostics behind a refusal, one per line. The CLI already printed
+    /// them through `render::eprint_all`; the MCP server surfaces them in
+    /// the tool error instead of leaving only a count.
+    pub detail: Option<String>,
 }
 
 impl RunOutcome {
@@ -844,8 +848,26 @@ impl RunOutcome {
             run_dir: None,
             report: None,
             messages: vec![message],
+            detail: None,
         }
     }
+
+    fn refusal_with_detail(exit_code: i32, message: String, detail: String) -> Self {
+        Self {
+            detail: Some(detail),
+            ..Self::refusal(exit_code, message)
+        }
+    }
+}
+
+/// One line per diagnostic, for refusals whose details the CLI already
+/// printed but which a non-CLI caller (the MCP server) should receive too.
+fn diagnostics_detail(diagnostics: &Diagnostics) -> String {
+    diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.one_line())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn cmd_run(
@@ -878,14 +900,22 @@ pub(crate) fn run_workspace(
     let Some(config) = config_outcome.config else {
         let message = format!("run: configuration errors in {}", config_path.display());
         eprintln!("{message}");
-        return RunOutcome::refusal(EXIT_USAGE, message);
+        return RunOutcome::refusal_with_detail(
+            EXIT_USAGE,
+            message,
+            diagnostics_detail(&config_outcome.diagnostics),
+        );
     };
     let devices_outcome = config::load_devices(devices_path);
     render::eprint_all(&devices_outcome.diagnostics);
     let Some(device_list) = devices_outcome.config else {
         let message = format!("run: configuration errors in {}", devices_path.display());
         eprintln!("{message}");
-        return RunOutcome::refusal(EXIT_USAGE, message);
+        return RunOutcome::refusal_with_detail(
+            EXIT_USAGE,
+            message,
+            diagnostics_detail(&devices_outcome.diagnostics),
+        );
     };
 
     let reporter_list = match &args.reporter {
@@ -935,7 +965,11 @@ pub(crate) fn run_workspace(
         render::eprint_all(&diagnostics);
         let message = "run: report_output is not usable; nothing was executed".to_string();
         eprintln!("{message}");
-        return RunOutcome::refusal(EXIT_USAGE, message);
+        return RunOutcome::refusal_with_detail(
+            EXIT_USAGE,
+            message,
+            diagnostics_detail(&diagnostics),
+        );
     }
 
     // Workspace: scenes come from the configured scenes_dir, plays from
@@ -955,7 +989,11 @@ pub(crate) fn run_workspace(
             load_diagnostics.errors().count()
         );
         eprintln!("{message}");
-        return RunOutcome::refusal(EXIT_USAGE, message);
+        return RunOutcome::refusal_with_detail(
+            EXIT_USAGE,
+            message,
+            diagnostics_detail(&load_diagnostics),
+        );
     }
 
     let selection = plan::Selection {
@@ -969,7 +1007,11 @@ pub(crate) fn run_workspace(
             render::eprint_all(&diagnostics);
             let message = "run: invalid --var; nothing was executed".to_string();
             eprintln!("{message}");
-            return RunOutcome::refusal(EXIT_USAGE, message);
+            return RunOutcome::refusal_with_detail(
+                EXIT_USAGE,
+                message,
+                diagnostics_detail(&diagnostics),
+            );
         }
     };
     let input = plan::PlanInput {
@@ -990,7 +1032,11 @@ pub(crate) fn run_workspace(
                 diagnostics.errors().count()
             );
             eprintln!("{message}");
-            return RunOutcome::refusal(EXIT_USAGE, message);
+            return RunOutcome::refusal_with_detail(
+                EXIT_USAGE,
+                message,
+                diagnostics_detail(&diagnostics),
+            );
         }
     };
 
@@ -1048,6 +1094,7 @@ pub(crate) fn run_workspace(
         run_dir: Some(run_dir),
         report: Some(outcome.report),
         messages: reporter_errors,
+        detail: None,
     }
 }
 

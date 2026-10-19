@@ -85,8 +85,9 @@ pub(crate) fn definitions() -> Vec<Value> {
                     "plays": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Play file names, workspace-relative paths or glob \
-        patterns (like --play). Default: every play in the plays directory.",
+                        "description": "Play names or simple globs (resolved against the \
+        plays directory), workspace-relative paths or glob patterns (like --play). \
+        Default: every play in the plays directory.",
                     },
                     "devices": {
                         "type": "array",

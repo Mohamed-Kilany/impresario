@@ -268,8 +268,12 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         json!("Mock Device")
     );
 
-    // run
-    let run = structured(&mcp.tools_call(7, "impresario_run", json!({ "devices": ["d1"] })));
+    // run — the play goes by the bare name `workspace_info` reports.
+    let run = structured(&mcp.tools_call(
+        7,
+        "impresario_run",
+        json!({ "devices": ["d1"], "plays": ["basic.play"] }),
+    ));
     assert_eq!(run["exit_code"], json!(0));
     assert_eq!(run["status"], json!("passed"));
     assert_eq!(run["summary"]["acts_passed"], json!(1));
@@ -401,6 +405,22 @@ fn modern_discover_protocol_errors_and_diagnostics() {
     assert!(
         codes.iter().any(|code| code.starts_with("IMP-DSL")),
         "codes: {codes:?}"
+    );
+
+    // A run refusal carries its diagnostics, not just a count: a bare play
+    // name that does not exist is reported by name.
+    let refused = mcp.tools_call_meta(
+        99,
+        "impresario_run",
+        json!({ "plays": ["nope.play"], "devices": ["d1"] }),
+        meta["_meta"].clone(),
+    );
+    assert_eq!(result_of(&refused)["isError"], json!(true));
+    let refusal = content_of(&refused);
+    let refusal_text = refusal[0]["text"].as_str().expect("refusal text");
+    assert!(
+        refusal_text.contains("nope.play") && refusal_text.contains("does not exist"),
+        "refusal text: {refusal_text}"
     );
 
     // Resources: the DSL reference is embedded in the binary.

@@ -121,6 +121,43 @@ fn relative_to(base: &Path, path: &Path) -> String {
     }
 }
 
+/// A bare play name or simple glob (no directory component) is resolved
+/// against the configured plays directory before meeting the CLI's
+/// root-relative `--play` semantics: the name `impresario_workspace_info`
+/// reports should just work when handed back to `impresario_run`.
+fn qualify_play(pattern: &str, plays_dir: &Path) -> String {
+    let normalized = pattern.replace('\\', "/");
+    let simple = !normalized.is_empty() && !normalized.contains('/') && !normalized.contains(':');
+    if !simple {
+        return pattern.to_string();
+    }
+    let dir = plays_dir.to_string_lossy().replace('\\', "/");
+    let dir = dir.trim_end_matches('/');
+    let dir = dir.strip_prefix("./").unwrap_or(dir);
+    if dir.is_empty() || dir == "." {
+        normalized
+    } else {
+        format!("{dir}/{normalized}")
+    }
+}
+
+fn qualify_plays(server: &Server, plays: Vec<String>) -> Result<Vec<String>, String> {
+    if plays.is_empty() {
+        return Ok(plays);
+    }
+    let config_outcome = config::load_config(&server.config_path);
+    let Some(config) = config_outcome.config else {
+        return Err(format!(
+            "the workspace is not usable:\n{}",
+            diagnostics_text(&config_outcome.diagnostics)
+        ));
+    };
+    Ok(plays
+        .into_iter()
+        .map(|play| qualify_play(&play, &config.plays_dir))
+        .collect())
+}
+
 struct WorkspaceConfig {
     config: ImpresarioConfig,
     devices: Vec<DeviceConfig>,
@@ -485,6 +522,10 @@ pub(crate) fn run(server: &Server, arguments: &Value) -> ToolOutput {
         Ok(plays) => plays,
         Err(message) => return ToolOutput::error(message),
     };
+    let plays = match qualify_plays(server, plays) {
+        Ok(plays) => plays,
+        Err(message) => return ToolOutput::error(message),
+    };
     let devices = match arg_strings(arguments, "devices") {
         Ok(devices) => devices,
         Err(message) => return ToolOutput::error(message),
@@ -597,10 +638,14 @@ use json, junit or html — every reporter still lands in the run directory",
             ToolOutput::json_with_prefix(run_summary(report, run_dir), headline)
         }
         _ => {
-            let detail = if outcome.messages.is_empty() {
+            let mut lines = outcome.messages.clone();
+            if let Some(detail) = &outcome.detail {
+                lines.push(detail.clone());
+            }
+            let detail = if lines.is_empty() {
                 "no report was produced".to_string()
             } else {
-                outcome.messages.join("\n")
+                lines.join("\n")
             };
             ToolOutput::error(format!("the run did not execute:\n{detail}"))
         }
@@ -1018,6 +1063,21 @@ mod tests {
                 "'{escape}' must not escape"
             );
         }
+    }
+
+    #[test]
+    fn bare_play_names_and_simple_globs_resolve_in_the_plays_directory() {
+        let plays = Path::new("./plays");
+        assert_eq!(
+            qualify_play("mobile_smoke.play", plays),
+            "plays/mobile_smoke.play"
+        );
+        assert_eq!(qualify_play("*.play", plays), "plays/*.play");
+        assert_eq!(qualify_play("plays/x.play", plays), "plays/x.play");
+        assert_eq!(qualify_play("sub\\x.play", plays), "sub\\x.play");
+        assert_eq!(qualify_play("C:/abs/x.play", plays), "C:/abs/x.play");
+        assert_eq!(qualify_play("x.play", Path::new(".")), "x.play");
+        assert_eq!(qualify_play("x.play", Path::new("specs/")), "specs/x.play");
     }
 
     #[test]
