@@ -109,6 +109,9 @@ Every ✖ combination fails loudly; nothing is a silent no-op:
     `focus` on phones, `key <k>` per platform profile, `app background`
     when the driver has no support for it, and non-ASCII text entry when
     the `input text` fallback is the only path;
+  - the Apple agent guards `focus` on `ios`, `swipe` and `select` on `tvos`,
+    `key <k>` per platform profile, and a selector strategy the platform does
+    not implement (`classChain`, D-15, and the Android/web strategies);
   - the connector guards what CDP cannot do on web runtimes;
   - the master surfaces the wire error verbatim in the report.
 
@@ -134,6 +137,34 @@ Every ✖ combination fails loudly; nothing is a silent no-op:
   mirrored by per-executor key tables with unit tests; the planner enforces
   the same ✅/✖ split shown here.
 
+Apple (`ios`, `tvos`) specifics:
+
+- `select` on `ios` is "D-pad only" like `android`/`androidtv`: the executor
+  takes the value from a `pickerWheel` (`adjust(toPickerWheelValue:)`) when the
+  located element is one, otherwise it taps the element and taps the match for
+  the value's label among the newly visible options.
+- `click` on `tvos` traverses focus and presses Select; if the traversal ends
+  `FOCUS_UNREACHABLE` but XCTest still reports the element hittable (system
+  alerts, focus traps), the executor taps it directly — the honest focus error
+  is kept only when the element is not hittable (I-86).
+- Text entry reads the field before touching it and verifies the value after
+  typing; `append` is implemented as read → delete-all → retype, because
+  XCUITest has no clear/append primitive (I-87). A non-text element answers
+  `NOT_INTERACTABLE` before the keyboard is involved.
+- `scroll` on `tvos` presses D-pad directions (the executor never calls the
+  driver's drag path there); on `ios` one step is a drag across 80% of the
+  container's visible extent, and `scrollto` splits its budget down-then-up.
+- `classChain` (selector strategy, spec 5.3) is **not implemented** for Apple
+  (D-15) and answers `UNSUPPORTED_ACTION`/`INVALID_SELECTOR` at runtime; the
+  Android strategies (`android_id`, `android_desc`, `android_class`) and the
+  web strategies (`css`, `xpath`, `text`, `text_contains`) are rejected with
+  `INVALID_SELECTOR` naming the Apple-supported set.
+- `clear_app_data` on `ios`/`tvos` is performed by the **host** (uninstall +
+  reinstall the app under test, `options.app_path`) because no app can delete
+  another app's container; without a usable tool the option degrades to a cold
+  start plus one WARN line (I-84). On `android`/`androidtv` the agent wipes
+  in place.
+
 ## Verification status (what was actually exercised)
 
 | Platform | Matrix verification | Real hardware |
@@ -143,8 +174,8 @@ Every ✖ combination fails loudly; nothing is a silent no-op:
 | `tizen` | unit and loopback-mock tests only | ✖ none available |
 | `android` | live E2E on a real phone (`run 20261018-103702-ee29`: 86 steps, 0 failed) incl. touch `scroll`/`swipe`, text entry, keys, app lifecycle | ✅ Galaxy A51, Android 13 (Wi-Fi) |
 | `androidtv` | live E2E on a real TV (`run 20261018-104405-4f10`: 89 steps, 0 failed, D-pad `scrollto`, key hold, app lifecycle) + the on-device driver/wire test classes (26/26, 2/2) | ✅ TCL Android TV, Android 11 (Wi-Fi) |
-| `ios` | executor deferred (no Swift/Xcode on this host); planner matrix is unit-tested | ✖ not built yet |
-| `tvos` | executor deferred; planner matrix is unit-tested | ✖ not built yet |
+| `ios` | `AgentCore`/`AgentService` are exercised by `swift test` on Linux (executor + dispatcher + focus navigator against fakes; the full wire protocol over loopback gRPC); the XCUITest layer (`XCUIDriver`, `AgentRunnerTests`) is written and reviewed but **not compiled** (no Xcode on this host) | ✖ not built yet (needs a macOS host) |
+| `tvos` | same as `ios`: executor/session behavior under `swift test`, XCUITest layer unbuilt | ✖ not built yet (needs a macOS host) |
 
 Hardware details, run ids and case-by-case evidence: `docs/DEVICES.md` and
 `docs/STATUS.md`.

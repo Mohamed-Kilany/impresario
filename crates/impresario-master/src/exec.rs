@@ -17,7 +17,7 @@ use impresario_clients::agent_client::{
     HandshakeParams, SessionOptions,
 };
 use impresario_clients::log::{LogBuffer, LogLevel, LogRecord};
-use impresario_clients::transport::{transport_for, DeviceTransport};
+use impresario_clients::transport::{transport_for, DeviceTransport, ResetOutcome};
 use impresario_core::ast::AppOp;
 use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
@@ -592,6 +592,25 @@ impl DeviceRun<'_> {
     /// `AppControl{LAUNCH|RESTART, clear_data}` before an Act (spec 7.3
     /// step 4; the first reset of the run issues LAUNCH).
     async fn reset_app(&mut self, clear_data: bool) -> Result<(), WireError> {
+        // Host-side clean state before the reset command (I-84): the Apple
+        // family cannot wipe another app's sandbox from inside the UI-test
+        // runner, so the host reinstalls the app under test. Android wipes the
+        // package in the agent and reports `NotRequested` here.
+        match self.transport.reset_app_data(self.device).await {
+            Ok(ResetOutcome::Reset) => {
+                tracing::debug!(device = %self.device.name, "app reinstalled for a clean state");
+            }
+            Ok(ResetOutcome::NotRequested) => {}
+            Ok(ResetOutcome::Unavailable(reason)) => {
+                tracing::warn!(
+                    device = %self.device.name,
+                    %reason,
+                    "clear_app_data degrades to a cold start (I-84)"
+                );
+            }
+            Err(error) => return Err(phase(error.to_wire(), "app_reset")),
+        }
+
         let timeout_ms =
             u32::try_from(self.shared.options.config.timeout_default_ms).unwrap_or(u32::MAX);
         let op = if self.launched {

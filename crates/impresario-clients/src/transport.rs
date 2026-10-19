@@ -32,6 +32,9 @@ const ADB_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// Timeout for `adb install`.
 const ADB_INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Timeout for the Apple clean-state reinstall (`simctl`/`devicectl`).
+const APPLE_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Port defaults used when the device entry does not override them.
 const ANDROID_AGENT_PORT: u16 = 50061;
 const APPLE_AGENT_PORT: u16 = 50062;
@@ -126,11 +129,142 @@ impl TransportError {
     }
 }
 
+/// What a [`DeviceTransport::reset_app_data`] call achieved (I-84).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResetOutcome {
+    /// `options.clear_app_data` is off: no clean state was requested.
+    NotRequested,
+    /// The app under test was wiped or reinstalled.
+    Reset,
+    /// The host cannot reset this app's container; the agent degrades to a
+    /// cold start (Apple without `options.app_path`).
+    Unavailable(String),
+}
+
+/// One host command of the Apple clean-state sequence (I-84).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResetCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    /// A failing command is tolerated (uninstalling an app that is not
+    /// installed is not an error).
+    pub tolerate_failure: bool,
+}
+
+/// Which host tool performs the Apple clean-state reinstall (I-84).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppleResetTool {
+    /// `xcrun simctl` for iOS simulators.
+    Simctl,
+    /// `xcrun devicectl` for iOS/tvOS devices (Xcode 15+).
+    Devicectl,
+    /// `ideviceinstaller` (libimobiledevice) fallback.
+    IdeviceInstaller,
+}
+
+/// Pure argv builder for the Apple clean-state sequence: uninstall, then
+/// install the app under test (I-84; unit-tested).
+#[must_use]
+pub fn apple_reset_commands(
+    tool: AppleResetTool,
+    udid: &str,
+    app_id: &str,
+    app_path: &str,
+) -> Vec<ResetCommand> {
+    let xcrun = |args: Vec<String>, tolerate_failure: bool| ResetCommand {
+        program: "xcrun".to_string(),
+        args,
+        tolerate_failure,
+    };
+    match tool {
+        AppleResetTool::Simctl => vec![
+            xcrun(
+                vec![
+                    "simctl".to_string(),
+                    "uninstall".to_string(),
+                    udid.to_string(),
+                    app_id.to_string(),
+                ],
+                true,
+            ),
+            xcrun(
+                vec![
+                    "simctl".to_string(),
+                    "install".to_string(),
+                    udid.to_string(),
+                    app_path.to_string(),
+                ],
+                false,
+            ),
+        ],
+        AppleResetTool::Devicectl => vec![
+            xcrun(
+                vec![
+                    "devicectl".to_string(),
+                    "device".to_string(),
+                    "uninstall".to_string(),
+                    "app".to_string(),
+                    "--device".to_string(),
+                    udid.to_string(),
+                    app_id.to_string(),
+                ],
+                true,
+            ),
+            xcrun(
+                vec![
+                    "devicectl".to_string(),
+                    "device".to_string(),
+                    "install".to_string(),
+                    "app".to_string(),
+                    "--device".to_string(),
+                    udid.to_string(),
+                    app_path.to_string(),
+                ],
+                false,
+            ),
+        ],
+        AppleResetTool::IdeviceInstaller => vec![
+            ResetCommand {
+                program: "ideviceinstaller".to_string(),
+                args: vec![
+                    "-u".to_string(),
+                    udid.to_string(),
+                    "-U".to_string(),
+                    app_id.to_string(),
+                ],
+                tolerate_failure: true,
+            },
+            ResetCommand {
+                program: "ideviceinstaller".to_string(),
+                args: vec![
+                    "-u".to_string(),
+                    udid.to_string(),
+                    "-i".to_string(),
+                    app_path.to_string(),
+                ],
+                tolerate_failure: false,
+            },
+        ],
+    }
+}
+
 /// One device transport per family (spec section 9).
 #[async_trait]
 pub trait DeviceTransport: Send {
     /// Prepare the device and return the executor endpoint (spec 7.3 step 1).
     async fn prepare(&mut self, device: &DeviceConfig) -> Result<Endpoint, TransportError>;
+
+    /// Host-side clean state before a reset `AppControl` (spec 7.3 step 4,
+    /// I-84). The Android family wipes the package inside the agent, so its
+    /// transport keeps this default (`NotRequested`: no host-side work). The
+    /// Apple family reinstalls the app under test from `options.app_path` and
+    /// returns `Reset`, or `Unavailable` when the host cannot.
+    async fn reset_app_data(
+        &mut self,
+        _device: &DeviceConfig,
+    ) -> Result<ResetOutcome, TransportError> {
+        Ok(ResetOutcome::NotRequested)
+    }
 
     /// Release everything `prepare` acquired (spec 7.3 step 6).
     async fn teardown(&mut self) -> Result<(), TransportError>;
@@ -1073,6 +1207,96 @@ impl AppleTransport {
         self.runner = Some(child);
         Ok(())
     }
+
+    /// Tool that performs the clean-state reinstall for this target (I-84).
+    async fn reset_tool(&self, udid: &str) -> AppleResetTool {
+        if is_simulator_udid(udid) {
+            return AppleResetTool::Simctl;
+        }
+        if find_in_path("xcrun").is_some() && self.devicectl_available().await {
+            return AppleResetTool::Devicectl;
+        }
+        AppleResetTool::IdeviceInstaller
+    }
+
+    /// `xcrun devicectl` exists from Xcode 15 on; older hosts fall back to
+    /// `ideviceinstaller`.
+    async fn devicectl_available(&self) -> bool {
+        let Some(xcrun) = find_in_path("xcrun") else {
+            return false;
+        };
+        let mut cmd = Command::new(xcrun);
+        cmd.args(["devicectl", "--version"]);
+        matches!(
+            command_output(
+                &mut cmd,
+                Duration::from_secs(30),
+                "xcrun devicectl --version"
+            )
+            .await,
+            Ok(output) if output.status.success()
+        )
+    }
+
+    /// Uninstall + install the app under test (`options.app_path`) so the next
+    /// launch starts from a clean container (I-84). Returns `NotRequested`
+    /// when `clear_app_data` is off and `Unavailable` when the host has no way
+    /// to reinstall the app (the agent then degrades to a cold start).
+    async fn reset_app_data_for(
+        &mut self,
+        device: &DeviceConfig,
+    ) -> Result<ResetOutcome, TransportError> {
+        if !device.options.clear_app_data {
+            return Ok(ResetOutcome::NotRequested);
+        }
+        let Some(app_id) = device.app_id.as_deref() else {
+            return Ok(ResetOutcome::Unavailable(
+                "clear_app_data needs app_id (the app under test)".to_string(),
+            ));
+        };
+        let Some(app_path) = device.options.app_path.as_deref() else {
+            return Ok(ResetOutcome::Unavailable(
+                "set options.app_path to a signed .app bundle or .ipa so the host can reinstall \
+                 the app; without it the agent only cold-starts it (docs/DEVICES.md section 3)"
+                    .to_string(),
+            ));
+        };
+        let udid = device.target_endpoint.clone();
+        let tool = self.reset_tool(&udid).await;
+        for step in apple_reset_commands(tool, &udid, app_id, app_path) {
+            let program = find_in_path(&step.program).ok_or_else(|| {
+                TransportError::DeviceUnavailable(format!(
+                    "{} not found on PATH; install libimobiledevice with \
+                     'brew install libimobiledevice'",
+                    step.program
+                ))
+            })?;
+            let mut cmd = Command::new(program);
+            cmd.args(&step.args);
+            let what = format!("{} {}", step.program, step.args.join(" "));
+            tracing::debug!(command = %what, "resetting the app under test");
+            let output = command_output(&mut cmd, APPLE_INSTALL_TIMEOUT, &what).await?;
+            if output.status.success() {
+                continue;
+            }
+            let text = output_text(&output).trim().to_string();
+            if step.tolerate_failure {
+                tracing::debug!(command = %what, %text, "tolerated reset failure");
+                continue;
+            }
+            return Err(TransportError::Transport(format!(
+                "{what} failed with {}: {text}",
+                output.status
+            )));
+        }
+        self.logs.push(LogRecord {
+            unix_ms: unix_ms_now(),
+            level: LogLevel::Info,
+            source: "xcodebuild".to_string(),
+            message: format!("reinstalled {app_id} from {app_path} for a clean state (I-84)"),
+        });
+        Ok(ResetOutcome::Reset)
+    }
 }
 
 #[async_trait]
@@ -1141,6 +1365,19 @@ impl DeviceTransport for AppleTransport {
                 "the Apple transport cannot serve platform {other}"
             ))),
         }
+    }
+
+    async fn reset_app_data(
+        &mut self,
+        device: &DeviceConfig,
+    ) -> Result<ResetOutcome, TransportError> {
+        if !cfg!(target_os = "macos") {
+            return Err(TransportError::DeviceUnavailable(format!(
+                "device '{}' ({}) needs a macOS host to reset the app under test",
+                device.name, device.platform
+            )));
+        }
+        self.reset_app_data_for(device).await
     }
 
     async fn teardown(&mut self) -> Result<(), TransportError> {
@@ -1300,5 +1537,142 @@ mod tests {
             transport_for(Platform::Tvos).log_sources()[0].name,
             "xcodebuild"
         );
+    }
+
+    fn apple_device(platform: Platform, udid: &str) -> DeviceConfig {
+        DeviceConfig {
+            name: "apple-device".to_string(),
+            platform,
+            target_endpoint: udid.to_string(),
+            app_id: Some("com.example.app".to_string()),
+            app_url: None,
+            agent_address: None,
+            connector: None,
+            options: impresario_core::config::DeviceOptions::default(),
+        }
+    }
+
+    #[test]
+    fn apple_reset_plan_for_simulators() {
+        let steps = apple_reset_commands(
+            AppleResetTool::Simctl,
+            "11111111-2222-3333-4444-555555555555",
+            "com.example.app",
+            "/tmp/Example.app",
+        );
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].program, "xcrun");
+        assert_eq!(
+            steps[0].args,
+            vec![
+                "simctl",
+                "uninstall",
+                "11111111-2222-3333-4444-555555555555",
+                "com.example.app"
+            ]
+        );
+        assert!(steps[0].tolerate_failure, "uninstall must tolerate absence");
+        assert_eq!(
+            steps[1].args,
+            vec![
+                "simctl",
+                "install",
+                "11111111-2222-3333-4444-555555555555",
+                "/tmp/Example.app"
+            ]
+        );
+        assert!(!steps[1].tolerate_failure, "install failures are fatal");
+    }
+
+    #[test]
+    fn apple_reset_plan_for_devices_and_fallback() {
+        let steps = apple_reset_commands(
+            AppleResetTool::Devicectl,
+            "00008110-000123456789001E",
+            "com.example.app",
+            "/tmp/Example.ipa",
+        );
+        assert_eq!(
+            steps[0].args,
+            vec![
+                "devicectl",
+                "device",
+                "uninstall",
+                "app",
+                "--device",
+                "00008110-000123456789001E",
+                "com.example.app"
+            ]
+        );
+        assert_eq!(
+            steps[1].args,
+            vec![
+                "devicectl",
+                "device",
+                "install",
+                "app",
+                "--device",
+                "00008110-000123456789001E",
+                "/tmp/Example.ipa"
+            ]
+        );
+
+        let fallback = apple_reset_commands(
+            AppleResetTool::IdeviceInstaller,
+            "00008110-000123456789001E",
+            "com.example.app",
+            "/tmp/Example.ipa",
+        );
+        assert_eq!(fallback[0].program, "ideviceinstaller");
+        assert_eq!(
+            fallback[0].args,
+            vec!["-u", "00008110-000123456789001E", "-U", "com.example.app"]
+        );
+        assert_eq!(
+            fallback[1].args,
+            vec!["-u", "00008110-000123456789001E", "-i", "/tmp/Example.ipa"]
+        );
+    }
+
+    #[tokio::test]
+    async fn apple_reset_is_a_noop_without_clear_app_data() {
+        let mut transport = AppleTransport::new();
+        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let outcome = transport
+            .reset_app_data_for(&device)
+            .await
+            .expect("no-op reset");
+        assert_eq!(outcome, ResetOutcome::NotRequested);
+    }
+
+    #[tokio::test]
+    async fn apple_reset_reports_a_missing_app_path() {
+        let mut transport = AppleTransport::new();
+        let mut device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        device.options.clear_app_data = true;
+        let outcome = transport
+            .reset_app_data_for(&device)
+            .await
+            .expect("unavailable reset");
+        match outcome {
+            ResetOutcome::Unavailable(reason) => {
+                assert!(reason.contains("app_path"), "{reason}");
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apple_reset_requires_a_macos_host() {
+        if cfg!(target_os = "macos") {
+            return;
+        }
+        let mut transport = AppleTransport::new();
+        let device = apple_device(Platform::Tvos, "00008110-000123456789001E");
+        let error = transport
+            .reset_app_data(&device)
+            .await
+            .expect_err("host check");
+        assert!(matches!(error, TransportError::DeviceUnavailable(_)));
     }
 }

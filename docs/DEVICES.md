@@ -499,7 +499,118 @@ devices:
 
 ## 3. Apple — platforms `ios`, `tvos`
 
-Setup, signing and the `iproxy` tunnel are documented together with the Apple
-agent sources in Phase 6; the host of this repository has no Swift/Xcode
-toolchain, so nothing in this section has been executed here yet (see
-`docs/STATUS.md`).
+Two halves with different reachability:
+
+* the **SwiftPM package** (`agents/apple`) builds and unit-tests on any Swift
+  host, including Linux — verified here (WSL Ubuntu 22.04, Swift 6.4.1, §3.1);
+* the **Xcode targets** (the XCUITest runner + host/stub apps) need macOS with
+  Xcode — not available here, so §3.2 is written from the sources and the
+  command reference, not from a run (recorded gap in `docs/STATUS.md`).
+
+### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
+
+```bash
+# Ubuntu 22.04 host prerequisites, if the toolchain is fresh:
+#   apt-get install zlib1g-dev libstdc++-12-dev   # headers grpc-swift/NIOSSL compile against
+cd agents/apple
+swift build            # AgentCore + ImpresarioWire + AgentService
+swift test             # executor/dispatcher/focus (fakes) + full wire protocol over loopback gRPC
+```
+
+Measured on this host (WSL Ubuntu, Swift 6.4.1): `swift build` ≈ 15 s
+incremental / ~4 min cold, `swift test` right after it. On a host with no
+network access to GitHub, unpack the pinned checkouts from a mirror into
+`.build/checkouts` (the `swift-nio`/`grpc-swift`/`swift-protobuf` sources) or
+copy `Package.resolved` and the checkouts from another machine.
+
+Interpreter of the two halves: `swift test` speaks the real protocol (handshake,
+ordered commands, heartbeats, logs, screenshots, shutdown) against an in-process
+grpc-swift server, so a wire-level regression fails here before any Mac is
+involved. `SWIFTNIO_STRICT=1 swift test` (the same run with SwiftNIO's strict
+mode) turns every task scheduled on an already-stopped event loop into a crash
+with a stack trace — the shutdown ordering of I-90 is verified that way.
+
+### 3.2 Not verified here: the Xcode targets (macOS host)
+
+```bash
+brew install xcodegen
+cd agents/apple
+xcodegen generate                                  # ImpresarioApple.xcodeproj
+
+# the fixture app under test (what plays point app_id at)
+xcodebuild build -scheme AgentTargetStub-iOS \
+  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
+xcodebuild build -scheme AgentTargetStub-tvOS \
+  -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
+
+# the runner (the master starts this itself when IMPRESARIO_XCTESTRUN is set)
+xcodebuild build-for-testing -scheme AgentUITests-iOS \
+  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
+xcodebuild build-for-testing -scheme AgentUITests-tvOS \
+  -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
+```
+
+Device runs need a development team (set it in Xcode or a local xcconfig; the
+repo pins none) and the device must trust the host. `xcrun devicectl list
+devices` / `xcrun xctrace list devices` prints the udids (`xcodebuild
+-destination 'platform=iOS,id=<udid>'` takes the same value).
+
+Runner environment (the `.xctestrun`'s `TestingEnvironmentVariables`; the
+master drains the `xcodebuild` output, where the runner logs its port and
+addresses):
+
+```bash
+plutil -insert TestingEnvironmentVariables.IMPRESARIO_AGENT_PORT -string 50062 \
+  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun
+plutil -insert TestingEnvironmentVariables.IMPRESARIO_AGENT_TOKEN -string <token> \
+  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun   # optional
+plutil -insert TestingEnvironmentVariables.IMPRESARIO_NO_BONJOUR -string 1 \
+  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun   # optional
+```
+
+Master side:
+
+```toml
+[[devices]]
+id = "<udid>"                       # what xcodebuild -destination takes
+platform = "ios"                    # or "tvos"
+app_id = "com.impresario.agent.AgentTargetStub-iOS"
+
+[devices.options]
+clear_app_data = true
+app_path = "/abs/path/build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app"
+# agent_address = "192.168.1.42:50062"   # WLAN; not needed over USB (iproxy)
+```
+
+```bash
+IMPRESARIO_XCTESTRUN=build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun \
+  impresario run --config impresario.toml
+```
+
+Endpoint resolution for Apple devices (`AppleTransport`): a **simulator** is
+reached on loopback; an **iOS device** over USB gets an `iproxy` tunnel the
+transport starts itself (port `50062` by default, `IMPRESARIO_AGENT_PORT`
+changes both sides); an iOS device or Apple TV over **WLAN** uses
+`options.agent_address` — the address the runner logs at start
+(`impresario agent: addresses en0=…`). macOS only: without `xcodebuild`/
+`iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84).
+
+Clean state per test is a host-side uninstall + reinstall (`clear_app_data` +
+`options.app_path`, I-84); the tool is chosen automatically
+(`simctl` → `devicectl` → `ideviceinstaller`, the latter from
+`brew install libimobiledevice`). When none is available the option degrades to
+a cold start and one WARN line.
+
+First run after an install: iOS/tvOS ask for local-network permission. The
+runner declares the usage description and tries to dismiss the alert itself
+(interruption monitor + SpringBoard poll, `SystemAlerts`); if the buttons are
+not reachable it logs the labels it saw and one human tap on the device grants
+it for good (I-88). Uninstall + reinstall does **not** reset that permission,
+so it is a one-time cost per device.
+
+Apple TV specifics: no USB path, so WLAN is the only way (put the logged
+address into `agent_address`); the runner presses remote buttons through
+`XCUIRemote` (D-pad/Select/Menu/PlayPause; `home` = `XCUIDevice.press(.home)`),
+and the stub app's focused row is visible in its `stub_key_log`/`stub_status`
+labels while a play runs.
+

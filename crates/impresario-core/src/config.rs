@@ -200,6 +200,11 @@ pub struct DeviceOptions {
     pub page_match: Option<String>,
     #[serde(default)]
     pub clear_app_data: bool,
+    /// Host path of the app under test (`.app` bundle or `.ipa`); Apple
+    /// platforms only. With `clear_app_data` the Apple transport reinstalls it
+    /// so every test starts from a clean container (I-84).
+    #[serde(default)]
+    pub app_path: Option<String>,
     #[serde(default)]
     pub agent_port: Option<u16>,
     #[serde(default)]
@@ -304,6 +309,7 @@ const OPTION_KEYS: &[&str] = &[
     "key_dispatch",
     "page_match",
     "clear_app_data",
+    "app_path",
     "agent_port",
     "animations_disabled",
 ];
@@ -1190,9 +1196,15 @@ fn validate_options(
         }
     }
     if let Some(value) = options.get("clear_app_data") {
-        if let Some(reason) =
-            platform_problem("clear_app_data", &[Platform::Android, Platform::AndroidTv])
-        {
+        if let Some(reason) = platform_problem(
+            "clear_app_data",
+            &[
+                Platform::Android,
+                Platform::AndroidTv,
+                Platform::Ios,
+                Platform::Tvos,
+            ],
+        ) {
             invalid(diagnostics, "clear_app_data", reason);
         }
         if value.as_bool().is_none() {
@@ -1200,6 +1212,18 @@ fn validate_options(
                 diagnostics,
                 "clear_app_data",
                 "expected true or false".to_string(),
+            );
+        }
+    }
+    if let Some(value) = options.get("app_path") {
+        if let Some(reason) = platform_problem("app_path", &[Platform::Ios, Platform::Tvos]) {
+            invalid(diagnostics, "app_path", reason);
+        }
+        if value.as_str().is_none_or(|s| s.trim().is_empty()) {
+            invalid(
+                diagnostics,
+                "app_path",
+                "expected a path to the app under test (.app bundle or .ipa)".to_string(),
             );
         }
     }

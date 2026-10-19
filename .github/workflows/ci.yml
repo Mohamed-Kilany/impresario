@@ -1,7 +1,8 @@
 # CI (spec 17/18). The Rust gates run on Ubuntu (which ships
 # google-chrome — the connector fixture suite needs it); the Android JVM
-# unit tests run with JDK 17 + the Android SDK. An Apple job lands together
-# with the Apple agent (needs macOS/Xcode; see docs/STATUS.md).
+# unit tests run with JDK 17 + the Android SDK; the Apple job builds and
+# unit-tests the Swift package on Linux (the Xcode runner targets need
+# macOS/Xcode and are covered by the checklist in docs/DEVICES.md §3.2).
 name: CI
 
 on:
@@ -52,3 +53,25 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon test
+
+  apple:
+    name: "apple (Swift package: build, unit tests)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.4.1"
+      # SwiftPM on Linux links the corelibs against zlib (the same dependency
+      # the WSL build needed, docs/DEVICES.md §3.1).
+      - name: Toolchain dependencies
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+      - name: Resolve
+        working-directory: agents/apple
+        run: swift package resolve
+      - name: Build
+        working-directory: agents/apple
+        run: swift build
+      - name: Tests
+        working-directory: agents/apple
+        run: swift test
