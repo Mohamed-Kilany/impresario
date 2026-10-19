@@ -373,6 +373,10 @@ impl Session {
             }
             return Err(error);
         }
+        // The page target can match while the parser is still running. Wait
+        // until its inline scripts have run so the first command cannot race
+        // listeners the page has not attached yet (e.g. a scroll handler).
+        executor.wait_dom_ready(&bootstrap).await;
         let device = match executor.device_info(&bootstrap).await {
             Ok(device) => device,
             Err(error) => {

@@ -927,9 +927,40 @@ return {{ok:true, found:true, value:(picked.value == null ? '' : String(picked.v
         let body = format!(
             r#"
 {target}
-var amount = 0.8 * window.__impresario.visibleExtent(target, {vertical});
+var vertical = {vertical};
+var amount = 0.8 * window.__impresario.visibleExtent(target, vertical);
+var before = target
+  ? (vertical ? target.scrollTop : target.scrollLeft)
+  : (vertical ? window.pageYOffset : window.pageXOffset);
+var fired = false;
+function onScroll() {{ fired = true; }}
+// Capture phase sees element scrolls too (they do not bubble), and by the
+// time a later frame runs the page's own listeners have also completed.
+window.addEventListener('scroll', onScroll, true);
 window.__impresario.scrollBy(target, {direction}, amount);
-return {{ok:true}};
+return new Promise(function (resolve) {{
+  var frames = 0;
+  function position() {{
+    return target
+      ? (vertical ? target.scrollTop : target.scrollLeft)
+      : (vertical ? window.pageYOffset : window.pageXOffset);
+  }}
+  function finish() {{
+    window.removeEventListener('scroll', onScroll, true);
+    resolve({{ok:true}});
+  }}
+  function settle() {{
+    // A clamp at the end does not dispatch an event; give the renderer two
+    // frames, then report success without waiting further.
+    if (frames >= 2 && (fired || position() === before)) {{ finish(); return; }}
+    // A real scroll event can be delayed behind a busy compositor; keep
+    // polling frames instead of assuming two are always enough.
+    if (frames >= 30) {{ finish(); return; }}
+    frames += 1;
+    requestAnimationFrame(settle);
+  }}
+  requestAnimationFrame(settle);
+}});
 "#,
             target = target,
             vertical = vertical,
@@ -1323,8 +1354,31 @@ return {ok:true, complete:(info.max - info.top) <= 1};
     /// Best-effort `document.readyState == "complete"` wait (10 s cap; a page
     /// that never finishes loading does not fail the launch).
     async fn wait_ready(&self, cancel: &CancellationToken) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        let body = "return {ok:true, complete:((document.readyState || '') === 'complete')};";
+        self.wait_ready_state(
+            "return {ok:true, complete:((document.readyState || '') === 'complete')};",
+            Duration::from_secs(10),
+            cancel,
+        )
+        .await;
+    }
+
+    /// Best-effort wait until the page has left the `loading` state, i.e.
+    /// parsing finished and its inline scripts (event listeners) have run.
+    ///
+    /// The connector may attach to a page target while it is still parsing;
+    /// acting then can set a scroll position before the page's own `scroll`
+    /// listener exists. Five seconds cap, like the launch wait.
+    pub(crate) async fn wait_dom_ready(&self, cancel: &CancellationToken) {
+        self.wait_ready_state(
+            "return {ok:true, complete:((document.readyState || '') !== 'loading')};",
+            Duration::from_secs(5),
+            cancel,
+        )
+        .await;
+    }
+
+    async fn wait_ready_state(&self, body: &str, cap: Duration, cancel: &CancellationToken) {
+        let deadline = tokio::time::Instant::now() + cap;
         loop {
             if cancel.is_cancelled() {
                 return;
