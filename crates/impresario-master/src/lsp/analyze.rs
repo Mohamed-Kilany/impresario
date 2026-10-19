@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use impresario_core::config;
 use impresario_core::diag::{Code, Diagnostic as CoreDiagnostic, Diagnostics, Severity};
 use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::settings;
 use impresario_core::span::Span;
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::Workspace;
@@ -55,7 +56,7 @@ pub fn analyze(
     let mut raw: RawDiags = BTreeMap::new();
     let mut sources: BTreeMap<PathBuf, String> = BTreeMap::new();
 
-    let cfg_outcome = config::load_config(config_path);
+    let cfg_outcome = settings::load_default_layers(config_path, base);
     sources.insert(config_path.to_path_buf(), read_or_empty(config_path));
     absorb(&mut raw, &cfg_outcome.diagnostics, Some(config_path));
 

@@ -3,6 +3,7 @@
 //! The loader is recovering like the parsers: unreadable or broken files
 //! produce diagnostics, everything else still loads.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{PlayFile, SceneFile};
@@ -194,6 +195,110 @@ fn load_files(files: &[PathBuf]) -> LoadedWorkspace {
     loaded
 }
 
+/// Where the workspace root came from (TASK-2 section 3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceSource {
+    /// `--workspace <path>`.
+    Flag,
+    /// `IMPRESARIO_WORKSPACE`.
+    Environment,
+    /// `.impresario/` or `impresario.config` found walking up from the CWD.
+    Marker,
+    /// The `workspace` key in the global config.
+    GlobalConfig,
+    /// No other source matched; the current directory.
+    CurrentDir,
+}
+
+impl WorkspaceSource {
+    /// A short human-readable label for `workspace current`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorkspaceSource::Flag => "--workspace",
+            WorkspaceSource::Environment => "IMPRESARIO_WORKSPACE",
+            WorkspaceSource::Marker => "workspace marker",
+            WorkspaceSource::GlobalConfig => "global config",
+            WorkspaceSource::CurrentDir => "current directory",
+        }
+    }
+}
+
+/// The resolved workspace root and the layer that supplied it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceLocation {
+    /// Absolute or caller-relative workspace root.
+    pub root: PathBuf,
+    /// Winning resolution layer.
+    pub source: WorkspaceSource,
+}
+
+/// Resolve the workspace root in the documented order:
+/// flag, environment, marker walking up from `cwd`, global config, `cwd`.
+///
+/// Relative paths are resolved against `cwd`; the function never touches the
+/// process environment itself, which keeps it testable.
+#[must_use]
+pub fn resolve_root(
+    flag: Option<&Path>,
+    environment: Option<&OsStr>,
+    cwd: &Path,
+    global: Option<&Path>,
+) -> WorkspaceLocation {
+    if let Some(path) = flag {
+        return WorkspaceLocation {
+            root: absolute(path, cwd),
+            source: WorkspaceSource::Flag,
+        };
+    }
+    if let Some(value) = environment {
+        if !value.is_empty() {
+            return WorkspaceLocation {
+                root: absolute(Path::new(value), cwd),
+                source: WorkspaceSource::Environment,
+            };
+        }
+    }
+    if let Some(root) = find_marker(cwd) {
+        return WorkspaceLocation {
+            root,
+            source: WorkspaceSource::Marker,
+        };
+    }
+    if let Some(path) = global {
+        return WorkspaceLocation {
+            root: absolute(path, cwd),
+            source: WorkspaceSource::GlobalConfig,
+        };
+    }
+    WorkspaceLocation {
+        root: cwd.to_path_buf(),
+        source: WorkspaceSource::CurrentDir,
+    }
+}
+
+fn absolute(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    }
+}
+
+/// Walk up from `start` looking for a workspace marker.
+///
+/// A directory containing `.impresario/` or `impresario.config` is a
+/// workspace. The marker lookup stops at the filesystem root.
+#[must_use]
+pub fn find_marker(start: &Path) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        if dir.join(".impresario").is_dir() || dir.join("impresario.config").is_file() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -294,6 +399,88 @@ mod tests {
         let loaded = load_paths(&[dir.join("bad.play"), dir.join("good.scene")]);
         assert_eq!(loaded.workspace.scenes.len(), 1);
         assert_eq!(loaded.workspace.plays.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn location_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "impresario-loc-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn marker_walks_up_to_the_workspace() {
+        let dir = location_dir("marker");
+        let nested = dir.join("a/b/c");
+        fs::create_dir_all(&nested).expect("nested");
+        fs::write(dir.join("impresario.config"), "project: x\n").expect("config");
+        let found = resolve_root(None, None, &nested, None);
+        assert_eq!(found.root, dir);
+        assert_eq!(found.source, WorkspaceSource::Marker);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dot_impresario_directory_is_a_marker() {
+        let dir = location_dir("dot");
+        let nested = dir.join("x");
+        fs::create_dir_all(&nested).expect("nested");
+        fs::create_dir_all(dir.join(".impresario")).expect("marker");
+        assert_eq!(find_marker(&nested), Some(dir.clone()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flag_beats_environment_and_marker() {
+        let dir = location_dir("flag");
+        let flag = dir.join("flag-workspace");
+        fs::create_dir_all(&flag).expect("flag");
+        fs::write(dir.join("impresario.config"), "project: x\n").expect("config");
+        let found = resolve_root(
+            Some(Path::new("flag-workspace")),
+            Some(OsStr::new("env-workspace")),
+            &dir,
+            Some(Path::new("global-workspace")),
+        );
+        assert_eq!(found.root, flag);
+        assert_eq!(found.source, WorkspaceSource::Flag);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn environment_beats_marker_and_empty_values_are_ignored() {
+        let dir = location_dir("env");
+        fs::write(dir.join("impresario.config"), "project: x\n").expect("config");
+        let found = resolve_root(
+            None,
+            Some(OsStr::new("elsewhere")),
+            &dir,
+            Some(Path::new("global")),
+        );
+        assert_eq!(found.root, dir.join("elsewhere"));
+        assert_eq!(found.source, WorkspaceSource::Environment);
+        let found = resolve_root(None, Some(OsStr::new("")), &dir, None);
+        assert_eq!(found.source, WorkspaceSource::Marker);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn global_config_then_current_dir_are_the_last_resort() {
+        let dir = location_dir("global");
+        let found = resolve_root(None, None, &dir, Some(Path::new("w")));
+        assert_eq!(found.root, dir.join("w"));
+        assert_eq!(found.source, WorkspaceSource::GlobalConfig);
+        let found = resolve_root(None, None, &dir, None);
+        assert_eq!(found.root, dir);
+        assert_eq!(found.source, WorkspaceSource::CurrentDir);
         let _ = fs::remove_dir_all(&dir);
     }
 }

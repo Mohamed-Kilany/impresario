@@ -14,6 +14,7 @@ use impresario_clients::agent_client::DeviceInfo;
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::platforms::Platform;
+use impresario_core::settings;
 use impresario_core::support::{self, CheckVerb, Verb};
 use impresario_core::workspace;
 use serde_json::{json, Map, Value};
@@ -145,7 +146,7 @@ fn qualify_plays(server: &Server, plays: Vec<String>) -> Result<Vec<String>, Str
     if plays.is_empty() {
         return Ok(plays);
     }
-    let config_outcome = config::load_config(&server.config_path);
+    let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
     let Some(config) = config_outcome.config else {
         return Err(format!(
             "the workspace is not usable:\n{}",
@@ -164,7 +165,7 @@ struct WorkspaceConfig {
 }
 
 fn load_workspace_config(server: &Server) -> Result<WorkspaceConfig, String> {
-    let config_outcome = config::load_config(&server.config_path);
+    let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
     let devices_outcome = config::load_devices(&server.devices_path);
     let mut diagnostics = Diagnostics::new();
     diagnostics.extend(config_outcome.diagnostics.iter().cloned());
@@ -217,7 +218,7 @@ pub(crate) fn workspace_info(server: &Server, _arguments: &Value) -> ToolOutput 
 /// The workspace summary; shared with the `impresario://workspace/info`
 /// resource.
 pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
-    let config_outcome = config::load_config(&server.config_path);
+    let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
     let devices_outcome = config::load_devices(&server.devices_path);
     let mut diagnostics = Diagnostics::new();
     diagnostics.extend(config_outcome.diagnostics.iter().cloned());
@@ -743,7 +744,7 @@ fn failure_summary(attempt: &AttemptReport, failure: &FailureReport) -> Value {
 // ---------------------------------------------------------------------------
 
 fn report_output_dir(server: &Server) -> Result<PathBuf, String> {
-    let outcome = config::load_config(&server.config_path);
+    let outcome = settings::load_default_layers(&server.config_path, &server.base);
     let Some(config) = outcome.config else {
         return Err(format!(
             "configuration errors in {}:\n{}",

@@ -209,14 +209,16 @@ fn config_files_report_their_own_diagnostics() {
         let mark = server.mark();
         server.start_session(None).await;
         let published = server.wait_diagnostics(&config, mark).await;
+        // Since TASK-2 section 4.1 every key has a default, so a file with only
+        // an invalid value reports that value rather than a missing key.
         assert!(
-            lsp::codes(&published).contains(&"IMP-CFG-002".to_string()),
-            "the missing 'project' key is reported: {published}"
+            lsp::codes(&published).contains(&"IMP-CFG-003".to_string()),
+            "the invalid timeout value is reported: {published}"
         );
         let diagnostic = lsp::diagnostics(&published)
             .into_iter()
             .find(|diagnostic| {
-                diagnostic.get("code").and_then(Value::as_str) == Some("IMP-CFG-002")
+                diagnostic.get("code").and_then(Value::as_str) == Some("IMP-CFG-003")
             })
             .expect("config diagnostic");
         assert_eq!(diagnostic.get("severity").and_then(Value::as_i64), Some(1));

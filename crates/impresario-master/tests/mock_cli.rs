@@ -1,8 +1,8 @@
 //! The README quick start, end to end and hardware-free, exactly as written:
-//! `impresario init` + `validate`, `impresario mock-agent` (decision I-77)
+//! `impresario workspace new` + `validate`, `impresario mock-agent` (decision I-77)
 //! serving the scripted MockAgent, the mock device appended to
 //! `impresario.devices.config`, and a real `impresario run` child of the
-//! init-generated example play exiting 0 with a passing `report.json`.
+//! workspace-new example play exiting 0 with a passing `report.json`.
 
 mod common;
 
@@ -83,7 +83,7 @@ fn readme_mock_quick_start_runs_green() {
     let (_mock, address) = start_mock_agent("0");
 
     // README step 2: create and validate the workspace.
-    let (code, stdout, stderr) = run_in(temp.path(), &["init"], &[]);
+    let (code, stdout, stderr) = run_in(temp.path(), &["workspace", "new", "--example"], &[]);
     assert_eq!(code, Some(0), "init failed\n{stdout}\n{stderr}");
     let (code, stdout, stderr) = run_in(temp.path(), &["validate"], &[]);
     assert_eq!(code, Some(0), "validate failed\n{stdout}\n{stderr}");

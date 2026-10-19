@@ -72,6 +72,7 @@ impl Drop for TestLsp {
 impl TestLsp {
     /// Start a server for `base` (the workspace root).
     pub async fn start(base: &Path) -> Self {
+        super::test_home();
         let ctx = Ctx {
             base: base.to_path_buf(),
             config_path: base.join("impresario.config"),

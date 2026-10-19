@@ -1,7 +1,7 @@
 //! The `impresario` CLI (spec sections 4.4 and 8.1).
 //!
 //! This module owns argument parsing, exit codes and every command:
-//! `init`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, plus the
+//! `config`, `workspace`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, plus the
 //! development-only `mock-agent` (decision I-77) and `mcp` (decision I-80).
 
 use std::path::{Path, PathBuf};
@@ -13,9 +13,11 @@ use impresario_clients::agent_client::{AgentClient, DeviceInfo, HandshakeParams}
 use impresario_clients::transport::{transport_for, DeviceTransport};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::{Code, Diagnostic, Diagnostics};
+use impresario_core::home::Home;
 use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::settings::{self, EffectiveSettings, LayerSource, SettingValue, SettingsFile};
 use impresario_core::validation::{self, DeviceRef};
-use impresario_core::workspace;
+use impresario_core::workspace::{self, WorkspaceSource};
 use tokio_util::sync::CancellationToken;
 
 use crate::report::RunReport;
@@ -39,8 +41,10 @@ pub struct Cli {
     /// Path to impresario.devices.config (default: <workspace>/impresario.devices.config).
     #[arg(long, global = true, value_name = "PATH")]
     pub devices_config: Option<PathBuf>,
-    /// Workspace directory relative paths resolve against (default: cwd).
-    #[arg(long, global = true, value_name = "DIR")]
+    /// Workspace directory relative paths resolve against. Place it before the
+    /// subcommand; `--workspace` after a `config` subcommand selects the
+    /// config scope instead (TASK-2 section 4.1).
+    #[arg(long, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
     /// More logging (repeatable).
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
@@ -57,11 +61,15 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Write the example workspace (impresario.config, devices, scenes, plays).
-    Init {
-        /// Overwrite files that already exist.
-        #[arg(long)]
-        force: bool,
+    /// Read and edit configuration (global and workspace layers).
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// Manage known workspaces.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
     },
     /// Parse and validate the workspace without touching any device.
     Validate {
@@ -111,6 +119,106 @@ pub enum DevicesCommand {
     Check {
         /// Device names (default: all).
         names: Vec<String>,
+    },
+}
+
+/// `--global` / `--workspace` scope selector; the workspace is the default.
+#[derive(Debug, Args)]
+pub struct ScopeArgs {
+    /// Use the global config (~/.impresario/config.yaml).
+    #[arg(long, conflicts_with = "workspace")]
+    pub global: bool,
+    /// Use the workspace config (<workspace>/impresario.config).
+    #[arg(long, conflicts_with = "global")]
+    pub workspace: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Show every setting with its effective value and layer.
+    List {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print one setting.
+    Get {
+        /// Dotted key, for example `ui.theme`.
+        key: String,
+        #[command(flatten)]
+        scope: ScopeArgs,
+        /// Show the winning layer and the shadowed values.
+        #[arg(long)]
+        explain: bool,
+    },
+    /// Set one setting, validating it against the schema.
+    Set {
+        /// Dotted key, for example `timeout_default_ms`.
+        key: String,
+        /// New value (lists are comma-separated).
+        value: String,
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Remove one setting from a layer.
+    Unset {
+        /// Dotted key.
+        key: String,
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Open a config file in $VISUAL/$EDITOR and revalidate it.
+    Edit {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Print the path of a config file.
+    Path {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+    /// Explain where a setting's effective value comes from.
+    Explain {
+        /// Dotted key.
+        key: String,
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkspaceCommand {
+    /// Print the active workspace and why it won.
+    Current,
+    /// List added workspaces.
+    List,
+    /// Remember a workspace by path.
+    Add {
+        /// Workspace directory (default: the active one).
+        path: Option<PathBuf>,
+    },
+    /// Forget a workspace path.
+    Remove {
+        /// Workspace directory.
+        path: PathBuf,
+    },
+    /// Make a workspace the global default.
+    Use {
+        /// Workspace directory.
+        path: PathBuf,
+    },
+    /// Create a new workspace skeleton.
+    New {
+        /// Directory (created when missing); default: the active workspace.
+        path: Option<PathBuf>,
+        /// Also write the example scenes and play.
+        #[arg(long)]
+        example: bool,
+        /// Overwrite files that already exist.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -171,18 +279,26 @@ pub fn run_with(argv: &[String]) -> i32 {
     render::install_hook(cli.no_color);
     init_logging(cli.verbose, cli.quiet);
 
-    let base = workspace_base(&cli.workspace);
+    let home = match Home::resolve() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("impresario: {error}");
+            return EXIT_INFRA;
+        }
+    };
+    let (base, base_source) = workspace_base(&cli.workspace, &home);
     let config_path = resolve_path(&base, &cli.config, "impresario.config");
     let devices_path = resolve_path(&base, &cli.devices_config, "impresario.devices.config");
 
     match &cli.command {
-        Command::Init { force } => cmd_init(&base, *force),
+        Command::Config { command } => cmd_config(command, &home, &config_path),
+        Command::Workspace { command } => cmd_workspace(command, &home, &base, base_source),
         Command::Validate { paths } => cmd_validate(&base, &config_path, &devices_path, paths),
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
         Command::Devices { command } => match command {
             DevicesCommand::List => cmd_devices_list(&devices_path),
             DevicesCommand::Check { names } => {
-                cmd_devices_check(&config_path, &devices_path, names)
+                cmd_devices_check(&base, &config_path, &devices_path, names)
             }
         },
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
@@ -211,13 +327,32 @@ fn init_logging(verbose: u8, quiet: bool) {
     });
 }
 
-fn workspace_base(workspace: &Option<PathBuf>) -> PathBuf {
+fn workspace_base(workspace: &Option<PathBuf>, home: &Home) -> (PathBuf, WorkspaceSource) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    match workspace {
-        Some(dir) if dir.is_absolute() => dir.clone(),
-        Some(dir) => cwd.join(dir),
-        None => cwd,
-    }
+    let global = SettingsFile::load(&home.config_path());
+    let global_workspace = match global.values.get("workspace") {
+        Some(SettingValue::Text(path)) if !path.is_empty() => Some(PathBuf::from(path)),
+        _ => None,
+    };
+    let environment = std::env::var_os("IMPRESARIO_WORKSPACE");
+    let location = workspace::resolve_root(
+        workspace.as_deref(),
+        environment.as_deref(),
+        &cwd,
+        global_workspace.as_deref(),
+    );
+    (location.root, location.source)
+}
+
+/// Resolve the effective configuration from the global and workspace layers.
+///
+/// Thin wrapper over [`settings::load_default_layers`] kept so the CLI, the
+/// MCP server and the LSP all name the same helper.
+pub(crate) fn load_effective_config(
+    base: &Path,
+    config_path: &Path,
+) -> config::ConfigOutcome<ImpresarioConfig> {
+    settings::load_default_layers(config_path, base)
 }
 
 fn resolve_path(base: &Path, path: &Option<PathBuf>, default: &str) -> PathBuf {
@@ -312,22 +447,675 @@ Stage: Verify Outcome
         Check: WelcomeBanner is visible timeout 20s
 ";
 
-fn cmd_init(base: &Path, force: bool) -> i32 {
-    let files: [(&str, &str); 5] = [
-        ("impresario.config", EXAMPLE_CONFIG),
-        ("impresario.devices.config", EXAMPLE_DEVICES),
-        ("scenes/LoginScreen.scene", EXAMPLE_LOGIN_SCENE),
-        ("scenes/DashboardScreen.scene", EXAMPLE_DASHBOARD_SCENE),
-        ("plays/login.play", EXAMPLE_LOGIN_PLAY),
-    ];
+// ---------------------------------------------------------------------------
+// config
+// ---------------------------------------------------------------------------
+
+impl ScopeArgs {
+    /// `Some(true)` for `--global`, `Some(false)` for `--workspace`, `None`
+    /// when the command should use the effective (merged) value.
+    fn explicit(&self) -> Option<bool> {
+        if self.global {
+            Some(true)
+        } else if self.workspace {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
+fn scope_path(scope: &ScopeArgs, home: &Home, workspace_config: &Path) -> PathBuf {
+    if scope.global {
+        home.config_path()
+    } else {
+        workspace_config.to_path_buf()
+    }
+}
+
+fn scope_name(scope: &ScopeArgs) -> &'static str {
+    if scope.global {
+        "global"
+    } else {
+        "workspace"
+    }
+}
+
+fn source_label(source: &LayerSource) -> String {
+    match source {
+        LayerSource::Workspace(path) => format!("workspace {}", path.display()),
+        LayerSource::Global(path) => format!("global {}", path.display()),
+        LayerSource::Default => "default".to_string(),
+    }
+}
+
+fn cmd_config(command: &ConfigCommand, home: &Home, workspace_config: &Path) -> i32 {
+    let global = SettingsFile::load(&home.config_path());
+    let workspace = SettingsFile::load(workspace_config);
+    let effective = EffectiveSettings::resolve(&global, &workspace);
+    match command {
+        ConfigCommand::List { scope, json } => {
+            let mut diagnostics = global.diagnostics.clone();
+            diagnostics.extend(workspace.diagnostics.iter().cloned());
+            if diagnostics.has_errors() {
+                render::eprint_all(&diagnostics);
+                return EXIT_USAGE;
+            }
+            let rows = setting_rows(scope, &global, &workspace, &effective);
+            if *json {
+                let mut map = serde_json::Map::new();
+                for (key, value, source) in &rows {
+                    let mut entry = serde_json::Map::new();
+                    entry.insert(
+                        "value".to_string(),
+                        value.as_ref().map_or(serde_json::Value::Null, setting_json),
+                    );
+                    entry.insert(
+                        "source".to_string(),
+                        serde_json::Value::String(source.clone()),
+                    );
+                    map.insert((*key).to_string(), serde_json::Value::Object(entry));
+                }
+                match serde_json::to_string_pretty(&serde_json::Value::Object(map)) {
+                    Ok(text) => println!("{text}"),
+                    Err(error) => {
+                        eprintln!("config list: cannot render JSON: {error}");
+                        return EXIT_INFRA;
+                    }
+                }
+                return EXIT_OK;
+            }
+            for (key, value, source) in &rows {
+                let shown = value
+                    .as_ref()
+                    .map_or_else(|| "(unset)".to_string(), SettingValue::display);
+                println!("{key} = {shown}  [{source}]");
+            }
+            EXIT_OK
+        }
+        ConfigCommand::Get {
+            key,
+            scope,
+            explain,
+        } => show_setting(
+            key,
+            &effective,
+            &global,
+            &workspace,
+            scope.explicit(),
+            *explain,
+        ),
+        ConfigCommand::Explain { key, .. } => {
+            show_setting(key, &effective, &global, &workspace, None, true)
+        }
+        ConfigCommand::Set { key, value, scope } => {
+            let Some(def) = settings::definition(key) else {
+                return unknown_key(key);
+            };
+            if matches!(def.scope, settings::Scope::GlobalOnly) && !scope.global {
+                eprintln!(
+                    "config set: '{key}' is global-only; pass --global (workspace files are relative to the workspace)"
+                );
+                return EXIT_USAGE;
+            }
+            let parsed = match settings::parse_cli_value(def, value) {
+                Ok(parsed) => parsed,
+                Err(reason) => {
+                    eprintln!("config set: IMP-CFG-003: {key}: {reason}");
+                    return EXIT_USAGE;
+                }
+            };
+            let path = scope_path(scope, home, workspace_config);
+            let source = match std::fs::read_to_string(&path) {
+                Ok(source) => source,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(error) => {
+                    eprintln!("config set: cannot read {}: {error}", path.display());
+                    return EXIT_INFRA;
+                }
+            };
+            let edited = match settings::edit_set(&source, def, &parsed) {
+                Ok(edited) => edited,
+                Err(error) => {
+                    eprintln!("config set: cannot edit {}: {error}", path.display());
+                    return EXIT_INFRA;
+                }
+            };
+            if let Err(message) = validate_and_write(&path, &edited) {
+                eprintln!("config set: {message}");
+                return EXIT_USAGE;
+            }
+            println!(
+                "config set: {key} = {} in {} ({})",
+                parsed.display(),
+                path.display(),
+                scope_name(scope)
+            );
+            EXIT_OK
+        }
+        ConfigCommand::Unset { key, scope } => {
+            let Some(def) = settings::definition(key) else {
+                return unknown_key(key);
+            };
+            if matches!(def.scope, settings::Scope::GlobalOnly) && !scope.global {
+                eprintln!("config unset: '{key}' is global-only; pass --global");
+                return EXIT_USAGE;
+            }
+            let path = scope_path(scope, home, workspace_config);
+            let source = match std::fs::read_to_string(&path) {
+                Ok(source) => source,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    println!("config unset: {key} is not set in {}", path.display());
+                    return EXIT_OK;
+                }
+                Err(error) => {
+                    eprintln!("config unset: cannot read {}: {error}", path.display());
+                    return EXIT_INFRA;
+                }
+            };
+            let edited = match settings::edit_unset(&source, key) {
+                Ok(edited) => edited,
+                Err(error) => {
+                    eprintln!("config unset: cannot edit {}: {error}", path.display());
+                    return EXIT_INFRA;
+                }
+            };
+            if edited == source {
+                println!("config unset: {key} is not set in {}", path.display());
+                return EXIT_OK;
+            }
+            if let Err(message) = validate_and_write(&path, &edited) {
+                eprintln!("config unset: {message}");
+                return EXIT_USAGE;
+            }
+            println!(
+                "config unset: {key} removed from {} ({})",
+                path.display(),
+                scope_name(scope)
+            );
+            EXIT_OK
+        }
+        ConfigCommand::Edit { scope } => {
+            let path = scope_path(scope, home, workspace_config);
+            edit_config_file(&path)
+        }
+        ConfigCommand::Path { scope } => {
+            let path = scope_path(scope, home, workspace_config);
+            println!("{}", path.display());
+            EXIT_OK
+        }
+    }
+}
+
+fn edit_config_file(path: &Path) -> i32 {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                eprintln!("config edit: cannot create {}: {error}", parent.display());
+                return EXIT_INFRA;
+            }
+        }
+    }
+    let original = match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            eprintln!("config edit: cannot read {}: {error}", path.display());
+            return EXIT_INFRA;
+        }
+    };
+    let (program, args) = match editor_command() {
+        Ok(editor) => editor,
+        Err(message) => {
+            eprintln!("config edit: {message}");
+            return EXIT_INFRA;
+        }
+    };
+    if original.is_none() {
+        if let Err(error) = std::fs::write(path, "# impresario configuration\n") {
+            eprintln!("config edit: cannot create {}: {error}", path.display());
+            return EXIT_INFRA;
+        }
+    }
+    loop {
+        let status = std::process::Command::new(&program)
+            .args(&args)
+            .arg(path)
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                eprintln!("config edit: editor exited with {status}");
+                return EXIT_USAGE;
+            }
+            Err(error) => {
+                eprintln!("config edit: cannot run {program}: {error}");
+                return EXIT_INFRA;
+            }
+        }
+        let edited = match std::fs::read_to_string(path) {
+            Ok(edited) => edited,
+            Err(error) => {
+                eprintln!("config edit: cannot read {}: {error}", path.display());
+                return EXIT_INFRA;
+            }
+        };
+        let parsed = settings::parse_settings(&edited, path);
+        if !parsed.diagnostics.has_errors() {
+            println!("config edit: {} ok", path.display());
+            return EXIT_OK;
+        }
+        render::eprint_all(&parsed.diagnostics);
+        // TASK-2 section 4.1: an invalid edit keeps the old file.
+        let restored = match &original {
+            Some(text) => std::fs::write(path, text),
+            None => match std::fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            },
+        };
+        if let Err(error) = restored {
+            eprintln!("config edit: could not restore {}: {error}", path.display());
+            return EXIT_INFRA;
+        }
+        eprintln!(
+            "config edit: {} is not valid; the previous contents were restored",
+            path.display()
+        );
+        if !reopen_editor_prompt() {
+            return EXIT_USAGE;
+        }
+        if original.is_none() {
+            if let Err(error) = std::fs::write(path, "# impresario configuration\n") {
+                eprintln!("config edit: cannot create {}: {error}", path.display());
+                return EXIT_INFRA;
+            }
+        }
+    }
+}
+
+fn editor_command() -> Result<(String, Vec<String>), String> {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .map_err(|_| "set VISUAL or EDITOR to your editor".to_string())?;
+    if editor.trim().is_empty() {
+        return Err("set VISUAL or EDITOR to your editor".to_string());
+    }
+    let mut parts = split_command_line(&editor).into_iter();
+    let Some(program) = parts.next() else {
+        return Err("set VISUAL or EDITOR to your editor".to_string());
+    };
+    Ok((program, parts.collect()))
+}
+
+/// Split an editor command line, honouring single and double quotes.
+fn split_command_line(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    for character in text.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => current.push(character),
+            None if character == '"' || character == '\'' => quote = Some(character),
+            None if character.is_whitespace() => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(character),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
+fn reopen_editor_prompt() -> bool {
+    use std::io::{BufRead, IsTerminal, Write};
+    if std::env::var_os("CI").is_some() || !std::io::stdin().is_terminal() {
+        return false;
+    }
+    eprint!("reopen the editor? [y/N] ");
+    if std::io::stderr().flush().is_err() {
+        return false;
+    }
+    let mut answer = String::new();
+    match std::io::stdin().lock().read_line(&mut answer) {
+        Ok(0) | Err(_) => false,
+        Ok(_) => matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+    }
+}
+
+fn setting_rows(
+    scope: &ScopeArgs,
+    global: &SettingsFile,
+    workspace: &SettingsFile,
+    effective: &EffectiveSettings,
+) -> Vec<(&'static str, Option<SettingValue>, String)> {
+    match scope.explicit() {
+        Some(true) => settings::SETTINGS
+            .iter()
+            .map(|def| {
+                (
+                    def.key,
+                    global.values.get(def.key).cloned(),
+                    format!("global {}", global.path.display()),
+                )
+            })
+            .collect(),
+        Some(false) => settings::SETTINGS
+            .iter()
+            .map(|def| {
+                (
+                    def.key,
+                    workspace.values.get(def.key).cloned(),
+                    format!("workspace {}", workspace.path.display()),
+                )
+            })
+            .collect(),
+        None => effective
+            .iter()
+            .map(|(key, value, source)| {
+                let value = if effective.is_set(key) {
+                    Some(value.clone())
+                } else {
+                    None
+                };
+                (key, value, source_label(source))
+            })
+            .collect(),
+    }
+}
+
+fn show_setting(
+    key: &str,
+    effective: &EffectiveSettings,
+    global: &SettingsFile,
+    workspace: &SettingsFile,
+    scope: Option<bool>,
+    explain: bool,
+) -> i32 {
+    let Some(def) = settings::definition(key) else {
+        return unknown_key(key);
+    };
+    if explain {
+        let Some(explained) = effective.explain(key) else {
+            return unknown_key(key);
+        };
+        let shown = if effective.is_set(key) {
+            explained.value.display()
+        } else {
+            "(unset)".to_string()
+        };
+        println!("{key} = {shown}");
+        println!("  source: {}", source_label(&explained.source));
+        for (source, value) in &explained.shadowed {
+            println!("  shadowed: {} = {}", source_label(source), value.display());
+        }
+        println!("  type: {}", def.kind.type_name());
+        println!("  {}", def.doc);
+        return EXIT_OK;
+    }
+    match scope {
+        Some(global_scope) => {
+            let (layer, label) = if global_scope {
+                (global, "global")
+            } else {
+                (workspace, "workspace")
+            };
+            match layer.values.get(key) {
+                Some(value) => println!("{key} = {}", value.display()),
+                None => println!("{key} = (unset)"),
+            }
+            println!("  source: {label} {}", layer.path.display());
+            EXIT_OK
+        }
+        None => {
+            let Some(explained) = effective.explain(key) else {
+                return unknown_key(key);
+            };
+            let shown = if effective.is_set(key) {
+                explained.value.display()
+            } else {
+                "(unset)".to_string()
+            };
+            println!("{key} = {shown}");
+            println!("  source: {}", source_label(&explained.source));
+            EXIT_OK
+        }
+    }
+}
+
+fn unknown_key(key: &str) -> i32 {
+    let known: Vec<&str> = settings::SETTINGS.iter().map(|def| def.key).collect();
+    let hint = impresario_core::diag::suggest(key, &known)
+        .map(|hint| format!(" ({hint})"))
+        .unwrap_or_default();
+    eprintln!("config: IMP-CFG-001: unknown key '{key}'{hint}");
+    eprintln!("config: known keys: {}", known.join(", "));
+    EXIT_USAGE
+}
+
+fn setting_json(value: &SettingValue) -> serde_json::Value {
+    match value {
+        SettingValue::Text(text) | SettingValue::Enum(text) => {
+            serde_json::Value::String(text.clone())
+        }
+        SettingValue::Bool(value) => serde_json::Value::Bool(*value),
+        SettingValue::Int(value) => serde_json::Value::Number((*value).into()),
+        SettingValue::List(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(|value| serde_json::Value::String(value.clone()))
+                .collect(),
+        ),
+    }
+}
+
+fn validate_and_write(path: &Path, contents: &str) -> Result<(), String> {
+    let parsed = settings::parse_settings(contents, path);
+    if parsed.diagnostics.has_errors() {
+        let mut rendered = String::new();
+        for diagnostic in parsed.diagnostics.errors() {
+            rendered.push_str(&format!("{diagnostic}\n"));
+        }
+        return Err(format!(
+            "{} would not be valid after the edit: {}",
+            path.display(),
+            rendered.trim()
+        ));
+    }
+    write_file(path, contents)
+}
+
+fn write_file(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+    }
+    let temp = PathBuf::from(format!("{}.tmp", path.display()));
+    std::fs::write(&temp, contents)
+        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    #[cfg(windows)]
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+    std::fs::rename(&temp, path)
+        .map_err(|error| format!("cannot replace {}: {error}", path.display()))
+}
+
+// ---------------------------------------------------------------------------
+// workspace
+// ---------------------------------------------------------------------------
+
+fn cmd_workspace(
+    command: &WorkspaceCommand,
+    home: &Home,
+    base: &Path,
+    base_source: WorkspaceSource,
+) -> i32 {
+    match command {
+        WorkspaceCommand::Current => {
+            println!("{}", base.display());
+            println!("  source: {}", base_source.as_str());
+            if !base.is_dir() {
+                eprintln!("  warning: the directory does not exist");
+            }
+            EXIT_OK
+        }
+        WorkspaceCommand::List => {
+            let global = SettingsFile::load(&home.config_path());
+            render::eprint_all(&global.diagnostics);
+            let added: Vec<String> = match global.values.get("workspaces") {
+                Some(SettingValue::List(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            let mut seen = Vec::new();
+            for path in added {
+                if seen.contains(&path) {
+                    continue;
+                }
+                let exists = Path::new(&path).is_dir();
+                let active = same_path(Path::new(&path), base);
+                println!(
+                    "{} {}{}",
+                    if active { "*" } else { " " },
+                    path,
+                    if exists { "" } else { "  (missing)" }
+                );
+                seen.push(path);
+            }
+            if !seen.iter().any(|path| same_path(Path::new(path), base)) {
+                println!("* {}", base.display());
+            }
+            EXIT_OK
+        }
+        WorkspaceCommand::Add { path } => {
+            let path = path.clone().unwrap_or_else(|| base.to_path_buf());
+            let path = absolute_path(&path);
+            if !path.is_dir() {
+                eprintln!("workspace add: {} is not a directory", path.display());
+                return EXIT_USAGE;
+            }
+            let text = path.to_string_lossy().into_owned();
+            let global = SettingsFile::load(&home.config_path());
+            let mut values: Vec<String> = match global.values.get("workspaces") {
+                Some(SettingValue::List(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            if values
+                .iter()
+                .any(|value| same_path(Path::new(value), &path))
+            {
+                println!("workspace add: {} is already listed", path.display());
+                return EXIT_OK;
+            }
+            values.push(text);
+            match save_global(home, "workspaces", SettingValue::List(values)) {
+                Ok(()) => {
+                    println!("workspace add: {}", path.display());
+                    EXIT_OK
+                }
+                Err(message) => {
+                    eprintln!("workspace add: {message}");
+                    EXIT_USAGE
+                }
+            }
+        }
+        WorkspaceCommand::Remove { path } => {
+            let path = absolute_path(path);
+            let global = SettingsFile::load(&home.config_path());
+            let values: Vec<String> = match global.values.get("workspaces") {
+                Some(SettingValue::List(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            let kept: Vec<String> = values
+                .iter()
+                .filter(|value| !same_path(Path::new(value), &path))
+                .cloned()
+                .collect();
+            if kept.len() == values.len() {
+                println!("workspace remove: {} is not listed", path.display());
+                return EXIT_OK;
+            }
+            match save_global(home, "workspaces", SettingValue::List(kept)) {
+                Ok(()) => {
+                    println!("workspace remove: {}", path.display());
+                    EXIT_OK
+                }
+                Err(message) => {
+                    eprintln!("workspace remove: {message}");
+                    EXIT_USAGE
+                }
+            }
+        }
+        WorkspaceCommand::Use { path } => {
+            let path = absolute_path(path);
+            if !path.is_dir() {
+                eprintln!("workspace use: {} is not a directory", path.display());
+                return EXIT_USAGE;
+            }
+            let text = path.to_string_lossy().into_owned();
+            if let Err(message) = save_global(home, "workspace", SettingValue::Text(text.clone())) {
+                eprintln!("workspace use: {message}");
+                return EXIT_USAGE;
+            }
+            let global = SettingsFile::load(&home.config_path());
+            let mut values: Vec<String> = match global.values.get("workspaces") {
+                Some(SettingValue::List(values)) => values.clone(),
+                _ => Vec::new(),
+            };
+            if !values
+                .iter()
+                .any(|value| same_path(Path::new(value), &path))
+            {
+                values.push(text);
+                if let Err(message) = save_global(home, "workspaces", SettingValue::List(values)) {
+                    eprintln!("workspace use: {message}");
+                    return EXIT_USAGE;
+                }
+            }
+            println!("workspace use: {}", path.display());
+            EXIT_OK
+        }
+        WorkspaceCommand::New {
+            path,
+            example,
+            force,
+        } => {
+            let root = match path {
+                Some(path) => absolute_path(path),
+                None => base.to_path_buf(),
+            };
+            cmd_workspace_new(&root, *example, *force)
+        }
+    }
+}
+
+fn cmd_workspace_new(root: &Path, example: bool, force: bool) -> i32 {
+    let root = root.to_path_buf();
+    let mut files: Vec<(&str, &str)> = vec![("impresario.config", EXAMPLE_CONFIG)];
+    if example {
+        files.extend([
+            ("impresario.devices.config", EXAMPLE_DEVICES),
+            ("scenes/LoginScreen.scene", EXAMPLE_LOGIN_SCENE),
+            ("scenes/DashboardScreen.scene", EXAMPLE_DASHBOARD_SCENE),
+            ("plays/login.play", EXAMPLE_LOGIN_PLAY),
+        ]);
+    }
     let mut status = EXIT_OK;
     for (relative, content) in files {
         let target = relative
             .split('/')
-            .fold(base.to_path_buf(), |path, part| path.join(part));
+            .fold(root.clone(), |path, part| path.join(part));
         if target.exists() && !force {
             eprintln!(
-                "init: refusing to overwrite {} (use --force)",
+                "workspace new: refusing to overwrite {} (use --force)",
                 target.display()
             );
             status = EXIT_USAGE;
@@ -335,7 +1123,7 @@ fn cmd_init(base: &Path, force: bool) -> i32 {
         }
         if let Some(parent) = target.parent() {
             if let Err(err) = std::fs::create_dir_all(parent) {
-                eprintln!("init: cannot create {}: {err}", parent.display());
+                eprintln!("workspace new: cannot create {}: {err}", parent.display());
                 status = EXIT_USAGE;
                 continue;
             }
@@ -343,33 +1131,80 @@ fn cmd_init(base: &Path, force: bool) -> i32 {
         match std::fs::write(&target, content) {
             Ok(()) => println!("created {}", target.display()),
             Err(err) => {
-                eprintln!("init: cannot write {}: {err}", target.display());
+                eprintln!("workspace new: cannot write {}: {err}", target.display());
                 status = EXIT_USAGE;
             }
         }
     }
-    // .gitignore gains reports/ (created when needed).
-    let gitignore = base.join(".gitignore");
-    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
-    let has_entry = existing.lines().any(|line| line.trim() == "reports/");
-    if !has_entry {
-        let mut text = existing;
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
+    for directory in ["scenes", "theatres", "plays", "reports"] {
+        let target = root.join(directory);
+        if let Err(err) = std::fs::create_dir_all(&target) {
+            eprintln!("workspace new: cannot create {}: {err}", target.display());
+            status = EXIT_USAGE;
         }
-        text.push_str("reports/\n");
-        match std::fs::write(&gitignore, text) {
-            Ok(()) => println!("updated {}", gitignore.display()),
-            Err(err) => {
-                eprintln!("init: cannot write {}: {err}", gitignore.display());
-                status = EXIT_USAGE;
+    }
+    if example {
+        let gitignore = root.join(".gitignore");
+        let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+        let has_entry = existing.lines().any(|line| line.trim() == "reports/");
+        if !has_entry {
+            let mut text = existing;
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str("reports/\n");
+            match std::fs::write(&gitignore, text) {
+                Ok(()) => println!("updated {}", gitignore.display()),
+                Err(err) => {
+                    eprintln!("workspace new: cannot write {}: {err}", gitignore.display());
+                    status = EXIT_USAGE;
+                }
             }
         }
     }
     if status == EXIT_OK {
-        println!("init: example workspace ready; run `impresario validate` next");
+        println!(
+            "workspace new: {} ready; run `impresario validate --workspace {}` next",
+            root.display(),
+            root.display()
+        );
     }
     status
+}
+
+fn save_global(home: &Home, key: &str, value: SettingValue) -> Result<(), String> {
+    let Some(def) = settings::definition(key) else {
+        return Err(format!("internal: unknown setting '{key}'"));
+    };
+    let path = home.config_path();
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let edited = settings::edit_set(&source, def, &value)
+        .map_err(|error| format!("cannot edit {}: {error}", path.display()))?;
+    validate_and_write(&path, &edited)
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +1232,7 @@ pub(crate) fn validate_workspace(
 ) -> ValidateOutcome {
     let mut all = Diagnostics::new();
 
-    let cfg_outcome = config::load_config(config_path);
+    let cfg_outcome = load_effective_config(base, config_path);
     all.extend(cfg_outcome.diagnostics.iter().cloned());
     let Some(cfg) = cfg_outcome.config else {
         return ValidateOutcome {
@@ -608,8 +1443,13 @@ fn cmd_devices_list(devices_path: &Path) -> i32 {
     EXIT_OK
 }
 
-fn cmd_devices_check(config_path: &Path, devices_path: &Path, names: &[String]) -> i32 {
-    let config_outcome = config::load_config(config_path);
+fn cmd_devices_check(
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    names: &[String],
+) -> i32 {
+    let config_outcome = load_effective_config(base, config_path);
     render::eprint_all(&config_outcome.diagnostics);
     let Some(config) = config_outcome.config else {
         eprintln!(
@@ -895,7 +1735,7 @@ pub(crate) fn run_workspace(
     color: bool,
     interrupts: bool,
 ) -> RunOutcome {
-    let config_outcome = config::load_config(config_path);
+    let config_outcome = load_effective_config(base, config_path);
     render::eprint_all(&config_outcome.diagnostics);
     let Some(config) = config_outcome.config else {
         let message = format!("run: configuration errors in {}", config_path.display());
@@ -1257,7 +2097,21 @@ mod tests {
         dir
     }
 
+    /// Keep the real `~/.impresario` out of the unit tests.
+    fn test_home() -> &'static Path {
+        static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        HOME.get_or_init(|| {
+            let home =
+                std::env::temp_dir().join(format!("impresario-cli-home-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&home);
+            std::fs::create_dir_all(&home).expect("create test home");
+            std::env::set_var("IMPRESARIO_HOME", &home);
+            home
+        })
+    }
+
     fn argv(workspace: &Path, rest: &[&str]) -> Vec<String> {
+        test_home();
         let mut args = vec![
             "impresario".to_string(),
             "--workspace".to_string(),
@@ -1270,7 +2124,7 @@ mod tests {
     #[test]
     fn init_then_validate_passes() {
         let dir = temp_workspace("init-validate");
-        let code = run_with(&argv(&dir, &["init"]));
+        let code = run_with(&argv(&dir, &["workspace", "new", "--example"]));
         assert_eq!(code, EXIT_OK);
         for file in [
             "impresario.config",
@@ -1292,12 +2146,21 @@ mod tests {
     #[test]
     fn init_refuses_to_overwrite_without_force() {
         let dir = temp_workspace("init-force");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_OK
+        );
         std::fs::write(dir.join("plays/login.play"), "// user edit\n").expect("edit");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_USAGE);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_USAGE
+        );
         let content = std::fs::read_to_string(dir.join("plays/login.play")).expect("read");
         assert_eq!(content, "// user edit\n");
-        assert_eq!(run_with(&argv(&dir, &["init", "--force"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example", "--force"])),
+            EXIT_OK
+        );
         let content = std::fs::read_to_string(dir.join("plays/login.play")).expect("read");
         assert!(content.contains("Play: User Authentication Feature"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1306,7 +2169,10 @@ mod tests {
     #[test]
     fn validate_reports_dsl_errors() {
         let dir = temp_workspace("validate-errors");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_OK
+        );
         std::fs::write(
             dir.join("plays/broken.play"),
             "Play: Broken\n\nAct: A\n\nStage: S\n    Scene: NoSuchScene\n        Check: Nope\n",
@@ -1332,7 +2198,10 @@ mod tests {
     #[test]
     fn parse_accepts_both_file_kinds() {
         let dir = temp_workspace("parse");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_OK
+        );
         assert_eq!(
             run_with(&argv(&dir, &["parse", "scenes/LoginScreen.scene"])),
             EXIT_OK
@@ -1351,7 +2220,10 @@ mod tests {
     #[test]
     fn devices_list_prints_the_configured_devices() {
         let dir = temp_workspace("devices");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_OK
+        );
         assert_eq!(run_with(&argv(&dir, &["devices", "list"])), EXIT_OK);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1404,7 +2276,10 @@ mod tests {
     #[test]
     fn play_patterns_are_glob_expanded() {
         let dir = temp_workspace("play-glob");
-        assert_eq!(run_with(&argv(&dir, &["init"])), EXIT_OK);
+        assert_eq!(
+            run_with(&argv(&dir, &["workspace", "new", "--example"])),
+            EXIT_OK
+        );
         std::fs::write(
             dir.join("plays/extra.play"),
             "Play: Extra\n\nAct: A\n\nStage: S\n    Scene: LoginScreen\n        Check: LoginTitle\n",

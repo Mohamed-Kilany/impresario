@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 serde_yaml_ng.workspace = true
+yaml-edit.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 winnow.workspace = true

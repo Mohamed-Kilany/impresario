@@ -88,6 +88,10 @@ fn default_scenes_dir() -> PathBuf {
     PathBuf::from("./scenes")
 }
 
+fn default_theatres_dir() -> PathBuf {
+    PathBuf::from("./theatres")
+}
+
 fn default_app_reset() -> AppReset {
     AppReset::PerAct
 }
@@ -108,6 +112,8 @@ pub struct ImpresarioConfig {
     pub plays_dir: PathBuf,
     #[serde(default = "default_scenes_dir")]
     pub scenes_dir: PathBuf,
+    #[serde(default = "default_theatres_dir")]
+    pub theatres_dir: PathBuf,
     #[serde(default)]
     pub retries: u32,
     #[serde(default = "parallel_default")]
@@ -282,6 +288,7 @@ const CONFIG_KEYS: &[&str] = &[
     "report_output",
     "plays_dir",
     "scenes_dir",
+    "theatres_dir",
     "retries",
     "parallel_devices",
     "app_reset",
@@ -507,7 +514,7 @@ pub fn parse_config(source: &str, path: &Path) -> ConfigOutcome<ImpresarioConfig
             )),
         }
     }
-    for key in ["plays_dir", "scenes_dir"] {
+    for key in ["plays_dir", "scenes_dir", "theatres_dir"] {
         if let Some(value) = map.get(key) {
             match value.as_str() {
                 Some(text) if !text.trim().is_empty() => {}
@@ -760,7 +767,7 @@ fn check_bool(
     }
 }
 
-fn yaml_syntax_diagnostic(err: &serde_yaml_ng::Error, path: &Path) -> Diagnostic {
+pub(crate) fn yaml_syntax_diagnostic(err: &serde_yaml_ng::Error, path: &Path) -> Diagnostic {
     let span = err.location().map_or(Span::new(path, 1, 1, 0), |loc| {
         Span::new(path, loc.line(), loc.column(), 0)
     });

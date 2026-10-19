@@ -278,6 +278,27 @@ pub fn build_test_plan_with(
     .expect("plan builds")
 }
 
+/// A process-wide empty global home for tests.
+///
+/// `run_with` and the spawned binary read `IMPRESARIO_HOME`; without this a
+/// developer's real `~/.impresario/config.yaml` would leak into the suite.
+/// The directory is created once and never removed (it is small and the
+/// process id makes it unique).
+pub fn test_home() -> &'static Path {
+    static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = std::env::temp_dir().join(format!(
+            "impresario-test-home-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("create test home");
+        std::env::set_var("IMPRESARIO_HOME", &home);
+        home
+    })
+}
+
 /// Write a complete CLI workspace: both configs, the shared scene and one
 /// `.play` file per `(file name, source)` pair.
 pub fn write_workspace(
@@ -286,6 +307,7 @@ pub fn write_workspace(
     devices: &[(String, String)],
     plays: &[(&str, &str)],
 ) {
+    test_home();
     std::fs::create_dir_all(dir.join("scenes")).expect("mkdir scenes");
     std::fs::create_dir_all(dir.join("plays")).expect("mkdir plays");
     let config = format!(
@@ -314,6 +336,7 @@ pub fn write_workspace(
 
 /// `argv` for `run_with` with a workspace.
 pub fn argv(workspace: &Path, rest: &[&str]) -> Vec<String> {
+    test_home();
     let mut args = vec![
         "impresario".to_string(),
         "--workspace".to_string(),
