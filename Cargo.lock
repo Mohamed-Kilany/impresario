@@ -1180,6 +1180,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "thiserror",
+ "unicode-width 0.2.2",
  "url",
  "winnow",
  "yaml-edit",

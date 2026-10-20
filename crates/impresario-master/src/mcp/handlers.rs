@@ -402,8 +402,8 @@ pub(crate) fn validate(server: &Server, arguments: &Value) -> ToolOutput {
         "validate: the workspace configuration is not readable".to_string()
     } else if ok {
         format!(
-            "validate: ok ({} scene(s), {} play(s), {} device(s), {warnings} warning(s))",
-            outcome.scenes, outcome.plays, outcome.devices
+            "validate: ok ({} scene(s), {} theatre(s), {} play(s), {} device(s), {warnings} warning(s))",
+            outcome.scenes, outcome.theatres, outcome.plays, outcome.devices
         )
     } else {
         format!("validate: {errors} error(s), {warnings} warning(s)")
@@ -413,6 +413,7 @@ pub(crate) fn validate(server: &Server, arguments: &Value) -> ToolOutput {
         "errors": errors,
         "warnings": warnings,
         "scenes": outcome.scenes,
+        "theatres": outcome.theatres,
         "plays": outcome.plays,
         "devices": outcome.devices,
         "diagnostics": diagnostics_json(&outcome.diagnostics),
@@ -575,6 +576,20 @@ pub(crate) fn run(server: &Server, arguments: &Value) -> ToolOutput {
         }
         Some(_) => return ToolOutput::error("'vars' must be an object of string values"),
     };
+    let act_args: Vec<String> = match arguments.get("args") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(map)) => {
+            let mut args = Vec::with_capacity(map.len());
+            for (key, value) in map {
+                match value.as_str() {
+                    Some(value) => args.push(format!("{key}={value}")),
+                    None => return ToolOutput::error("'args' must map ACT.PARAM to strings"),
+                }
+            }
+            args
+        }
+        Some(_) => return ToolOutput::error("'args' must be an object of string values"),
+    };
     let timeout = match arg_u64(arguments, "timeout_ms") {
         Ok(timeout) => timeout,
         Err(message) => return ToolOutput::error(message),
@@ -632,6 +647,7 @@ use json, junit or html — every reporter still lands in the run directory",
         exclude_tag: exclude_tags,
         act: acts,
         var: vars,
+        arg: act_args,
         timeout,
         retries,
         reporter: Some(reporter_spec),

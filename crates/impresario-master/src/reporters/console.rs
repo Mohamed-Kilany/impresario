@@ -156,11 +156,16 @@ fn write_act(out: &mut impl fmt::Write, style: Style, act: &ActReport) -> fmt::R
 
 fn write_attempt(out: &mut impl fmt::Write, style: Style, attempt: &AttemptReport) -> fmt::Result {
     for stage in &attempt.stages {
+        let source = stage
+            .span
+            .as_ref()
+            .map(|span| format!(" ({}:{}:{})", span.file, span.line, span.col))
+            .unwrap_or_default();
         writeln!(
             out,
             "      {} {}",
             style.mark(stage.status),
-            style.paint(DIM, &format!("Stage: {}", stage.name))
+            style.paint(DIM, &format!("Stage: {}{source}", stage.name))
         )?;
         for step in &stage.steps {
             write_step(out, style, step)?;

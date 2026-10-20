@@ -202,6 +202,7 @@ pub async fn execute(plan: &ExecutionPlan, options: &ExecOptions) -> ExecOutcome
         RunStatus::Passed
     };
     let report = RunReport {
+        schema_version: 2,
         run_id: options.run_id.clone(),
         started_at: rfc3339_utc(started_ms),
         duration_ms: now_millis().saturating_sub(started_ms),
@@ -503,6 +504,52 @@ fn panic_device_report(plan: &DevicePlan, message: &str) -> DeviceReport {
     }
 }
 
+fn redacted_example(act: &PlannedAct, redactor: Option<&Redactor>) -> BTreeMap<String, String> {
+    act.example
+        .iter()
+        .map(|(key, value)| {
+            let value = if is_secret_example_key(key) {
+                "***".to_string()
+            } else {
+                match redactor {
+                    Some(redactor) => redactor.redact(value),
+                    None => value.clone(),
+                }
+            };
+            (key.clone(), value)
+        })
+        .collect()
+}
+
+fn display_act_name(act: &PlannedAct, redactor: Option<&Redactor>) -> String {
+    if act.example.is_empty() {
+        return act.name.clone();
+    }
+    let values = act
+        .example
+        .iter()
+        .map(|(key, value)| {
+            let value = if is_secret_example_key(key) {
+                "***".to_string()
+            } else {
+                match redactor {
+                    Some(redactor) => redactor.redact(value),
+                    None => value.clone(),
+                }
+            };
+            format!("{key}={value}")
+        })
+        .collect::<Vec<_>>();
+    format!("{} [{}]", act.name, values.join(", "))
+}
+
+fn is_secret_example_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    ["password", "passwd", "secret", "token", "pin"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
 fn assemble_plays(
     plan: &DevicePlan,
     done: &[Vec<Option<ActReport>>],
@@ -523,8 +570,9 @@ fn assemble_plays(
                         .and_then(|acts| acts.get(act_index))
                         .and_then(|slot| slot.clone())
                         .unwrap_or_else(|| ActReport {
-                            name: act.name.clone(),
+                            name: display_act_name(act, None),
                             tags: act.tags.clone(),
+                            example: redacted_example(act, None),
                             status: default_status,
                             flaky: false,
                             attempts: Vec::new(),
@@ -745,8 +793,9 @@ impl DeviceRun<'_> {
             });
         ActOutcome {
             report: ActReport {
-                name: act.name.clone(),
+                name: display_act_name(act, Some(&self.shared.redactor)),
                 tags: act.tags.clone(),
+                example: redacted_example(act, Some(&self.shared.redactor)),
                 status: final_status,
                 flaky,
                 attempts: attempts.into_iter().map(|(report, _, _)| report).collect(),
@@ -766,6 +815,7 @@ impl DeviceRun<'_> {
         for stage in &act.stages {
             let mut stage_report = StageReport {
                 name: stage.name.clone(),
+                span: Some(SpanJson::from(&stage.span)),
                 status: Status::Passed,
                 steps: Vec::new(),
             };
@@ -1285,6 +1335,7 @@ mod tests {
         };
         let stage = |steps: Vec<StepReport>| StageReport {
             name: "S".to_string(),
+            span: None,
             status: Status::Passed,
             steps,
         };

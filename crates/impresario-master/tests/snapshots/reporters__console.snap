@@ -6,11 +6,11 @@ expression: "console::render(&report(), false)"
   Pixel 8 · Android 14 · 1080x2400 @2.62x
   Play: Login (plays/login.play)
     ✔ Act: Sign in (850 ms)
-      ✔ Stage: Login
+      ✔ Stage: Login (theatres/auth.theatre:4:1)
         ✔ Check: email (120 ms)
         ✔ Action: click => submit (700 ms)
     ✖ Act: Wrong password (1.25 s)
-      ✖ Stage: Login
+      ✖ Stage: Login (theatres/auth.theatre:4:1)
         ✖ Check: welcome (1.10 s)
         ○ Action: click => retry
       ✖ CHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'
@@ -21,7 +21,7 @@ expression: "console::render(&report(), false)"
   Play: Checkout (plays/checkout.play)
     ✔ Act: Pay (1.30 s, 2 attempts, flaky)
       ✖ Attempt 1: (400 ms)
-      ✖ Stage: Checkout
+      ✖ Stage: Checkout (theatres/auth.theatre:4:1)
         ✖ Check: receipt (380 ms)
       ✖ CHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'
         (step 1, plays/login.play:3:9)
@@ -29,7 +29,7 @@ expression: "console::render(&report(), false)"
         screenshot: screenshots/pixel-8/missing.png
         2 log entries attached
       ✔ Attempt 2: (900 ms)
-      ✔ Stage: Checkout
+      ✔ Stage: Checkout (theatres/auth.theatre:4:1)
         ✔ Check: receipt (300 ms)
         ✔ Action: click => done (500 ms)
     ○ Act: Refund (0 ms)

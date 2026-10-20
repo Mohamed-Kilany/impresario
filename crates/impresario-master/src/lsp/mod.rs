@@ -39,6 +39,12 @@ pub(crate) fn is_scene_file(path: &std::path::Path) -> bool {
         .is_some_and(|extension| extension == "scene")
 }
 
+/// `.theatre` files.
+pub(crate) fn is_theatre_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == "theatre")
+}
+
 /// `.play` files.
 pub(crate) fn is_play_file(path: &std::path::Path) -> bool {
     path.extension()

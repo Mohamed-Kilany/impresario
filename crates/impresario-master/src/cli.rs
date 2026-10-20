@@ -15,7 +15,7 @@ use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::{Code, Diagnostic, Diagnostics};
 use impresario_core::home::Home;
-use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::settings::{self, EffectiveSettings, LayerSource, SettingValue, SettingsFile};
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::{self, WorkspaceSource};
@@ -77,12 +77,20 @@ pub enum Command {
         /// Files or directories to validate (default: the configured dirs).
         paths: Vec<PathBuf>,
     },
-    /// Parse one .scene or .play file.
+    /// Parse one .scene, .theatre or .play file.
     Parse {
         file: PathBuf,
         /// Dump the typed AST as JSON on stdout.
         #[arg(long)]
         json: bool,
+    },
+    /// Format .scene, .theatre and .play files canonically.
+    Fmt {
+        /// Files or directories (default: the configured workspace dirs).
+        paths: Vec<PathBuf>,
+        /// Check only: exit 1 when a file would change.
+        #[arg(long)]
+        check: bool,
     },
     /// Device definitions: add, edit, list, check, import, export.
     #[command(alias = "devices")]
@@ -245,6 +253,9 @@ pub struct RunArgs {
     /// Variable override K=V (repeatable, beats play vars).
     #[arg(long, value_name = "K=V")]
     pub var: Vec<String>,
+    /// Act parameter override: `ACT.PARAM=VALUE` (repeatable; beats Examples).
+    #[arg(long = "arg", value_name = "ACT.PARAM=VALUE")]
+    pub arg: Vec<String>,
     /// Default poll timeout in ms (beats timeout_default_ms).
     #[arg(long, value_name = "MS")]
     pub timeout: Option<u64>,
@@ -298,6 +309,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Workspace { command } => cmd_workspace(command, &home, &base, base_source),
         Command::Validate { paths } => cmd_validate(&base, &config_path, &devices_path, paths),
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
+        Command::Fmt { paths, check } => cmd_fmt(&base, &config_path, paths, *check),
         Command::Device { command } => match command {
             DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)
@@ -308,7 +320,7 @@ pub fn run_with(argv: &[String]) -> i32 {
             let apps_path = base.join("impresario.apps.config");
             crate::definitions::run_app(command, &home, &apps_path)
         }
-        Command::Migrate(args) => crate::definitions::migrate(&base, args.dry_run),
+        Command::Migrate(args) => crate::definitions::migrate(&base, &config_path, args.dry_run),
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&base, &config_path, &devices_path),
@@ -1262,6 +1274,7 @@ pub(crate) struct ValidateOutcome {
     /// False when `impresario.apps.config` could not be read at all.
     pub apps_ok: bool,
     pub scenes: usize,
+    pub theatres: usize,
     pub plays: usize,
     pub devices: usize,
     pub apps: usize,
@@ -1284,6 +1297,7 @@ pub(crate) fn validate_workspace(
             devices_ok: true,
             apps_ok: true,
             scenes: 0,
+            theatres: 0,
             plays: 0,
             devices: 0,
             apps: 0,
@@ -1299,6 +1313,7 @@ pub(crate) fn validate_workspace(
             devices_ok: false,
             apps_ok: true,
             scenes: 0,
+            theatres: 0,
             plays: 0,
             devices: 0,
             apps: 0,
@@ -1314,6 +1329,7 @@ pub(crate) fn validate_workspace(
             devices_ok: true,
             apps_ok: false,
             scenes: 0,
+            theatres: 0,
             plays: 0,
             devices: devices.devices.len(),
             apps: 0,
@@ -1325,7 +1341,11 @@ pub(crate) fn validate_workspace(
     }
 
     let loaded = if paths.is_empty() {
-        workspace::load_dirs(&base.join(&cfg.scenes_dir), &base.join(&cfg.plays_dir))
+        workspace::load_dirs(
+            &base.join(&cfg.scenes_dir),
+            &base.join(&cfg.theatres_dir),
+            &base.join(&cfg.plays_dir),
+        )
     } else {
         let resolved: Vec<PathBuf> = paths
             .iter()
@@ -1344,6 +1364,13 @@ pub(crate) fn validate_workspace(
             let scenes = workspace::load_scenes(&base.join(&cfg.scenes_dir));
             explicit.workspace.scenes = scenes.workspace.scenes;
             explicit.diagnostics.extend(scenes.diagnostics);
+        }
+        // A theatrical play resolves `Perform:` against the configured
+        // theatres, so load the stage index even when only the play was named.
+        if explicit.workspace.theatres.is_empty() {
+            let theatres = workspace::load_theatres(&base.join(&cfg.theatres_dir));
+            explicit.workspace.theatres = theatres.workspace.theatres;
+            explicit.diagnostics.extend(theatres.diagnostics);
         }
         explicit
     };
@@ -1383,10 +1410,129 @@ pub(crate) fn validate_workspace(
         devices_ok: true,
         apps_ok: true,
         scenes: loaded.workspace.scenes.len(),
+        theatres: loaded.workspace.theatres.len(),
         plays: loaded.workspace.plays.len(),
         devices: devices.devices.len(),
         apps: app_list.apps.len(),
     }
+}
+
+fn cmd_fmt(base: &Path, config_path: &Path, paths: &[PathBuf], check: bool) -> i32 {
+    let cfg_outcome = load_effective_config(base, config_path);
+    if cfg_outcome.diagnostics.has_errors() {
+        render::eprint_all(&cfg_outcome.diagnostics);
+        return EXIT_USAGE;
+    }
+    let Some(cfg) = cfg_outcome.config else {
+        eprintln!("fmt: cannot load configuration");
+        return EXIT_USAGE;
+    };
+
+    let roots: Vec<PathBuf> = if paths.is_empty() {
+        vec![
+            base.join(&cfg.scenes_dir),
+            base.join(&cfg.theatres_dir),
+            base.join(&cfg.plays_dir),
+        ]
+    } else {
+        paths
+            .iter()
+            .map(|path| {
+                if path.is_absolute() {
+                    path.clone()
+                } else {
+                    base.join(path)
+                }
+            })
+            .collect()
+    };
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    for root in &roots {
+        if root.is_dir() {
+            if let Err(error) = collect_dsl_files(root, &mut files) {
+                eprintln!("fmt: {error}");
+                return EXIT_INFRA;
+            }
+        } else if is_dsl_file(root) {
+            files.push(root.clone());
+        } else if root.exists() || paths.is_empty() {
+            // Configured directories may be absent; explicit paths may not.
+            if !paths.is_empty() {
+                eprintln!(
+                    "fmt: {} is neither a .scene, .theatre nor .play file",
+                    root.display()
+                );
+                return EXIT_USAGE;
+            }
+        } else {
+            eprintln!("fmt: {} does not exist", root.display());
+            return EXIT_USAGE;
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    let mut failed = false;
+    let mut changed = false;
+    for file in &files {
+        let source = match std::fs::read_to_string(file) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("fmt: cannot read {}: {error}", file.display());
+                failed = true;
+                continue;
+            }
+        };
+        match impresario_core::fmt::format_source(&source, file) {
+            Ok(formatted) if formatted == source => {}
+            Ok(formatted) => {
+                changed = true;
+                if check {
+                    println!("would reformat {}", file.display());
+                } else if let Err(error) = write_file(file, &formatted) {
+                    eprintln!("fmt: {error}");
+                    failed = true;
+                }
+            }
+            Err(diagnostics) => {
+                render::eprint_all(&diagnostics);
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        return EXIT_USAGE;
+    }
+    if check && changed {
+        EXIT_FAILURE
+    } else {
+        EXIT_OK
+    }
+}
+
+fn is_dsl_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension, "scene" | "theatre" | "play"))
+}
+
+fn collect_dsl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
+    let mut entries: Vec<_> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_dsl_files(&path, out)?;
+        } else if is_dsl_file(&path) {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[PathBuf]) -> i32 {
@@ -1420,8 +1566,13 @@ fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[P
         return EXIT_USAGE;
     }
     println!(
-        "validate: ok ({} scene(s), {} play(s), {} device(s), {} app(s), {} warning(s))",
-        outcome.scenes, outcome.plays, outcome.devices, outcome.apps, warnings
+        "validate: ok ({} scene(s), {} theatre(s), {} play(s), {} device(s), {} app(s), {} warning(s))",
+        outcome.scenes,
+        outcome.theatres,
+        outcome.plays,
+        outcome.devices,
+        outcome.apps,
+        warnings
     );
     EXIT_OK
 }
@@ -1456,6 +1607,14 @@ fn cmd_parse(base: &Path, file: &Path, json: bool) -> i32 {
                 outcome.ast.as_ref().map(serde_json::to_value),
             )
         }
+        "theatre" => {
+            let outcome = parse_theatre(&source, &path);
+            report_parse(
+                json,
+                &outcome.diagnostics,
+                outcome.ast.as_ref().map(serde_json::to_value),
+            )
+        }
         "play" => {
             let outcome = parse_play(&source, &path);
             report_parse(
@@ -1466,7 +1625,7 @@ fn cmd_parse(base: &Path, file: &Path, json: bool) -> i32 {
         }
         _ => {
             eprintln!(
-                "parse: {} is neither a .scene nor a .play file",
+                "parse: {} is neither a .scene, .theatre nor .play file",
                 path.display()
             );
             EXIT_USAGE
@@ -1909,11 +2068,14 @@ pub(crate) fn run_workspace(
     // Workspace: scenes come from the configured scenes_dir, plays from
     // --play patterns or plays_dir (spec 8.1).
     let scenes = workspace::load_scenes(&base.join(&config.scenes_dir));
+    let theatres = workspace::load_theatres(&base.join(&config.theatres_dir));
     let plays = load_play_selection(base, &config, &args.play);
     let mut load_diagnostics = scenes.diagnostics;
+    load_diagnostics.extend(theatres.diagnostics);
     load_diagnostics.extend(plays.diagnostics);
     let ws = workspace::Workspace {
         scenes: scenes.workspace.scenes,
+        theatres: theatres.workspace.theatres,
         plays: plays.workspace.plays,
     };
     render::eprint_all(&load_diagnostics);
@@ -1948,6 +2110,19 @@ pub(crate) fn run_workspace(
             );
         }
     };
+    let cli_args = match plan::parse_cli_args(&args.arg) {
+        Ok(cli_args) => cli_args,
+        Err(diagnostics) => {
+            render::eprint_all(&diagnostics);
+            let message = "run: invalid --arg; nothing was executed".to_string();
+            eprintln!("{message}");
+            return RunOutcome::refusal_with_detail(
+                EXIT_USAGE,
+                message,
+                diagnostics_detail(&diagnostics),
+            );
+        }
+    };
     let input = plan::PlanInput {
         config: &config,
         workspace: &ws,
@@ -1958,6 +2133,7 @@ pub(crate) fn run_workspace(
         plays: &ws.plays,
         selection: &selection,
         cli_vars: &cli_vars,
+        cli_args: &cli_args,
         cli_timeout: args.timeout,
     };
     let plan = match plan::build_plan(&input) {

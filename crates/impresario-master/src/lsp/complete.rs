@@ -63,6 +63,17 @@ pub fn complete(ctx: &CompleteCtx<'_>) -> Option<Vec<CompletionItem>> {
     let indent = indent_of(line);
     let trimmed = prefix.trim_start();
 
+    if !ctx.is_scene {
+        if let Some(rest) = trimmed.strip_prefix("Perform:") {
+            let after = rest.trim_start();
+            if let Some((stage_name, arguments)) = after.split_once('(') {
+                if !after.contains(')') || arguments.is_empty() {
+                    return Some(stage_param_items(ctx.index, stage_name.trim()));
+                }
+            }
+            return Some(stage_items(ctx.index));
+        }
+    }
     if ctx.is_scene && inside_pieces(&lines, ctx.line) {
         return Some(piece_entry_items(&prefix));
     }
@@ -141,6 +152,35 @@ fn scene_items(index: &Index) -> Vec<CompletionItem> {
         .map(|(name, info)| {
             let mut entry = item(name.as_str(), CompletionItemKind::FILE);
             entry.detail = Some(info.platforms_summary());
+            entry
+        })
+        .collect()
+}
+
+fn stage_items(index: &Index) -> Vec<CompletionItem> {
+    index
+        .stages
+        .iter()
+        .map(|(name, info)| {
+            let mut entry = item(name.as_str(), CompletionItemKind::FUNCTION);
+            entry.detail = Some(format!("{} ({})", info.signature, info.theatre));
+            entry
+        })
+        .collect()
+}
+
+fn stage_param_items(index: &Index, stage_name: &str) -> Vec<CompletionItem> {
+    let Some(info) = index.stage(stage_name) else {
+        return Vec::new();
+    };
+    info.params
+        .iter()
+        .map(|(name, default)| {
+            let mut entry = item(format!("{name} = "), CompletionItemKind::PROPERTY);
+            entry.detail = Some(match default {
+                Some(default) => format!("default: '{default}'"),
+                None => "required".to_string(),
+            });
             entry
         })
         .collect()
@@ -365,6 +405,7 @@ Var: USER = 'alice'
 Act: Successful Login
 Tags: smoke, auth
 Platforms: android, webos
+    Perform: Navigate
 
 Stage: Navigate
     Scene: LoginScreen
@@ -373,16 +414,59 @@ Stage: Navigate
         Check: LoginButton
 "#;
 
+    const THEATRE: &str = r#"Theatre: Auth
+
+Stage: Navigate
+    Scene: LoginScreen
+        Action: click => LoginButton
+
+Stage: Fill(user, password = 'secret')
+    Scene: LoginScreen
+        Action: type '${param.user}' => UsernameInput
+"#;
+
     fn test_index() -> Index {
         let scene_path = std::env::temp_dir().join("impresario-lsp/scenes/LoginScreen.scene");
         let play_path = std::env::temp_dir().join("impresario-lsp/plays/login.play");
+        let theatre_path = std::env::temp_dir().join("impresario-lsp/theatres/auth.theatre");
         let scene = impresario_core::parser::parse_scene(SCENE, &scene_path)
             .ast
             .expect("scene parses");
+        let theatre = impresario_core::parser::parse_theatre(THEATRE, &theatre_path)
+            .ast
+            .expect("theatre parses");
         let play = impresario_core::parser::parse_play(PLAY, &play_path)
             .ast
             .expect("play parses");
-        Index::build(&[scene], &[play])
+        Index::build(&[scene], &[theatre], &[play])
+    }
+
+    #[test]
+    fn perform_suggests_stages_and_their_parameters_with_defaults() {
+        let stages = "Play: P\n\nAct: A\n    Perform: |\n";
+        let items = complete_at(stages, false, &[]);
+        let stage_labels = labels(&items);
+        assert!(
+            stage_labels.contains(&"Fill".to_string()),
+            "{stage_labels:?}"
+        );
+        assert!(
+            stage_labels.contains(&"Navigate".to_string()),
+            "{stage_labels:?}"
+        );
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.label == "Fill")
+                .and_then(|item| item.detail.as_deref()),
+            Some("Stage: Fill(user, password = 'secret') (Auth)")
+        );
+
+        let params = "Play: P\n\nAct: A\n    Perform: Fill(|\n";
+        let items = complete_at(params, false, &[]);
+        assert_eq!(labels(&items), vec!["user = ", "password = "]);
+        assert_eq!(items[0].detail.as_deref(), Some("required"));
+        assert_eq!(items[1].detail.as_deref(), Some("default: 'secret'"));
     }
 
     /// Split the caret marker `|` out of a playground text.

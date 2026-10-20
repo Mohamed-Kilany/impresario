@@ -1,0 +1,7 @@
+---
+source: crates/impresario-core/tests/golden_dsl.rs
+expression: files
+---
+LoginScreen.scene: "Scene: LoginScreen\nPlatforms: web, android\n\n| Piece        | web                   | android        | index |\n|--------------|-----------------------|----------------|-------|\n| LoginTitle   | h1.title              | id:login_title | -     |\n| SubmitButton | button[type='submit'] | id:submit      | -     |\n| PromoBanner  | .promo                | -              | 2     |\n"
+login.play: "Play: Golden Legacy\nDescription: Migration fixture.\n\nAct: Successful login\nTags: smoke\n    Perform: Fill\n\nAct: Promo visible\n    Perform: Fill_2\n"
+theatres/login.theatre: "Theatre: Golden Legacy stages\n\nStage: Fill\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: click => SubmitButton\n\nStage: Fill_2\n    Scene: LoginScreen\n        Check: PromoBanner\n"

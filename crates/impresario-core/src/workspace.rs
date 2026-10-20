@@ -1,4 +1,4 @@
-//! Loading a workspace: every `.scene` and `.play` file plus its diagnostics.
+//! Loading a workspace: every `.scene`, `.theatre` and `.play` file plus its diagnostics.
 //!
 //! The loader is recovering like the parsers: unreadable or broken files
 //! produce diagnostics, everything else still loads.
@@ -6,14 +6,15 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{PlayFile, SceneFile};
+use crate::ast::{PlayFile, SceneFile, TheatreFile};
 use crate::diag::{Code, Diagnostic, Diagnostics};
-use crate::parser::{parse_play, parse_scene};
+use crate::parser::{parse_play, parse_scene, parse_theatre};
 
-/// All parsed scenes and plays of one run.
+/// All parsed scenes, theatres and plays of one run.
 #[derive(Debug, Default)]
 pub struct Workspace {
     pub scenes: Vec<SceneFile>,
+    pub theatres: Vec<TheatreFile>,
     pub plays: Vec<PlayFile>,
 }
 
@@ -43,6 +44,49 @@ impl Workspace {
             })
             .unwrap_or_default()
     }
+
+    /// Resolve a stage by its globally unique name.
+    ///
+    /// An exact stage name wins (stage names may themselves contain dots).
+    /// Otherwise a theatre-qualified `Theatre.Stage` reference is accepted,
+    /// which TASK-2 section 8.3 allows for readability even though stage
+    /// names are globally unique.
+    #[must_use]
+    pub fn stage(&self, name: &str) -> Option<&crate::ast::StageDecl> {
+        if let Some(stage) = self
+            .theatres
+            .iter()
+            .flat_map(|theatre| theatre.stages.iter())
+            .find(|stage| stage.name == name)
+        {
+            return Some(stage);
+        }
+        for (index, _) in name.match_indices('.').rev() {
+            let (theatre_name, rest) = name.split_at(index);
+            let Some(stage_name) = rest.get(1..) else {
+                continue;
+            };
+            if let Some(theatre) = self
+                .theatres
+                .iter()
+                .find(|theatre| theatre.name == theatre_name)
+            {
+                if let Some(stage) = theatre.stage(stage_name) {
+                    return Some(stage);
+                }
+            }
+        }
+        None
+    }
+
+    #[must_use]
+    pub fn stage_names(&self) -> Vec<&str> {
+        self.theatres
+            .iter()
+            .flat_map(|theatre| theatre.stages.iter())
+            .map(|stage| stage.name.as_str())
+            .collect()
+    }
 }
 
 /// Result of loading a workspace.
@@ -52,11 +96,13 @@ pub struct LoadedWorkspace {
     pub diagnostics: Diagnostics,
 }
 
-/// Load the workspace from the configured `scenes_dir` and `plays_dir`.
+/// Load the workspace from the configured `scenes_dir`, `theatres_dir` and
+/// `plays_dir`.
 #[must_use]
-pub fn load_dirs(scenes_dir: &Path, plays_dir: &Path) -> LoadedWorkspace {
+pub fn load_dirs(scenes_dir: &Path, theatres_dir: &Path, plays_dir: &Path) -> LoadedWorkspace {
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_dir(scenes_dir, &mut paths);
+    collect_dir(theatres_dir, &mut paths);
     collect_dir(plays_dir, &mut paths);
     paths.sort();
     paths.dedup();
@@ -69,6 +115,16 @@ pub fn load_scenes(dir: &Path) -> LoadedWorkspace {
     let mut paths: Vec<PathBuf> = Vec::new();
     collect_dir(dir, &mut paths);
     paths.retain(|path| is_scene_file(path));
+    paths.sort();
+    load_paths(&paths)
+}
+
+/// Load only the `.theatre` files under `dir` (recursively).
+#[must_use]
+pub fn load_theatres(dir: &Path) -> LoadedWorkspace {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    collect_dir(dir, &mut paths);
+    paths.retain(|path| is_theatre_file(path));
     paths.sort();
     load_paths(&paths)
 }
@@ -92,12 +148,15 @@ pub fn load_paths(paths: &[PathBuf]) -> LoadedWorkspace {
     for path in paths {
         if path.is_dir() {
             collect_dir(path, &mut files);
-        } else if is_scene_file(path) || is_play_file(path) {
+        } else if is_scene_file(path) || is_theatre_file(path) || is_play_file(path) {
             files.push(path.clone());
         } else if path.exists() {
             missing.push(Diagnostic::error(
                 Code::CfgInvalidValue,
-                format!("{} is neither a .scene nor a .play file", path.display()),
+                format!(
+                    "{} is neither a .scene, .theatre nor a .play file",
+                    path.display()
+                ),
             ));
         } else {
             missing.push(Diagnostic::error(
@@ -115,6 +174,10 @@ pub fn load_paths(paths: &[PathBuf]) -> LoadedWorkspace {
 
 fn is_scene_file(path: &Path) -> bool {
     path.extension().is_some_and(|ext| ext == "scene")
+}
+
+fn is_theatre_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "theatre")
 }
 
 fn is_play_file(path: &Path) -> bool {
@@ -137,7 +200,9 @@ fn collect_dir(dir: &Path, out: &mut Vec<PathBuf>) {
         };
         if file_type.is_dir() {
             collect_dir(&child, out);
-        } else if file_type.is_file() {
+        } else if file_type.is_file()
+            && (is_scene_file(&child) || is_theatre_file(&child) || is_play_file(&child))
+        {
             out.push(child);
         }
     }
@@ -168,6 +233,12 @@ fn load_files(files: &[PathBuf]) -> LoadedWorkspace {
             if let Some(scene) = outcome.ast {
                 loaded.workspace.scenes.push(scene);
             }
+        } else if is_theatre_file(path) {
+            let outcome = parse_theatre(&source, path);
+            loaded.diagnostics.extend(outcome.diagnostics);
+            if let Some(theatre) = outcome.ast {
+                loaded.workspace.theatres.push(theatre);
+            }
         } else if is_play_file(path) {
             let outcome = parse_play(&source, path);
             loaded.diagnostics.extend(outcome.diagnostics);
@@ -190,6 +261,46 @@ fn load_files(files: &[PathBuf]) -> LoadedWorkspace {
             );
         } else {
             seen.push(scene.name.clone());
+        }
+    }
+
+    // IMP-DSL-033 duplicate theatre names.
+    let mut theatres: Vec<String> = Vec::new();
+    for theatre in &loaded.workspace.theatres {
+        if theatres.iter().any(|name| name == &theatre.name) {
+            loaded.diagnostics.push(
+                Diagnostic::error(
+                    Code::DslDuplicateTheatre,
+                    format!("duplicate theatre '{}'", theatre.name),
+                )
+                .with_span(theatre.name_span.clone())
+                .with_help("theatre names must be unique across the workspace"),
+            );
+        } else {
+            theatres.push(theatre.name.clone());
+        }
+    }
+
+    // IMP-DSL-030 stage names are globally unique across all theatres.
+    let mut stages: Vec<(String, crate::span::Span)> = Vec::new();
+    for theatre in &loaded.workspace.theatres {
+        for stage in &theatre.stages {
+            if let Some((_, previous)) = stages.iter().find(|(name, _)| name == &stage.name) {
+                loaded.diagnostics.push(
+                    Diagnostic::error(
+                        Code::DslDuplicateStage,
+                        format!("duplicate stage '{}'", stage.name),
+                    )
+                    .with_span(stage.name_span.clone())
+                    .with_help(format!(
+                        "first declared at {}:{}",
+                        previous.file().display(),
+                        previous.line
+                    )),
+                );
+            } else {
+                stages.push((stage.name.clone(), stage.name_span.clone()));
+            }
         }
     }
     loaded
@@ -339,7 +450,11 @@ mod tests {
             "plays/one.play",
             "Play: One\n\nAct: A\n\nStage: S\n    Scene: First\n        Check: A\n",
         );
-        let loaded = load_dirs(&dir.join("scenes"), &dir.join("plays"));
+        let loaded = load_dirs(
+            &dir.join("scenes"),
+            &dir.join("theatres"),
+            &dir.join("plays"),
+        );
         assert!(!loaded.diagnostics.has_errors(), "{:?}", loaded.diagnostics);
         assert_eq!(loaded.workspace.scenes.len(), 2);
         assert_eq!(loaded.workspace.scenes[0].name, "First");
@@ -414,6 +529,47 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn stages_resolve_unqualified_and_theatre_qualified_names() {
+        use crate::parser::parse_theatre;
+
+        let source = "Theatre: Auth\n\nStage: Login\n    Scene: Home\n        Check: Title\n";
+        let theatre = parse_theatre(source, Path::new("auth.theatre"))
+            .ast
+            .expect("theatre parses");
+        let workspace = Workspace {
+            theatres: vec![theatre],
+            ..Workspace::default()
+        };
+        assert_eq!(
+            workspace.stage("Login").map(|s| s.name.as_str()),
+            Some("Login")
+        );
+        assert_eq!(
+            workspace.stage("Auth.Login").map(|s| s.name.as_str()),
+            Some("Login")
+        );
+        assert!(workspace.stage("Other.Login").is_none());
+    }
+
+    #[test]
+    fn an_exact_stage_name_containing_a_dot_wins_over_theatre_qualification() {
+        use crate::parser::parse_theatre;
+
+        let source = "Theatre: Auth\n\nStage: Auth.Login\n    Scene: Home\n        Check: Title\n";
+        let theatre = parse_theatre(source, Path::new("auth.theatre"))
+            .ast
+            .expect("theatre parses");
+        let workspace = Workspace {
+            theatres: vec![theatre],
+            ..Workspace::default()
+        };
+        assert_eq!(
+            workspace.stage("Auth.Login").map(|s| s.name.as_str()),
+            Some("Auth.Login")
+        );
     }
 
     #[test]

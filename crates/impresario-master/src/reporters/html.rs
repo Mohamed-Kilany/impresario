@@ -168,8 +168,20 @@ fn write_attempt(html: &mut String, attempt: &AttemptReport, multiple: bool, run
         ));
     }
     for stage in &attempt.stages {
+        let source = stage
+            .span
+            .as_ref()
+            .map(|span| {
+                format!(
+                    " <span class=\"dim\">{}:{}:{}</span>",
+                    escape(&span.file),
+                    span.line,
+                    span.col
+                )
+            })
+            .unwrap_or_default();
         html.push_str(&format!(
-            "<div class=\"stage\"><h5>{} Stage: {}</h5>\n",
+            "<div class=\"stage\"><h5>{} Stage: {}{source}</h5>\n",
             badge(stage.status),
             escape(&stage.name)
         ));
@@ -339,6 +351,7 @@ mod tests {
         std::fs::write(screenshots.join("failure-1.png"), b"png-bytes").expect("write");
 
         let report = RunReport {
+            schema_version: 2,
             run_id: "20261016-185512-a1b2".to_string(),
             started_at: "2026-10-16T18:55:12.000Z".to_string(),
             duration_ms: 10,
@@ -355,6 +368,7 @@ mod tests {
                     acts: vec![ActReport {
                         name: "A".to_string(),
                         tags: vec![],
+                        example: BTreeMap::new(),
                         status: Status::Failed,
                         flaky: false,
                         attempts: vec![AttemptReport {

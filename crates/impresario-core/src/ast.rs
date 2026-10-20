@@ -17,10 +17,22 @@ pub struct SceneFile {
     /// `Scene: Name`
     pub name: String,
     pub name_span: Span,
-    /// `Platform: ...`
+    /// `Platform: ...` / `Platforms: ...`
     pub platforms: ScenePlatforms,
     pub platforms_span: Span,
+    /// Column order of the table form (empty for the legacy `Pieces:` form).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<SceneColumn>,
     pub pieces: Vec<PieceDecl>,
+}
+
+/// One column of a tabular scene.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneColumn {
+    /// `None` for the `index` column.
+    pub platform: Option<Platform>,
+    pub name: String,
+    pub span: Span,
 }
 
 impl SceneFile {
@@ -82,16 +94,125 @@ pub struct VarDecl {
     pub value: ParsedString,
 }
 
-/// `Act: ...` with its tags, platforms and stages.
+/// A `.theatre` file: named, reusable stages (TASK-2 section 8.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TheatreFile {
+    pub path: PathBuf,
+    /// `Theatre: Name`
+    pub name: String,
+    pub name_span: Span,
+    pub stages: Vec<StageDecl>,
+}
+
+impl TheatreFile {
+    #[must_use]
+    pub fn stage(&self, name: &str) -> Option<&StageDecl> {
+        self.stages.iter().find(|stage| stage.name == name)
+    }
+}
+
+/// `Act: ...` with its tags, platforms and performances.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActDecl {
     pub name: String,
     pub name_span: Span,
+    /// `Act: Name(param, ...)` parameters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ParamDecl>,
     /// `Tags: a, b`
     pub tags: Vec<Named>,
     /// `Platforms: a, b` (empty = all platforms).
     pub platforms: Vec<Named>,
+    /// `Examples:` rows (one execution each).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub examples: Option<ExampleTable>,
+    /// New-style `Perform:` lines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub performs: Vec<PerformDecl>,
+    /// Legacy inline `Stage:` blocks (kept for `migrate`/backward compatibility).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<StageDecl>,
+}
+
+/// `Stage: Name(param, ...)` declaration (theatre or legacy inline).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageDecl {
+    pub name: String,
+    pub name_span: Span,
+    /// `Stage: Name(param, ...)` parameters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ParamDecl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `Platforms:` restriction inside the stage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<Named>,
+    pub timeout: Option<DslDuration>,
+    pub timeout_span: Option<Span>,
+    /// Ordered body of the stage: scene blocks and nested `Perform:` calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<StageItem>,
+    /// Legacy view of the scene blocks (kept for old parsers/tests).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenes: Vec<SceneBlock>,
+}
+
+/// One ordered item in a stage body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "item", rename_all = "snake_case")]
+pub enum StageItem {
+    Scene(SceneBlock),
+    Perform(PerformDecl),
+}
+
+/// A stage parameter declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamDecl {
+    pub name: String,
+    pub name_span: Span,
+    /// `= 'default'` (omitted means required).
+    pub default: Option<ParsedString>,
+}
+
+/// One `Perform: Stage(arg = 'value', ...)` reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PerformDecl {
+    pub stage_name: String,
+    pub stage_span: Span,
+    pub args: Vec<Argument>,
+    /// Span of the whole declaration.
+    pub span: Span,
+}
+
+/// One named stage argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Argument {
+    pub name: String,
+    pub name_span: Span,
+    pub value: ParsedString,
+}
+
+/// An `Examples:` table on an act.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExampleTable {
+    pub columns: Vec<ExampleColumn>,
+    pub rows: Vec<ExampleRow>,
+    pub span: Span,
+}
+
+/// One example column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExampleColumn {
+    pub name: String,
+    pub span: Span,
+}
+
+/// One example row; `values` is aligned with `ExampleTable::columns` and
+/// `None` means an absent cell (`-`, `~`, `none`, `null` or empty).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExampleRow {
+    pub values: Vec<Option<String>>,
+    pub span: Span,
 }
 
 /// A named item with the span of its name (tags, platforms).
@@ -99,16 +220,6 @@ pub struct ActDecl {
 pub struct Named {
     pub name: String,
     pub span: Span,
-}
-
-/// `Stage: ...` with optional `Timeout:` and one or more scene blocks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StageDecl {
-    pub name: String,
-    pub name_span: Span,
-    pub timeout: Option<DslDuration>,
-    pub timeout_span: Option<Span>,
-    pub scenes: Vec<SceneBlock>,
 }
 
 /// `Scene: X` block inside a stage.

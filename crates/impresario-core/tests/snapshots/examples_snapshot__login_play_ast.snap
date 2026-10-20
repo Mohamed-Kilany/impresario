@@ -72,180 +72,28 @@ acts:
           line: 8
           col: 27
           len: 5
-    stages:
-      - name: Navigate and Login
-        name_span:
+    performs:
+      - stage_name: Navigate and Login
+        stage_span:
+          file: examples/plays/login.play
+          line: 9
+          col: 14
+          len: 18
+        args: []
+        span:
+          file: examples/plays/login.play
+          line: 9
+          col: 5
+          len: 27
+      - stage_name: Verify Outcome
+        stage_span:
           file: examples/plays/login.play
           line: 10
-          col: 8
-          len: 18
-        timeout: 15000
-        timeout_span:
-          file: examples/plays/login.play
-          line: 11
           col: 14
-          len: 3
-        scenes:
-          - scene_name: LoginScreen
-            scene_span:
-              file: examples/plays/login.play
-              line: 12
-              col: 12
-              len: 11
-            steps:
-              - source_text: "Check: LoginTitle"
-                span:
-                  file: examples/plays/login.play
-                  line: 13
-                  col: 9
-                  len: 17
-                timeout: ~
-                step: check
-                piece:
-                  name: LoginTitle
-                  span:
-                    file: examples/plays/login.play
-                    line: 13
-                    col: 16
-                    len: 10
-                condition:
-                  check: is_visible
-                span:
-                  file: examples/plays/login.play
-                  line: 13
-                  col: 16
-                  len: 10
-              - source_text: "Action: '${var.USER}' => UsernameInput"
-                span:
-                  file: examples/plays/login.play
-                  line: 14
-                  col: 9
-                  len: 38
-                timeout: ~
-                step: action
-                verb:
-                  action: type
-                  text:
-                    raw: "${var.USER}"
-                    parts:
-                      - Var:
-                          name: USER
-                          span:
-                            file: examples/plays/login.play
-                            line: 14
-                            col: 18
-                            len: 11
-                    span:
-                      file: examples/plays/login.play
-                      line: 14
-                      col: 17
-                      len: 13
-                  piece:
-                    name: UsernameInput
-                    span:
-                      file: examples/plays/login.play
-                      line: 14
-                      col: 34
-                      len: 13
-                span:
-                  file: examples/plays/login.play
-                  line: 14
-                  col: 17
-                  len: 30
-              - source_text: "Action: '${env.TEST_PASSWORD}' => PasswordInput"
-                span:
-                  file: examples/plays/login.play
-                  line: 15
-                  col: 9
-                  len: 47
-                timeout: ~
-                step: action
-                verb:
-                  action: type
-                  text:
-                    raw: "${env.TEST_PASSWORD}"
-                    parts:
-                      - Env:
-                          name: TEST_PASSWORD
-                          span:
-                            file: examples/plays/login.play
-                            line: 15
-                            col: 18
-                            len: 20
-                    span:
-                      file: examples/plays/login.play
-                      line: 15
-                      col: 17
-                      len: 22
-                  piece:
-                    name: PasswordInput
-                    span:
-                      file: examples/plays/login.play
-                      line: 15
-                      col: 43
-                      len: 13
-                span:
-                  file: examples/plays/login.play
-                  line: 15
-                  col: 17
-                  len: 39
-              - source_text: "Action: click => SubmitButton"
-                span:
-                  file: examples/plays/login.play
-                  line: 16
-                  col: 9
-                  len: 29
-                timeout: ~
-                step: action
-                verb:
-                  action: click
-                  piece:
-                    name: SubmitButton
-                    span:
-                      file: examples/plays/login.play
-                      line: 16
-                      col: 26
-                      len: 12
-                span:
-                  file: examples/plays/login.play
-                  line: 16
-                  col: 17
-                  len: 21
-      - name: Verify Outcome
-        name_span:
-          file: examples/plays/login.play
-          line: 18
-          col: 8
           len: 14
-        timeout: ~
-        timeout_span: ~
-        scenes:
-          - scene_name: DashboardScreen
-            scene_span:
-              file: examples/plays/login.play
-              line: 19
-              col: 12
-              len: 15
-            steps:
-              - source_text: "Check: WelcomeBanner is visible timeout 20s"
-                span:
-                  file: examples/plays/login.play
-                  line: 20
-                  col: 9
-                  len: 43
-                timeout: 20000
-                step: check
-                piece:
-                  name: WelcomeBanner
-                  span:
-                    file: examples/plays/login.play
-                    line: 20
-                    col: 16
-                    len: 13
-                condition:
-                  check: is_visible
-                span:
-                  file: examples/plays/login.play
-                  line: 20
-                  col: 16
-                  len: 36
+        args: []
+        span:
+          file: examples/plays/login.play
+          line: 10
+          col: 5
+          len: 23

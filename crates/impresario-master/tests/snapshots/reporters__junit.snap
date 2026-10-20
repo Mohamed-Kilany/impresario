@@ -8,11 +8,13 @@ expression: xml
         <testcase name="Sign in" classname="plays/login.play" time="0.850">
             <properties>
                 <property name="attempts" value="1"/>
+                <property name="stage_sources" value="Login@theatres/auth.theatre:4:1"/>
             </properties>
         </testcase>
         <testcase name="Wrong password" classname="plays/login.play" time="1.250">
             <properties>
                 <property name="attempts" value="1"/>
+                <property name="stage_sources" value="Login@theatres/auth.theatre:4:1"/>
             </properties>
             <failure message="CHECK_FAILED: expected &apos;Welcome&apos; but saw &apos;Invalid credentials&apos;" type="CHECK_FAILED"/>
         </testcase>
@@ -24,6 +26,7 @@ expression: xml
                 <property name="attempts" value="2"/>
                 <property name="flaky" value="true"/>
                 <property name="tags" value="smoke"/>
+                <property name="stage_sources" value="Checkout@theatres/auth.theatre:4:1"/>
             </properties>
         </testcase>
         <testcase name="Refund" classname="plays/checkout.play" time="0.000">

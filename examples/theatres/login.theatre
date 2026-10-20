@@ -1,0 +1,14 @@
+Theatre: User Authentication Feature stages
+
+Stage: Navigate and Login
+    Timeout: 15s
+    Scene: LoginScreen
+        Check: LoginTitle
+        Action: '${var.USER}' => UsernameInput
+        Action: '${env.TEST_PASSWORD}' => PasswordInput
+        Action: click => SubmitButton
+
+Stage: Verify Outcome
+    Scene: DashboardScreen
+        Check: WelcomeBanner is visible timeout 20s
+        Check: LogoutButton is visible

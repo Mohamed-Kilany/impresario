@@ -96,6 +96,9 @@ pub struct StepReport {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StageReport {
     pub name: String,
+    /// Source location of the stage declaration in the `.theatre` file.
+    #[serde(default)]
+    pub span: Option<SpanJson>,
     pub status: Status,
     pub steps: Vec<StepReport>,
 }
@@ -126,9 +129,13 @@ pub struct AttemptReport {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActReport {
+    /// Display name, e.g. `Login rejects bad passwords [user=alice]`.
     pub name: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Redacted `Examples:` values for this execution.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub example: BTreeMap<String, String>,
     pub status: Status,
     #[serde(default)]
     pub flaky: bool,
@@ -170,6 +177,9 @@ pub struct DeviceReport {
 /// The complete `report.json` document (Appendix B).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunReport {
+    /// `report.json` schema version (2 adds stage spans and example rows).
+    #[serde(default = "report_schema_version")]
+    pub schema_version: u32,
     pub run_id: String,
     pub started_at: String,
     pub duration_ms: u64,
@@ -177,6 +187,10 @@ pub struct RunReport {
     /// Extra field: the process exit code the CLI will return.
     pub exit_code: i32,
     pub devices: Vec<DeviceReport>,
+}
+
+fn report_schema_version() -> u32 {
+    2
 }
 
 impl RunReport {
@@ -242,6 +256,7 @@ mod tests {
 
     fn report() -> RunReport {
         RunReport {
+            schema_version: 2,
             run_id: "20261016-185512-a1b2".to_string(),
             started_at: "2026-10-16T18:55:12.000Z".to_string(),
             duration_ms: 42,
@@ -258,6 +273,7 @@ mod tests {
                     acts: vec![ActReport {
                         name: "A".to_string(),
                         tags: vec!["smoke".to_string()],
+                        example: BTreeMap::new(),
                         status: Status::Failed,
                         flaky: false,
                         attempts: vec![AttemptReport {
@@ -266,6 +282,7 @@ mod tests {
                             duration_ms: 10,
                             stages: vec![StageReport {
                                 name: "S".to_string(),
+                                span: None,
                                 status: Status::Failed,
                                 steps: vec![step(Status::Passed), step(Status::Failed)],
                             }],
@@ -322,6 +339,7 @@ mod tests {
         report.devices[0].plays[0].acts.push(ActReport {
             name: "B".to_string(),
             tags: vec![],
+            example: BTreeMap::new(),
             status: Status::Skipped,
             flaky: false,
             attempts: vec![],
@@ -329,6 +347,7 @@ mod tests {
         report.devices[0].plays[0].acts.push(ActReport {
             name: "C".to_string(),
             tags: vec![],
+            example: BTreeMap::new(),
             status: Status::Aborted,
             flaky: false,
             attempts: vec![],
@@ -336,6 +355,7 @@ mod tests {
         report.devices[0].plays[0].acts.push(ActReport {
             name: "D".to_string(),
             tags: vec![],
+            example: BTreeMap::new(),
             status: Status::Passed,
             flaky: false,
             attempts: vec![],

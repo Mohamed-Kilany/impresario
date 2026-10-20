@@ -615,6 +615,7 @@ fn semantic_negative_cases() {
             .unwrap_or_else(|| panic!("case '{}': play must parse", case.name));
         let workspace = Workspace {
             scenes: vec![scene],
+            theatres: Vec::new(),
             plays: vec![play],
         };
         let refs: Vec<DeviceRef> = case
@@ -657,8 +658,36 @@ fn duplicate_scene_across_workspace_is_imp_dsl_006() {
 // Matrix bookkeeping: size and per-code coverage
 // ---------------------------------------------------------------------------
 
-/// `IMP-DSL-006` is covered by `duplicate_scene_across_workspace_is_imp_dsl_006`.
-const DEDICATED: &[Code] = &[Code::DslDuplicateScene];
+/// Codes covered by dedicated tests rather than this table:
+/// `IMP-DSL-006` (`duplicate_scene_across_workspace_is_imp_dsl_006`) and the
+/// theatrical/workspace-lint family, whose fixtures need a `.theatre` or a
+/// full workspace: parser tests (`duplicate_stage`, `duplicate_parameter`,
+/// `examples_width`, `unknown_example_column`), validation tests (031/032/
+/// 034/036/037/040/041 and 042..050), and the planner's `--arg` tests (032).
+const DEDICATED: &[Code] = &[
+    Code::DslDuplicateScene,
+    Code::DslDuplicateStage,
+    Code::DslUnknownStage,
+    Code::DslInvalidStageArguments,
+    Code::DslDuplicateTheatre,
+    Code::DslStageCycle,
+    Code::DslDuplicateParameter,
+    Code::DslUnknownParameter,
+    Code::DslMissingStageArgument,
+    Code::DslDuplicateExampleColumn,
+    Code::DslExampleWidth,
+    Code::DslUnknownExampleColumn,
+    Code::DslStageDepth,
+    Code::DslLintUnusedScene,
+    Code::DslLintUnusedPiece,
+    Code::DslLintUnusedStage,
+    Code::DslLintUnusedTheatre,
+    Code::DslLintUnusedVar,
+    Code::DslLintUnusedExampleColumn,
+    Code::DslLintShadowedVar,
+    Code::DslLintActPlatformCoverage,
+    Code::DslLintRequiredParamNeverSupplied,
+];
 
 const ALL_DSL_CODES: &[Code] = &[
     Code::DslTabIndentation,
@@ -683,6 +712,27 @@ const ALL_DSL_CODES: &[Code] = &[
     Code::DslLintNaming,
     Code::DslLintSceneFileMismatch,
     Code::DslTimeoutNotAllowed,
+    Code::DslDuplicateStage,
+    Code::DslUnknownStage,
+    Code::DslInvalidStageArguments,
+    Code::DslDuplicateTheatre,
+    Code::DslStageCycle,
+    Code::DslDuplicateParameter,
+    Code::DslUnknownParameter,
+    Code::DslMissingStageArgument,
+    Code::DslDuplicateExampleColumn,
+    Code::DslExampleWidth,
+    Code::DslUnknownExampleColumn,
+    Code::DslStageDepth,
+    Code::DslLintUnusedScene,
+    Code::DslLintUnusedPiece,
+    Code::DslLintUnusedStage,
+    Code::DslLintUnusedTheatre,
+    Code::DslLintUnusedVar,
+    Code::DslLintUnusedExampleColumn,
+    Code::DslLintShadowedVar,
+    Code::DslLintActPlatformCoverage,
+    Code::DslLintRequiredParamNeverSupplied,
 ];
 
 #[test]

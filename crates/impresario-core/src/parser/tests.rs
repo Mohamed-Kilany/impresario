@@ -6,9 +6,10 @@
 
 use std::path::Path;
 
-use super::{parse_play, parse_scene, ParseOutcome};
+use super::{parse_play, parse_scene, parse_theatre, ParseOutcome};
 use crate::ast::{
-    ActionVerb, AppOp, Check, CheckCondition, Direction, PlayFile, SceneFile, Step, StepKind,
+    ActionVerb, AppOp, Check, CheckCondition, Direction, PlayFile, SceneFile, StageItem, Step,
+    StepKind, TheatreFile,
 };
 use crate::diag::{Code, Diagnostics};
 use crate::keys::RemoteKey;
@@ -34,6 +35,16 @@ fn scene_ok(source: &str) -> SceneFile {
         outcome.diagnostics
     );
     outcome.ast.expect("scene AST")
+}
+
+fn theatre_ok(source: &str) -> TheatreFile {
+    let outcome = parse_theatre(source, Path::new("test.theatre"));
+    assert!(
+        !outcome.diagnostics.has_errors(),
+        "unexpected diagnostics: {:?}",
+        outcome.diagnostics
+    );
+    outcome.ast.expect("theatre AST")
 }
 
 fn play_ok(source: &str) -> PlayFile {
@@ -277,6 +288,23 @@ fn duplicate_var_declarations_last_wins() {
     );
     assert_eq!(play.var_decls.len(), 1);
     assert_eq!(play.var_decls[0].value.raw, "second");
+}
+
+#[test]
+fn duplicate_var_declaration_warns_about_shadowing() {
+    let outcome = parse_play(
+        "Play: P\nVar: USER = 'first'\nVar: USER = 'second'\n\nAct: A\n\nStage: S\n    Scene: X\n        Check: A\n",
+        Path::new("p.play"),
+    );
+    assert!(outcome.ast.is_some());
+    assert_eq!(
+        outcome
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["IMP-DSL-048"]
+    );
 }
 
 #[test]
@@ -698,4 +726,90 @@ fn duplicate_piece_names_are_reported() {
         .and_then(|d| d.help.clone())
         .unwrap_or_default();
     assert!(help.contains("line 5"), "help: {help}");
+}
+
+#[test]
+fn tabular_scene_parses_cells_spans_and_absent_values() {
+    let scene = scene_ok(
+        "Scene: LoginScreen\nPlatforms: web, android\n\n| Piece | web | android | index |\n|---|---|---|---|\n| LoginTitle | h1.title | id:login_title | |\n| PromoBanner | .promo | - | 2 |\n",
+    );
+    assert_eq!(
+        scene.platforms,
+        ScenePlatforms::List(vec![Platform::Web, Platform::Android])
+    );
+    assert_eq!(scene.columns.len(), 3);
+    assert_eq!(scene.columns[0].platform, Some(Platform::Web));
+    assert_eq!(scene.columns[2].platform, None);
+    assert_eq!(scene.pieces.len(), 2);
+    let title = &scene.pieces[0];
+    assert_eq!(title.name, "LoginTitle");
+    assert_eq!(title.selectors.len(), 2);
+    assert_eq!(title.selectors[0].raw, "h1.title");
+    assert_eq!(title.selectors[0].span.line, 6);
+    let promo = &scene.pieces[1];
+    assert_eq!(promo.index, 2);
+    assert_eq!(promo.selectors.len(), 1);
+    assert_eq!(promo.selectors[0].key, Platform::Web);
+}
+
+#[test]
+fn tabular_scene_defaults_to_cross_platform_and_accepts_omitted_column() {
+    let scene = scene_ok(
+        "Scene: Home\n| Piece | android | web |\n|---|---|---|\n| Play | id:play | #play |\n",
+    );
+    assert_eq!(scene.platforms, ScenePlatforms::CrossPlatform);
+    assert_eq!(scene.pieces[0].selectors.len(), 2);
+}
+
+#[test]
+fn theatre_parses_parameters_platforms_and_ordered_items() {
+    let theatre = theatre_ok(
+        "Theatre: Authentication\n\nStage: Login(user, password, remember = 'false')\n    Description: Fills the login form.\n    Platforms: web, android\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${param.user}' => UsernameInput\n    Perform: DashboardShown\n\nStage: DashboardShown\n    Scene: DashboardScreen\n        Check: WelcomeBanner\n",
+    );
+    assert_eq!(theatre.name, "Authentication");
+    assert_eq!(theatre.stages.len(), 2);
+    let login = &theatre.stages[0];
+    assert_eq!(login.name, "Login");
+    assert_eq!(login.params.len(), 3);
+    assert_eq!(login.params[2].name, "remember");
+    assert_eq!(
+        login.params[2]
+            .default
+            .as_ref()
+            .map(|value| value.raw.as_str()),
+        Some("false")
+    );
+    assert_eq!(login.platforms.len(), 2);
+    assert_eq!(login.scenes.len(), 1);
+    assert_eq!(login.items.len(), 2);
+    assert!(matches!(login.items[0], StageItem::Scene(_)));
+    assert!(matches!(login.items[1], StageItem::Perform(_)));
+}
+
+#[test]
+fn theatrical_play_parses_examples_and_performs() {
+    let play = play_ok(
+        "Play: Login feature\nApp: shop\nVar: USER = 'alice'\n\nAct: Login(user, password)\nTags: smoke\nPlatforms: android, web\n    Examples:\n        | user | password |\n        | alice | wrong-1 |\n        | bob | wrong-2 |\n    Perform: Login(user = '${example.user}', password = '${example.password}')\n    Perform: DashboardShown\n",
+    );
+    let act = &play.acts[0];
+    assert_eq!(act.name, "Login");
+    assert_eq!(act.params.len(), 2);
+    assert_eq!(act.performs.len(), 2);
+    let table = act.examples.as_ref().expect("examples");
+    assert_eq!(table.columns.len(), 2);
+    assert_eq!(table.rows.len(), 2);
+    assert_eq!(table.rows[0].values[0].as_deref(), Some("alice"));
+    assert_eq!(act.performs[0].args.len(), 2);
+    assert_eq!(act.performs[0].args[0].value.example_names(), vec!["user"]);
+}
+
+#[test]
+fn theatrical_play_rejects_inline_stage_blocks() {
+    let outcome = play_outcome(
+        "Play: P\n\nAct: A\n    Perform: S\n    Stage: Inline\n        Scene: Screen\n            Check: P\n",
+    );
+    assert!(outcome
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("inline Stage")));
 }

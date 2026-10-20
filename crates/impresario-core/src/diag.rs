@@ -73,6 +73,28 @@ pub enum Code {
     DslLintNaming,
     DslLintSceneFileMismatch,
     DslTimeoutNotAllowed,
+    // theatrical DSL (TASK-2 section 8)
+    DslDuplicateStage,
+    DslUnknownStage,
+    DslInvalidStageArguments,
+    DslDuplicateTheatre,
+    DslStageCycle,
+    DslDuplicateParameter,
+    DslUnknownParameter,
+    DslMissingStageArgument,
+    DslDuplicateExampleColumn,
+    DslExampleWidth,
+    DslUnknownExampleColumn,
+    DslStageDepth,
+    DslLintUnusedScene,
+    DslLintUnusedPiece,
+    DslLintUnusedStage,
+    DslLintUnusedTheatre,
+    DslLintUnusedVar,
+    DslLintUnusedExampleColumn,
+    DslLintShadowedVar,
+    DslLintActPlatformCoverage,
+    DslLintRequiredParamNeverSupplied,
 }
 
 impl Code {
@@ -112,6 +134,27 @@ impl Code {
             Code::DslLintNaming => "IMP-DSL-020",
             Code::DslLintSceneFileMismatch => "IMP-DSL-021",
             Code::DslTimeoutNotAllowed => "IMP-DSL-022",
+            Code::DslDuplicateStage => "IMP-DSL-030",
+            Code::DslUnknownStage => "IMP-DSL-031",
+            Code::DslInvalidStageArguments => "IMP-DSL-032",
+            Code::DslDuplicateTheatre => "IMP-DSL-033",
+            Code::DslStageCycle => "IMP-DSL-034",
+            Code::DslDuplicateParameter => "IMP-DSL-035",
+            Code::DslUnknownParameter => "IMP-DSL-036",
+            Code::DslMissingStageArgument => "IMP-DSL-037",
+            Code::DslDuplicateExampleColumn => "IMP-DSL-038",
+            Code::DslExampleWidth => "IMP-DSL-039",
+            Code::DslUnknownExampleColumn => "IMP-DSL-040",
+            Code::DslStageDepth => "IMP-DSL-041",
+            Code::DslLintUnusedScene => "IMP-DSL-042",
+            Code::DslLintUnusedPiece => "IMP-DSL-043",
+            Code::DslLintUnusedStage => "IMP-DSL-044",
+            Code::DslLintUnusedTheatre => "IMP-DSL-045",
+            Code::DslLintUnusedVar => "IMP-DSL-046",
+            Code::DslLintUnusedExampleColumn => "IMP-DSL-047",
+            Code::DslLintShadowedVar => "IMP-DSL-048",
+            Code::DslLintActPlatformCoverage => "IMP-DSL-049",
+            Code::DslLintRequiredParamNeverSupplied => "IMP-DSL-050",
         }
     }
 
@@ -119,9 +162,18 @@ impl Code {
     #[must_use]
     pub fn default_severity(self) -> Severity {
         match self {
-            Code::DslLintFixedWait | Code::DslLintNaming | Code::DslLintSceneFileMismatch => {
-                Severity::Warning
-            }
+            Code::DslLintFixedWait
+            | Code::DslLintNaming
+            | Code::DslLintSceneFileMismatch
+            | Code::DslLintUnusedScene
+            | Code::DslLintUnusedPiece
+            | Code::DslLintUnusedStage
+            | Code::DslLintUnusedTheatre
+            | Code::DslLintUnusedVar
+            | Code::DslLintUnusedExampleColumn
+            | Code::DslLintShadowedVar
+            | Code::DslLintActPlatformCoverage
+            | Code::DslLintRequiredParamNeverSupplied => Severity::Warning,
             _ => Severity::Error,
         }
     }

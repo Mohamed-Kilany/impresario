@@ -68,6 +68,29 @@ fn parse_json_scene_matches_the_snapshot() {
 }
 
 #[test]
+fn parse_json_theatre_matches_the_snapshot() {
+    let value = parse_json("theatres/login.theatre", "examples/theatres/login.theatre");
+    insta::assert_json_snapshot!("parse_json_login_theatre", value);
+}
+
+#[test]
+fn validate_explicit_play_loads_the_configured_theatre_index() {
+    let output = Command::new(env!("CARGO_BIN_EXE_impresario"))
+        .current_dir(repo_root())
+        .args(["--workspace", "examples", "validate", "plays/login.play"])
+        .output()
+        .expect("run impresario");
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("IMP-DSL-031"), "{stderr}");
+}
+
+#[test]
 fn parse_reports_broken_files_on_stderr_with_exit_2() {
     let dir = repo_root().join("target").join("tmp-parse-broken");
     let _ = std::fs::remove_dir_all(&dir);

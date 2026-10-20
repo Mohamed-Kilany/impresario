@@ -6,17 +6,17 @@
 
 use std::path::Path;
 
-use impresario_core::ast::{ActDecl, PlayFile, SceneFile, StageDecl};
-use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::ast::{ActDecl, PlayFile, SceneFile, StageDecl, StageItem, TheatreFile};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::span::Span;
 use tower_lsp_server::ls_types::{
     DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location,
-    MarkupContent, MarkupKind, Position, Range, SymbolKind,
+    MarkupContent, MarkupKind, Position, Range, SymbolKind, Uri,
 };
 
 use super::index::{selectors_summary, Index, PieceInfo, SceneInfo};
-use super::is_scene_file;
 use super::position::{enclosing_scene, indent_of, word_at, Doc, Encoding};
+use super::{is_scene_file, is_theatre_file};
 /// The markdown hover of one piece: its per-platform selectors table.
 #[must_use]
 pub fn piece_markdown(piece: &PieceInfo) -> String {
@@ -48,6 +48,25 @@ pub fn hover(
     let (line1, at) = doc.scalar_index(enc, pos)?;
     let line = doc.line(line1)?;
     let (word, start, len) = word_at(line, at)?;
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("Perform:") || trimmed.starts_with("Stage:") {
+        if let Some(stage) = index.stage(&word) {
+            let mut value = format!(
+                "**{}**\n\n`{}`\n\nTheatre: {}",
+                word, stage.signature, stage.theatre
+            );
+            if let Some(description) = &stage.description {
+                value.push_str(&format!("\n\n{description}"));
+            }
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
+                range: Some(doc.range_of(enc, line1, start + 1, len)),
+            });
+        }
+    }
     let (_scene, piece) = find_piece(index, text, is_scene, line1, &word)?;
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -74,20 +93,24 @@ pub fn definition(
     let line = doc.line(line1)?;
     let (word, _, _) = word_at(line, at)?;
 
+    if line.trim_start().starts_with("Perform:") {
+        let info = index.stages.get(&word)?;
+        return Some(location_of(&info.uri, &info.name_span, enc, read)?.into());
+    }
     if line.trim_start().starts_with("Scene:") {
         if is_scene {
             return None;
         }
         let info = index.scenes.get(&word)?;
-        return Some(location_of(info, &info.name_span, enc, read)?.into());
+        return Some(location_of(&info.uri, &info.name_span, enc, read)?.into());
     }
 
     let (scene, piece) = find_piece(index, text, is_scene, line1, &word)?;
-    Some(location_of(scene, &piece.name_span, enc, read)?.into())
+    Some(location_of(&scene.uri, &piece.name_span, enc, read)?.into())
 }
 
 fn location_of(
-    scene: &SceneInfo,
+    uri: &Uri,
     span: &Span,
     enc: Encoding,
     read: &dyn Fn(&Path) -> Option<String>,
@@ -95,7 +118,7 @@ fn location_of(
     let target = read(&span.file)?;
     let target_doc = Doc::new(&target);
     Some(Location {
-        uri: scene.uri.clone(),
+        uri: uri.clone(),
         range: target_doc.range(enc, span),
     })
 }
@@ -141,10 +164,31 @@ pub fn document_symbols(text: &str, path: &Path, enc: Encoding) -> Option<Docume
     let doc = Doc::new(text);
     let root = if is_scene_file(path) {
         scene_symbol(&doc, enc, &parse_scene(text, path).ast?)
+    } else if is_theatre_file(path) {
+        theatre_symbol(&doc, enc, &parse_theatre(text, path).ast?)
     } else {
         play_symbol(&doc, enc, &parse_play(text, path).ast?)
     };
     Some(DocumentSymbolResponse::Nested(vec![root]))
+}
+
+fn theatre_symbol(doc: &Doc<'_>, enc: Encoding, theatre: &TheatreFile) -> DocumentSymbol {
+    let children: Vec<DocumentSymbol> = theatre
+        .stages
+        .iter()
+        .map(|stage| stage_symbol(doc, enc, stage))
+        .collect();
+    let last = theatre.stages.last().map(stage_end);
+    let mut root = symbol(
+        theatre.name.clone(),
+        SymbolKind::MODULE,
+        doc,
+        enc,
+        &theatre.name_span,
+        last,
+    );
+    root.children = Some(children);
+    root
 }
 
 fn play_symbol(doc: &Doc<'_>, enc: Encoding, play: &PlayFile) -> DocumentSymbol {
@@ -168,12 +212,28 @@ fn play_symbol(doc: &Doc<'_>, enc: Encoding, play: &PlayFile) -> DocumentSymbol 
 }
 
 fn act_symbol(doc: &Doc<'_>, enc: Encoding, act: &ActDecl) -> DocumentSymbol {
-    let children: Vec<DocumentSymbol> = act
+    let mut children: Vec<DocumentSymbol> = act
         .stages
         .iter()
         .map(|stage| stage_symbol(doc, enc, stage))
         .collect();
-    let last = act.stages.last().map(stage_end);
+    for perform in &act.performs {
+        let mut entry = symbol(
+            perform.stage_name.clone(),
+            SymbolKind::FUNCTION,
+            doc,
+            enc,
+            &perform.stage_span,
+            Some(&perform.span),
+        );
+        entry.detail = Some("Perform".to_string());
+        children.push(entry);
+    }
+    let last = act
+        .performs
+        .last()
+        .map(|perform| &perform.span)
+        .or_else(|| act.stages.last().map(stage_end));
     let mut root = symbol(
         act.name.clone(),
         SymbolKind::NAMESPACE,
@@ -231,8 +291,17 @@ fn scene_symbol(doc: &Doc<'_>, enc: Encoding, scene: &SceneFile) -> DocumentSymb
     root
 }
 
-/// The last span inside a stage (its last step, else its last scene block).
+/// The last span inside a stage (its last step, nested call, or scene block).
 fn stage_end(stage: &StageDecl) -> &Span {
+    if let Some(last) = stage.items.last() {
+        return match last {
+            StageItem::Scene(block) => block
+                .steps
+                .last()
+                .map_or(&block.scene_span, |step| &step.span),
+            StageItem::Perform(perform) => &perform.span,
+        };
+    }
     stage
         .scenes
         .last()
@@ -241,9 +310,13 @@ fn stage_end(stage: &StageDecl) -> &Span {
         .unwrap_or(&stage.name_span)
 }
 
-/// The last span inside an act (its last stage).
+/// The last span inside an act (its last stage or `Perform:` call).
 fn act_end(act: &ActDecl) -> &Span {
-    act.stages.last().map_or(&act.name_span, stage_end)
+    act.performs
+        .last()
+        .map(|perform| &perform.span)
+        .or_else(|| act.stages.last().map(stage_end))
+        .unwrap_or(&act.name_span)
 }
 
 fn symbol(
@@ -305,7 +378,7 @@ Stage: Navigate
         let play_path = std::env::temp_dir().join("impresario-lsp/plays/login.play");
         let scene = parse_scene(SCENE, &scene_path).ast.expect("scene");
         let play = parse_play(PLAY, &play_path).ast.expect("play");
-        Index::build(&[scene], &[play])
+        Index::build(&[scene], &[], &[play])
     }
 
     fn reader() -> impl Fn(&Path) -> Option<String> {

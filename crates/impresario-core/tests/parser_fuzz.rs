@@ -27,6 +27,7 @@ fn exercise(source: &str) {
 
     let workspace = Workspace {
         scenes: scene.ast.into_iter().collect(),
+        theatres: Vec::new(),
         plays: play.ast.into_iter().collect(),
     };
     let devices = [

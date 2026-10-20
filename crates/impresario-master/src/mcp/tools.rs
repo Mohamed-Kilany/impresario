@@ -122,6 +122,12 @@ pub(crate) fn definitions() -> Vec<Value> {
                         "description": "Variables that override scene pieces (name to value, \
         like --var name=value).",
                     },
+                    "args": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Act parameters as ACT.PARAM to value (like \
+        --arg ACT.PARAM=value).",
+                    },
                     "timeout_ms": {
                         "type": "integer",
                         "minimum": 100,

@@ -1,0 +1,13 @@
+Play: Golden Canonical
+Description: Formatter fixture.
+Var: USER = 'alice'
+
+Act: Login(user = 'alice')
+Tags: smoke, auth
+Platforms: web, android
+    Examples:
+        | user | password |
+        | alice | secret |
+        | bob | hunter2 |
+    Perform: Login(user = '${example.user}', password = '${example.password}')
+    Perform: Auth.Verify

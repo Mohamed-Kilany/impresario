@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
@@ -50,6 +50,52 @@ fn login_play_parses_clean_and_snapshots() {
     let json = serde_json::to_value(&ast).expect("serialize AST");
     insta::assert_yaml_snapshot!("login_play_ast", ast);
     insta::assert_json_snapshot!("login_play_ast_json", json);
+}
+
+#[test]
+fn login_theatre_parses_clean_and_snapshots() {
+    let source = read("theatres/login.theatre");
+    let outcome = parse_theatre(&source, Path::new("examples/theatres/login.theatre"));
+    assert!(outcome.diagnostics.is_empty(), "{:?}", outcome.diagnostics);
+    let ast = outcome.ast.expect("theatre AST");
+    let json = serde_json::to_value(&ast).expect("serialize AST");
+    insta::assert_yaml_snapshot!("login_theatre_ast", ast);
+    insta::assert_json_snapshot!("login_theatre_ast_json", json);
+}
+
+#[test]
+fn examples_are_migrated_already_and_formatted() {
+    let root = examples_dir();
+    let loaded = impresario_core::workspace::load_dirs(
+        &root.join("scenes"),
+        &root.join("theatres"),
+        &root.join("plays"),
+    );
+    assert!(!loaded.diagnostics.has_errors(), "{:?}", loaded.diagnostics);
+    let migrated = impresario_core::migrate::migrate(&loaded.workspace, &root.join("theatres"));
+    assert!(!migrated.errors.has_errors(), "{migrated:?}");
+    assert!(migrated.is_empty(), "{migrated:?}");
+
+    for path in loaded
+        .workspace
+        .scenes
+        .iter()
+        .map(|scene| scene.path.clone())
+        .chain(
+            loaded
+                .workspace
+                .theatres
+                .iter()
+                .map(|theatre| theatre.path.clone()),
+        )
+        .chain(loaded.workspace.plays.iter().map(|play| play.path.clone()))
+    {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+        let formatted = impresario_core::fmt::format_source(&source, &path)
+            .unwrap_or_else(|diagnostics| panic!("{}: {diagnostics:?}", path.display()));
+        assert_eq!(formatted, source, "{} is not formatted", path.display());
+    }
 }
 
 #[test]

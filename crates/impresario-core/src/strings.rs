@@ -2,8 +2,9 @@
 //!
 //! Grammar (spec 5.1): strings are single or double quoted; escapes are
 //! `\\ \' \" \n \t \u{XXXX}`; a string never spans lines. Interpolation
-//! happens inside strings only: `${env.NAME}` (process environment) and
-//! `${var.NAME}` (play variable).
+//! happens inside strings only: `${env.NAME}` (process environment),
+//! `${var.NAME}` (play variable), `${param.NAME}` (stage/act parameter) and
+//! `${example.NAME}` (Examples column).
 
 use std::path::Path;
 
@@ -21,6 +22,10 @@ pub enum Part {
     Env { name: String, span: Span },
     /// `${var.NAME}` reference.
     Var { name: String, span: Span },
+    /// `${param.NAME}` reference (stage or act parameter).
+    Param { name: String, span: Span },
+    /// `${example.NAME}` reference (Examples column).
+    Example { name: String, span: Span },
 }
 
 /// A parsed string literal.
@@ -60,6 +65,30 @@ impl ParsedString {
             .iter()
             .filter_map(|p| match p {
                 Part::Env { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All stage/act parameter names referenced by `${param.*}`.
+    #[must_use]
+    pub fn param_names(&self) -> Vec<&str> {
+        self.parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Param { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All example-column names referenced by `${example.*}`.
+    #[must_use]
+    pub fn example_names(&self) -> Vec<&str> {
+        self.parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Example { name, .. } => Some(name.as_str()),
                 _ => None,
             })
             .collect()
@@ -252,6 +281,14 @@ fn interpolation_parts(text: &str, source_cols: &[usize], file: &Path, line: usi
                             span,
                         }),
                         "var" => Some(Part::Var {
+                            name: name.to_string(),
+                            span,
+                        }),
+                        "param" => Some(Part::Param {
+                            name: name.to_string(),
+                            span,
+                        }),
+                        "example" => Some(Part::Example {
                             name: name.to_string(),
                             span,
                         }),

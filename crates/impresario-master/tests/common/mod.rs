@@ -265,6 +265,7 @@ pub fn build_test_plan_with(
         .expect("test play parses");
     let workspace = Workspace {
         scenes: vec![scene],
+        theatres: Vec::new(),
         plays: vec![play.clone()],
     };
     plan::build_plan(&PlanInput {
@@ -277,6 +278,7 @@ pub fn build_test_plan_with(
         plays: std::slice::from_ref(&play),
         selection,
         cli_vars: &BTreeMap::new(),
+        cli_args: &BTreeMap::new(),
         cli_timeout: None,
     })
     .expect("plan builds")

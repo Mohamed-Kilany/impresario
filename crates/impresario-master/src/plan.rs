@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use impresario_core::apps::AppConfig;
 use impresario_core::ast::{
-    ActDecl, ActionVerb, AppOp, CheckCondition, PlayFile, SceneFile, Step, StepKind,
+    ActDecl, ActionVerb, AppOp, CheckCondition, PerformDecl, PlayFile, SceneFile, StageDecl,
+    StageItem, Step, StepKind,
 };
 use impresario_core::command::{
     ActionType, CheckKind, Command, KeyPress, RunAction, ValidateCheck,
@@ -86,6 +87,8 @@ pub struct PlannedStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedStage {
     pub name: String,
+    /// Location of the stage declaration in its `.theatre` file.
+    pub span: Span,
     pub steps: Vec<PlannedStep>,
 }
 
@@ -93,6 +96,8 @@ pub struct PlannedStage {
 pub struct PlannedAct {
     pub name: String,
     pub tags: Vec<String>,
+    /// Values of the selected `Examples:` row (empty for a table-less Act).
+    pub example: BTreeMap<String, String>,
     pub stages: Vec<PlannedStage>,
 }
 
@@ -136,6 +141,8 @@ pub struct PlanInput<'a> {
     pub selection: &'a Selection,
     /// `--var K=V` overrides (beat play vars).
     pub cli_vars: &'a BTreeMap<String, String>,
+    /// `--arg ACT.PARAM=VALUE` overrides (beat Examples and defaults).
+    pub cli_args: &'a BTreeMap<String, String>,
     /// `--timeout <ms>` (beats `timeout_default_ms`).
     pub cli_timeout: Option<u64>,
 }
@@ -143,6 +150,7 @@ pub struct PlanInput<'a> {
 /// Compile the plan. On any error returns every diagnostic collected.
 pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
+    validate_cli_args(input, &mut diagnostics);
     let mut secrets: Vec<String> = Vec::new();
     let mut devices = Vec::new();
     let mut reported_not_applicable: HashSet<(String, Platform)> = HashSet::new();
@@ -171,43 +179,57 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
                 if !act_applies_to(act, platform) || !input.selection.act_selected(act) {
                     continue;
                 }
-                let mut stages = Vec::new();
-                for stage in &act.stages {
-                    let mut steps = Vec::new();
+                let act_args: BTreeMap<String, String> = input
+                    .cli_args
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        key.strip_prefix(act.name.as_str())
+                            .and_then(|rest| rest.strip_prefix('.'))
+                            .map(|param| (param.to_string(), value.clone()))
+                    })
+                    .collect();
+                for example in act_examples(act) {
                     let mut ctx = CompileContext {
                         input,
                         device,
                         platform,
-                        stage_timeout: stage.timeout,
+                        stage_timeout: None,
                         vars,
                         declared_vars: &play.var_decls,
+                        params: BTreeMap::new(),
+                        examples: example.clone(),
+                        act_args: act_args.clone(),
                         reported_not_applicable: &mut reported_not_applicable,
                         reported_selectors: &mut reported_selectors,
                         secrets: &mut secrets,
                         diagnostics: &mut diagnostics,
                     };
-                    for block in &stage.scenes {
-                        compile_scene_block(
-                            block.scene_name.as_str(),
-                            &block.steps,
-                            &block.scene_span,
-                            &mut ctx,
-                            &mut steps,
-                        );
+                    bind_act_params(act, &mut ctx);
+                    let mut stages = Vec::new();
+                    if !act.performs.is_empty() {
+                        let mut stack = Vec::new();
+                        for perform in &act.performs {
+                            expand_perform(
+                                perform,
+                                &mut ctx,
+                                input.workspace,
+                                &mut stack,
+                                &mut stages,
+                            );
+                        }
+                    } else {
+                        for stage in &act.stages {
+                            compile_legacy_stage(stage, &mut ctx, &mut stages);
+                        }
                     }
-                    if !steps.is_empty() {
-                        stages.push(PlannedStage {
-                            name: stage.name.clone(),
-                            steps,
+                    if !stages.is_empty() {
+                        acts.push(PlannedAct {
+                            name: act.name.clone(),
+                            tags: act.tags.iter().map(|t| t.name.clone()).collect(),
+                            example: ctx.examples.clone(),
+                            stages,
                         });
                     }
-                }
-                if !stages.is_empty() {
-                    acts.push(PlannedAct {
-                        name: act.name.clone(),
-                        tags: act.tags.iter().map(|t| t.name.clone()).collect(),
-                        stages,
-                    });
                 }
             }
             if !acts.is_empty() {
@@ -350,6 +372,268 @@ fn act_applies_to(act: &ActDecl, platform: Platform) -> bool {
         .any(|p| p == platform)
 }
 
+fn stage_applies_to(stage: &StageDecl, platform: Platform) -> bool {
+    if stage.platforms.is_empty() {
+        return true;
+    }
+    stage
+        .platforms
+        .iter()
+        .filter_map(|named| named.name.parse::<Platform>().ok())
+        .any(|p| p == platform)
+}
+
+/// One execution per `Examples:` row; a table-less Act runs once.
+fn act_examples(act: &ActDecl) -> Vec<BTreeMap<String, String>> {
+    let Some(table) = &act.examples else {
+        return vec![BTreeMap::new()];
+    };
+    if table.rows.is_empty() {
+        return vec![BTreeMap::new()];
+    }
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            table
+                .columns
+                .iter()
+                .zip(&row.values)
+                .filter_map(|(column, value)| {
+                    value
+                        .as_ref()
+                        .map(|value| (column.name.clone(), value.clone()))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Bind Act parameters from the current Examples row, then from defaults.
+/// Required parameters that are not supplied stay unbound; a `${param.*}`
+/// reference in the Act then reports `IMP-DSL-036` with the exact span.
+fn bind_act_params(act: &ActDecl, ctx: &mut CompileContext<'_, '_>) {
+    for param in &act.params {
+        if ctx.params.contains_key(&param.name) {
+            continue;
+        }
+        if let Some(value) = ctx.act_args.get(&param.name).cloned() {
+            ctx.params.insert(param.name.clone(), value.clone());
+            ctx.examples.insert(param.name.clone(), value);
+            continue;
+        }
+        if let Some(value) = ctx.examples.get(&param.name).cloned() {
+            ctx.params.insert(param.name.clone(), value);
+            continue;
+        }
+        if let Some(default) = &param.default {
+            let mut local = Diagnostics::new();
+            let resolved = resolve_string(default, ctx, &mut local);
+            ctx.diagnostics.extend(local.into_vec());
+            if let Some(value) = resolved {
+                ctx.params.insert(param.name.clone(), value);
+            }
+        }
+    }
+}
+
+fn compile_legacy_stage(
+    stage: &StageDecl,
+    ctx: &mut CompileContext<'_, '_>,
+    out: &mut Vec<PlannedStage>,
+) {
+    let mut steps = Vec::new();
+    let previous_timeout = ctx.stage_timeout;
+    ctx.stage_timeout = stage.timeout;
+    for block in &stage.scenes {
+        compile_scene_block(
+            block.scene_name.as_str(),
+            &block.steps,
+            &block.scene_span,
+            ctx,
+            &mut steps,
+        );
+    }
+    ctx.stage_timeout = previous_timeout;
+    flush_stage(&stage.name, &stage.name_span, &mut steps, out);
+}
+
+fn flush_stage(name: &str, span: &Span, steps: &mut Vec<PlannedStep>, out: &mut Vec<PlannedStage>) {
+    if !steps.is_empty() {
+        out.push(PlannedStage {
+            name: name.to_string(),
+            span: span.clone(),
+            steps: std::mem::take(steps),
+        });
+    }
+}
+
+/// Expand one `Perform:` into ordered stage segments. Nested performances are
+/// recursively expanded in place, so the executed order always matches the
+/// written order of scenes and Perform lines.
+fn expand_perform(
+    perform: &PerformDecl,
+    ctx: &mut CompileContext<'_, '_>,
+    workspace: &Workspace,
+    stack: &mut Vec<String>,
+    out: &mut Vec<PlannedStage>,
+) {
+    let Some(stage) = workspace.stage(&perform.stage_name) else {
+        let mut diag = Diagnostic::error(
+            Code::DslUnknownStage,
+            format!("unknown stage '{}'", perform.stage_name),
+        )
+        .with_span(perform.stage_span.clone())
+        .with_help("declare it in a .theatre file under the configured theatres_dir");
+        if let Some(hint) = suggest(&perform.stage_name, &workspace.stage_names()) {
+            diag = diag.with_help(hint);
+        }
+        ctx.diagnostics.push(diag);
+        return;
+    };
+    if !stage_applies_to(stage, ctx.platform) {
+        return;
+    }
+    if let Some(cycle_start) = stack.iter().position(|name| name == &stage.name) {
+        let cycle = stack
+            .get(cycle_start..)
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .chain(std::iter::once(stage.name.clone()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        ctx.diagnostics.push(
+            Diagnostic::error(Code::DslStageCycle, format!("stage cycle: {cycle}"))
+                .with_span(perform.stage_span.clone())
+                .with_help("a stage cannot perform itself, directly or through another stage"),
+        );
+        return;
+    }
+    if stack.len() >= 64 {
+        ctx.diagnostics.push(
+            Diagnostic::error(
+                Code::DslStageDepth,
+                format!("stage nesting is deeper than 64 levels at '{}'", stage.name),
+            )
+            .with_span(perform.stage_span.clone())
+            .with_help("flatten the stage composition or split it into separate Acts"),
+        );
+        return;
+    }
+
+    let mut bound: BTreeMap<String, String> = BTreeMap::new();
+    let mut provided: HashSet<String> = HashSet::new();
+    for arg in &perform.args {
+        if !stage.params.iter().any(|param| param.name == arg.name) {
+            ctx.diagnostics.push(
+                Diagnostic::error(
+                    Code::DslInvalidStageArguments,
+                    format!("stage '{}' has no parameter '{}'", stage.name, arg.name),
+                )
+                .with_span(arg.name_span.clone())
+                .with_help(if stage.params.is_empty() {
+                    "this stage declares no parameters".to_string()
+                } else {
+                    format!(
+                        "parameters: {}",
+                        stage
+                            .params
+                            .iter()
+                            .map(|param| param.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }),
+            );
+            continue;
+        }
+        provided.insert(arg.name.clone());
+        let mut local = Diagnostics::new();
+        let resolved = resolve_string(&arg.value, ctx, &mut local);
+        ctx.diagnostics.extend(local.into_vec());
+        if let Some(value) = resolved {
+            bound.insert(arg.name.clone(), value);
+        }
+    }
+
+    for param in &stage.params {
+        if bound.contains_key(&param.name) {
+            continue;
+        }
+        if let Some(default) = &param.default {
+            let saved = std::mem::replace(&mut ctx.params, bound.clone());
+            let mut local = Diagnostics::new();
+            let resolved = resolve_string(default, ctx, &mut local);
+            ctx.params = saved;
+            ctx.diagnostics.extend(local.into_vec());
+            if let Some(value) = resolved {
+                bound.insert(param.name.clone(), value);
+            }
+        } else if !provided.contains(&param.name) {
+            ctx.diagnostics.push(
+                Diagnostic::error(
+                    Code::DslMissingStageArgument,
+                    format!("stage '{}' needs argument '{}'", stage.name, param.name),
+                )
+                .with_span(perform.stage_span.clone())
+                .with_help(format!(
+                    "pass it with Perform: {}(... {} = 'value' ...)",
+                    stage.name, param.name
+                )),
+            );
+        }
+    }
+
+    let mut child = CompileContext {
+        input: ctx.input,
+        device: ctx.device,
+        platform: ctx.platform,
+        stage_timeout: stage.timeout,
+        vars: ctx.vars,
+        declared_vars: ctx.declared_vars,
+        params: bound,
+        examples: ctx.examples.clone(),
+        act_args: ctx.act_args.clone(),
+        reported_not_applicable: &mut *ctx.reported_not_applicable,
+        reported_selectors: &mut *ctx.reported_selectors,
+        secrets: &mut *ctx.secrets,
+        diagnostics: &mut *ctx.diagnostics,
+    };
+
+    stack.push(stage.name.clone());
+    let mut pending = Vec::new();
+    if stage.items.is_empty() {
+        for block in &stage.scenes {
+            compile_scene_block(
+                block.scene_name.as_str(),
+                &block.steps,
+                &block.scene_span,
+                &mut child,
+                &mut pending,
+            );
+        }
+    } else {
+        for item in &stage.items {
+            match item {
+                StageItem::Scene(block) => compile_scene_block(
+                    block.scene_name.as_str(),
+                    &block.steps,
+                    &block.scene_span,
+                    &mut child,
+                    &mut pending,
+                ),
+                StageItem::Perform(nested) => {
+                    flush_stage(&stage.name, &stage.name_span, &mut pending, out);
+                    expand_perform(nested, &mut child, workspace, stack, out);
+                }
+            }
+        }
+    }
+    flush_stage(&stage.name, &stage.name_span, &mut pending, out);
+    stack.pop();
+}
+
 /// Resolve every `Var:` value of a play: values may interpolate other vars
 /// and `${env.*}`; cycles are `IMP-DSL-014`; CLI `--var` wins; duplicate
 /// declarations are last-wins (I-04).
@@ -442,6 +726,30 @@ fn resolve_var_decl(
                     break;
                 }
             }
+            Part::Param { name: param, span } => {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::DslUnknownParameter,
+                        format!("parameter '{param}' is not available in a Var: declaration"),
+                    )
+                    .with_span(span.clone())
+                    .with_help("Var: values are resolved once per play; use `${param.*}` in a Stage action instead"),
+                );
+                failed = true;
+                break;
+            }
+            Part::Example { name: column, span } => {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::DslUnknownExampleColumn,
+                        format!("example column '{column}' is not available in a Var: declaration"),
+                    )
+                    .with_span(span.clone())
+                    .with_help("use `${example.*}` in an Act's Perform: arguments instead"),
+                );
+                failed = true;
+                break;
+            }
             Part::Env {
                 name: env_name,
                 span,
@@ -495,6 +803,12 @@ struct CompileContext<'a, 'b> {
     stage_timeout: Option<impresario_core::duration::DslDuration>,
     vars: &'a BTreeMap<String, String>,
     declared_vars: &'a [impresario_core::ast::VarDecl],
+    /// Stage/act parameters bound for the current Perform expansion.
+    params: BTreeMap<String, String>,
+    /// Examples row values bound for the current Act execution.
+    examples: BTreeMap<String, String>,
+    /// CLI `--arg ACT.PARAM=VALUE` values for this Act.
+    act_args: BTreeMap<String, String>,
     reported_not_applicable: &'a mut HashSet<(String, Platform)>,
     reported_selectors: &'a mut HashSet<(String, Platform)>,
     secrets: &'a mut Vec<String>,
@@ -1190,6 +1504,34 @@ fn resolve_string(
                     return None;
                 }
             },
+            Part::Param { name, span } => match ctx.params.get(name) {
+                Some(value) => out.push_str(value),
+                None => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::DslUnknownParameter,
+                            format!("parameter '{name}' is not bound here"),
+                        )
+                        .with_span(span.clone())
+                        .with_help("declare it in the Stage/Act header or pass it in the Perform: argument list"),
+                    );
+                    return None;
+                }
+            },
+            Part::Example { name, span } => match ctx.examples.get(name) {
+                Some(value) => out.push_str(value),
+                None => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::DslUnknownExampleColumn,
+                            format!("example column '{name}' is not bound here"),
+                        )
+                        .with_span(span.clone())
+                        .with_help("declare it in the Act's Examples: table"),
+                    );
+                    return None;
+                }
+            },
             Part::Env { name, span } => match std::env::var(name) {
                 Ok(value) => {
                     if !value.is_empty() {
@@ -1229,6 +1571,35 @@ pub fn sanitize_file_name(name: &str) -> String {
         "screenshot".to_string()
     } else {
         capped
+    }
+}
+
+fn validate_cli_args(input: &PlanInput<'_>, diagnostics: &mut Diagnostics) {
+    for key in input.cli_args.keys() {
+        let Some((act_name, param)) = key.rsplit_once('.') else {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslInvalidStageArguments,
+                    format!("invalid --arg '{key}': expected ACT.PARAM=VALUE"),
+                )
+                .with_help("for example: --arg 'Login.user=alice'"),
+            );
+            continue;
+        };
+        let known = input.plays.iter().any(|play| {
+            play.acts
+                .iter()
+                .any(|act| act.name == act_name && act.params.iter().any(|decl| decl.name == param))
+        });
+        if !known {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslInvalidStageArguments,
+                    format!("--arg '{key}' does not match an Act parameter"),
+                )
+                .with_help("declare it as `Act: Name(param)` and pass `--arg 'Name.param=value'`"),
+            );
+        }
     }
 }
 
@@ -1282,6 +1653,53 @@ fn is_variable_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Parse `--arg ACT.PARAM=VALUE` overrides.
+pub fn parse_cli_args(pairs: &[String]) -> Result<BTreeMap<String, String>, Diagnostics> {
+    let mut args = BTreeMap::new();
+    let mut diagnostics = Diagnostics::new();
+    for pair in pairs {
+        match pair.split_once('=') {
+            Some((key, value)) => {
+                let Some((act, param)) = key.rsplit_once('.') else {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgInvalidValue,
+                            format!("invalid --arg '{pair}': expected ACT.PARAM=VALUE"),
+                        )
+                        .with_help("for example: --arg 'Login.user=alice'"),
+                    );
+                    continue;
+                };
+                if act.trim().is_empty() || !is_variable_name(param) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgInvalidValue,
+                            format!("invalid --arg '{pair}': expected ACT.PARAM=VALUE"),
+                        )
+                        .with_help("act names may contain spaces; parameter names are identifiers"),
+                    );
+                    continue;
+                }
+                args.insert(key.to_string(), value.to_string());
+            }
+            None => {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgInvalidValue,
+                        format!("invalid --arg '{pair}': expected ACT.PARAM=VALUE"),
+                    )
+                    .with_help("pass arguments as --arg 'Act.param=value'"),
+                );
+            }
+        }
+    }
+    if diagnostics.has_errors() {
+        Err(diagnostics)
+    } else {
+        Ok(args)
+    }
+}
+
 /// `--timeout` bounds (spec 4.1: `timeout_default_ms` is `[100, 600000]`).
 #[must_use]
 pub fn timeout_in_bounds(ms: u64) -> bool {
@@ -1311,7 +1729,7 @@ pub fn app_start_command(first_of_run: bool, clear_data: bool) -> Command {
 mod tests {
     use super::*;
     use impresario_core::config;
-    use impresario_core::parser::{parse_play, parse_scene};
+    use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
     use std::path::Path;
 
     fn workspace(scene_source: &str, play_source: &str) -> Workspace {
@@ -1323,8 +1741,81 @@ mod tests {
             .expect("play parses");
         Workspace {
             scenes: vec![scene],
+            theatres: Vec::new(),
             plays: vec![play],
         }
+    }
+
+    fn theatrical_workspace(
+        scene_source: &str,
+        theatre_source: &str,
+        play_source: &str,
+    ) -> Workspace {
+        let scene = parse_scene(scene_source, Path::new("S.scene"))
+            .ast
+            .expect("scene parses");
+        let theatre = parse_theatre(theatre_source, Path::new("T.theatre"))
+            .ast
+            .expect("theatre parses");
+        let play = parse_play(play_source, Path::new("p.play"))
+            .ast
+            .expect("play parses");
+        Workspace {
+            scenes: vec![scene],
+            theatres: vec![theatre],
+            plays: vec![play],
+        }
+    }
+
+    fn compile_theatrical(
+        scene_source: &str,
+        theatre_source: &str,
+        play_source: &str,
+        platform: Platform,
+    ) -> Result<ExecutionPlan, Diagnostics> {
+        let workspace = theatrical_workspace(scene_source, theatre_source, play_source);
+        let config = config();
+        let devices = vec![device(platform)];
+        let plays = workspace.plays.clone();
+        build_plan(&PlanInput {
+            config: &config,
+            workspace: &workspace,
+            base: Path::new("."),
+            devices: &devices,
+            apps: &[],
+            cli_app: None,
+            plays: &plays,
+            selection: &Selection::default(),
+            cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
+            cli_timeout: None,
+        })
+    }
+
+    fn compile_theatrical_with_args(
+        scene_source: &str,
+        theatre_source: &str,
+        play_source: &str,
+        platform: Platform,
+        cli_args: &BTreeMap<String, String>,
+    ) -> Result<ExecutionPlan, Diagnostics> {
+        let workspace = theatrical_workspace(scene_source, theatre_source, play_source);
+        let config = config();
+        let devices = vec![device(platform)];
+        let plays = workspace.plays.clone();
+        build_plan(&PlanInput {
+            config: &config,
+            workspace: &workspace,
+            base: Path::new("."),
+            devices: &devices,
+            apps: &[],
+            cli_app: None,
+            plays: &plays,
+            selection: &Selection::default(),
+            cli_vars: &BTreeMap::new(),
+            cli_args,
+            cli_timeout: None,
+        })
     }
 
     fn config() -> ImpresarioConfig {
@@ -1396,6 +1887,7 @@ mod tests {
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: vars,
+            cli_args: &BTreeMap::new(),
             cli_timeout: None,
         })
     }
@@ -1475,6 +1967,149 @@ Stage: S1
     }
 
     #[test]
+    fn theatrical_examples_params_and_nested_stages_compile_in_order() {
+        let scene = r#"Scene: LoginScreen
+Platforms: cross-platform
+
+| Piece | web | android | ios |
+|---|---|---|---|
+| UsernameInput | #username | id:username | accessibilityId:username |
+| PasswordInput | #password | id:password | accessibilityId:password |
+| SubmitButton | button[type='submit'] | id:submit | accessibilityId:submit |
+"#;
+        let theatre = r#"Theatre: Authentication
+
+Stage: Fill(user, password)
+    Timeout: 7s
+    Scene: LoginScreen
+        Action: '${param.user}' => UsernameInput
+        Action: '${param.password}' => PasswordInput
+    Perform: Submit(remember = 'true')
+
+Stage: Submit(remember = 'true')
+    Scene: LoginScreen
+        Action: click => SubmitButton
+"#;
+        let play = r#"Play: P
+
+Act: Login(user, password)
+    Examples:
+        | user | password |
+        | alice | secret |
+    Perform: Fill(user = '${example.user}', password = '${example.password}')
+"#;
+        let plan = compile_theatrical(scene, theatre, play, Platform::Android).expect("plans");
+        let acts = &plan.devices[0].plays[0].acts;
+        assert_eq!(acts.len(), 1, "one execution per example row");
+        let act = &acts[0];
+        assert_eq!(act.name, "Login");
+        assert_eq!(act.example.get("user").map(String::as_str), Some("alice"));
+        let names: Vec<&str> = act.stages.iter().map(|stage| stage.name.as_str()).collect();
+        assert_eq!(names, vec!["Fill", "Submit"]);
+        assert_eq!(act.stages[0].steps.len(), 2);
+        assert_eq!(act.stages[1].steps.len(), 1);
+        assert_eq!(act.stages[0].steps[0].timeout_ms, 7_000);
+        assert_eq!(act.stages[1].steps[0].timeout_ms, 10_000);
+        match &act.stages[0].steps[0].command {
+            Some(Command::RunAction(action)) => assert_eq!(action.text, "alice"),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn theatrical_examples_create_one_act_execution_per_row() {
+        let play = r#"Play: P
+
+Act: Login(user)
+    Examples:
+        | user |
+        | alice |
+        | bob |
+    Perform: Fill(user = '${example.user}')
+"#;
+        let theatre = r#"Theatre: A
+
+Stage: Fill(user)
+    Scene: S
+        Check: Field
+"#;
+        let plan = compile_theatrical(SCENE, theatre, play, Platform::Android).expect("plans");
+        let acts = &plan.devices[0].plays[0].acts;
+        assert_eq!(acts.len(), 2);
+        assert_eq!(
+            acts[0].example.get("user").map(String::as_str),
+            Some("alice")
+        );
+        assert_eq!(acts[1].example.get("user").map(String::as_str), Some("bob"));
+    }
+
+    #[test]
+    fn cli_args_override_examples_and_defaults() {
+        let play = r#"Play: P
+
+Act: Login(user = 'default')
+    Examples:
+        | user |
+        | alice |
+    Perform: Fill(user = '${param.user}')
+"#;
+        let theatre = r#"Theatre: A
+
+Stage: Fill(user)
+    Scene: S
+        Action: '${param.user}' => Field
+"#;
+        let args = BTreeMap::from([("Login.user".to_string(), "bob".to_string())]);
+        let plan = compile_theatrical_with_args(SCENE, theatre, play, Platform::Android, &args)
+            .expect("plans");
+        let act = &plan.devices[0].plays[0].acts[0];
+        assert_eq!(act.example.get("user").map(String::as_str), Some("bob"));
+        match &act.stages[0].steps[0].command {
+            Some(Command::RunAction(action)) => assert_eq!(action.text, "bob"),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let unknown = BTreeMap::from([("Login.admin".to_string(), "yes".to_string())]);
+        let err = compile_theatrical_with_args(SCENE, theatre, play, Platform::Android, &unknown)
+            .expect_err("unknown argument");
+        assert_eq!(codes(&err), vec!["IMP-DSL-032"]);
+    }
+
+    #[test]
+    fn theatrical_unknown_stage_missing_argument_and_cycle_are_reported() {
+        let play = r#"Play: P
+
+Act: A
+    Perform: Missing
+"#;
+        let theatre = "Theatre: T\n\nStage: Fill(user)\n    Scene: S\n        Check: Field\n";
+        let err =
+            compile_theatrical(SCENE, theatre, play, Platform::Android).expect_err("unknown stage");
+        assert_eq!(codes(&err), vec!["IMP-DSL-031"]);
+
+        let play = r#"Play: P
+
+Act: A
+    Perform: Fill
+"#;
+        let err = compile_theatrical(SCENE, theatre, play, Platform::Android)
+            .expect_err("missing argument");
+        assert_eq!(codes(&err), vec!["IMP-DSL-037"]);
+
+        let theatre = r#"Theatre: T
+
+Stage: A
+    Perform: B
+
+Stage: B
+    Perform: A
+"#;
+        let play = "Play: P\n\nAct: A\n    Perform: A\n";
+        let err = compile_theatrical(SCENE, theatre, play, Platform::Android).expect_err("cycle");
+        assert_eq!(codes(&err), vec!["IMP-DSL-034"]);
+    }
+
+    #[test]
     fn timeout_precedence_cli_beats_default_stage_beats_cli_beat_by_step() {
         let play = r#"Play: P
 
@@ -1500,6 +2135,7 @@ Stage: S1
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
             cli_timeout: Some(7000),
         })
         .expect("plans");
@@ -1524,6 +2160,7 @@ Stage: S1
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
             cli_timeout: Some(7000),
         })
         .expect("plans");
@@ -1663,6 +2300,7 @@ Stage: S3
             plays: &plays,
             selection: &selection,
             cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
             cli_timeout: None,
         })
         .expect("plans");
@@ -1689,6 +2327,7 @@ Stage: S3
             plays: &plays,
             selection: &selection,
             cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
             cli_timeout: None,
         })
         .expect("plans");
@@ -1849,6 +2488,7 @@ Stage: S1
         let scene = parse_scene(SCENE, Path::new("S.scene")).ast.expect("scene");
         let workspace = Workspace {
             scenes: vec![scene],
+            theatres: Vec::new(),
             plays: vec![first, second],
         };
         let config = config();
@@ -1864,6 +2504,7 @@ Stage: S1
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: &BTreeMap::new(),
+            cli_args: &BTreeMap::new(),
             cli_timeout: None,
         })
         .expect_err("conflict");

@@ -44,6 +44,7 @@ miette = { version = "7.6.0", features = ["fancy-no-backtrace", "derive"] }
 # parsing
 winnow = { version = "1.0.4", features = ["ascii"] }
 regex = "1.13.1"
+unicode-width = "0.2.2"
 url = "2.5.8"
 
 # cli / logging

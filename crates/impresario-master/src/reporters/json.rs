@@ -19,6 +19,7 @@ mod tests {
     #[test]
     fn json_round_trips_and_keeps_appendix_b_keys() {
         let report = RunReport {
+            schema_version: 2,
             run_id: "20261016-185512-a1b2".to_string(),
             started_at: "2026-10-16T18:55:12.000Z".to_string(),
             duration_ms: 42,
@@ -35,6 +36,7 @@ mod tests {
                     acts: vec![ActReport {
                         name: "A".to_string(),
                         tags: vec![],
+                        example: std::collections::BTreeMap::new(),
                         status: Status::Passed,
                         flaky: false,
                         attempts: vec![AttemptReport {

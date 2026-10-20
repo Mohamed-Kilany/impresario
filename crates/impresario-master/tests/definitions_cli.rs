@@ -320,6 +320,49 @@ fn migrate_is_dry_runnable_idempotent_and_backs_up() {
 }
 
 #[test]
+fn migrate_converts_legacy_dsl_and_is_idempotent() {
+    let (_guard, home, workspace) = temp();
+    let scenes = workspace.join("scenes");
+    let plays = workspace.join("plays");
+    std::fs::create_dir_all(&scenes).expect("scenes");
+    std::fs::create_dir_all(&plays).expect("plays");
+    let scene_path = scenes.join("LoginScreen.scene");
+    let play_path = plays.join("login.play");
+    let legacy_scene =
+        "Scene: LoginScreen\nPlatform: android\n\nPieces:\n    Title: android=\"id:title\"\n";
+    let legacy_play =
+        "Play: Login\n\nAct: A\n\nStage: Fill\n    Scene: LoginScreen\n        Check: Title\n";
+    std::fs::write(&scene_path, legacy_scene).expect("scene");
+    std::fs::write(&play_path, legacy_play).expect("play");
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["migrate", "--dry-run"]);
+    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("| Piece"), "{stdout}");
+    assert!(stdout.contains("Perform: Fill"), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(&scene_path).expect("unchanged"),
+        legacy_scene
+    );
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
+    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("converted"), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(format!("{}.bak", scene_path.display())).expect("backup"),
+        legacy_scene
+    );
+    let migrated_play = std::fs::read_to_string(&play_path).expect("play");
+    assert!(migrated_play.contains("Perform: Fill"), "{migrated_play}");
+    let theatre = std::fs::read_to_string(workspace.join("theatres/login.theatre"))
+        .expect("generated theatre");
+    assert!(theatre.contains("Stage: Fill"), "{theatre}");
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
+    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("already"), "{stdout}");
+}
+
+#[test]
 fn migrate_refuses_mixed_legacy_and_new_entries() {
     let (_guard, home, workspace) = temp();
     let path = workspace.join("impresario.devices.config");

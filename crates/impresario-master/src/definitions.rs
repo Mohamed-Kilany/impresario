@@ -1023,11 +1023,27 @@ fn export_apps(home: &Home, workspace_path: &Path, global: bool, merged: bool) -
 // Migration
 // ---------------------------------------------------------------------------
 
-pub fn migrate(base: &Path, dry_run: bool) -> i32 {
+/// Migrate both the device/app definitions and the DSL files.
+pub fn migrate(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
+    let definitions = migrate_definitions(base, dry_run);
+    if definitions != EXIT_OK {
+        return definitions;
+    }
+    migrate_dsl(base, config_path, dry_run)
+}
+
+fn migrate_definitions(base: &Path, dry_run: bool) -> i32 {
     let devices_path = base.join("impresario.devices.config");
     let apps_path = base.join("impresario.apps.config");
     let source = match std::fs::read_to_string(&devices_path) {
         Ok(source) => source,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "migrate: {} does not exist; skipping device/app migration",
+                devices_path.display()
+            );
+            return EXIT_OK;
+        }
         Err(err) => {
             eprintln!("migrate: cannot read {}: {err}", devices_path.display());
             return EXIT_USAGE;
@@ -1206,6 +1222,90 @@ pub fn migrate(base: &Path, dry_run: bool) -> i32 {
     for warning in &warnings {
         eprintln!("migrate: warning: {warning}");
     }
+    EXIT_OK
+}
+
+fn migrate_dsl(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
+    let cfg_outcome = crate::cli::load_effective_config(base, config_path);
+    if cfg_outcome.diagnostics.has_errors() {
+        crate::render::eprint_all(&cfg_outcome.diagnostics);
+        return EXIT_USAGE;
+    }
+    let Some(cfg) = cfg_outcome.config else {
+        eprintln!("migrate: cannot load configuration");
+        return EXIT_USAGE;
+    };
+    let scenes_dir = base.join(&cfg.scenes_dir);
+    let theatres_dir = base.join(&cfg.theatres_dir);
+    let plays_dir = base.join(&cfg.plays_dir);
+    let loaded = impresario_core::workspace::load_dirs(&scenes_dir, &theatres_dir, &plays_dir);
+    if loaded.diagnostics.has_errors() {
+        crate::render::eprint_all(&loaded.diagnostics);
+        eprintln!("migrate: fix the DSL errors above first");
+        return EXIT_USAGE;
+    }
+    let migration = impresario_core::migrate::migrate(&loaded.workspace, &theatres_dir);
+    if migration.errors.has_errors() {
+        crate::render::eprint_all(&migration.errors);
+        eprintln!("migrate: generated DSL did not validate; nothing was written");
+        return EXIT_USAGE;
+    }
+    for warning in &migration.warnings {
+        eprintln!("migrate: warning: {warning}");
+    }
+    if migration.is_empty() {
+        println!("migrate: DSL files are already in the theatre/play format");
+        return EXIT_OK;
+    }
+    if dry_run {
+        for file in &migration.files {
+            println!(
+                "# {} ({})",
+                file.path.display(),
+                if file.created { "new" } else { "rewritten" }
+            );
+            print!("{}", file.contents);
+            if !file.contents.ends_with('\n') {
+                println!();
+            }
+            println!();
+        }
+        return EXIT_OK;
+    }
+
+    for file in &migration.files {
+        if let Some(parent) = file.path.parent() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                eprintln!("migrate: cannot create {}: {err}", parent.display());
+                return EXIT_USAGE;
+            }
+        }
+        if !file.created {
+            match std::fs::read(&file.path) {
+                Ok(original) => {
+                    let backup = PathBuf::from(format!("{}.bak", file.path.display()));
+                    if let Err(err) = std::fs::write(&backup, original) {
+                        eprintln!("migrate: cannot write {}: {err}", backup.display());
+                        return EXIT_USAGE;
+                    }
+                }
+                Err(err) => {
+                    eprintln!("migrate: cannot read {}: {err}", file.path.display());
+                    return EXIT_USAGE;
+                }
+            }
+        }
+        if let Err(err) = std::fs::write(&file.path, &file.contents) {
+            eprintln!("migrate: cannot write {}: {err}", file.path.display());
+            return EXIT_USAGE;
+        }
+    }
+    let created = migration.files.iter().filter(|file| file.created).count();
+    println!(
+        "migrate: converted {} DSL file(s) ({} new); backups use .bak",
+        migration.files.len(),
+        created
+    );
     EXIT_OK
 }
 

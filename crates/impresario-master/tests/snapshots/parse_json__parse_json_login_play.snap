@@ -12,6 +12,40 @@ expression: value
         "len": 21,
         "line": 6
       },
+      "performs": [
+        {
+          "args": [],
+          "span": {
+            "col": 5,
+            "file": "examples/plays/login.play",
+            "len": 27,
+            "line": 9
+          },
+          "stage_name": "Navigate and Login",
+          "stage_span": {
+            "col": 14,
+            "file": "examples/plays/login.play",
+            "len": 18,
+            "line": 9
+          }
+        },
+        {
+          "args": [],
+          "span": {
+            "col": 5,
+            "file": "examples/plays/login.play",
+            "len": 23,
+            "line": 10
+          },
+          "stage_name": "Verify Outcome",
+          "stage_span": {
+            "col": 14,
+            "file": "examples/plays/login.play",
+            "len": 14,
+            "line": 10
+          }
+        }
+      ],
       "platforms": [
         {
           "name": "android",
@@ -39,220 +73,6 @@ expression: value
             "len": 5,
             "line": 8
           }
-        }
-      ],
-      "stages": [
-        {
-          "name": "Navigate and Login",
-          "name_span": {
-            "col": 8,
-            "file": "examples/plays/login.play",
-            "len": 18,
-            "line": 10
-          },
-          "scenes": [
-            {
-              "scene_name": "LoginScreen",
-              "scene_span": {
-                "col": 12,
-                "file": "examples/plays/login.play",
-                "len": 11,
-                "line": 12
-              },
-              "steps": [
-                {
-                  "condition": {
-                    "check": "is_visible"
-                  },
-                  "piece": {
-                    "name": "LoginTitle",
-                    "span": {
-                      "col": 16,
-                      "file": "examples/plays/login.play",
-                      "len": 10,
-                      "line": 13
-                    }
-                  },
-                  "source_text": "Check: LoginTitle",
-                  "span": {
-                    "col": 16,
-                    "file": "examples/plays/login.play",
-                    "len": 10,
-                    "line": 13
-                  },
-                  "step": "check",
-                  "timeout": null
-                },
-                {
-                  "source_text": "Action: '${var.USER}' => UsernameInput",
-                  "span": {
-                    "col": 17,
-                    "file": "examples/plays/login.play",
-                    "len": 30,
-                    "line": 14
-                  },
-                  "step": "action",
-                  "timeout": null,
-                  "verb": {
-                    "action": "type",
-                    "piece": {
-                      "name": "UsernameInput",
-                      "span": {
-                        "col": 34,
-                        "file": "examples/plays/login.play",
-                        "len": 13,
-                        "line": 14
-                      }
-                    },
-                    "text": {
-                      "parts": [
-                        {
-                          "Var": {
-                            "name": "USER",
-                            "span": {
-                              "col": 18,
-                              "file": "examples/plays/login.play",
-                              "len": 11,
-                              "line": 14
-                            }
-                          }
-                        }
-                      ],
-                      "raw": "${var.USER}",
-                      "span": {
-                        "col": 17,
-                        "file": "examples/plays/login.play",
-                        "len": 13,
-                        "line": 14
-                      }
-                    }
-                  }
-                },
-                {
-                  "source_text": "Action: '${env.TEST_PASSWORD}' => PasswordInput",
-                  "span": {
-                    "col": 17,
-                    "file": "examples/plays/login.play",
-                    "len": 39,
-                    "line": 15
-                  },
-                  "step": "action",
-                  "timeout": null,
-                  "verb": {
-                    "action": "type",
-                    "piece": {
-                      "name": "PasswordInput",
-                      "span": {
-                        "col": 43,
-                        "file": "examples/plays/login.play",
-                        "len": 13,
-                        "line": 15
-                      }
-                    },
-                    "text": {
-                      "parts": [
-                        {
-                          "Env": {
-                            "name": "TEST_PASSWORD",
-                            "span": {
-                              "col": 18,
-                              "file": "examples/plays/login.play",
-                              "len": 20,
-                              "line": 15
-                            }
-                          }
-                        }
-                      ],
-                      "raw": "${env.TEST_PASSWORD}",
-                      "span": {
-                        "col": 17,
-                        "file": "examples/plays/login.play",
-                        "len": 22,
-                        "line": 15
-                      }
-                    }
-                  }
-                },
-                {
-                  "source_text": "Action: click => SubmitButton",
-                  "span": {
-                    "col": 17,
-                    "file": "examples/plays/login.play",
-                    "len": 21,
-                    "line": 16
-                  },
-                  "step": "action",
-                  "timeout": null,
-                  "verb": {
-                    "action": "click",
-                    "piece": {
-                      "name": "SubmitButton",
-                      "span": {
-                        "col": 26,
-                        "file": "examples/plays/login.play",
-                        "len": 12,
-                        "line": 16
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          ],
-          "timeout": 15000,
-          "timeout_span": {
-            "col": 14,
-            "file": "examples/plays/login.play",
-            "len": 3,
-            "line": 11
-          }
-        },
-        {
-          "name": "Verify Outcome",
-          "name_span": {
-            "col": 8,
-            "file": "examples/plays/login.play",
-            "len": 14,
-            "line": 18
-          },
-          "scenes": [
-            {
-              "scene_name": "DashboardScreen",
-              "scene_span": {
-                "col": 12,
-                "file": "examples/plays/login.play",
-                "len": 15,
-                "line": 19
-              },
-              "steps": [
-                {
-                  "condition": {
-                    "check": "is_visible"
-                  },
-                  "piece": {
-                    "name": "WelcomeBanner",
-                    "span": {
-                      "col": 16,
-                      "file": "examples/plays/login.play",
-                      "len": 13,
-                      "line": 20
-                    }
-                  },
-                  "source_text": "Check: WelcomeBanner is visible timeout 20s",
-                  "span": {
-                    "col": 16,
-                    "file": "examples/plays/login.play",
-                    "len": 36,
-                    "line": 20
-                  },
-                  "step": "check",
-                  "timeout": 20000
-                }
-              ]
-            }
-          ],
-          "timeout": null,
-          "timeout_span": null
         }
       ],
       "tags": [

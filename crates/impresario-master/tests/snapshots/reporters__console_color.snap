@@ -6,11 +6,11 @@ expression: "console::render(&report(), true)"
   [2mPixel 8 · Android 14 · 1080x2400 @2.62x[0m
   [2mPlay:[0m Login [2m(plays/login.play)[0m
     [32m✔[0m [2mAct:[0m Sign in [2m(850 ms)[0m
-      [32m✔[0m [2mStage: Login[0m
+      [32m✔[0m [2mStage: Login (theatres/auth.theatre:4:1)[0m
         [32m✔[0m Check: email[2m (120 ms)[0m
         [32m✔[0m Action: click => submit[2m (700 ms)[0m
     [31m✖[0m [2mAct:[0m Wrong password [2m(1.25 s)[0m
-      [31m✖[0m [2mStage: Login[0m
+      [31m✖[0m [2mStage: Login (theatres/auth.theatre:4:1)[0m
         [31m✖[0m Check: welcome[2m (1.10 s)[0m
         [33m○[0m Action: click => retry[2m[0m
       [31m✖[0m [31mCHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'[0m
@@ -21,7 +21,7 @@ expression: "console::render(&report(), true)"
   [2mPlay:[0m Checkout [2m(plays/checkout.play)[0m
     [32m✔[0m [2mAct:[0m Pay [2m(1.30 s, 2 attempts, flaky)[0m
       [31m✖[0m [2mAttempt 1:[0m [2m(400 ms)[0m
-      [31m✖[0m [2mStage: Checkout[0m
+      [31m✖[0m [2mStage: Checkout (theatres/auth.theatre:4:1)[0m
         [31m✖[0m Check: receipt[2m (380 ms)[0m
       [31m✖[0m [31mCHECK_FAILED: expected 'Welcome' but saw 'Invalid credentials'[0m
         [2m(step 1, plays/login.play:3:9)[0m
@@ -29,7 +29,7 @@ expression: "console::render(&report(), true)"
         [2mscreenshot: screenshots/pixel-8/missing.png[0m
         [2m2 log entries attached[0m
       [32m✔[0m [2mAttempt 2:[0m [2m(900 ms)[0m
-      [32m✔[0m [2mStage: Checkout[0m
+      [32m✔[0m [2mStage: Checkout (theatres/auth.theatre:4:1)[0m
         [32m✔[0m Check: receipt[2m (300 ms)[0m
         [32m✔[0m Action: click => done[2m (500 ms)[0m
     [33m○[0m [2mAct:[0m Refund [2m(0 ms)[0m

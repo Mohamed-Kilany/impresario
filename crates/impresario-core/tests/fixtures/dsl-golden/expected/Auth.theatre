@@ -1,0 +1,13 @@
+Theatre: Auth
+
+Stage: Login(user, password = 'secret')
+    Description: Fill the form.
+    Timeout: 5s
+    Scene: LoginScreen
+        Action: '${param.user}' => LoginTitle
+        Action: click => SubmitButton
+    Perform: Verify
+
+Stage: Verify
+    Scene: LoginScreen
+        Check: LoginTitle

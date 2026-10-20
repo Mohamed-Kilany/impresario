@@ -6,15 +6,5 @@ Var: USER = 'test_user_impresario'
 Act: Successful Login Flow
 Tags: smoke, auth
 Platforms: android, ios, webos
-
-Stage: Navigate and Login
-    Timeout: 15s
-    Scene: LoginScreen
-        Check: LoginTitle
-        Action: '${var.USER}' => UsernameInput
-        Action: '${env.TEST_PASSWORD}' => PasswordInput
-        Action: click => SubmitButton
-
-Stage: Verify Outcome
-    Scene: DashboardScreen
-        Check: WelcomeBanner is visible timeout 20s
+    Perform: Navigate and Login
+    Perform: Verify Outcome

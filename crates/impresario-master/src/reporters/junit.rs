@@ -70,6 +70,25 @@ fn test_case(play: &PlayReport, act: &ActReport) -> TestCase {
     if !act.tags.is_empty() {
         case.add_property(Property::new("tags", act.tags.join(",")));
     }
+    // The JUnit schema has no tree below the testcase. Expose the source
+    // location of every stage of the first attempt as one property so a
+    // failure still points back to the theatre declaration.
+    if let Some(attempt) = act.attempts.first() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut sources = Vec::new();
+        for stage in &attempt.stages {
+            let Some(span) = stage.span.as_ref() else {
+                continue;
+            };
+            let source = format!("{}@{}:{}:{}", stage.name, span.file, span.line, span.col);
+            if seen.insert(source.clone()) {
+                sources.push(source);
+            }
+        }
+        if !sources.is_empty() {
+            case.add_property(Property::new("stage_sources", sources.join("; ")));
+        }
+    }
     case
 }
 
@@ -94,6 +113,7 @@ mod tests {
         ActReport {
             name: "A".to_string(),
             tags: vec!["smoke".to_string()],
+            example: BTreeMap::new(),
             status,
             flaky: false,
             attempts: vec![AttemptReport {
@@ -124,6 +144,7 @@ mod tests {
             acts: vec![act(status)],
         };
         let report = RunReport {
+            schema_version: 2,
             run_id: "20261016-185512-a1b2".to_string(),
             started_at: "2026-10-16T18:55:12.000Z".to_string(),
             duration_ms: 10,

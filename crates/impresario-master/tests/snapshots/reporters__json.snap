@@ -3,6 +3,7 @@ source: crates/impresario-master/tests/reporters.rs
 expression: text
 ---
 {
+  "schema_version": 2,
   "run_id": "20261016-120000-abcd",
   "started_at": "2026-10-16T12:00:00.000Z",
   "duration_ms": 12345,
@@ -40,6 +41,12 @@ expression: text
                   "stages": [
                     {
                       "name": "Login",
+                      "span": {
+                        "file": "theatres/auth.theatre",
+                        "line": 4,
+                        "col": 1,
+                        "len": 5
+                      },
                       "status": "passed",
                       "steps": [
                         {
@@ -86,6 +93,12 @@ expression: text
                   "stages": [
                     {
                       "name": "Login",
+                      "span": {
+                        "file": "theatres/auth.theatre",
+                        "line": 4,
+                        "col": 1,
+                        "len": 5
+                      },
                       "status": "failed",
                       "steps": [
                         {
@@ -158,6 +171,12 @@ expression: text
                   "stages": [
                     {
                       "name": "Checkout",
+                      "span": {
+                        "file": "theatres/auth.theatre",
+                        "line": 4,
+                        "col": 1,
+                        "len": 5
+                      },
                       "status": "failed",
                       "steps": [
                         {
@@ -202,6 +221,12 @@ expression: text
                   "stages": [
                     {
                       "name": "Checkout",
+                      "span": {
+                        "file": "theatres/auth.theatre",
+                        "line": 4,
+                        "col": 1,
+                        "len": 5
+                      },
                       "status": "passed",
                       "steps": [
                         {

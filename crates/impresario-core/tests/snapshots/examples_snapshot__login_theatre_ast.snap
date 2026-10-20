@@ -1,0 +1,390 @@
+---
+source: crates/impresario-core/tests/examples_snapshot.rs
+expression: ast
+---
+path: examples/theatres/login.theatre
+name: User Authentication Feature stages
+name_span:
+  file: examples/theatres/login.theatre
+  line: 1
+  col: 10
+  len: 34
+stages:
+  - name: Navigate and Login
+    name_span:
+      file: examples/theatres/login.theatre
+      line: 3
+      col: 8
+      len: 18
+    timeout: 15000
+    timeout_span:
+      file: examples/theatres/login.theatre
+      line: 4
+      col: 14
+      len: 3
+    items:
+      - item: scene
+        scene_name: LoginScreen
+        scene_span:
+          file: examples/theatres/login.theatre
+          line: 5
+          col: 12
+          len: 11
+        steps:
+          - source_text: "Check: LoginTitle"
+            span:
+              file: examples/theatres/login.theatre
+              line: 6
+              col: 9
+              len: 17
+            timeout: ~
+            step: check
+            piece:
+              name: LoginTitle
+              span:
+                file: examples/theatres/login.theatre
+                line: 6
+                col: 16
+                len: 10
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 6
+              col: 16
+              len: 10
+          - source_text: "Action: '${var.USER}' => UsernameInput"
+            span:
+              file: examples/theatres/login.theatre
+              line: 7
+              col: 9
+              len: 38
+            timeout: ~
+            step: action
+            verb:
+              action: type
+              text:
+                raw: "${var.USER}"
+                parts:
+                  - Var:
+                      name: USER
+                      span:
+                        file: examples/theatres/login.theatre
+                        line: 7
+                        col: 18
+                        len: 11
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 7
+                  col: 17
+                  len: 13
+              piece:
+                name: UsernameInput
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 7
+                  col: 34
+                  len: 13
+            span:
+              file: examples/theatres/login.theatre
+              line: 7
+              col: 17
+              len: 30
+          - source_text: "Action: '${env.TEST_PASSWORD}' => PasswordInput"
+            span:
+              file: examples/theatres/login.theatre
+              line: 8
+              col: 9
+              len: 47
+            timeout: ~
+            step: action
+            verb:
+              action: type
+              text:
+                raw: "${env.TEST_PASSWORD}"
+                parts:
+                  - Env:
+                      name: TEST_PASSWORD
+                      span:
+                        file: examples/theatres/login.theatre
+                        line: 8
+                        col: 18
+                        len: 20
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 8
+                  col: 17
+                  len: 22
+              piece:
+                name: PasswordInput
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 8
+                  col: 43
+                  len: 13
+            span:
+              file: examples/theatres/login.theatre
+              line: 8
+              col: 17
+              len: 39
+          - source_text: "Action: click => SubmitButton"
+            span:
+              file: examples/theatres/login.theatre
+              line: 9
+              col: 9
+              len: 29
+            timeout: ~
+            step: action
+            verb:
+              action: click
+              piece:
+                name: SubmitButton
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 9
+                  col: 26
+                  len: 12
+            span:
+              file: examples/theatres/login.theatre
+              line: 9
+              col: 17
+              len: 21
+    scenes:
+      - scene_name: LoginScreen
+        scene_span:
+          file: examples/theatres/login.theatre
+          line: 5
+          col: 12
+          len: 11
+        steps:
+          - source_text: "Check: LoginTitle"
+            span:
+              file: examples/theatres/login.theatre
+              line: 6
+              col: 9
+              len: 17
+            timeout: ~
+            step: check
+            piece:
+              name: LoginTitle
+              span:
+                file: examples/theatres/login.theatre
+                line: 6
+                col: 16
+                len: 10
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 6
+              col: 16
+              len: 10
+          - source_text: "Action: '${var.USER}' => UsernameInput"
+            span:
+              file: examples/theatres/login.theatre
+              line: 7
+              col: 9
+              len: 38
+            timeout: ~
+            step: action
+            verb:
+              action: type
+              text:
+                raw: "${var.USER}"
+                parts:
+                  - Var:
+                      name: USER
+                      span:
+                        file: examples/theatres/login.theatre
+                        line: 7
+                        col: 18
+                        len: 11
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 7
+                  col: 17
+                  len: 13
+              piece:
+                name: UsernameInput
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 7
+                  col: 34
+                  len: 13
+            span:
+              file: examples/theatres/login.theatre
+              line: 7
+              col: 17
+              len: 30
+          - source_text: "Action: '${env.TEST_PASSWORD}' => PasswordInput"
+            span:
+              file: examples/theatres/login.theatre
+              line: 8
+              col: 9
+              len: 47
+            timeout: ~
+            step: action
+            verb:
+              action: type
+              text:
+                raw: "${env.TEST_PASSWORD}"
+                parts:
+                  - Env:
+                      name: TEST_PASSWORD
+                      span:
+                        file: examples/theatres/login.theatre
+                        line: 8
+                        col: 18
+                        len: 20
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 8
+                  col: 17
+                  len: 22
+              piece:
+                name: PasswordInput
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 8
+                  col: 43
+                  len: 13
+            span:
+              file: examples/theatres/login.theatre
+              line: 8
+              col: 17
+              len: 39
+          - source_text: "Action: click => SubmitButton"
+            span:
+              file: examples/theatres/login.theatre
+              line: 9
+              col: 9
+              len: 29
+            timeout: ~
+            step: action
+            verb:
+              action: click
+              piece:
+                name: SubmitButton
+                span:
+                  file: examples/theatres/login.theatre
+                  line: 9
+                  col: 26
+                  len: 12
+            span:
+              file: examples/theatres/login.theatre
+              line: 9
+              col: 17
+              len: 21
+  - name: Verify Outcome
+    name_span:
+      file: examples/theatres/login.theatre
+      line: 11
+      col: 8
+      len: 14
+    timeout: ~
+    timeout_span: ~
+    items:
+      - item: scene
+        scene_name: DashboardScreen
+        scene_span:
+          file: examples/theatres/login.theatre
+          line: 12
+          col: 12
+          len: 15
+        steps:
+          - source_text: "Check: WelcomeBanner is visible timeout 20s"
+            span:
+              file: examples/theatres/login.theatre
+              line: 13
+              col: 9
+              len: 43
+            timeout: 20000
+            step: check
+            piece:
+              name: WelcomeBanner
+              span:
+                file: examples/theatres/login.theatre
+                line: 13
+                col: 16
+                len: 13
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 13
+              col: 16
+              len: 36
+          - source_text: "Check: LogoutButton is visible"
+            span:
+              file: examples/theatres/login.theatre
+              line: 14
+              col: 9
+              len: 30
+            timeout: ~
+            step: check
+            piece:
+              name: LogoutButton
+              span:
+                file: examples/theatres/login.theatre
+                line: 14
+                col: 16
+                len: 12
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 14
+              col: 16
+              len: 23
+    scenes:
+      - scene_name: DashboardScreen
+        scene_span:
+          file: examples/theatres/login.theatre
+          line: 12
+          col: 12
+          len: 15
+        steps:
+          - source_text: "Check: WelcomeBanner is visible timeout 20s"
+            span:
+              file: examples/theatres/login.theatre
+              line: 13
+              col: 9
+              len: 43
+            timeout: 20000
+            step: check
+            piece:
+              name: WelcomeBanner
+              span:
+                file: examples/theatres/login.theatre
+                line: 13
+                col: 16
+                len: 13
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 13
+              col: 16
+              len: 36
+          - source_text: "Check: LogoutButton is visible"
+            span:
+              file: examples/theatres/login.theatre
+              line: 14
+              col: 9
+              len: 30
+            timeout: ~
+            step: check
+            piece:
+              name: LogoutButton
+              span:
+                file: examples/theatres/login.theatre
+                line: 14
+                col: 16
+                len: 12
+            condition:
+              check: is_visible
+            span:
+              file: examples/theatres/login.theatre
+              line: 14
+              col: 16
+              len: 23

@@ -3,6 +3,38 @@ source: crates/impresario-core/tests/examples_snapshot.rs
 expression: json
 ---
 {
+  "columns": [
+    {
+      "name": "web",
+      "platform": "web",
+      "span": {
+        "col": 19,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 3,
+        "line": 3
+      }
+    },
+    {
+      "name": "android",
+      "platform": "android",
+      "span": {
+        "col": 32,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 7,
+        "line": 3
+      }
+    },
+    {
+      "name": "ios",
+      "platform": "ios",
+      "span": {
+        "col": 52,
+        "file": "examples/scenes/DashboardScreen.scene",
+        "len": 3,
+        "line": 3
+      }
+    }
+  ],
   "name": "DashboardScreen",
   "name_span": {
     "col": 8,
@@ -16,7 +48,7 @@ expression: json
       "index": 0,
       "name": "WelcomeBanner",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/DashboardScreen.scene",
         "len": 13,
         "line": 5
@@ -26,9 +58,9 @@ expression: json
           "key": "web",
           "raw": "h2.welcome",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 12,
+            "len": 10,
             "line": 5
           }
         },
@@ -36,9 +68,9 @@ expression: json
           "key": "android",
           "raw": "id:welcome_banner",
           "span": {
-            "col": 46,
+            "col": 32,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 19,
+            "len": 17,
             "line": 5
           }
         },
@@ -46,17 +78,17 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:welcome_banner",
           "span": {
-            "col": 71,
+            "col": 52,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 32,
+            "len": 30,
             "line": 5
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/DashboardScreen.scene",
-        "len": 98,
+        "len": 83,
         "line": 5
       }
     },
@@ -64,7 +96,7 @@ expression: json
       "index": 0,
       "name": "LogoutButton",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/DashboardScreen.scene",
         "len": 12,
         "line": 6
@@ -74,9 +106,9 @@ expression: json
           "key": "web",
           "raw": "#logout",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 9,
+            "len": 7,
             "line": 6
           }
         },
@@ -84,9 +116,9 @@ expression: json
           "key": "android",
           "raw": "id:logout_btn",
           "span": {
-            "col": 46,
+            "col": 32,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 15,
+            "len": 13,
             "line": 6
           }
         },
@@ -94,26 +126,26 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:logout",
           "span": {
-            "col": 72,
+            "col": 52,
             "file": "examples/scenes/DashboardScreen.scene",
-            "len": 24,
+            "len": 22,
             "line": 6
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/DashboardScreen.scene",
-        "len": 91,
+        "len": 83,
         "line": 6
       }
     }
   ],
   "platforms": null,
   "platforms_span": {
-    "col": 11,
+    "col": 8,
     "file": "examples/scenes/DashboardScreen.scene",
-    "len": 14,
-    "line": 2
+    "len": 15,
+    "line": 1
   }
 }

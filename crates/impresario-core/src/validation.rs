@@ -9,7 +9,10 @@
 
 use std::collections::HashSet;
 
-use crate::ast::{Action, ActionVerb, CheckCondition, Ident, PlayFile, SceneFile, Step, StepKind};
+use crate::ast::{
+    ActDecl, Action, ActionVerb, CheckCondition, Ident, PerformDecl, PlayFile, SceneBlock,
+    SceneFile, StageDecl, StageItem, Step, StepKind,
+};
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
 use crate::platforms::{Platform, ScenePlatforms};
 use crate::span::Span;
@@ -53,6 +56,7 @@ pub fn validate(workspace: &Workspace, devices: &[DeviceRef]) -> Diagnostics {
     for play in &workspace.plays {
         validate_play(play, workspace, &platforms, &mut diagnostics);
     }
+    lint_workspace(workspace, &platforms, &mut diagnostics);
     diagnostics
 }
 
@@ -158,81 +162,346 @@ fn validate_play(
             .collect();
         let applies =
             |platform: Platform| act_platforms.is_empty() || act_platforms.contains(&platform);
-        for stage in &act.stages {
-            for block in &stage.scenes {
-                let scene = workspace.scene(&block.scene_name);
-                if scene.is_none() {
-                    let mut diag = Diagnostic::error(
-                        Code::DslUnknownScene,
-                        format!("unknown scene '{}'", block.scene_name),
+
+        if !act.performs.is_empty() {
+            let act_params: Vec<&str> = act.params.iter().map(|p| p.name.as_str()).collect();
+            let example_names: Vec<&str> = act
+                .examples
+                .as_ref()
+                .map(|table| table.columns.iter().map(|c| c.name.as_str()).collect())
+                .unwrap_or_default();
+            for param in &act.params {
+                if let Some(default) = &param.default {
+                    check_string_refs(default, &declared, &act_params, &example_names, diagnostics);
+                }
+            }
+            let mut stack = Vec::new();
+            for perform in &act.performs {
+                validate_perform(
+                    perform,
+                    workspace,
+                    platforms,
+                    &declared,
+                    &act_params,
+                    &example_names,
+                    &applies,
+                    &mut stack,
+                    &mut reported_selectors,
+                    &mut reported_not_applicable,
+                    diagnostics,
+                );
+            }
+        } else {
+            let mut stack = Vec::new();
+            for stage in &act.stages {
+                validate_stage_body(
+                    stage,
+                    workspace,
+                    platforms,
+                    &declared,
+                    &[],
+                    &[],
+                    &applies,
+                    &mut stack,
+                    &mut reported_selectors,
+                    &mut reported_not_applicable,
+                    diagnostics,
+                );
+            }
+        }
+    }
+}
+
+/// Validate one `Perform:` call: argument names/arity, string references in
+/// the arguments and the recursive stage body.
+#[allow(clippy::too_many_arguments)]
+fn validate_perform(
+    perform: &PerformDecl,
+    workspace: &Workspace,
+    platforms: &[(Platform, &str)],
+    declared_vars: &[&str],
+    caller_params: &[&str],
+    example_names: &[&str],
+    caller_applies: &dyn Fn(Platform) -> bool,
+    stack: &mut Vec<String>,
+    reported_selectors: &mut HashSet<(String, Platform)>,
+    reported_not_applicable: &mut HashSet<(String, Platform)>,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(stage) = workspace.stage(&perform.stage_name) else {
+        let mut diag = Diagnostic::error(
+            Code::DslUnknownStage,
+            format!("unknown stage '{}'", perform.stage_name),
+        )
+        .with_span(perform.stage_span.clone())
+        .with_help("declare it in a .theatre file");
+        if let Some(hint) = suggest(&perform.stage_name, &workspace.stage_names()) {
+            diag = diag.with_help(hint);
+        }
+        diagnostics.push(diag);
+        return;
+    };
+
+    let mut provided: HashSet<&str> = HashSet::new();
+    for arg in &perform.args {
+        check_string_refs(
+            &arg.value,
+            declared_vars,
+            caller_params,
+            example_names,
+            diagnostics,
+        );
+        if !stage.params.iter().any(|param| param.name == arg.name) {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslInvalidStageArguments,
+                    format!("stage '{}' has no parameter '{}'", stage.name, arg.name),
+                )
+                .with_span(arg.name_span.clone())
+                .with_help(if stage.params.is_empty() {
+                    "this stage declares no parameters".to_string()
+                } else {
+                    format!(
+                        "parameters: {}",
+                        stage
+                            .params
+                            .iter()
+                            .map(|param| param.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
-                    .with_span(block.scene_span.clone());
-                    if let Some(hint) = suggest(&block.scene_name, &workspace.scene_names()) {
-                        diag = diag.with_help(hint);
-                    }
-                    diagnostics.push(diag);
-                }
+                }),
+            );
+        }
+        provided.insert(arg.name.as_str());
+    }
+    for param in &stage.params {
+        if param.default.is_none() && !provided.contains(param.name.as_str()) {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslMissingStageArgument,
+                    format!("stage '{}' needs argument '{}'", stage.name, param.name),
+                )
+                .with_span(perform.stage_span.clone())
+                .with_help(format!(
+                    "pass it with Perform: {}(... {} = 'value' ...)",
+                    stage.name, param.name
+                )),
+            );
+        }
+        if let Some(default) = &param.default {
+            let stage_params: Vec<&str> = stage.params.iter().map(|p| p.name.as_str()).collect();
+            check_string_refs(
+                default,
+                declared_vars,
+                &stage_params,
+                example_names,
+                diagnostics,
+            );
+        }
+    }
 
-                // Scene applicability (IMP-DSL-017) per platform.
-                if let Some(scene) = scene {
-                    for (platform, device) in platforms {
-                        if !applies(*platform) || scene.platforms.applies_to(*platform) {
-                            continue;
-                        }
-                        if reported_not_applicable.insert((scene.name.clone(), *platform)) {
-                            diagnostics.push(
-                                Diagnostic::error(
-                                    Code::DslSceneNotApplicable,
-                                    format!(
-                                        "scene '{}' does not apply to platform '{platform}' (device '{device}')",
-                                        scene.name
-                                    ),
-                                )
-                                .with_span(block.scene_span.clone())
-                                .with_help(format!(
-                                    "the scene applies to: {}",
-                                    describe_platforms(&scene.platforms)
-                                )),
-                            );
-                        }
-                    }
-                }
+    if let Some(cycle_start) = stack.iter().position(|name| name == &stage.name) {
+        let cycle = stack
+            .get(cycle_start..)
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .chain(std::iter::once(stage.name.clone()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        diagnostics.push(
+            Diagnostic::error(Code::DslStageCycle, format!("stage cycle: {cycle}"))
+                .with_span(perform.stage_span.clone())
+                .with_help("a stage cannot perform itself, directly or through another stage"),
+        );
+        return;
+    }
+    if stack.len() >= 64 {
+        diagnostics.push(
+            Diagnostic::error(
+                Code::DslStageDepth,
+                format!("stage nesting is deeper than 64 levels at '{}'", stage.name),
+            )
+            .with_span(perform.stage_span.clone())
+            .with_help("flatten the stage composition or split it into separate Acts"),
+        );
+        return;
+    }
 
-                for step in &block.steps {
-                    for string in step_strings(step) {
-                        check_variables(string, &declared, diagnostics);
-                    }
-                    if let Some(Action {
-                        verb: ActionVerb::Wait { .. },
-                        ..
-                    }) = action_of(step)
-                    {
-                        diagnostics.push(
-                            Diagnostic::warning(
-                                Code::DslLintFixedWait,
-                                "fixed waits are fragile; prefer a Check with a timeout",
-                            )
-                            .with_span(step.span.clone()),
-                        );
-                    }
-                    check_piece_resolution(
-                        scene,
-                        step,
-                        platforms,
-                        &applies,
-                        &mut reported_selectors,
-                        diagnostics,
-                    );
-                    // Action/check support per platform (IMP-DSL-013).
-                    for (platform, device) in platforms {
-                        if !applies(*platform) {
-                            continue;
-                        }
-                        if let Some(diag) = unsupported_step(step, *platform, device) {
-                            diagnostics.push(diag);
-                        }
-                    }
-                }
+    let combined = |platform: Platform| caller_applies(platform) && stage_applies(stage, platform);
+    let stage_params: Vec<&str> = stage.params.iter().map(|p| p.name.as_str()).collect();
+    validate_stage_body(
+        stage,
+        workspace,
+        platforms,
+        declared_vars,
+        &stage_params,
+        example_names,
+        &combined,
+        stack,
+        reported_selectors,
+        reported_not_applicable,
+        diagnostics,
+    );
+}
+
+fn stage_applies(stage: &StageDecl, platform: Platform) -> bool {
+    stage.platforms.is_empty()
+        || stage
+            .platforms
+            .iter()
+            .filter_map(|named| named.name.parse::<Platform>().ok())
+            .any(|p| p == platform)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_stage_body(
+    stage: &StageDecl,
+    workspace: &Workspace,
+    platforms: &[(Platform, &str)],
+    declared_vars: &[&str],
+    params: &[&str],
+    example_names: &[&str],
+    applies: &dyn Fn(Platform) -> bool,
+    stack: &mut Vec<String>,
+    reported_selectors: &mut HashSet<(String, Platform)>,
+    reported_not_applicable: &mut HashSet<(String, Platform)>,
+    diagnostics: &mut Diagnostics,
+) {
+    stack.push(stage.name.clone());
+    if stage.items.is_empty() {
+        for block in &stage.scenes {
+            validate_scene_block(
+                block,
+                workspace,
+                platforms,
+                declared_vars,
+                params,
+                example_names,
+                applies,
+                reported_selectors,
+                reported_not_applicable,
+                diagnostics,
+            );
+        }
+    } else {
+        for item in &stage.items {
+            match item {
+                StageItem::Scene(block) => validate_scene_block(
+                    block,
+                    workspace,
+                    platforms,
+                    declared_vars,
+                    params,
+                    example_names,
+                    applies,
+                    reported_selectors,
+                    reported_not_applicable,
+                    diagnostics,
+                ),
+                StageItem::Perform(nested) => validate_perform(
+                    nested,
+                    workspace,
+                    platforms,
+                    declared_vars,
+                    params,
+                    example_names,
+                    applies,
+                    stack,
+                    reported_selectors,
+                    reported_not_applicable,
+                    diagnostics,
+                ),
+            }
+        }
+    }
+    stack.pop();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_scene_block(
+    block: &SceneBlock,
+    workspace: &Workspace,
+    platforms: &[(Platform, &str)],
+    declared_vars: &[&str],
+    params: &[&str],
+    example_names: &[&str],
+    applies: &dyn Fn(Platform) -> bool,
+    reported_selectors: &mut HashSet<(String, Platform)>,
+    reported_not_applicable: &mut HashSet<(String, Platform)>,
+    diagnostics: &mut Diagnostics,
+) {
+    let scene = workspace.scene(&block.scene_name);
+    if scene.is_none() {
+        let mut diag = Diagnostic::error(
+            Code::DslUnknownScene,
+            format!("unknown scene '{}'", block.scene_name),
+        )
+        .with_span(block.scene_span.clone());
+        if let Some(hint) = suggest(&block.scene_name, &workspace.scene_names()) {
+            diag = diag.with_help(hint);
+        }
+        diagnostics.push(diag);
+    }
+
+    // Scene applicability (IMP-DSL-017) per platform.
+    if let Some(scene) = scene {
+        for (platform, device) in platforms {
+            if !applies(*platform) || scene.platforms.applies_to(*platform) {
+                continue;
+            }
+            if reported_not_applicable.insert((scene.name.clone(), *platform)) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::DslSceneNotApplicable,
+                        format!(
+                            "scene '{}' does not apply to platform '{platform}' (device '{device}')",
+                            scene.name
+                        ),
+                    )
+                    .with_span(block.scene_span.clone())
+                    .with_help(format!(
+                        "the scene applies to: {}",
+                        describe_platforms(&scene.platforms)
+                    )),
+                );
+            }
+        }
+    }
+
+    for step in &block.steps {
+        for string in step_strings(step) {
+            check_string_refs(string, declared_vars, params, example_names, diagnostics);
+        }
+        if let Some(Action {
+            verb: ActionVerb::Wait { .. },
+            ..
+        }) = action_of(step)
+        {
+            diagnostics.push(
+                Diagnostic::warning(
+                    Code::DslLintFixedWait,
+                    "fixed waits are fragile; prefer a Check with a timeout",
+                )
+                .with_span(step.span.clone()),
+            );
+        }
+        check_piece_resolution(
+            scene,
+            step,
+            platforms,
+            applies,
+            reported_selectors,
+            diagnostics,
+        );
+        // Action/check support per platform (IMP-DSL-013).
+        for (platform, device) in platforms {
+            if !applies(*platform) {
+                continue;
+            }
+            if let Some(diag) = unsupported_step(step, *platform, device) {
+                diagnostics.push(diag);
             }
         }
     }
@@ -324,22 +593,73 @@ fn describe_platforms(platforms: &ScenePlatforms) -> String {
     }
 }
 
-/// `IMP-DSL-014` for every `${var.X}` whose `X` is not declared.
-fn check_variables(string: &ParsedString, declared: &[&str], diagnostics: &mut Diagnostics) {
+/// `IMP-DSL-014` for undefined variables, plus the parameter/example
+/// equivalents. `params`/`example_names` are the names visible in the current
+/// stage/act scope; pass empty slices where those references are not allowed.
+fn check_string_refs(
+    string: &ParsedString,
+    declared: &[&str],
+    params: &[&str],
+    example_names: &[&str],
+    diagnostics: &mut Diagnostics,
+) {
     for part in &string.parts {
-        if let Part::Var { name, span } = part {
-            if !declared.contains(&name.as_str()) {
-                diagnostics.push(
-                    Diagnostic::error(
-                        Code::DslUndefinedVariable,
-                        format!("undefined variable '{name}'"),
-                    )
-                    .with_span(span.clone())
-                    .with_help("declare it with: Var: NAME = 'value' (or pass --var NAME=value)"),
-                );
+        match part {
+            Part::Var { name, span } => {
+                if !declared.contains(&name.as_str()) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::DslUndefinedVariable,
+                            format!("undefined variable '{name}'"),
+                        )
+                        .with_span(span.clone())
+                        .with_help(
+                            "declare it with: Var: NAME = 'value' (or pass --var NAME=value)",
+                        ),
+                    );
+                }
             }
+            Part::Param { name, span } => {
+                if !params.contains(&name.as_str()) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::DslUnknownParameter,
+                            format!("unknown parameter '{name}'"),
+                        )
+                        .with_span(span.clone())
+                        .with_help(if params.is_empty() {
+                            "this scope declares no parameters".to_string()
+                        } else {
+                            format!("parameters in scope: {}", params.join(", "))
+                        }),
+                    );
+                }
+            }
+            Part::Example { name, span } => {
+                if !example_names.contains(&name.as_str()) {
+                    let mut diag = Diagnostic::error(
+                        Code::DslUnknownExampleColumn,
+                        format!("unknown example column '{name}'"),
+                    )
+                    .with_span(span.clone());
+                    if example_names.is_empty() {
+                        diag = diag.with_help("add an Examples: table to the Act");
+                    } else {
+                        diag = diag.with_help(format!(
+                            "example columns in scope: {}",
+                            example_names.join(", ")
+                        ));
+                    }
+                    diagnostics.push(diag);
+                }
+            }
+            Part::Env { .. } | Part::Literal(_) => {}
         }
     }
+}
+
+fn check_variables(string: &ParsedString, declared: &[&str], diagnostics: &mut Diagnostics) {
+    check_string_refs(string, declared, &[], &[], diagnostics);
 }
 
 fn action_of(step: &Step) -> Option<&Action> {
@@ -439,12 +759,608 @@ fn unsupported_step(step: &Step, platform: Platform, device: &str) -> Option<Dia
     }
 }
 
+/// Workspace-wide lints from TASK-2 section 8.7: unused declarations,
+/// duplicate `Var:` names, unused `Examples:` columns, Acts without
+/// `Platforms:` that cannot run everywhere, and required stage parameters
+/// that no call site supplies.
+fn lint_workspace(
+    workspace: &Workspace,
+    platforms: &[(Platform, &str)],
+    diagnostics: &mut Diagnostics,
+) {
+    let mut used_scenes: HashSet<String> = HashSet::new();
+    let mut used_pieces: HashSet<(String, String)> = HashSet::new();
+    let mut called_stages: HashSet<String> = HashSet::new();
+    for play in &workspace.plays {
+        for act in &play.acts {
+            for stage in &act.stages {
+                collect_stage_usage(
+                    stage,
+                    &mut used_scenes,
+                    &mut used_pieces,
+                    &mut called_stages,
+                );
+            }
+            for perform in &act.performs {
+                called_stages.insert(perform.stage_name.clone());
+            }
+        }
+    }
+    for theatre in &workspace.theatres {
+        for stage in &theatre.stages {
+            collect_stage_usage(
+                stage,
+                &mut used_scenes,
+                &mut used_pieces,
+                &mut called_stages,
+            );
+        }
+    }
+
+    for scene in &workspace.scenes {
+        if !used_scenes.contains(&scene.name) {
+            diagnostics.push(
+                Diagnostic::warning(
+                    Code::DslLintUnusedScene,
+                    format!("scene '{}' is never used by a stage", scene.name),
+                )
+                .with_span(scene.name_span.clone())
+                .with_help("add a `Scene:` block to a stage, or remove the scene file"),
+            );
+            continue;
+        }
+        for piece in &scene.pieces {
+            if !used_pieces.contains(&(scene.name.clone(), piece.name.clone())) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintUnusedPiece,
+                        format!(
+                            "piece '{}' in scene '{}' is never used by a step",
+                            piece.name, scene.name
+                        ),
+                    )
+                    .with_span(piece.name_span.clone())
+                    .with_help("reference it from an Action or Check, or remove it"),
+                );
+            }
+        }
+    }
+
+    let mut reachable: HashSet<String> = HashSet::new();
+    let mut stack: Vec<String> = called_stages.iter().cloned().collect();
+    while let Some(name) = stack.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        let Some(stage) = workspace.stage(&name) else {
+            continue;
+        };
+        for item in &stage.items {
+            if let StageItem::Perform(perform) = item {
+                stack.push(perform.stage_name.clone());
+            }
+        }
+    }
+    for theatre in &workspace.theatres {
+        if !theatre
+            .stages
+            .iter()
+            .any(|stage| reachable.contains(&stage.name))
+        {
+            diagnostics.push(
+                Diagnostic::warning(
+                    Code::DslLintUnusedTheatre,
+                    format!(
+                        "theatre '{}' has no stage performed by an Act",
+                        theatre.name
+                    ),
+                )
+                .with_span(theatre.name_span.clone())
+                .with_help("reference one of its stages with Perform: or remove the theatre"),
+            );
+        }
+        for stage in &theatre.stages {
+            if !reachable.contains(&stage.name) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintUnusedStage,
+                        format!("stage '{}' is never performed", stage.name),
+                    )
+                    .with_span(stage.name_span.clone())
+                    .with_help("call it from an Act or another stage with Perform:"),
+                );
+            }
+        }
+    }
+
+    let mut var_refs: HashSet<String> = HashSet::new();
+    let mut example_refs: HashSet<String> = HashSet::new();
+    for play in &workspace.plays {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for decl in &play.var_decls {
+            if !seen.insert(decl.name.as_str()) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintShadowedVar,
+                        format!("variable '{}' is declared more than once", decl.name),
+                    )
+                    .with_span(decl.name_span.clone())
+                    .with_help("the last declaration wins; rename or remove one"),
+                );
+            }
+            collect_string_refs(&decl.value, &mut var_refs, &mut example_refs);
+        }
+        for act in &play.acts {
+            for param in &act.params {
+                if let Some(default) = &param.default {
+                    collect_string_refs(default, &mut var_refs, &mut example_refs);
+                }
+            }
+            for perform in &act.performs {
+                collect_perform_refs(perform, &mut var_refs, &mut example_refs);
+            }
+            for stage in &act.stages {
+                collect_stage_refs(stage, &mut var_refs, &mut example_refs);
+            }
+            lint_examples(act, workspace, diagnostics);
+        }
+    }
+    for theatre in &workspace.theatres {
+        for stage in &theatre.stages {
+            collect_stage_refs(stage, &mut var_refs, &mut example_refs);
+        }
+    }
+    for play in &workspace.plays {
+        for decl in &play.var_decls {
+            if !var_refs.contains(&decl.name) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintUnusedVar,
+                        format!("variable '{}' is never referenced", decl.name),
+                    )
+                    .with_span(decl.name_span.clone())
+                    .with_help("reference it as ${var.NAME}, or remove it"),
+                );
+            }
+        }
+    }
+
+    lint_act_platform_coverage(workspace, platforms, diagnostics);
+    lint_required_stage_parameters(workspace, diagnostics);
+}
+
+/// `IMP-DSL-049`: an Act without `Platforms:` is planned for every configured
+/// device. If a piece it uses has no selector for one of those platforms, the
+/// step will fail with `IMP-DSL-012`; warn early and list what is missing so
+/// the author can either restrict the Act or add the selectors.
+fn lint_act_platform_coverage(
+    workspace: &Workspace,
+    platforms: &[(Platform, &str)],
+    diagnostics: &mut Diagnostics,
+) {
+    if platforms.is_empty() {
+        return;
+    }
+    for play in &workspace.plays {
+        for act in &play.acts {
+            if !act.platforms.is_empty() {
+                continue;
+            }
+            let needed = act_piece_requirements(act, workspace);
+            if needed.is_empty() {
+                continue;
+            }
+            for (platform, device) in platforms {
+                let missing: Vec<&(String, String)> = needed
+                    .iter()
+                    .filter(|(scene_name, piece_name)| {
+                        let Some(scene) = workspace.scene(scene_name) else {
+                            return false;
+                        };
+                        let Some(piece) = scene.piece(piece_name) else {
+                            return false;
+                        };
+                        !piece
+                            .selectors
+                            .iter()
+                            .any(|selector| platform.selector_chain().contains(&selector.key))
+                    })
+                    .collect();
+                if missing.is_empty() {
+                    continue;
+                }
+                let listed = missing
+                    .iter()
+                    .take(5)
+                    .map(|(scene, piece)| format!("{piece} ({scene})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let more = missing.len().saturating_sub(5);
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintActPlatformCoverage,
+                        format!(
+                            "Act '{}' has no Platforms: but {} piece(s) have no selector for platform '{}' (device '{}'): {}{}",
+                            act.name,
+                            missing.len(),
+                            platform,
+                            device,
+                            listed,
+                            if more > 0 {
+                                format!(" and {more} more")
+                            } else {
+                                String::new()
+                            }
+                        ),
+                    )
+                    .with_span(act.name_span.clone())
+                    .with_help(
+                        "add `Platforms:` to the Act, or add the missing selectors to the scene table",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Every `(scene, piece)` an Act reaches through its stages, in first-use
+/// order and deduplicated. Cycles are guarded with `seen_stages`; the cycle
+/// error itself is reported by validation.
+fn act_piece_requirements(act: &ActDecl, workspace: &Workspace) -> Vec<(String, String)> {
+    let mut seen_stages = HashSet::new();
+    let mut seen_pieces = HashSet::new();
+    let mut needed = Vec::new();
+    for perform in &act.performs {
+        collect_perform_requirements(
+            perform,
+            workspace,
+            &mut seen_stages,
+            &mut seen_pieces,
+            &mut needed,
+        );
+    }
+    for stage in &act.stages {
+        collect_stage_requirements(
+            stage,
+            workspace,
+            &mut seen_stages,
+            &mut seen_pieces,
+            &mut needed,
+        );
+    }
+    needed
+}
+
+fn collect_perform_requirements(
+    perform: &PerformDecl,
+    workspace: &Workspace,
+    seen_stages: &mut HashSet<String>,
+    seen_pieces: &mut HashSet<(String, String)>,
+    needed: &mut Vec<(String, String)>,
+) {
+    let Some(stage) = workspace.stage(&perform.stage_name) else {
+        return;
+    };
+    collect_stage_requirements(stage, workspace, seen_stages, seen_pieces, needed);
+}
+
+fn collect_stage_requirements(
+    stage: &StageDecl,
+    workspace: &Workspace,
+    seen_stages: &mut HashSet<String>,
+    seen_pieces: &mut HashSet<(String, String)>,
+    needed: &mut Vec<(String, String)>,
+) {
+    if !seen_stages.insert(stage.name.clone()) {
+        return;
+    }
+    let blocks = if stage.items.is_empty() {
+        stage.scenes.iter().collect::<Vec<_>>()
+    } else {
+        stage
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                StageItem::Scene(block) => Some(block),
+                StageItem::Perform(_) => None,
+            })
+            .collect()
+    };
+    for block in blocks {
+        for step in &block.steps {
+            let Some(piece) = step_piece(step) else {
+                continue;
+            };
+            let key = (block.scene_name.clone(), piece.name.clone());
+            if seen_pieces.insert(key.clone()) {
+                needed.push(key);
+            }
+        }
+    }
+    for item in &stage.items {
+        if let StageItem::Perform(perform) = item {
+            collect_perform_requirements(perform, workspace, seen_stages, seen_pieces, needed);
+        }
+    }
+}
+
+/// `IMP-DSL-050`: a required stage parameter is omitted by every `Perform:`
+/// call that reaches the stage. The first omission is already an
+/// `IMP-DSL-037` error; this lint points at the declaration so the author can
+/// add a default or fix every call site.
+fn lint_required_stage_parameters(workspace: &Workspace, diagnostics: &mut Diagnostics) {
+    let mut calls: std::collections::HashMap<String, Vec<&PerformDecl>> =
+        std::collections::HashMap::new();
+    for perform in all_performs(workspace) {
+        if let Some(stage) = workspace.stage(&perform.stage_name) {
+            calls.entry(stage.name.clone()).or_default().push(perform);
+        }
+    }
+    for theatre in &workspace.theatres {
+        for stage in &theatre.stages {
+            for param in &stage.params {
+                if param.default.is_some() {
+                    continue;
+                }
+                let Some(sites) = calls.get(&stage.name) else {
+                    continue;
+                };
+                if sites.is_empty()
+                    || sites
+                        .iter()
+                        .any(|call| call.args.iter().any(|arg| arg.name == param.name))
+                {
+                    continue;
+                }
+                diagnostics.push(
+                    Diagnostic::warning(
+                        Code::DslLintRequiredParamNeverSupplied,
+                        format!(
+                            "required parameter '{}' of stage '{}' is never supplied",
+                            param.name, stage.name
+                        ),
+                    )
+                    .with_span(param.name_span.clone())
+                    .with_help(
+                        "pass it from every `Perform:` call, or give it a default in the Stage header",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn all_performs(workspace: &Workspace) -> Vec<&PerformDecl> {
+    let mut out: Vec<&PerformDecl> = Vec::new();
+    for play in &workspace.plays {
+        for act in &play.acts {
+            out.extend(act.performs.iter());
+            for stage in &act.stages {
+                collect_stage_performs(stage, &mut out);
+            }
+        }
+    }
+    for theatre in &workspace.theatres {
+        for stage in &theatre.stages {
+            collect_stage_performs(stage, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_stage_performs<'a>(stage: &'a StageDecl, out: &mut Vec<&'a PerformDecl>) {
+    for item in &stage.items {
+        if let StageItem::Perform(perform) = item {
+            out.push(perform);
+        }
+    }
+}
+
+fn collect_stage_usage(
+    stage: &StageDecl,
+    used_scenes: &mut HashSet<String>,
+    used_pieces: &mut HashSet<(String, String)>,
+    called_stages: &mut HashSet<String>,
+) {
+    if stage.items.is_empty() {
+        for block in &stage.scenes {
+            collect_block_usage(block, used_scenes, used_pieces);
+        }
+    } else {
+        for item in &stage.items {
+            match item {
+                StageItem::Scene(block) => {
+                    collect_block_usage(block, used_scenes, used_pieces);
+                }
+                StageItem::Perform(perform) => {
+                    called_stages.insert(perform.stage_name.clone());
+                }
+            }
+        }
+    }
+}
+
+fn collect_block_usage(
+    block: &SceneBlock,
+    used_scenes: &mut HashSet<String>,
+    used_pieces: &mut HashSet<(String, String)>,
+) {
+    used_scenes.insert(block.scene_name.clone());
+    for step in &block.steps {
+        if let Some(piece) = step_piece(step) {
+            used_pieces.insert((block.scene_name.clone(), piece.name.clone()));
+        }
+    }
+}
+
+fn collect_perform_refs(
+    perform: &PerformDecl,
+    vars: &mut HashSet<String>,
+    examples: &mut HashSet<String>,
+) {
+    for arg in &perform.args {
+        collect_string_refs(&arg.value, vars, examples);
+    }
+}
+
+fn collect_stage_refs(
+    stage: &StageDecl,
+    vars: &mut HashSet<String>,
+    examples: &mut HashSet<String>,
+) {
+    for param in &stage.params {
+        if let Some(default) = &param.default {
+            collect_string_refs(default, vars, examples);
+        }
+    }
+    if stage.items.is_empty() {
+        for block in &stage.scenes {
+            for step in &block.steps {
+                for string in step_strings(step) {
+                    collect_string_refs(string, vars, examples);
+                }
+            }
+        }
+    } else {
+        for item in &stage.items {
+            match item {
+                StageItem::Scene(block) => {
+                    for step in &block.steps {
+                        for string in step_strings(step) {
+                            collect_string_refs(string, vars, examples);
+                        }
+                    }
+                }
+                StageItem::Perform(perform) => {
+                    collect_perform_refs(perform, vars, examples);
+                }
+            }
+        }
+    }
+}
+
+fn collect_string_refs(
+    string: &ParsedString,
+    vars: &mut HashSet<String>,
+    examples: &mut HashSet<String>,
+) {
+    for part in &string.parts {
+        match part {
+            Part::Var { name, .. } => {
+                vars.insert(name.clone());
+            }
+            Part::Example { name, .. } => {
+                examples.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
+}
+
+fn lint_examples(act: &ActDecl, workspace: &Workspace, diagnostics: &mut Diagnostics) {
+    let Some(table) = &act.examples else {
+        return;
+    };
+    let mut used: HashSet<String> = act
+        .params
+        .iter()
+        .filter(|param| table.columns.iter().any(|column| column.name == param.name))
+        .map(|param| param.name.clone())
+        .collect();
+    for param in &act.params {
+        if let Some(default) = &param.default {
+            collect_example_refs(default, &mut used);
+        }
+    }
+    let mut seen = HashSet::new();
+    for perform in &act.performs {
+        collect_perform_example_refs(perform, workspace, &mut seen, &mut used);
+    }
+    for stage in &act.stages {
+        collect_stage_example_refs(stage, workspace, &mut seen, &mut used);
+    }
+    for column in &table.columns {
+        if !used.contains(&column.name) {
+            diagnostics.push(
+                Diagnostic::warning(
+                    Code::DslLintUnusedExampleColumn,
+                    format!("Examples column '{}' is never used", column.name),
+                )
+                .with_span(column.span.clone())
+                .with_help("reference it as ${example.NAME}, or remove the column"),
+            );
+        }
+    }
+}
+
+fn collect_perform_example_refs(
+    perform: &PerformDecl,
+    workspace: &Workspace,
+    seen: &mut HashSet<String>,
+    used: &mut HashSet<String>,
+) {
+    for arg in &perform.args {
+        collect_example_refs(&arg.value, used);
+    }
+    if !seen.insert(perform.stage_name.clone()) {
+        return;
+    }
+    if let Some(stage) = workspace.stage(&perform.stage_name) {
+        collect_stage_example_refs(stage, workspace, seen, used);
+    }
+}
+
+fn collect_stage_example_refs(
+    stage: &StageDecl,
+    workspace: &Workspace,
+    seen: &mut HashSet<String>,
+    used: &mut HashSet<String>,
+) {
+    for param in &stage.params {
+        if let Some(default) = &param.default {
+            collect_example_refs(default, used);
+        }
+    }
+    if stage.items.is_empty() {
+        for block in &stage.scenes {
+            for step in &block.steps {
+                for string in step_strings(step) {
+                    collect_example_refs(string, used);
+                }
+            }
+        }
+    } else {
+        for item in &stage.items {
+            match item {
+                StageItem::Scene(block) => {
+                    for step in &block.steps {
+                        for string in step_strings(step) {
+                            collect_example_refs(string, used);
+                        }
+                    }
+                }
+                StageItem::Perform(perform) => {
+                    collect_perform_example_refs(perform, workspace, seen, used);
+                }
+            }
+        }
+    }
+}
+
+fn collect_example_refs(string: &ParsedString, used: &mut HashSet<String>) {
+    for part in &string.parts {
+        if let Part::Example { name, .. } = part {
+            used.insert(name.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::parser::{parse_play, parse_scene};
+    use crate::parser::{parse_play, parse_scene, parse_theatre};
 
     fn scene(source: &str, name: &str) -> SceneFile {
         parse_scene(source, Path::new(name))
@@ -458,12 +1374,38 @@ mod tests {
             .expect("play parses")
     }
 
+    fn theatre(source: &str, name: &str) -> crate::ast::TheatreFile {
+        parse_theatre(source, Path::new(name))
+            .ast
+            .expect("theatre parses")
+    }
+
     fn workspace(scenes: Vec<SceneFile>, plays: Vec<PlayFile>) -> Workspace {
-        Workspace { scenes, plays }
+        Workspace {
+            scenes,
+            theatres: Vec::new(),
+            plays,
+        }
+    }
+
+    fn workspace_with_theatre(
+        scenes: Vec<SceneFile>,
+        theatres: Vec<crate::ast::TheatreFile>,
+        plays: Vec<PlayFile>,
+    ) -> Workspace {
+        Workspace {
+            scenes,
+            theatres,
+            plays,
+        }
     }
 
     fn codes(diagnostics: &Diagnostics) -> Vec<&'static str> {
         diagnostics.iter().map(|d| d.code.as_str()).collect()
+    }
+
+    fn error_codes(diagnostics: &Diagnostics) -> Vec<&'static str> {
+        diagnostics.errors().map(|d| d.code.as_str()).collect()
     }
 
     fn android() -> Vec<DeviceRef> {
@@ -493,6 +1435,209 @@ mod tests {
     }
 
     #[test]
+    fn theatrical_workspace_validates_params_examples_and_scene_steps() {
+        let scenes = vec![scene(
+            "Scene: LoginScreen\nPlatforms: cross-platform\n\n| Piece | web | android | ios |\n|---|---|---|---|\n| LoginTitle | h1.title | id:login_title | accessibilityId:login_title |\n| UsernameInput | #username | id:username | accessibilityId:username |\n| SubmitButton | #submit | id:submit | accessibilityId:submit |\n",
+            "LoginScreen.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: Authentication\n\nStage: Login(user, password, remember = 'false')\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${param.user}' => UsernameInput\n        Action: '${param.password}' => UsernameInput\n        Action: click => SubmitButton\n",
+            "auth.theatre",
+        )];
+        let plays = vec![play(
+            "Play: Auth\n\nAct: Login\n    Examples:\n        | user | password |\n        | alice | wrong |\n    Perform: Login(user = '${example.user}', password = '${example.password}')\n",
+            "auth.play",
+        )];
+        let devices = vec![
+            DeviceRef::new("flagship_android", Platform::Android),
+            DeviceRef::new("test_iphone", Platform::Ios),
+        ];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &devices);
+        assert!(
+            !diagnostics.has_errors(),
+            "{:?}",
+            diagnostics.errors().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn theatrical_unknown_param_and_example_are_reported() {
+        let scenes = vec![scene(
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Field | id:f |\n",
+            "S.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: Fill(user)\n    Scene: S\n        Action: '${param.nope}' => Field\n",
+            "t.theatre",
+        )];
+        let plays = vec![play(
+            "Play: P\n\nAct: A\n    Examples:\n        | user |\n        | alice |\n    Perform: Fill(user = '${example.nope}')\n",
+            "p.play",
+        )];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
+        let codes = codes(&diagnostics);
+        assert!(codes.contains(&"IMP-DSL-036"), "{codes:?}");
+        assert!(codes.contains(&"IMP-DSL-040"), "{codes:?}");
+    }
+
+    #[test]
+    fn theatrical_missing_argument_and_unknown_stage_are_reported() {
+        let scenes = vec![scene(
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Field | id:f |\n",
+            "S.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: Fill(user)\n    Scene: S\n        Check: Field\n",
+            "t.theatre",
+        )];
+        let plays = vec![play(
+            "Play: P\n\nAct: A\n    Perform: Fill\n    Perform: Missing\n",
+            "p.play",
+        )];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
+        let codes = codes(&diagnostics);
+        assert!(codes.contains(&"IMP-DSL-037"), "{codes:?}");
+        assert!(codes.contains(&"IMP-DSL-031"), "{codes:?}");
+    }
+
+    #[test]
+    fn workspace_lints_report_unused_declarations_and_columns() {
+        let scenes = vec![
+            scene(
+                "Scene: UsedScene\nPlatform: cross-platform\n\nPieces:\n    UsedPiece: android=\"id:used\"\n    UnusedPiece: android=\"id:unused\"\n",
+                "UsedScene.scene",
+            ),
+            scene(
+                "Scene: UnusedScene\nPlatform: cross-platform\n\nPieces:\n    Other: android=\"id:other\"\n",
+                "UnusedScene.scene",
+            ),
+        ];
+        let theatres = vec![
+            theatre(
+                "Theatre: T\n\nStage: UsedStage(user)\n    Scene: UsedScene\n        Action: type '${var.USED}' => UsedPiece\n        Check: UsedPiece\n",
+                "T.theatre",
+            ),
+            theatre("Theatre: Other\n\nStage: Never\n", "Other.theatre"),
+        ];
+        let plays = vec![play(
+            "Play: P\nVar: USED = 'x'\nVar: DEAD = 'y'\nVar: USED = 'z'\n\nAct: A\n    Examples:\n        | user | unused |\n        | alice | x |\n    Perform: UsedStage(user = '${example.user}')\n",
+            "p.play",
+        )];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
+        assert!(diagnostics.errors().next().is_none(), "{diagnostics:?}");
+        let codes = codes(&diagnostics);
+        for expected in [
+            "IMP-DSL-042",
+            "IMP-DSL-043",
+            "IMP-DSL-044",
+            "IMP-DSL-045",
+            "IMP-DSL-046",
+            "IMP-DSL-047",
+        ] {
+            assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
+        }
+    }
+
+    #[test]
+    fn act_without_platforms_warns_about_missing_piece_selectors() {
+        let scenes = vec![scene(
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Field | id:f |\n",
+            "S.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: Fill\n    Scene: S\n        Check: Field\n",
+            "t.theatre",
+        )];
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: Fill\n", "p.play")];
+        let devices = vec![
+            DeviceRef::new("pixel", Platform::Android),
+            DeviceRef::new("iphone", Platform::Ios),
+        ];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &devices);
+        let warning = diagnostics
+            .warnings()
+            .find(|diagnostic| diagnostic.code == Code::DslLintActPlatformCoverage)
+            .unwrap_or_else(|| panic!("missing IMP-DSL-049: {diagnostics:?}"));
+        assert!(warning.message.contains("ios"), "{}", warning.message);
+        assert!(warning.message.contains("Field (S)"), "{}", warning.message);
+        assert!(
+            warning
+                .help
+                .as_deref()
+                .is_some_and(|help| help.contains("Platforms:")),
+            "{warning:?}"
+        );
+    }
+
+    #[test]
+    fn act_platform_coverage_lint_is_quiet_when_the_act_is_restricted() {
+        let scenes = vec![scene(
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Field | id:f |\n",
+            "S.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: Fill\n    Scene: S\n        Check: Field\n",
+            "t.theatre",
+        )];
+        let plays = vec![play(
+            "Play: P\n\nAct: A\nPlatforms: android\n    Perform: Fill\n",
+            "p.play",
+        )];
+        let devices = vec![
+            DeviceRef::new("pixel", Platform::Android),
+            DeviceRef::new("iphone", Platform::Ios),
+        ];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &devices);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == Code::DslLintActPlatformCoverage),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn required_stage_parameter_never_supplied_is_linted() {
+        let scenes = vec![scene(
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Field | id:f |\n",
+            "S.scene",
+        )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: Fill(user)\n    Scene: S\n        Check: Field\n",
+            "t.theatre",
+        )];
+        let bad = vec![play("Play: P\n\nAct: A\n    Perform: T.Fill\n", "p.play")];
+        let diagnostics = validate(
+            &workspace_with_theatre(scenes.clone(), theatres.clone(), bad),
+            &android(),
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == Code::DslMissingStageArgument),
+            "{diagnostics:?}"
+        );
+        let warning = diagnostics
+            .warnings()
+            .find(|d| d.code == Code::DslLintRequiredParamNeverSupplied)
+            .unwrap_or_else(|| panic!("missing IMP-DSL-050: {diagnostics:?}"));
+        assert!(warning.message.contains("user"), "{}", warning.message);
+
+        let good = vec![play(
+            "Play: P\n\nAct: A\n    Perform: T.Fill(user = 'alice')\n",
+            "p.play",
+        )];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, good), &android());
+        assert!(diagnostics.errors().next().is_none(), "{diagnostics:?}");
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == Code::DslLintRequiredParamNeverSupplied),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn unknown_scene_reports_with_hint() {
         let scenes = vec![scene(
             "Scene: LoginScreen\nPlatform: cross-platform\n\nPieces:\n    Title: web=\"h1\"\n",
@@ -504,7 +1649,7 @@ mod tests {
         )];
         let diagnostics = validate(&workspace(scenes, plays), &android());
         let errors: Vec<_> = diagnostics.errors().collect();
-        assert_eq!(codes(&diagnostics), vec!["IMP-DSL-008"], "{errors:?}");
+        assert_eq!(error_codes(&diagnostics), vec!["IMP-DSL-008"], "{errors:?}");
         assert!(errors[0]
             .help
             .as_deref()
@@ -523,7 +1668,7 @@ mod tests {
             "p.play",
         )];
         let diagnostics = validate(&workspace(scenes, plays), &android());
-        assert_eq!(codes(&diagnostics), vec!["IMP-DSL-009"]);
+        assert_eq!(error_codes(&diagnostics), vec!["IMP-DSL-009"]);
         assert!(diagnostics
             .errors()
             .next()
@@ -548,9 +1693,14 @@ mod tests {
             &[DeviceRef::new("living_room_tv", Platform::WebOs)],
         );
         assert!(!ok.has_errors(), "{:?}", ok.errors().collect::<Vec<_>>());
-        // android does not: IMP-DSL-012.
+        // android does not: IMP-DSL-012, plus the actionable IMP-DSL-049 lint.
         let bad = validate(&workspace(scenes, plays), &android());
-        assert_eq!(codes(&bad), vec!["IMP-DSL-012"]);
+        assert_eq!(error_codes(&bad), vec!["IMP-DSL-012"]);
+        assert!(
+            bad.iter()
+                .any(|diagnostic| diagnostic.code == Code::DslLintActPlatformCoverage),
+            "{bad:?}"
+        );
     }
 
     #[test]

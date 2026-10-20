@@ -12,75 +12,97 @@ name_span:
 platforms: ~
 platforms_span:
   file: examples/scenes/DashboardScreen.scene
-  line: 2
-  col: 11
-  len: 14
+  line: 1
+  col: 8
+  len: 15
+columns:
+  - platform: web
+    name: web
+    span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 3
+      col: 19
+      len: 3
+  - platform: android
+    name: android
+    span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 3
+      col: 32
+      len: 7
+  - platform: ios
+    name: ios
+    span:
+      file: examples/scenes/DashboardScreen.scene
+      line: 3
+      col: 52
+      len: 3
 pieces:
   - name: WelcomeBanner
     name_span:
       file: examples/scenes/DashboardScreen.scene
       line: 5
-      col: 5
+      col: 3
       len: 13
     span:
       file: examples/scenes/DashboardScreen.scene
       line: 5
-      col: 5
-      len: 98
+      col: 1
+      len: 83
     selectors:
       - key: web
         raw: h2.welcome
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 5
-          col: 24
-          len: 12
+          col: 19
+          len: 10
       - key: android
         raw: "id:welcome_banner"
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 5
-          col: 46
-          len: 19
+          col: 32
+          len: 17
       - key: ios
         raw: "accessibilityId:welcome_banner"
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 5
-          col: 71
-          len: 32
+          col: 52
+          len: 30
     index: 0
   - name: LogoutButton
     name_span:
       file: examples/scenes/DashboardScreen.scene
       line: 6
-      col: 5
+      col: 3
       len: 12
     span:
       file: examples/scenes/DashboardScreen.scene
       line: 6
-      col: 5
-      len: 91
+      col: 1
+      len: 83
     selectors:
       - key: web
         raw: "#logout"
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 6
-          col: 24
-          len: 9
+          col: 19
+          len: 7
       - key: android
         raw: "id:logout_btn"
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 6
-          col: 46
-          len: 15
+          col: 32
+          len: 13
       - key: ios
         raw: "accessibilityId:logout"
         span:
           file: examples/scenes/DashboardScreen.scene
           line: 6
-          col: 72
-          len: 24
+          col: 52
+          len: 22
     index: 0

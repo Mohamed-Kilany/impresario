@@ -12,143 +12,165 @@ name_span:
 platforms: ~
 platforms_span:
   file: examples/scenes/LoginScreen.scene
-  line: 2
-  col: 11
-  len: 14
+  line: 1
+  col: 8
+  len: 11
+columns:
+  - platform: web
+    name: web
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 3
+      col: 19
+      len: 3
+  - platform: android
+    name: android
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 3
+      col: 43
+      len: 7
+  - platform: ios
+    name: ios
+    span:
+      file: examples/scenes/LoginScreen.scene
+      line: 3
+      col: 60
+      len: 3
 pieces:
   - name: LoginTitle
     name_span:
       file: examples/scenes/LoginScreen.scene
       line: 5
-      col: 5
+      col: 3
       len: 10
     span:
       file: examples/scenes/LoginScreen.scene
       line: 5
-      col: 5
-      len: 92
+      col: 1
+      len: 88
     selectors:
       - key: web
         raw: h1.title
         span:
           file: examples/scenes/LoginScreen.scene
           line: 5
-          col: 24
-          len: 10
+          col: 19
+          len: 8
       - key: android
         raw: "id:login_title"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 5
-          col: 45
-          len: 16
+          col: 43
+          len: 14
       - key: ios
         raw: "accessibilityId:login_title"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 5
-          col: 68
-          len: 29
+          col: 60
+          len: 27
     index: 0
   - name: UsernameInput
     name_span:
       file: examples/scenes/LoginScreen.scene
       line: 6
-      col: 5
+      col: 3
       len: 13
     span:
       file: examples/scenes/LoginScreen.scene
       line: 6
-      col: 5
-      len: 89
+      col: 1
+      len: 88
     selectors:
       - key: web
         raw: "#username"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 6
-          col: 24
-          len: 11
+          col: 19
+          len: 9
       - key: android
         raw: "id:username"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 6
-          col: 45
-          len: 13
+          col: 43
+          len: 11
       - key: ios
         raw: "accessibilityId:username"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 6
-          col: 68
-          len: 26
+          col: 60
+          len: 24
     index: 0
   - name: PasswordInput
     name_span:
       file: examples/scenes/LoginScreen.scene
       line: 7
-      col: 5
+      col: 3
       len: 13
     span:
       file: examples/scenes/LoginScreen.scene
       line: 7
-      col: 5
-      len: 89
+      col: 1
+      len: 88
     selectors:
       - key: web
         raw: "#password"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 7
-          col: 24
-          len: 11
+          col: 19
+          len: 9
       - key: android
         raw: "id:password"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 7
-          col: 45
-          len: 13
+          col: 43
+          len: 11
       - key: ios
         raw: "accessibilityId:password"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 7
-          col: 68
-          len: 26
+          col: 60
+          len: 24
     index: 0
   - name: SubmitButton
     name_span:
       file: examples/scenes/LoginScreen.scene
       line: 8
-      col: 5
+      col: 3
       len: 12
     span:
       file: examples/scenes/LoginScreen.scene
       line: 8
-      col: 5
-      len: 95
+      col: 1
+      len: 88
     selectors:
       - key: web
         raw: "button[type='submit']"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 8
-          col: 24
-          len: 23
+          col: 19
+          len: 21
       - key: android
         raw: "id:login_btn"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 8
-          col: 57
-          len: 14
+          col: 43
+          len: 12
       - key: ios
         raw: "accessibilityId:login"
         span:
           file: examples/scenes/LoginScreen.scene
           line: 8
-          col: 77
-          len: 23
+          col: 60
+          len: 21
     index: 0

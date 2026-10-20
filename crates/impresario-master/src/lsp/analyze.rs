@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use impresario_core::apps;
 use impresario_core::config;
 use impresario_core::diag::{Code, Diagnostic as CoreDiagnostic, Diagnostics, Severity};
-use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::settings;
 use impresario_core::span::Span;
 use impresario_core::validation::{self, DeviceRef};
@@ -21,7 +21,7 @@ use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, NumberOrString}
 
 use super::index::Index;
 use super::position::{Doc, Encoding};
-use super::{is_play_file, is_scene_file};
+use super::{is_play_file, is_scene_file, is_theatre_file};
 
 /// An unsaved editor buffer (the server advertises full sync).
 #[derive(Debug, Clone)]
@@ -87,6 +87,13 @@ pub fn analyze(
             .as_ref()
             .map_or_else(|| PathBuf::from("./scenes"), |cfg| cfg.scenes_dir.clone()),
     );
+    let theatres_dir = resolve(
+        base,
+        cfg_outcome.config.as_ref().map_or_else(
+            || PathBuf::from("./theatres"),
+            |cfg| cfg.theatres_dir.clone(),
+        ),
+    );
     let plays_dir = resolve(
         base,
         cfg_outcome
@@ -97,18 +104,21 @@ pub fn analyze(
 
     let mut files: BTreeSet<PathBuf> = BTreeSet::new();
     collect_files(&scenes_dir, &mut files);
+    collect_files(&theatres_dir, &mut files);
     collect_files(&plays_dir, &mut files);
     for path in overlays.keys() {
-        if is_scene_file(path) || is_play_file(path) {
+        if is_scene_file(path) || is_theatre_file(path) || is_play_file(path) {
             files.insert(path.clone());
         }
     }
 
     let mut scenes = Vec::new();
+    let mut theatres = Vec::new();
     let mut plays = Vec::new();
     for path in &files {
         let scene = is_scene_file(path);
-        if !scene && !is_play_file(path) {
+        let theatre = is_theatre_file(path);
+        if !scene && !theatre && !is_play_file(path) {
             continue;
         }
         let text = match overlays.get(path) {
@@ -133,6 +143,12 @@ pub fn analyze(
                 scenes.push(ast);
             }
             absorb(&mut raw, &outcome.diagnostics, Some(path));
+        } else if theatre {
+            let outcome = parse_theatre(&text, path);
+            if let Some(ast) = outcome.ast {
+                theatres.push(ast);
+            }
+            absorb(&mut raw, &outcome.diagnostics, Some(path));
         } else {
             let outcome = parse_play(&text, path);
             if let Some(ast) = outcome.ast {
@@ -143,7 +159,11 @@ pub fn analyze(
         sources.insert(path.clone(), text);
     }
 
-    let workspace = Workspace { scenes, plays };
+    let workspace = Workspace {
+        scenes,
+        theatres,
+        plays,
+    };
     let semantic = validation::validate(&workspace, &devices);
     absorb(&mut raw, &semantic, None);
 
@@ -171,7 +191,7 @@ pub fn analyze(
         absorb(&mut raw, &app_diags, None);
     }
 
-    let index = Index::build(&workspace.scenes, &workspace.plays);
+    let index = Index::build(&workspace.scenes, &workspace.theatres, &workspace.plays);
 
     let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
     for (file, entries) in raw {

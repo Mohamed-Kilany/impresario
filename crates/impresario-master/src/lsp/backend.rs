@@ -15,10 +15,11 @@ use tower_lsp_server::jsonrpc::Result as RpcResult;
 use tower_lsp_server::ls_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, OneOf, Position, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, OneOf,
+    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -328,6 +329,30 @@ impl Inner {
         let encoding = *read(&self.encoding);
         nav::document_symbols(&text, &path, encoding)
     }
+
+    fn formatting_of(&self, uri: &Uri) -> Option<Vec<TextEdit>> {
+        let path = path_of(uri)?;
+        let text = self.document_text(&path)?;
+        let formatted = impresario_core::fmt::format_source(&text, &path).ok()?;
+        if formatted == text {
+            return Some(Vec::new());
+        }
+        let encoding = *read(&self.encoding);
+        let lines: Vec<&str> = text.split('\n').collect();
+        let last = lines.last().copied().unwrap_or_default();
+        let character = match encoding {
+            super::position::Encoding::Utf8 => last.len(),
+            super::position::Encoding::Utf16 => last.encode_utf16().count(),
+        };
+        let end = Position::new(
+            u32::try_from(lines.len().saturating_sub(1)).unwrap_or(u32::MAX),
+            u32::try_from(character).unwrap_or(u32::MAX),
+        );
+        Some(vec![TextEdit {
+            range: Range::new(Position::new(0, 0), end),
+            new_text: formatted,
+        }])
+    }
 }
 
 /// The debounced analysis worker: wait for a first signal, let the burst
@@ -396,6 +421,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -524,5 +550,18 @@ impl LanguageServer for Backend {
         Ok(tokio::task::spawn_blocking(move || inner.symbols_of(&uri))
             .await
             .unwrap_or(None))
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> RpcResult<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let inner = Arc::clone(&self.inner);
+        Ok(
+            tokio::task::spawn_blocking(move || inner.formatting_of(&uri))
+                .await
+                .unwrap_or(None),
+        )
     }
 }

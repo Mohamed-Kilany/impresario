@@ -3,6 +3,38 @@ source: crates/impresario-core/tests/examples_snapshot.rs
 expression: json
 ---
 {
+  "columns": [
+    {
+      "name": "web",
+      "platform": "web",
+      "span": {
+        "col": 19,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 3,
+        "line": 3
+      }
+    },
+    {
+      "name": "android",
+      "platform": "android",
+      "span": {
+        "col": 43,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 7,
+        "line": 3
+      }
+    },
+    {
+      "name": "ios",
+      "platform": "ios",
+      "span": {
+        "col": 60,
+        "file": "examples/scenes/LoginScreen.scene",
+        "len": 3,
+        "line": 3
+      }
+    }
+  ],
   "name": "LoginScreen",
   "name_span": {
     "col": 8,
@@ -16,7 +48,7 @@ expression: json
       "index": 0,
       "name": "LoginTitle",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/LoginScreen.scene",
         "len": 10,
         "line": 5
@@ -26,9 +58,9 @@ expression: json
           "key": "web",
           "raw": "h1.title",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 10,
+            "len": 8,
             "line": 5
           }
         },
@@ -36,9 +68,9 @@ expression: json
           "key": "android",
           "raw": "id:login_title",
           "span": {
-            "col": 45,
+            "col": 43,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 16,
+            "len": 14,
             "line": 5
           }
         },
@@ -46,17 +78,17 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:login_title",
           "span": {
-            "col": 68,
+            "col": 60,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 29,
+            "len": 27,
             "line": 5
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/LoginScreen.scene",
-        "len": 92,
+        "len": 88,
         "line": 5
       }
     },
@@ -64,7 +96,7 @@ expression: json
       "index": 0,
       "name": "UsernameInput",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/LoginScreen.scene",
         "len": 13,
         "line": 6
@@ -74,9 +106,9 @@ expression: json
           "key": "web",
           "raw": "#username",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 11,
+            "len": 9,
             "line": 6
           }
         },
@@ -84,9 +116,9 @@ expression: json
           "key": "android",
           "raw": "id:username",
           "span": {
-            "col": 45,
+            "col": 43,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 13,
+            "len": 11,
             "line": 6
           }
         },
@@ -94,17 +126,17 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:username",
           "span": {
-            "col": 68,
+            "col": 60,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 26,
+            "len": 24,
             "line": 6
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/LoginScreen.scene",
-        "len": 89,
+        "len": 88,
         "line": 6
       }
     },
@@ -112,7 +144,7 @@ expression: json
       "index": 0,
       "name": "PasswordInput",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/LoginScreen.scene",
         "len": 13,
         "line": 7
@@ -122,9 +154,9 @@ expression: json
           "key": "web",
           "raw": "#password",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 11,
+            "len": 9,
             "line": 7
           }
         },
@@ -132,9 +164,9 @@ expression: json
           "key": "android",
           "raw": "id:password",
           "span": {
-            "col": 45,
+            "col": 43,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 13,
+            "len": 11,
             "line": 7
           }
         },
@@ -142,17 +174,17 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:password",
           "span": {
-            "col": 68,
+            "col": 60,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 26,
+            "len": 24,
             "line": 7
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/LoginScreen.scene",
-        "len": 89,
+        "len": 88,
         "line": 7
       }
     },
@@ -160,7 +192,7 @@ expression: json
       "index": 0,
       "name": "SubmitButton",
       "name_span": {
-        "col": 5,
+        "col": 3,
         "file": "examples/scenes/LoginScreen.scene",
         "len": 12,
         "line": 8
@@ -170,9 +202,9 @@ expression: json
           "key": "web",
           "raw": "button[type='submit']",
           "span": {
-            "col": 24,
+            "col": 19,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 23,
+            "len": 21,
             "line": 8
           }
         },
@@ -180,9 +212,9 @@ expression: json
           "key": "android",
           "raw": "id:login_btn",
           "span": {
-            "col": 57,
+            "col": 43,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 14,
+            "len": 12,
             "line": 8
           }
         },
@@ -190,26 +222,26 @@ expression: json
           "key": "ios",
           "raw": "accessibilityId:login",
           "span": {
-            "col": 77,
+            "col": 60,
             "file": "examples/scenes/LoginScreen.scene",
-            "len": 23,
+            "len": 21,
             "line": 8
           }
         }
       ],
       "span": {
-        "col": 5,
+        "col": 1,
         "file": "examples/scenes/LoginScreen.scene",
-        "len": 95,
+        "len": 88,
         "line": 8
       }
     }
   ],
   "platforms": null,
   "platforms_span": {
-    "col": 11,
+    "col": 8,
     "file": "examples/scenes/LoginScreen.scene",
-    "len": 14,
-    "line": 2
+    "len": 11,
+    "line": 1
   }
 }

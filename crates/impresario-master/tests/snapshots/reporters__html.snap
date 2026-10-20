@@ -41,7 +41,7 @@ footer { color: #888; margin-top: 2rem; font-size: .85em; }
 <section class="play">
 <h3>Login <span class="dim">(plays/login.play)</span></h3>
 <details class="act"><summary><span class="badge passed">passed</span> Sign in <span class="dim">850 ms</span></summary>
-<div class="stage"><h5><span class="badge passed">passed</span> Stage: Login</h5>
+<div class="stage"><h5><span class="badge passed">passed</span> Stage: Login <span class="dim">theatres/auth.theatre:4:1</span></h5>
 <table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
 <tr class="passed"><td><code>Check: email</code><br><span class="dim">plays/login.play:4:9</span></td><td><span class="badge passed">passed</span></td><td>120 ms</td><td></td></tr>
 <tr class="passed"><td><code>Action: click =&gt; submit</code><br><span class="dim">plays/login.play:5:9</span></td><td><span class="badge passed">passed</span></td><td>700 ms</td><td></td></tr>
@@ -49,7 +49,7 @@ footer { color: #888; margin-top: 2rem; font-size: .85em; }
 </div>
 </details>
 <details class="act" open><summary><span class="badge failed">failed</span> Wrong password <span class="dim">1.25 s</span></summary>
-<div class="stage"><h5><span class="badge failed">failed</span> Stage: Login</h5>
+<div class="stage"><h5><span class="badge failed">failed</span> Stage: Login <span class="dim">theatres/auth.theatre:4:1</span></h5>
 <table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
 <tr class="failed"><td><code>Check: welcome</code><br><span class="dim">plays/login.play:11:9</span></td><td><span class="badge failed">failed</span></td><td>1.10 s</td><td>CHECK_FAILED: expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</td></tr>
 <tr class="skipped"><td><code>Action: click =&gt; retry</code><br><span class="dim">plays/login.play:12:9</span></td><td><span class="badge skipped">skipped</span></td><td></td><td></td></tr>
@@ -69,7 +69,7 @@ footer { color: #888; margin-top: 2rem; font-size: .85em; }
 <details class="act"><summary><span class="badge passed">passed</span> Pay <span class="dim">1.30 s, 2 attempts</span> <span class="badge skipped">flaky</span></summary>
 <p class="meta">tags: smoke</p>
 <div class="attempt"><span class="badge failed">failed</span> <span class="dim">attempt 1 · 400 ms</span></div>
-<div class="stage"><h5><span class="badge failed">failed</span> Stage: Checkout</h5>
+<div class="stage"><h5><span class="badge failed">failed</span> Stage: Checkout <span class="dim">theatres/auth.theatre:4:1</span></h5>
 <table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
 <tr class="failed"><td><code>Check: receipt</code><br><span class="dim">plays/login.play:3:9</span></td><td><span class="badge failed">failed</span></td><td>380 ms</td><td>CHECK_FAILED: expected &#39;Welcome&#39; but saw &#39;Invalid credentials&#39;</td></tr>
 </table>
@@ -82,7 +82,7 @@ footer { color: #888; margin-top: 2rem; font-size: .85em; }
 [ERROR] agent: login rejected</pre></details>
 </div>
 <div class="attempt"><span class="badge passed">passed</span> <span class="dim">attempt 2 · 900 ms</span></div>
-<div class="stage"><h5><span class="badge passed">passed</span> Stage: Checkout</h5>
+<div class="stage"><h5><span class="badge passed">passed</span> Stage: Checkout <span class="dim">theatres/auth.theatre:4:1</span></h5>
 <table><tr><th>step</th><th>status</th><th>time</th><th>error</th></tr>
 <tr class="passed"><td><code>Check: receipt</code><br><span class="dim">plays/login.play:3:9</span></td><td><span class="badge passed">passed</span></td><td>300 ms</td><td></td></tr>
 <tr class="passed"><td><code>Action: click =&gt; done</code><br><span class="dim">plays/login.play:4:9</span></td><td><span class="badge passed">passed</span></td><td>500 ms</td><td></td></tr>

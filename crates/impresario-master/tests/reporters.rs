@@ -49,6 +49,12 @@ fn stage(name: &str, steps: Vec<StepReport>) -> StageReport {
     };
     StageReport {
         name: name.to_string(),
+        span: Some(SpanJson {
+            file: "theatres/auth.theatre".to_string(),
+            line: 4,
+            col: 1,
+            len: 5,
+        }),
         status,
         steps,
     }
@@ -128,6 +134,7 @@ fn report() -> RunReport {
     ];
 
     RunReport {
+        schema_version: 2,
         run_id: "20261016-120000-abcd".to_string(),
         started_at: "2026-10-16T12:00:00.000Z".to_string(),
         duration_ms: 12_345,
@@ -154,6 +161,7 @@ fn report() -> RunReport {
                         ActReport {
                             name: "Sign in".to_string(),
                             tags: vec![],
+                            example: BTreeMap::new(),
                             status: Status::Passed,
                             flaky: false,
                             attempts: vec![passed_attempt()],
@@ -161,6 +169,7 @@ fn report() -> RunReport {
                         ActReport {
                             name: "Wrong password".to_string(),
                             tags: vec![],
+                            example: BTreeMap::new(),
                             status: Status::Failed,
                             flaky: false,
                             attempts: vec![failed_attempt],
@@ -174,6 +183,7 @@ fn report() -> RunReport {
                         ActReport {
                             name: "Pay".to_string(),
                             tags: vec!["smoke".to_string()],
+                            example: BTreeMap::new(),
                             status: Status::Passed,
                             flaky: true,
                             attempts: flaky_attempts,
@@ -181,6 +191,7 @@ fn report() -> RunReport {
                         ActReport {
                             name: "Refund".to_string(),
                             tags: vec![],
+                            example: BTreeMap::new(),
                             status: Status::Skipped,
                             flaky: false,
                             attempts: vec![],

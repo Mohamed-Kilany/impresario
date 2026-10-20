@@ -1,0 +1,16 @@
+Play: Golden Legacy
+Description: Migration fixture.
+
+Act: Successful login
+Tags: smoke
+
+Stage: Fill
+    Scene: LoginScreen
+        Check: LoginTitle
+        Action: click => SubmitButton
+
+Act: Promo visible
+
+Stage: Fill
+    Scene: LoginScreen
+        Check: PromoBanner
