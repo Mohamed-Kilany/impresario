@@ -50,10 +50,37 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 | `IMP-DSL-020` | lint: naming (scene/piece not UpperCamelCase) | `login_screen` |
 | `IMP-DSL-021` | lint: scene name does not match the file name | `Scene: Login` in `playlist.scene` |
 | `IMP-DSL-022` | `timeout` not allowed here | `Action: back timeout 5s` |
+| `IMP-DSL-030` | duplicate stage name across all theatres | two `Stage: Login` declarations |
+| `IMP-DSL-031` | unknown stage referenced by `Perform:` | `Perform: LoginFlow` with no such stage |
+| `IMP-DSL-032` | invalid stage arguments (unknown name, duplicate, bad `--arg`) | `Perform: Fill(usr = 'x')` |
+| `IMP-DSL-033` | duplicate theatre name | two `Theatre: Auth` files |
+| `IMP-DSL-034` | stage call cycle | A performs B, B performs A |
+| `IMP-DSL-035` | duplicate parameter in one Act/Stage | `Stage: Fill(user, user)` |
+| `IMP-DSL-036` | unknown parameter reference (`${param.X}`) | `X` is not declared by the Act/Stage |
+| `IMP-DSL-037` | required stage parameter is not supplied | `Stage: Fill(user)` called as `Fill()` |
+| `IMP-DSL-038` | duplicate `Examples:` column | `| user | user |` |
+| `IMP-DSL-039` | `Examples:` row has a different cell count than the header | header 2 cells, row 3 cells |
+| `IMP-DSL-040` | unknown `${example.X}` column | `X` not in the Act's `Examples:` header |
+| `IMP-DSL-041` | stage nesting deeper than 64 | recursive stage composition |
+| `IMP-DSL-042` | lint: scene is never used by a stage | unused `.scene` |
+| `IMP-DSL-043` | lint: piece is never used by a step | unused table row / `Pieces:` entry |
+| `IMP-DSL-044` | lint: stage is never reachable from an Act | unreferenced `.theatre` stage |
+| `IMP-DSL-045` | lint: theatre has no stage reachable from an Act | unreferenced theatre |
+| `IMP-DSL-046` | lint: variable is never referenced | unused `Var:` |
+| `IMP-DSL-047` | lint: `Examples:` column is never used | column not bound to a parameter or `${example.*}` |
+| `IMP-DSL-048` | lint: duplicate `Var:` declaration (last wins) | two `Var: USER` lines |
+| `IMP-DSL-049` | lint: Act has no `Platforms:` but a used piece has no selector for a configured platform | Android-only piece in an Act planned for web and Android |
+| `IMP-DSL-050` | lint: required stage parameter is omitted by every `Perform:` call | `Stage: Fill(user)` called as `Perform: Fill` everywhere |
 
 ## Notes
 
-- `IMP-DSL-019..021` are warnings; everything else is an error.
+- `IMP-DSL-019..021` and `IMP-DSL-042..050` are warnings; everything else is an error.
+- `IMP-DSL-049` is additive context for `IMP-DSL-012`: the latter still fails the
+  step on the affected device, while the warning points at the Act and lists
+  every missing piece so the author can add `Platforms:` or selectors.
+- `IMP-DSL-050` is additive context for `IMP-DSL-037`: the first omitted
+  argument is the error, and the warning highlights the declaration when no
+  call site ever supplies it.
 - `IMP-DSL-012`, `IMP-DSL-013` and `IMP-DSL-017` need the configured devices;
   they are raised by `validate` per device platform and again by the planner
   before any device is touched (I-05 in `docs/DECISIONS.md`).

@@ -4,10 +4,12 @@ Cross-platform UI test automation for **web, webOS, Tizen, Android, Android
 TV, iOS and tvOS** — one DSL, one CLI, and an executor that runs *on the
 target* (or next to it) instead of shelling out screen taps from the host.
 
-- **One workspace, every platform.** `*.scene` files hold per-platform
-  selectors; `*.play` files hold platform-independent steps. The planner
-  expands a play per device and rejects anything the target cannot do before
-  hardware is touched (`IMP-DSL-013`).
+- **One workspace, every platform.** Table-form `*.scene` files hold
+  per-platform selectors, reusable `*.theatre` stages compose scenes, and
+  `*.play` files bind Acts with `Perform:` and optional `Examples:` tables.
+  The planner expands a play per device and rejects anything the target cannot
+  do before hardware is touched (`IMP-DSL-013`). `impresario fmt` canonicalises
+  all three file kinds; `impresario migrate` converts old workspaces.
 - **Everything is gRPC to an executor.** The Android/TV agent, the Apple
   agent (see `docs/STATUS.md`) and the web connector all speak the
   same `Agent` service (`proto/impresario/v1/impresario.proto`). `adb` /
@@ -37,7 +39,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
 | `editors/vscode` | VS Code client + TextMate grammar |
 | `docs/` | DSL, protocol, devices, parity, LSP, errors, decisions, status |
-| `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example`, CDP fixture pages |
+| `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example` (table scenes, `theatres/login.theatre`, theatrical play), CDP fixture pages |
 
 ## Requirements
 
@@ -64,8 +66,9 @@ cargo install --path crates/impresario-connector --locked
 
 ```sh
 mkdir demo && cd demo
-impresario workspace new --example  # writes config, devices, apps, scenes/ and plays/
+impresario workspace new --example  # writes config, devices, apps, scenes/, theatres/ and plays/
 impresario validate    # parse + resolve the whole workspace, no device touched
+impresario fmt --check # canonical table/stage formatting
 ```
 
 ### 3. Smoke-run without hardware

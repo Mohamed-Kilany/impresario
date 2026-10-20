@@ -20,11 +20,12 @@ detail). The server exits with code 0 when the client closes stdin.
 |---|---|
 | **Diagnostics** | Every parser and semantic diagnostic of `impresario-core` plus the per-device warnings, published with their stable `IMP-…` codes and `impresario` source. Debounced 150 ms after `didOpen`/`didChange`/`didSave` and after file-watch bursts. Open buffers carry their document `version`. |
 | **Completion** | Computed from the current line prefix and the nearest enclosing `Scene:` line of lower indentation (scanning upward), so it keeps working while the rest of the file has errors. Trigger characters: `:`, ` `, `'`, `>`. See the context table below. |
-| **Hover** | On a piece (in a step or in its declaration): the per-platform selector table as Markdown. |
-| **Go to definition** | `Scene: X` → the scene header in its `.scene` file; a piece in a step → its declaration line. Works for unsaved buffers. |
-| **Document symbols** | `Play → Act → Stage` for `.play`, `Scene → Pieces` for `.scene`. |
+| **Hover** | On a piece (in a step or in its declaration): the per-platform selector table as Markdown. On `Perform:`/`Stage:`: the stage signature, theatre and description. |
+| **Go to definition** | `Scene: X` → the scene header in its `.scene` file; a piece in a step → its declaration line; `Perform: X` → the stage declaration in its `.theatre` file. Works for unsaved buffers. |
+| **Document symbols** | `Play → Act → Stage/Perform` for `.play`, `Theatre → Stage → Scene/Perform` for `.theatre`, `Scene → Pieces` for `.scene`. |
+| **Formatting** | `textDocument/formatting` returns one full-document edit from the CLI formatter; unsaved overlays are formatted without touching disk. |
 | **Unsaved buffers** | Full-sync overlays; an open buffer wins over disk for parsing **and** for the index — an edited-but-unsaved scene is indexed immediately. |
-| **File watching** | `notify`, debounced 200 ms, recursive: `scenes_dir`, `plays_dir` and both config files. If a directory does not exist yet, its parent is watched until it appears. Editor temp/swap files (`.swp`, `~`, `#…#`, `.tmp`, …) are ignored. |
+| **File watching** | `notify`, debounced 200 ms, recursive: `scenes_dir`, `theatres_dir`, `plays_dir` and both config files. If a directory does not exist yet, its parent is watched until it appears. Editor temp/swap files (`.swp`, `~`, `#…#`, `.tmp`, …) are ignored. |
 | **Position encoding** | `utf-8` when the client offers it, otherwise `utf-16` (the LSP default). Spans from `impresario-core` are Unicode scalar values and are converted per encoding, surrogate pairs included. |
 | **Settings** | `impresario.config` / `impresario.devices` can point the server at other config files at runtime (see below). |
 
@@ -33,6 +34,8 @@ detail). The server exits with code 0 when the client closes stdin.
 | Context (line prefix) | Suggestions |
 |---|---|
 | `Scene: ` inside a Stage | all scene names (with their platforms as `detail`) |
+| `Perform: ` (play or theatre) | all stage names, with signature/theatre in `detail` |
+| `Perform: Stage(` before `)` | that stage's parameters, with default or `required` in `detail` |
 | `Action: <anything> => ` | pieces of the enclosing scene, sorted, with selector `detail` |
 | `Check: ` | pieces; after a piece + space: `is visible/hidden/enabled/disabled/focused`, `text`, `textContains`, `count`, `timeout` |
 | `Action: ` (start) | action verbs + the `'` string starter (inserts `''`) |
