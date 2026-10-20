@@ -18,6 +18,7 @@ use impresario_clients::agent_client::{
 };
 use impresario_clients::log::{LogBuffer, LogLevel, LogRecord};
 use impresario_clients::transport::{transport_for, DeviceTransport, ResetOutcome};
+use impresario_core::apps::AppConfig;
 use impresario_core::ast::AppOp;
 use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
@@ -240,6 +241,7 @@ struct DeviceRun<'a> {
     transport: &'a mut (dyn DeviceTransport + 'a),
     connection: &'a mut Option<Connection>,
     device: &'a DeviceConfig,
+    app: Option<&'a AppConfig>,
     shared: &'a Shared,
     agent_logs: &'a LogBuffer,
     /// Whether a LAUNCH was issued for this app (first reset uses LAUNCH).
@@ -261,7 +263,14 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
         .map(|play| play.acts.iter().map(|_| None).collect())
         .collect();
 
-    let initial = establish(&mut *transport, device, shared, &agent_logs).await;
+    let initial = establish(
+        &mut *transport,
+        device,
+        plan.app.as_ref(),
+        shared,
+        &agent_logs,
+    )
+    .await;
     connection = match initial {
         Ok(conn) => Some(conn),
         Err(error) => {
@@ -290,6 +299,7 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
                 transport: &mut *transport,
                 connection: &mut connection,
                 device,
+                app: plan.app.as_ref(),
                 shared,
                 agent_logs: &agent_logs,
                 launched: false,
@@ -344,11 +354,12 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
 async fn establish(
     transport: &mut dyn DeviceTransport,
     device: &DeviceConfig,
+    app: Option<&AppConfig>,
     shared: &Shared,
     agent_logs: &LogBuffer,
 ) -> Result<Connection, WireError> {
     let endpoint = transport
-        .prepare(device)
+        .prepare(device, app)
         .await
         .map_err(|error| phase(error.to_wire(), "prepare"))?;
     let client = AgentClient::connect_retry(
@@ -361,13 +372,14 @@ async fn establish(
     let mut params = HandshakeParams::new(
         device.name.clone(),
         device.platform,
-        device.target_endpoint.clone(),
+        device.target_endpoint(),
         shared.options.master_version.clone(),
     );
-    params.app_id = device.app_id.clone();
-    params.app_url = device.app_url.clone();
+    let app_entry = app.and_then(|app| app.platform(device.platform));
+    params.app_id = app_entry.and_then(|entry| entry.id.clone());
+    params.app_url = app_entry.and_then(|entry| entry.url.clone());
     params.auth_token = shared.options.token.clone();
-    params.options = device_wire_options(device, &shared.options.config);
+    params.options = device_wire_options(device, app, &shared.options.config);
     let handshake = client
         .handshake(&params)
         .await
@@ -427,6 +439,7 @@ async fn establish(
 /// loop bounds executors enforce (5.6) which `Command` does not carry.
 fn device_wire_options(
     device: &DeviceConfig,
+    app: Option<&AppConfig>,
     config: &ImpresarioConfig,
 ) -> BTreeMap<String, String> {
     let mut options = BTreeMap::new();
@@ -441,7 +454,7 @@ fn device_wire_options(
     );
     options.insert(
         "clear_app_data".to_string(),
-        device_options.clear_app_data.to_string(),
+        app.is_some_and(|app| app.options.clear_data).to_string(),
     );
     options.insert(
         "animations_disabled".to_string(),
@@ -583,8 +596,14 @@ impl DeviceRun<'_> {
                 tracing::debug!(%error, "transport teardown before reconnect failed");
             }
         }
-        let connection =
-            establish(self.transport, self.device, self.shared, self.agent_logs).await?;
+        let connection = establish(
+            self.transport,
+            self.device,
+            self.app,
+            self.shared,
+            self.agent_logs,
+        )
+        .await?;
         *self.connection = Some(connection);
         Ok(())
     }
@@ -596,7 +615,7 @@ impl DeviceRun<'_> {
         // family cannot wipe another app's sandbox from inside the UI-test
         // runner, so the host reinstalls the app under test. Android wipes the
         // package in the agent and reports `NotRequested` here.
-        match self.transport.reset_app_data(self.device).await {
+        match self.transport.reset_app_data(self.device, self.app).await {
             Ok(ResetOutcome::Reset) => {
                 tracing::debug!(device = %self.device.name, "app reinstalled for a clean state");
             }
@@ -679,7 +698,10 @@ impl DeviceRun<'_> {
 
             let setup = match self.ensure_connection().await {
                 Err(error) => Err(error),
-                Ok(()) if reset_due => self.reset_app(self.device.options.clear_app_data).await,
+                Ok(()) if reset_due => {
+                    self.reset_app(self.app.is_some_and(|app| app.options.clear_data))
+                        .await
+                }
                 Ok(()) => Ok(()),
             };
 

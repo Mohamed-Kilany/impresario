@@ -8,7 +8,9 @@
 //! the run; **all** errors are collected and returned together.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
+use impresario_core::apps::AppConfig;
 use impresario_core::ast::{
     ActDecl, ActionVerb, AppOp, CheckCondition, PlayFile, SceneFile, Step, StepKind,
 };
@@ -105,6 +107,8 @@ pub struct PlannedPlay {
 #[derive(Debug, Clone)]
 pub struct DevicePlan {
     pub device: DeviceConfig,
+    /// The app bound to this run, or `None` for an app-less web run.
+    pub app: Option<AppConfig>,
     pub plays: Vec<PlannedPlay>,
 }
 
@@ -120,7 +124,13 @@ pub struct ExecutionPlan {
 pub struct PlanInput<'a> {
     pub config: &'a ImpresarioConfig,
     pub workspace: &'a Workspace,
+    /// Workspace root, used to resolve relative app package paths.
+    pub base: &'a Path,
     pub devices: &'a [DeviceConfig],
+    /// App definitions from the global/workspace layers.
+    pub apps: &'a [AppConfig],
+    /// `--app` override (wins over every play's `App:` header).
+    pub cli_app: Option<&'a str>,
     /// The selected Plays, in run order.
     pub plays: &'a [PlayFile],
     pub selection: &'a Selection,
@@ -138,6 +148,9 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
     let mut reported_not_applicable: HashSet<(String, Platform)> = HashSet::new();
     let mut reported_selectors: HashSet<(String, Platform)> = HashSet::new();
 
+    // Bind play -> app before any device work (TASK-2 section 5, D-21).
+    let app = resolve_app(input, &mut diagnostics);
+
     // Play variable values, resolved once per play: env is read now, `Var:`
     // values may interpolate, I-04 last-wins, CLI `--var` overrides win.
     let play_vars: Vec<BTreeMap<String, String>> = input
@@ -148,6 +161,9 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
 
     for device in input.devices {
         let platform = device.platform;
+        if let Some(app) = &app {
+            check_app_for_device(input.base, app, device, &mut diagnostics);
+        }
         let mut plays = Vec::new();
         for (play, vars) in input.plays.iter().zip(&play_vars) {
             let mut acts = Vec::new();
@@ -204,6 +220,7 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
         }
         devices.push(DevicePlan {
             device: device.clone(),
+            app: app.clone(),
             plays,
         });
     }
@@ -212,6 +229,115 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
         return Err(diagnostics);
     }
     Ok(ExecutionPlan { devices, secrets })
+}
+
+/// Resolve the single app a run binds to (TASK-2 section 5): `--app` wins,
+/// otherwise every selected play must agree on its optional `App:` header.
+fn resolve_app(input: &PlanInput<'_>, diagnostics: &mut Diagnostics) -> Option<AppConfig> {
+    let mut requested: Option<(String, Option<Span>)> =
+        input.cli_app.map(|name| (name.to_string(), None));
+    if requested.is_none() {
+        for play in input.plays {
+            let Some(named) = &play.app else {
+                continue;
+            };
+            match &requested {
+                None => requested = Some((named.name.clone(), Some(named.span.clone()))),
+                Some((name, _)) if name != &named.name => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::AppConflict,
+                            format!(
+                                "plays bind different apps ('{name}' and '{}'); split the run or \
+                                 pass --app to choose one",
+                                named.name
+                            ),
+                        )
+                        .with_span(named.span.clone())
+                        .with_help("one device connection can run one app at a time"),
+                    );
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    let (name, span) = requested?;
+    if let Some(app) = input.apps.iter().find(|app| app.name == name) {
+        return Some(app.clone());
+    }
+    let mut diag = Diagnostic::error(
+        Code::AppUnknown,
+        format!("unknown app '{name}'; it is not defined in the workspace or global apps layer"),
+    )
+    .with_help(if input.apps.is_empty() {
+        "add an apps file or run `impresario app add`".to_string()
+    } else {
+        let names: Vec<&str> = input.apps.iter().map(|app| app.name.as_str()).collect();
+        format!("available apps: {}", names.join(", "))
+    });
+    if let Some(span) = span {
+        diag = diag.with_span(span);
+    }
+    diagnostics.push(diag);
+    None
+}
+
+fn check_app_for_device(
+    base: &Path,
+    app: &AppConfig,
+    device: &DeviceConfig,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(entry) = app.platform(device.platform) else {
+        diagnostics.push(
+            Diagnostic::error(
+                Code::AppPlatformMissing,
+                format!(
+                    "app '{}' has no '{}' entry needed by device '{}'",
+                    app.name, device.platform, device.name
+                ),
+            )
+            .with_help(format!(
+                "add platforms.{} to the app definition or run a device of a supported platform",
+                device.platform
+            )),
+        );
+        return;
+    };
+    if device.platform != Platform::Web && entry.id.is_none() {
+        diagnostics.push(Diagnostic::error(
+            Code::AppPlatformMissing,
+            format!(
+                "app '{}' has no id for platform '{}'",
+                app.name, device.platform
+            ),
+        ));
+    }
+    if let Some(package) = &entry.package {
+        let path = PathBuf::from(package);
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            base.join(path)
+        };
+        if !resolved.exists() {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::AppPackageMissing,
+                    format!(
+                        "app '{}' package for '{}' does not exist: {}",
+                        app.name,
+                        device.platform,
+                        resolved.display()
+                    ),
+                )
+                .with_help(format!(
+                    "fix platforms.{}.package in the app definition or build the artifact",
+                    device.platform
+                )),
+            );
+        }
+    }
 }
 
 fn act_applies_to(act: &ActDecl, platform: Platform) -> bool {
@@ -1210,24 +1336,32 @@ mod tests {
     }
 
     fn device(platform: Platform) -> DeviceConfig {
-        let outcome = config::parse_devices(
-            &format!(
-                "devices:\n  - name: dev\n    platform: {}\n    target_endpoint: {}\n{}",
-                platform.as_str(),
-                match platform {
-                    Platform::Android | Platform::AndroidTv => "emulator-5554".to_string(),
-                    Platform::Ios | Platform::Tvos => "00008110-001A2345021E001E".to_string(),
-                    _ => "ws://127.0.0.1:9999".to_string(),
-                },
-                match platform {
-                    Platform::Android | Platform::AndroidTv | Platform::Ios | Platform::Tvos =>
-                        "    app_id: com.example.app\n",
-                    _ => "",
+        let mut connection = config::DeviceConnection::default();
+        match platform {
+            Platform::Android | Platform::AndroidTv => {
+                connection.serial = Some("emulator-5554".to_string());
+            }
+            Platform::Ios | Platform::Tvos => {
+                connection.udid = Some("00008110-001A2345021E001E".to_string());
+                if platform == Platform::Tvos {
+                    connection.endpoint = Some("127.0.0.1:50062".to_string());
                 }
-            ),
-            Path::new("impresario.devices.config"),
-        );
-        outcome.config.expect("devices parse").devices.remove(0)
+            }
+            Platform::Web | Platform::WebOs | Platform::Tizen => {
+                connection.endpoint = Some("ws://127.0.0.1:9999".to_string());
+                if platform != Platform::Web {
+                    connection.host = Some("127.0.0.1".to_string());
+                }
+            }
+        }
+        DeviceConfig {
+            name: "dev".to_string(),
+            platform,
+            connection,
+            auth: config::DeviceAuth::default(),
+            labels: Vec::new(),
+            options: config::DeviceOptions::default(),
+        }
     }
 
     fn compile(
@@ -1235,6 +1369,17 @@ mod tests {
         play_source: &str,
         platform: Platform,
         vars: &BTreeMap<String, String>,
+    ) -> Result<ExecutionPlan, Diagnostics> {
+        compile_apps(scene_source, play_source, platform, vars, &[], None)
+    }
+
+    fn compile_apps(
+        scene_source: &str,
+        play_source: &str,
+        platform: Platform,
+        vars: &BTreeMap<String, String>,
+        apps: &[AppConfig],
+        cli_app: Option<&str>,
     ) -> Result<ExecutionPlan, Diagnostics> {
         let workspace = workspace(scene_source, play_source);
         let config = config();
@@ -1244,12 +1389,22 @@ mod tests {
         build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
+            base: Path::new("."),
             devices: &devices,
+            apps,
+            cli_app,
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: vars,
             cli_timeout: None,
         })
+    }
+
+    fn app_defs(source: &str) -> Vec<AppConfig> {
+        impresario_core::apps::parse_apps(source, Path::new("impresario.apps.config"))
+            .config
+            .expect("apps parse")
+            .apps
     }
 
     fn codes(diagnostics: &Diagnostics) -> Vec<&'static str> {
@@ -1338,7 +1493,10 @@ Stage: S1
         let plan = build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
+            base: Path::new("."),
             devices: &devices,
+            apps: &[],
+            cli_app: None,
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: &BTreeMap::new(),
@@ -1359,7 +1517,10 @@ Stage: S1
         let plan = build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
+            base: Path::new("."),
             devices: &devices,
+            apps: &[],
+            cli_app: None,
             plays: &plays,
             selection: &Selection::default(),
             cli_vars: &BTreeMap::new(),
@@ -1495,7 +1656,10 @@ Stage: S3
         let plan = build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
+            base: Path::new("."),
             devices: &devices,
+            apps: &[],
+            cli_app: None,
             plays: &plays,
             selection: &selection,
             cli_vars: &BTreeMap::new(),
@@ -1518,7 +1682,10 @@ Stage: S3
         let plan = build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
+            base: Path::new("."),
             devices: &devices,
+            apps: &[],
+            cli_app: None,
             plays: &plays,
             selection: &selection,
             cli_vars: &BTreeMap::new(),
@@ -1558,5 +1725,148 @@ Stage: S3
         assert!(retries_in_bounds(0));
         assert!(retries_in_bounds(5));
         assert!(!retries_in_bounds(6));
+    }
+
+    const APP_PLAY: &str = r#"Act: A
+Tags: smoke
+
+Stage: S1
+    Scene: S
+        Action: click => Button
+"#;
+
+    const APPS_ANDROID: &str =
+        "apps:\n- name: shop\n  platforms:\n    android:\n      id: com.example.shop\n";
+
+    fn app_play(header: &str) -> String {
+        format!("Play: P\nApp: {header}\n\n{APP_PLAY}")
+    }
+
+    #[test]
+    fn app_header_binds_the_plan() {
+        let play = format!("Play: P\nApp: shop\n\n{APP_PLAY}");
+        let plan = compile_apps(
+            SCENE,
+            &play,
+            Platform::Android,
+            &BTreeMap::new(),
+            &app_defs(APPS_ANDROID),
+            None,
+        )
+        .expect("plans");
+        assert_eq!(
+            plan.devices[0].app.as_ref().map(|app| app.name.as_str()),
+            Some("shop")
+        );
+    }
+
+    #[test]
+    fn no_app_header_leaves_the_plan_app_less() {
+        let play = format!("Play: P\n\n{APP_PLAY}");
+        let plan = compile(SCENE, &play, Platform::Android, &BTreeMap::new()).expect("plans");
+        assert!(plan.devices[0].app.is_none());
+    }
+
+    #[test]
+    fn unknown_app_header_is_reported() {
+        let diagnostics = compile_apps(
+            SCENE,
+            &app_play("missing"),
+            Platform::Android,
+            &BTreeMap::new(),
+            &app_defs(APPS_ANDROID),
+            None,
+        )
+        .expect_err("unknown app");
+        assert_eq!(codes(&diagnostics), vec!["IMP-APP-001"]);
+        assert!(diagnostics
+            .iter()
+            .next()
+            .and_then(|diag| diag.help.as_deref())
+            .unwrap_or("")
+            .contains("shop"));
+    }
+
+    #[test]
+    fn app_missing_the_device_platform_is_reported() {
+        let apps = app_defs(
+            "apps:\n- name: shop\n  platforms:\n    web:\n      url: http://localhost:8080/\n",
+        );
+        let diagnostics = compile_apps(
+            SCENE,
+            &app_play("shop"),
+            Platform::Android,
+            &BTreeMap::new(),
+            &apps,
+            None,
+        )
+        .expect_err("no android entry");
+        assert_eq!(codes(&diagnostics), vec!["IMP-APP-002"]);
+    }
+
+    #[test]
+    fn app_package_must_exist() {
+        let apps = app_defs(
+            "apps:\n- name: shop\n  platforms:\n    android:\n      id: com.example.shop\n      package: ./definitely-missing.apk\n",
+        );
+        let diagnostics = compile_apps(
+            SCENE,
+            &app_play("shop"),
+            Platform::Android,
+            &BTreeMap::new(),
+            &apps,
+            None,
+        )
+        .expect_err("missing package");
+        assert_eq!(codes(&diagnostics), vec!["IMP-APP-003"]);
+    }
+
+    #[test]
+    fn cli_app_beats_headers_and_conflicting_headers_are_reported() {
+        let apps = app_defs(
+            "apps:\n- name: shop\n  platforms:\n    android:\n      id: com.example.shop\n- name: other\n  platforms:\n    android:\n      id: com.example.other\n",
+        );
+        let plan = compile_apps(
+            SCENE,
+            &app_play("missing"),
+            Platform::Android,
+            &BTreeMap::new(),
+            &apps,
+            Some("shop"),
+        )
+        .expect("cli app wins");
+        assert_eq!(
+            plan.devices[0].app.as_ref().map(|app| app.name.as_str()),
+            Some("shop")
+        );
+
+        let first = parse_play(&app_play("shop"), Path::new("a.play"))
+            .ast
+            .expect("first play");
+        let second = parse_play(&app_play("other"), Path::new("b.play"))
+            .ast
+            .expect("second play");
+        let scene = parse_scene(SCENE, Path::new("S.scene")).ast.expect("scene");
+        let workspace = Workspace {
+            scenes: vec![scene],
+            plays: vec![first, second],
+        };
+        let config = config();
+        let devices = vec![device(Platform::Android)];
+        let plays: Vec<PlayFile> = workspace.plays.to_vec();
+        let diagnostics = build_plan(&PlanInput {
+            config: &config,
+            workspace: &workspace,
+            base: Path::new("."),
+            devices: &devices,
+            apps: &apps,
+            cli_app: None,
+            plays: &plays,
+            selection: &Selection::default(),
+            cli_vars: &BTreeMap::new(),
+            cli_timeout: None,
+        })
+        .expect_err("conflict");
+        assert_eq!(codes(&diagnostics), vec!["IMP-APP-004"]);
     }
 }

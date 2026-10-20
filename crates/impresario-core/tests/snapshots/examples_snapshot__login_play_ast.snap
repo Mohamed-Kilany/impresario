@@ -10,11 +10,18 @@ name_span:
   col: 7
   len: 27
 description: Validating secure user entry across platforms.
+app:
+  name: shop
+  span:
+    file: examples/plays/login.play
+    line: 3
+    col: 6
+    len: 4
 var_decls:
   - name: USER
     name_span:
       file: examples/plays/login.play
-      line: 3
+      line: 4
       col: 6
       len: 4
     value:
@@ -23,73 +30,73 @@ var_decls:
         - Literal: test_user_impresario
       span:
         file: examples/plays/login.play
-        line: 3
+        line: 4
         col: 13
         len: 22
 acts:
   - name: Successful Login Flow
     name_span:
       file: examples/plays/login.play
-      line: 5
+      line: 6
       col: 6
       len: 21
     tags:
       - name: smoke
         span:
           file: examples/plays/login.play
-          line: 6
+          line: 7
           col: 8
           len: 5
       - name: auth
         span:
           file: examples/plays/login.play
-          line: 6
+          line: 7
           col: 15
           len: 4
     platforms:
       - name: android
         span:
           file: examples/plays/login.play
-          line: 7
+          line: 8
           col: 13
           len: 7
       - name: ios
         span:
           file: examples/plays/login.play
-          line: 7
+          line: 8
           col: 22
           len: 3
       - name: webos
         span:
           file: examples/plays/login.play
-          line: 7
+          line: 8
           col: 27
           len: 5
     stages:
       - name: Navigate and Login
         name_span:
           file: examples/plays/login.play
-          line: 9
+          line: 10
           col: 8
           len: 18
         timeout: 15000
         timeout_span:
           file: examples/plays/login.play
-          line: 10
+          line: 11
           col: 14
           len: 3
         scenes:
           - scene_name: LoginScreen
             scene_span:
               file: examples/plays/login.play
-              line: 11
+              line: 12
               col: 12
               len: 11
             steps:
               - source_text: "Check: LoginTitle"
                 span:
                   file: examples/plays/login.play
-                  line: 12
+                  line: 13
                   col: 9
                   len: 17
                 timeout: ~
@@ -98,20 +105,20 @@ acts:
                   name: LoginTitle
                   span:
                     file: examples/plays/login.play
-                    line: 12
+                    line: 13
                     col: 16
                     len: 10
                 condition:
                   check: is_visible
                 span:
                   file: examples/plays/login.play
-                  line: 12
+                  line: 13
                   col: 16
                   len: 10
               - source_text: "Action: '${var.USER}' => UsernameInput"
                 span:
                   file: examples/plays/login.play
-                  line: 13
+                  line: 14
                   col: 9
                   len: 38
                 timeout: ~
@@ -125,30 +132,30 @@ acts:
                           name: USER
                           span:
                             file: examples/plays/login.play
-                            line: 13
+                            line: 14
                             col: 18
                             len: 11
                     span:
                       file: examples/plays/login.play
-                      line: 13
+                      line: 14
                       col: 17
                       len: 13
                   piece:
                     name: UsernameInput
                     span:
                       file: examples/plays/login.play
-                      line: 13
+                      line: 14
                       col: 34
                       len: 13
                 span:
                   file: examples/plays/login.play
-                  line: 13
+                  line: 14
                   col: 17
                   len: 30
               - source_text: "Action: '${env.TEST_PASSWORD}' => PasswordInput"
                 span:
                   file: examples/plays/login.play
-                  line: 14
+                  line: 15
                   col: 9
                   len: 47
                 timeout: ~
@@ -162,30 +169,30 @@ acts:
                           name: TEST_PASSWORD
                           span:
                             file: examples/plays/login.play
-                            line: 14
+                            line: 15
                             col: 18
                             len: 20
                     span:
                       file: examples/plays/login.play
-                      line: 14
+                      line: 15
                       col: 17
                       len: 22
                   piece:
                     name: PasswordInput
                     span:
                       file: examples/plays/login.play
-                      line: 14
+                      line: 15
                       col: 43
                       len: 13
                 span:
                   file: examples/plays/login.play
-                  line: 14
+                  line: 15
                   col: 17
                   len: 39
               - source_text: "Action: click => SubmitButton"
                 span:
                   file: examples/plays/login.play
-                  line: 15
+                  line: 16
                   col: 9
                   len: 29
                 timeout: ~
@@ -196,18 +203,18 @@ acts:
                     name: SubmitButton
                     span:
                       file: examples/plays/login.play
-                      line: 15
+                      line: 16
                       col: 26
                       len: 12
                 span:
                   file: examples/plays/login.play
-                  line: 15
+                  line: 16
                   col: 17
                   len: 21
       - name: Verify Outcome
         name_span:
           file: examples/plays/login.play
-          line: 17
+          line: 18
           col: 8
           len: 14
         timeout: ~
@@ -216,14 +223,14 @@ acts:
           - scene_name: DashboardScreen
             scene_span:
               file: examples/plays/login.play
-              line: 18
+              line: 19
               col: 12
               len: 15
             steps:
               - source_text: "Check: WelcomeBanner is visible timeout 20s"
                 span:
                   file: examples/plays/login.play
-                  line: 19
+                  line: 20
                   col: 9
                   len: 43
                 timeout: 20000
@@ -232,13 +239,13 @@ acts:
                   name: WelcomeBanner
                   span:
                     file: examples/plays/login.play
-                    line: 19
+                    line: 20
                     col: 16
                     len: 13
                 condition:
                   check: is_visible
                 span:
                   file: examples/plays/login.play
-                  line: 19
+                  line: 20
                   col: 16
                   len: 36

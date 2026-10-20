@@ -10,7 +10,7 @@ expression: value
         "col": 6,
         "file": "examples/plays/login.play",
         "len": 21,
-        "line": 5
+        "line": 6
       },
       "platforms": [
         {
@@ -19,7 +19,7 @@ expression: value
             "col": 13,
             "file": "examples/plays/login.play",
             "len": 7,
-            "line": 7
+            "line": 8
           }
         },
         {
@@ -28,7 +28,7 @@ expression: value
             "col": 22,
             "file": "examples/plays/login.play",
             "len": 3,
-            "line": 7
+            "line": 8
           }
         },
         {
@@ -37,7 +37,7 @@ expression: value
             "col": 27,
             "file": "examples/plays/login.play",
             "len": 5,
-            "line": 7
+            "line": 8
           }
         }
       ],
@@ -48,7 +48,7 @@ expression: value
             "col": 8,
             "file": "examples/plays/login.play",
             "len": 18,
-            "line": 9
+            "line": 10
           },
           "scenes": [
             {
@@ -57,7 +57,7 @@ expression: value
                 "col": 12,
                 "file": "examples/plays/login.play",
                 "len": 11,
-                "line": 11
+                "line": 12
               },
               "steps": [
                 {
@@ -70,7 +70,7 @@ expression: value
                       "col": 16,
                       "file": "examples/plays/login.play",
                       "len": 10,
-                      "line": 12
+                      "line": 13
                     }
                   },
                   "source_text": "Check: LoginTitle",
@@ -78,7 +78,7 @@ expression: value
                     "col": 16,
                     "file": "examples/plays/login.play",
                     "len": 10,
-                    "line": 12
+                    "line": 13
                   },
                   "step": "check",
                   "timeout": null
@@ -89,7 +89,7 @@ expression: value
                     "col": 17,
                     "file": "examples/plays/login.play",
                     "len": 30,
-                    "line": 13
+                    "line": 14
                   },
                   "step": "action",
                   "timeout": null,
@@ -101,7 +101,7 @@ expression: value
                         "col": 34,
                         "file": "examples/plays/login.play",
                         "len": 13,
-                        "line": 13
+                        "line": 14
                       }
                     },
                     "text": {
@@ -113,7 +113,7 @@ expression: value
                               "col": 18,
                               "file": "examples/plays/login.play",
                               "len": 11,
-                              "line": 13
+                              "line": 14
                             }
                           }
                         }
@@ -123,7 +123,7 @@ expression: value
                         "col": 17,
                         "file": "examples/plays/login.play",
                         "len": 13,
-                        "line": 13
+                        "line": 14
                       }
                     }
                   }
@@ -134,7 +134,7 @@ expression: value
                     "col": 17,
                     "file": "examples/plays/login.play",
                     "len": 39,
-                    "line": 14
+                    "line": 15
                   },
                   "step": "action",
                   "timeout": null,
@@ -146,7 +146,7 @@ expression: value
                         "col": 43,
                         "file": "examples/plays/login.play",
                         "len": 13,
-                        "line": 14
+                        "line": 15
                       }
                     },
                     "text": {
@@ -158,7 +158,7 @@ expression: value
                               "col": 18,
                               "file": "examples/plays/login.play",
                               "len": 20,
-                              "line": 14
+                              "line": 15
                             }
                           }
                         }
@@ -168,7 +168,7 @@ expression: value
                         "col": 17,
                         "file": "examples/plays/login.play",
                         "len": 22,
-                        "line": 14
+                        "line": 15
                       }
                     }
                   }
@@ -179,7 +179,7 @@ expression: value
                     "col": 17,
                     "file": "examples/plays/login.play",
                     "len": 21,
-                    "line": 15
+                    "line": 16
                   },
                   "step": "action",
                   "timeout": null,
@@ -191,7 +191,7 @@ expression: value
                         "col": 26,
                         "file": "examples/plays/login.play",
                         "len": 12,
-                        "line": 15
+                        "line": 16
                       }
                     }
                   }
@@ -204,7 +204,7 @@ expression: value
             "col": 14,
             "file": "examples/plays/login.play",
             "len": 3,
-            "line": 10
+            "line": 11
           }
         },
         {
@@ -213,7 +213,7 @@ expression: value
             "col": 8,
             "file": "examples/plays/login.play",
             "len": 14,
-            "line": 17
+            "line": 18
           },
           "scenes": [
             {
@@ -222,7 +222,7 @@ expression: value
                 "col": 12,
                 "file": "examples/plays/login.play",
                 "len": 15,
-                "line": 18
+                "line": 19
               },
               "steps": [
                 {
@@ -235,7 +235,7 @@ expression: value
                       "col": 16,
                       "file": "examples/plays/login.play",
                       "len": 13,
-                      "line": 19
+                      "line": 20
                     }
                   },
                   "source_text": "Check: WelcomeBanner is visible timeout 20s",
@@ -243,7 +243,7 @@ expression: value
                     "col": 16,
                     "file": "examples/plays/login.play",
                     "len": 36,
-                    "line": 19
+                    "line": 20
                   },
                   "step": "check",
                   "timeout": 20000
@@ -262,7 +262,7 @@ expression: value
             "col": 8,
             "file": "examples/plays/login.play",
             "len": 5,
-            "line": 6
+            "line": 7
           }
         },
         {
@@ -271,12 +271,21 @@ expression: value
             "col": 15,
             "file": "examples/plays/login.play",
             "len": 4,
-            "line": 6
+            "line": 7
           }
         }
       ]
     }
   ],
+  "app": {
+    "name": "shop",
+    "span": {
+      "col": 6,
+      "file": "examples/plays/login.play",
+      "len": 4,
+      "line": 3
+    }
+  },
   "description": "Validating secure user entry across platforms.",
   "name": "User Authentication Feature",
   "name_span": {
@@ -293,7 +302,7 @@ expression: value
         "col": 6,
         "file": "examples/plays/login.play",
         "len": 4,
-        "line": 3
+        "line": 4
       },
       "value": {
         "parts": [
@@ -306,7 +315,7 @@ expression: value
           "col": 13,
           "file": "examples/plays/login.play",
           "len": 22,
-          "line": 3
+          "line": 4
         }
       }
     }

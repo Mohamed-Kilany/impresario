@@ -64,7 +64,7 @@ cargo install --path crates/impresario-connector --locked
 
 ```sh
 mkdir demo && cd demo
-impresario workspace new --example  # writes impresario.config, devices, scenes/ and plays/
+impresario workspace new --example  # writes config, devices, apps, scenes/ and plays/
 impresario validate    # parse + resolve the whole workspace, no device touched
 ```
 
@@ -88,9 +88,18 @@ generated example workspace runs against it unchanged):
 ```yaml
   - name: mock_device
     platform: webos
-    target_endpoint: ws://127.0.0.1:9999
-    connector: 127.0.0.1:50071
+    connection:
+      transport: ssh
+      host: 127.0.0.1
+      endpoint: ws://127.0.0.1:9999
+    options:
+      connector_address: 127.0.0.1:50071
 ```
+
+The generated `impresario.apps.config` defines `shop`, and
+`plays/login.play` binds it with `App: shop` (the example play uses the webOS
+platform entry). `--app NAME` overrides the header; a run never mixes two
+apps.
 
 Terminal B — the example play interpolates `${env.TEST_PASSWORD}`, so set it
 first:
@@ -111,9 +120,9 @@ You get the console tree on stdout and `reports/<run-id>/report.json` +
 ### 4. Run on a real target (optional)
 
 - **web** — uncomment the `local_chrome` device in
-  `impresario.devices.config` (or point `app_url` at your page) and run with
-  `--device local_chrome`; the connector starts headless Chrome or attaches
-  to a running one (`docs/DEVICES.md` §1).
+  `impresario.devices.config` (or point the app's `platforms.web.url` at your
+  page) and run with `--device local_chrome`; the connector starts headless
+  Chrome or attaches to a running one (`docs/DEVICES.md` §1).
 - **android / androidtv** — build/install the agent and run over Wi-Fi:
   `docs/DEVICES.md` §2.2–2.7 record the exact commands (verified on a
   Galaxy A51 and a TCL Android TV).

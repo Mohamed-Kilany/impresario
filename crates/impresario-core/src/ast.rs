@@ -61,6 +61,8 @@ pub struct PlayFile {
     pub name_span: Span,
     /// `Description: ...`
     pub description: Option<String>,
+    /// `App: <name>` (TASK-2 section 5); the planner binds it to every device.
+    pub app: Option<Named>,
     pub var_decls: Vec<VarDecl>,
     pub acts: Vec<ActDecl>,
 }

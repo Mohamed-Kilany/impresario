@@ -11,6 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use base64::Engine as _;
 use impresario_clients::agent_client::DeviceInfo;
+use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::platforms::Platform;
@@ -162,15 +163,26 @@ fn qualify_plays(server: &Server, plays: Vec<String>) -> Result<Vec<String>, Str
 struct WorkspaceConfig {
     config: ImpresarioConfig,
     devices: Vec<DeviceConfig>,
+    apps: Vec<AppConfig>,
+}
+
+fn apps_path(server: &Server) -> PathBuf {
+    server.base.join("impresario.apps.config")
 }
 
 fn load_workspace_config(server: &Server) -> Result<WorkspaceConfig, String> {
     let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
-    let devices_outcome = config::load_devices(&server.devices_path);
+    let devices_outcome = config::load_devices_merged(&server.devices_path);
+    let apps_outcome = apps::load_apps_merged(&apps_path(server));
     let mut diagnostics = Diagnostics::new();
     diagnostics.extend(config_outcome.diagnostics.iter().cloned());
     diagnostics.extend(devices_outcome.diagnostics.iter().cloned());
-    let (Some(config), Some(devices)) = (config_outcome.config, devices_outcome.config) else {
+    diagnostics.extend(apps_outcome.diagnostics.iter().cloned());
+    let (Some(config), Some(devices), Some(apps)) = (
+        config_outcome.config,
+        devices_outcome.config,
+        apps_outcome.config,
+    ) else {
         return Err(format!(
             "the workspace is not usable:\n{}",
             diagnostics_text(&diagnostics)
@@ -179,6 +191,31 @@ fn load_workspace_config(server: &Server) -> Result<WorkspaceConfig, String> {
     Ok(WorkspaceConfig {
         config,
         devices: devices.devices,
+        apps: apps.apps,
+    })
+}
+
+fn device_json(device: &DeviceConfig) -> Value {
+    json!({
+        "name": device.name,
+        "platform": device.platform.as_str(),
+        "transport": device.effective_transport().as_str(),
+        "connection": {
+            "host": device.connection.host,
+            "port": device.connection.port,
+            "serial": device.connection.serial,
+            "udid": device.connection.udid,
+            "endpoint": device.connection.endpoint,
+        },
+        "auth": {
+            "key": device.auth.key,
+            "identity": device.auth.identity,
+            "profile": device.auth.profile,
+        },
+        "labels": device.labels,
+        "connector_address": device.connector_address(),
+        "target_endpoint": device.target_endpoint(),
+        "support": platform_support(device.platform),
     })
 }
 
@@ -218,35 +255,26 @@ pub(crate) fn workspace_info(server: &Server, _arguments: &Value) -> ToolOutput 
 /// The workspace summary; shared with the `impresario://workspace/info`
 /// resource.
 pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
-    let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
-    let devices_outcome = config::load_devices(&server.devices_path);
+    let WorkspaceConfig {
+        config,
+        devices,
+        apps: app_list,
+    } = load_workspace_config(server)?;
     let mut diagnostics = Diagnostics::new();
-    diagnostics.extend(config_outcome.diagnostics.iter().cloned());
-    diagnostics.extend(devices_outcome.diagnostics.iter().cloned());
-    let (Some(config), Some(devices)) = (config_outcome.config, devices_outcome.config) else {
-        return Err(format!(
-            "the workspace is not usable:\n{}",
-            diagnostics_text(&diagnostics)
-        ));
-    };
     let scenes = workspace::load_scenes(&server.base.join(&config.scenes_dir));
     let plays = workspace::load_plays(&server.base.join(&config.plays_dir));
     diagnostics.extend(scenes.diagnostics.iter().cloned());
     diagnostics.extend(plays.diagnostics.iter().cloned());
 
-    let device_values: Vec<Value> = devices
-        .devices
+    let device_values: Vec<Value> = devices.iter().map(device_json).collect();
+    let app_values: Vec<Value> = app_list
         .iter()
-        .map(|device| {
+        .map(|app| {
             json!({
-                "name": device.name,
-                "platform": device.platform.as_str(),
-                "target_endpoint": device.target_endpoint,
-                "app_id": device.app_id,
-                "app_url": device.app_url,
-                "agent_address": device.agent_address,
-                "connector": device.connector,
-                "support": platform_support(device.platform),
+                "name": app.name,
+                "description": app.description,
+                "platforms": app.platforms.keys().map(|platform| platform.as_str()).collect::<Vec<_>>(),
+                "clear_data": app.options.clear_data,
             })
         })
         .collect();
@@ -277,6 +305,7 @@ pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
                 "name": play.name,
                 "file": relative_to(&server.base, &play.path),
                 "description": play.description,
+                "app": play.app.as_ref().map(|app| app.name.clone()),
                 "acts": play
                     .acts
                     .iter()
@@ -317,6 +346,7 @@ pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
         "workspace": server.base.display().to_string(),
         "config_file": server.config_path.display().to_string(),
         "devices_file": server.devices_path.display().to_string(),
+        "apps_file": apps_path(server).display().to_string(),
         "project": config.project,
         "scenes_dir": server.base.join(&config.scenes_dir).display().to_string(),
         "plays_dir": server.base.join(&config.plays_dir).display().to_string(),
@@ -331,6 +361,7 @@ pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
             .map(|reporter| reporter.as_str())
             .collect::<Vec<_>>(),
         "devices": device_values,
+        "apps": app_values,
         "scenes": scene_values,
         "plays": play_values,
         "tags": tags,
@@ -394,7 +425,7 @@ pub(crate) fn validate(server: &Server, arguments: &Value) -> ToolOutput {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn devices_list(server: &Server, _arguments: &Value) -> ToolOutput {
-    let outcome = config::load_devices(&server.devices_path);
+    let outcome = config::load_devices_merged(&server.devices_path);
     let Some(devices) = outcome.config else {
         return ToolOutput::error(format!(
             "configuration errors in {}:\n{}",
@@ -402,21 +433,7 @@ pub(crate) fn devices_list(server: &Server, _arguments: &Value) -> ToolOutput {
             diagnostics_text(&outcome.diagnostics)
         ));
     };
-    let values: Vec<Value> = devices
-        .devices
-        .iter()
-        .map(|device| {
-            json!({
-                "name": device.name,
-                "platform": device.platform.as_str(),
-                "target_endpoint": device.target_endpoint,
-                "app_id": device.app_id,
-                "app_url": device.app_url,
-                "agent_address": device.agent_address,
-                "connector": device.connector,
-            })
-        })
-        .collect();
+    let values: Vec<Value> = devices.devices.iter().map(device_json).collect();
     let headline = format!("{} device(s) configured", values.len());
     ToolOutput::json_with_prefix(
         json!({
@@ -461,7 +478,8 @@ pub(crate) fn devices_check(server: &Server, arguments: &Value) -> ToolOutput {
         let mut results = Vec::new();
         for device in &selected {
             results.push(
-                cli::check_device(device, timeout_ms, token.as_deref(), &master_version).await,
+                cli::check_device(device, None, timeout_ms, token.as_deref(), &master_version)
+                    .await,
             );
         }
         results
@@ -585,6 +603,11 @@ pub(crate) fn run(server: &Server, arguments: &Value) -> ToolOutput {
         Ok(reporters) => reporters,
         Err(message) => return ToolOutput::error(message),
     };
+    let app = match arguments.get("app") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(name)) if !name.trim().is_empty() => Some(name.clone()),
+        Some(_) => return ToolOutput::error("'app' must be a non-empty string"),
+    };
     let reporter_spec = if reporter_list.is_empty() {
         DEFAULT_REPORTERS.to_string()
     } else {
@@ -603,6 +626,7 @@ use json, junit or html — every reporter still lands in the run directory",
 
     let args = cli::RunArgs {
         play: plays,
+        app,
         device: devices,
         tag: tags,
         exclude_tag: exclude_tags,

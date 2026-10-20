@@ -235,6 +235,7 @@ fn workspace_registry_use_add_remove_list_and_new() {
     assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
     assert!(ws3.join("impresario.config").is_file());
     assert!(ws3.join("impresario.devices.config").is_file());
+    assert!(ws3.join("impresario.apps.config").is_file());
     assert!(ws3.join("plays/login.play").is_file());
     let (code, stdout, stderr) = run(home.path(), &ws3, &["validate"]);
     assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");

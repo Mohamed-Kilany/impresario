@@ -15,6 +15,7 @@ use impresario_clients::log::{LogLevel, LogRecord};
 use impresario_clients::testing::{MockAgentBuilder, MockScript};
 use impresario_core::command::WireErrorCode;
 use impresario_core::config::AppReset;
+use impresario_core::platforms::Platform;
 use impresario_master::exec::{execute, ExecOutcome};
 use impresario_master::plan::Selection;
 use impresario_master::report::{
@@ -279,9 +280,25 @@ async fn retries_restart_the_app_and_mark_flaky() {
     ));
     let temp = tempfile::tempdir().expect("tempdir");
     let config = with_app_reset(test_config(""), AppReset::PerAct);
-    let mut devices = vec![device("web1", &agent.address)];
-    devices[0].options.clear_app_data = true;
-    let plan = build_test_plan(&config, &devices, PLAY_BASIC);
+    let devices = vec![device("web1", &agent.address)];
+    let mut plan = build_test_plan(&config, &devices, PLAY_BASIC);
+    let mut platforms = std::collections::BTreeMap::new();
+    platforms.insert(
+        Platform::Web,
+        impresario_core::apps::AppPlatform {
+            url: Some("http://localhost/index.html".to_string()),
+            ..Default::default()
+        },
+    );
+    plan.devices[0].app = Some(impresario_core::apps::AppConfig {
+        name: "web_app".to_string(),
+        description: None,
+        platforms,
+        options: impresario_core::apps::AppOptions {
+            clear_data: true,
+            launch_params: std::collections::BTreeMap::new(),
+        },
+    });
     let mut options = exec_options(&temp, config, "run-flaky");
     options.retries = 1;
     let outcome = execute(&plan, &options).await;

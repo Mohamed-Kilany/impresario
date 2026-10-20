@@ -19,8 +19,9 @@ service Agent {
 ```
 
 - `Handshake` carries `protocol_version` ("1.0.0"), `master_version`, the
-  device identity, `platform`, `app_id`/`app_url`, `options`, and
-  `auth_token` when the executor is configured with a token. The answer
+  device identity, `platform`, `app_id`/`app_url` (resolved from the bound
+  app's entry for that platform, or empty when the run is app-less),
+  `options`, and `auth_token` when the executor is configured with a token. The answer
   carries `accepted`, `session_id`, `agent_version`, `protocol_version`,
   `capabilities` and `DeviceInfo` (runtime, OS version, screen, `tv` flag).
 - `Session` is one bidirectional stream: the master sends `Command`s
@@ -175,13 +176,14 @@ diagnostics (exit 2). Ctrl-C stops the run with exit 130.
 
 | Family | Default endpoint | Path |
 |---|---|---|
-| connector (`web`, `webos`, `tizen`) | `127.0.0.1:50051` | `connector:`/`agent_address` if set; a live listener is dialed directly, otherwise the master spawns `impresario-connector serve --listen <addr>` |
-| adb (`android`, `androidtv`) | `127.0.0.1:<auto forwarded>` | network dial first: `options.agent_address` → the serial's host (`adb` `ip route` learns the Wi-Fi IP) → `adb forward` fallback; then install the APKs in order and start `am instrument` (I-62) |
-| apple (`ios`, `tvos`) | tvOS: `agent_address` required | `iproxy` + `xcodebuild test-without-building` runner (spec 9.3; deferred with the Apple agent) |
+| connector (`web`, `webos`, `tizen`) | `127.0.0.1:50051` | `options.connector_address` if set; a live listener is dialed directly, otherwise the master spawns `impresario-connector serve --listen <addr>` |
+| adb (`android`, `androidtv`) | `127.0.0.1:<auto forwarded>` | network dial first: `connection.endpoint` → the serial's host (`adb` `ip route` learns the Wi-Fi IP) → `adb forward` fallback; then install the APKs in order and start `am instrument` (I-62) |
+| apple (`ios`, `tvos`) | tvOS: `connection.endpoint` required | `iproxy` + `xcodebuild test-without-building` runner (spec 9.3; the macOS path is a recorded D-19 gap) |
 
 Dialing retries with exponential backoff (200 ms → 2 s) until
-`agent_start_timeout_ms`. `devices check` runs prepare + `Handshake` +
-teardown and prints the `DeviceInfo` line without opening a session.
+`agent_start_timeout_ms`. `device check` (alias `devices check`) runs prepare +
+`Handshake` + teardown and prints the `DeviceInfo` line without opening a
+session.
 
 ## 8. Implementation notes pinned by tests
 

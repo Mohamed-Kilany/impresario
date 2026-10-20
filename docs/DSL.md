@@ -45,7 +45,7 @@ diagnostic has a stable code documented in [ERRORS.md](ERRORS.md).
   scenes and pieces (warning `IMP-DSL-020`).
 - **Free text** (`Play:`, `Description:`, `Act:`, `Stage:` values): the rest
   of the line, trimmed, 1..=200 characters.
-- **Keywords are case-sensitive**: `Scene Platform Pieces Play Description
+- **Keywords are case-sensitive**: `Scene Platform Pieces Play Description App
   Var Act Tags Platforms Stage Timeout Action Check`.
 
 ---
@@ -113,7 +113,7 @@ Anything else is a bare value (web keys only).
 Notes:
 
 - Android `id:` accepts a full resource id (`com.pkg:id/name`) or a short
-  name, which the agent expands with the device's `app_id` package. Android
+  name, which the agent expands with the bound app's Android `id` package. Android
   has no XPath.
 - Apple `type:` accepts `XCUIElement.ElementType` names in lowerCamel
   (`button`, `textField`, `secureTextField`, `staticText`, `cell`, `image`,
@@ -126,6 +126,7 @@ Notes:
 ```text
 Play: User Authentication Feature
 Description: Validating secure user entry across platforms.
+App: shop
 Var: USER = 'test_user_impresario'
 
 Act: Successful Login Flow
@@ -147,11 +148,15 @@ Stage: Verify Outcome
 
 Structure:
 
-- Depth 0: `Play`, `Description`, `Var`, `Act`, `Tags`, `Platforms`, `Stage`.
+- Depth 0: `Play`, `Description`, `App`, `Var`, `Act`, `Tags`, `Platforms`, `Stage`.
 - Depth 1 (inside a Stage): `Timeout`, `Scene`.
 - Depth 2 (inside a Scene block): `Action`, `Check`.
 - `Play:` is the first non-comment line. `Description:` may follow directly.
-  `Var:` declarations follow before the first `Act:`.
+  `App: <name>` may follow `Play:`/`Description:` and must precede the first
+  `Var:`; it binds the play to an app from `impresario.apps.config` (or the
+  global layer). `--app` overrides it; two selected plays binding different
+  apps is `IMP-APP-004` unless `--app` resolves it.
+- `Var:` declarations follow before the first `Act:`.
 - `Tags:` and `Platforms:` must directly follow their `Act:` line; a `Stage:`
   belongs to the nearest preceding `Act:`.
 - An Act has at least one Stage; a Stage at least one Scene block; a Scene
@@ -185,7 +190,7 @@ piece-line   = ident , ":" , sel-pair , { "," , sel-pair } , [ "," , "index" , "
 sel-pair     = platform , "=" , dq-string ;
 platform     = "web" | "webos" | "tizen" | "android" | "androidtv" | "ios" | "tvos" ;
 
-play-file    = "Play:" , text , EOL , [ "Description:" , text , EOL ] , { var-decl } , act , { act } ;
+play-file    = "Play:" , text , EOL , [ "Description:" , text , EOL ] , [ "App:" , ident , EOL ] , { var-decl } , act , { act } ;
 var-decl     = "Var:" , ident , "=" , string , EOL ;
 act          = "Act:" , text , EOL , [ "Tags:" , tag , { "," , tag } , EOL ]
              , [ "Platforms:" , platform , { "," , platform } , EOL ] , stage , { stage } ;

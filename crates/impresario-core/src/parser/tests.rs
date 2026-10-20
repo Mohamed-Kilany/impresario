@@ -217,6 +217,12 @@ fn play_example_structure_parses_clean() {
     assert_eq!(play.var_decls[0].name, "USER");
     assert_eq!(play.var_decls[0].value.raw, "test_user_impresario");
 
+    let bound = play_ok(
+        "Play: Bound\nDescription: One app.\nApp: shop\n\nAct: A\nStage: S\n    Scene: S\n        Action: click => B\n",
+    );
+    let named = bound.app.expect("app header");
+    assert_eq!(named.name, "shop");
+
     let act = play.acts.first().expect("act");
     assert_eq!(act.name, "Successful Login Flow");
     assert_eq!(

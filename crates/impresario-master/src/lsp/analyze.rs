@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use impresario_core::apps;
 use impresario_core::config;
 use impresario_core::diag::{Code, Diagnostic as CoreDiagnostic, Diagnostics, Severity};
 use impresario_core::parser::{parse_play, parse_scene};
@@ -40,6 +41,7 @@ pub struct Analysis {
     pub scenes_dir: PathBuf,
     pub plays_dir: PathBuf,
     pub devices: Vec<DeviceRef>,
+    pub apps_path: PathBuf,
 }
 
 type RawDiags = BTreeMap<PathBuf, Vec<(CoreDiagnostic, Span)>>;
@@ -60,9 +62,15 @@ pub fn analyze(
     sources.insert(config_path.to_path_buf(), read_or_empty(config_path));
     absorb(&mut raw, &cfg_outcome.diagnostics, Some(config_path));
 
-    let devices_outcome = config::load_devices(devices_path);
+    let devices_outcome = config::load_devices_merged(devices_path);
     sources.insert(devices_path.to_path_buf(), read_or_empty(devices_path));
     absorb(&mut raw, &devices_outcome.diagnostics, Some(devices_path));
+
+    let apps_path = base.join("impresario.apps.config");
+    let apps_outcome = apps::load_apps_merged(&apps_path);
+    sources.insert(apps_path.clone(), read_or_empty(&apps_path));
+    absorb(&mut raw, &apps_outcome.diagnostics, Some(&apps_path));
+
     let devices: Vec<DeviceRef> = match &devices_outcome.config {
         Some(devices) => devices
             .devices
@@ -139,6 +147,30 @@ pub fn analyze(
     let semantic = validation::validate(&workspace, &devices);
     absorb(&mut raw, &semantic, None);
 
+    if let Some(app_list) = &apps_outcome.config {
+        let mut app_diags = Diagnostics::new();
+        for play in &workspace.plays {
+            let Some(named) = &play.app else {
+                continue;
+            };
+            if app_list.apps.iter().any(|app| app.name == named.name) {
+                continue;
+            }
+            let help = if app_list.apps.is_empty() {
+                "add an app definition or run `impresario app add`".to_string()
+            } else {
+                let names: Vec<&str> = app_list.apps.iter().map(|app| app.name.as_str()).collect();
+                format!("available apps: {}", names.join(", "))
+            };
+            app_diags.push(
+                CoreDiagnostic::error(Code::AppUnknown, format!("unknown app '{}'", named.name))
+                    .with_span(named.span.clone())
+                    .with_help(help),
+            );
+        }
+        absorb(&mut raw, &app_diags, None);
+    }
+
     let index = Index::build(&workspace.scenes, &workspace.plays);
 
     let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
@@ -161,6 +193,7 @@ pub fn analyze(
         scenes_dir,
         plays_dir,
         devices,
+        apps_path,
     }
 }
 

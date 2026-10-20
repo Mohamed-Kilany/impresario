@@ -13,6 +13,7 @@
 //! impresario-core: configuration, the impresario DSL, selectors, keys and
 //! diagnostics. This crate has no async or gRPC dependencies (D-16).
 
+pub mod apps;
 pub mod ast;
 pub mod command;
 pub mod config;

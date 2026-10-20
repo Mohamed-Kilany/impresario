@@ -159,8 +159,8 @@ Apple (`ios`, `tvos`) specifics:
   Android strategies (`android_id`, `android_desc`, `android_class`) and the
   web strategies (`css`, `xpath`, `text`, `text_contains`) are rejected with
   `INVALID_SELECTOR` naming the Apple-supported set.
-- `clear_app_data` on `ios`/`tvos` is performed by the **host** (uninstall +
-  reinstall the app under test, `options.app_path`) because no app can delete
+- `clear_data` on `ios`/`tvos` is performed by the **host** (uninstall +
+  reinstall the app under test, the app platform's `package`) because no app can delete
   another app's container; without a usable tool the option degrades to a cold
   start plus one WARN line (I-84). On `android`/`androidtv` the agent wipes
   in place.

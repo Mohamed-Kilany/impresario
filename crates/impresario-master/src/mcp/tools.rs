@@ -47,7 +47,8 @@ pub(crate) fn definitions() -> Vec<Value> {
             "name": "impresario_devices_list",
             "title": "List devices",
             "description": "List the devices from impresario.devices.config (name, platform, \
-        target endpoint, app id/url, agent address, connector). No device is contacted; use \
+        target endpoint, auth references and connector address). Apps are listed separately. \
+        No device is contacted; use \
         impresario_devices_check to actually reach them.",
             "inputSchema": { "type": "object", "additionalProperties": false },
         }),
@@ -94,6 +95,11 @@ pub(crate) fn definitions() -> Vec<Value> {
                         "items": { "type": "string" },
                         "description": "Device names to run on (like --device). Default: all \
         configured devices.",
+                    },
+                    "app": {
+                        "type": "string",
+                        "description": "App definition to bind (like --app); beats each play's \
+        App: header. Default: the header, which must agree across selected plays.",
                     },
                     "tags": {
                         "type": "array",

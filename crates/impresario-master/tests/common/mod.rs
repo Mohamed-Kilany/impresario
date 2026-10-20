@@ -184,12 +184,13 @@ pub fn device(name: &str, agent_address: &str) -> DeviceConfig {
     DeviceConfig {
         name: name.to_string(),
         platform: Platform::Web,
-        target_endpoint: "launch".to_string(),
-        app_id: None,
-        app_url: Some("http://localhost/index.html".to_string()),
-        agent_address: Some(agent_address.to_string()),
-        connector: None,
-        options: DeviceOptions::default(),
+        connection: impresario_core::config::DeviceConnection::default(),
+        auth: Default::default(),
+        labels: Vec::new(),
+        options: DeviceOptions {
+            connector_address: Some(agent_address.to_string()),
+            ..DeviceOptions::default()
+        },
     }
 }
 
@@ -269,7 +270,10 @@ pub fn build_test_plan_with(
     plan::build_plan(&PlanInput {
         config,
         workspace: &workspace,
+        base: std::path::Path::new("."),
         devices,
+        apps: &[],
+        cli_app: None,
         plays: std::slice::from_ref(&play),
         selection,
         cli_vars: &BTreeMap::new(),
@@ -324,7 +328,7 @@ pub fn write_workspace(
     let mut yaml = String::from("devices:\n");
     for (name, address) in devices {
         yaml.push_str(&format!(
-            "  - name: {name}\n    platform: web\n    target_endpoint: launch\n    agent_address: {address}\n"
+            "  - name: {name}\n    platform: web\n    connection:\n      transport: launch\n    options:\n      connector_address: {address}\n"
         ));
     }
     std::fs::write(dir.join("impresario.devices.config"), yaml).expect("write devices");

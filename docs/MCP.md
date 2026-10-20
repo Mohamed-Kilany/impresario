@@ -126,7 +126,8 @@ matches its server build.
   is abandoned with the process.
 - No new dependencies: the protocol layer is hand-rolled on `serde_json`,
   and device work reuses the same code paths as the CLI (`validate`,
-  `devices check`, `run`).
+  `device check`/`devices check`, `run`). `run` accepts an optional `app`
+  argument that overrides the selected plays' `App:` headers.
 
 ## Security
 

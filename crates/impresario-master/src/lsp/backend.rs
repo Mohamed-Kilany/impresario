@@ -211,6 +211,7 @@ impl Inner {
             &analysis.plays_dir,
             config_path,
             devices_path,
+            &analysis.apps_path,
         );
         let mut watches = lock(&self.watches);
         if watches.is_none() {

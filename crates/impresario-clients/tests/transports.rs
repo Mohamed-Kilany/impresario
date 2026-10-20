@@ -4,24 +4,41 @@
 use impresario_clients::transport::{
     transport_for, AppleTransport, ConnectorTransport, DeviceTransport, TransportError,
 };
-use impresario_core::config::{DeviceConfig, DeviceOptions};
+use impresario_core::config::{DeviceConfig, DeviceConnection, DeviceOptions};
 use impresario_core::platforms::Platform;
 
 fn device(
     name: &str,
     platform: Platform,
     target_endpoint: &str,
-    agent_address: Option<&str>,
+    connector_address: Option<&str>,
 ) -> DeviceConfig {
+    let mut connection = DeviceConnection::default();
+    match platform {
+        Platform::Web => {
+            connection.endpoint = Some(target_endpoint.to_string());
+        }
+        Platform::WebOs | Platform::Tizen => {
+            connection.host = Some("192.168.1.50".to_string());
+            connection.endpoint = Some(target_endpoint.to_string());
+        }
+        Platform::Android | Platform::AndroidTv => {
+            connection.serial = Some(target_endpoint.to_string());
+        }
+        Platform::Ios | Platform::Tvos => {
+            connection.udid = Some(target_endpoint.to_string());
+        }
+    }
     DeviceConfig {
         name: name.to_string(),
         platform,
-        target_endpoint: target_endpoint.to_string(),
-        app_id: None,
-        app_url: None,
-        agent_address: agent_address.map(str::to_string),
-        connector: None,
-        options: DeviceOptions::default(),
+        connection,
+        auth: impresario_core::config::DeviceAuth::default(),
+        labels: Vec::new(),
+        options: DeviceOptions {
+            connector_address: connector_address.map(str::to_string),
+            ..DeviceOptions::default()
+        },
     }
 }
 
@@ -34,7 +51,7 @@ async fn connector_uses_a_non_loopback_address_directly() {
         "ws://192.168.1.50:9998",
         Some("192.168.1.50:50051"),
     );
-    let endpoint = transport.prepare(&dev).await.expect("prepare");
+    let endpoint = transport.prepare(&dev, None).await.expect("prepare");
     assert_eq!(endpoint.address(), "192.168.1.50:50051");
     assert!(!endpoint.is_loopback());
     assert_eq!(transport.log_sources().len(), 1);
@@ -50,7 +67,7 @@ async fn connector_connects_to_a_listening_loopback_agent() {
 
     let mut transport = ConnectorTransport::new();
     let dev = device("web_site", Platform::Web, "launch", Some(&address));
-    let endpoint = transport.prepare(&dev).await.expect("prepare");
+    let endpoint = transport.prepare(&dev, None).await.expect("prepare");
     assert_eq!(endpoint.address(), address);
     assert!(endpoint.is_loopback());
 }
@@ -68,8 +85,8 @@ async fn connector_handles_a_loopback_address_with_nothing_listening() {
     let mut transport = ConnectorTransport::new();
     let mut dev = device("web_site", Platform::Web, "launch", None);
     let address = format!("127.0.0.1:{port}");
-    dev.agent_address = Some(address.clone());
-    match transport.prepare(&dev).await {
+    dev.options.connector_address = Some(address.clone());
+    match transport.prepare(&dev, None).await {
         Ok(endpoint) => {
             assert_eq!(endpoint.address(), address);
             transport.teardown().await.expect("teardown");
@@ -93,7 +110,7 @@ async fn apple_transport_explains_on_non_macos_hosts() {
         "00008110-001A2345021E001E",
         None,
     );
-    let error = transport.prepare(&dev).await.expect_err("not macOS");
+    let error = transport.prepare(&dev, None).await.expect_err("not macOS");
     match error {
         TransportError::DeviceUnavailable(message) => {
             assert!(message.contains("macOS"), "{message}");
@@ -111,7 +128,7 @@ async fn adb_transport_reports_a_missing_adb_binary() {
     std::env::set_var("IMPRESARIO_ADB", "definitely-not-adb-impresario");
     let mut transport = transport_for(Platform::Android);
     let dev = device("flagship_android", Platform::Android, "emulator-5554", None);
-    let error = transport.prepare(&dev).await.expect_err("no adb");
+    let error = transport.prepare(&dev, None).await.expect_err("no adb");
     match &error {
         TransportError::Transport(message) => assert!(message.contains("adb"), "{message}"),
         other => panic!("unexpected error: {other}"),

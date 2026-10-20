@@ -14,6 +14,7 @@
 //! and the MCP server.
 
 pub mod cli;
+pub mod definitions;
 pub mod exec;
 pub mod lsp;
 pub mod mcp;

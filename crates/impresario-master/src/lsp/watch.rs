@@ -32,6 +32,7 @@ pub fn specs_for(
     plays_dir: &Path,
     config: &Path,
     devices: &Path,
+    apps: &Path,
 ) -> Vec<WatchSpec> {
     let mut specs = Vec::new();
     for dir in [scenes_dir, plays_dir] {
@@ -59,6 +60,15 @@ pub fn specs_for(
                 recursive: false,
             });
         }
+    }
+    // A missing apps file is treated as an empty layer. Watching its parent
+    // (the workspace root) on Windows would turn every subdirectory event into
+    // an analysis, so only an existing apps file is watched.
+    if apps.is_file() {
+        specs.push(WatchSpec {
+            path: apps.to_path_buf(),
+            recursive: false,
+        });
     }
     specs
 }
@@ -175,7 +185,8 @@ mod tests {
         let config = base.join("impresario.config");
         let devices = base.join("impresario.devices.config");
 
-        let specs = specs_for(&scenes, &plays, &config, &devices);
+        let apps = base.join("impresario.apps.config");
+        let specs = specs_for(&scenes, &plays, &config, &devices, &apps);
         assert!(
             specs
                 .iter()
@@ -185,7 +196,8 @@ mod tests {
 
         std::fs::create_dir_all(&scenes).expect("scenes");
         std::fs::write(&config, "project: x\n").expect("config");
-        let specs = specs_for(&scenes, &plays, &config, &devices);
+        let apps = base.join("impresario.apps.config");
+        let specs = specs_for(&scenes, &plays, &config, &devices, &apps);
         assert!(specs.contains(&WatchSpec {
             path: scenes.clone(),
             recursive: true

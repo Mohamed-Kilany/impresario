@@ -566,6 +566,7 @@ fn parse_piece_line(
 const PLAY_KEYWORDS: &[&str] = &[
     "Play",
     "Description",
+    "App",
     "Var",
     "Act",
     "Tags",
@@ -590,6 +591,7 @@ pub fn parse_play(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
     let mut name: Option<String> = None;
     let mut name_span: Option<Span> = None;
     let mut description: Option<String> = None;
+    let mut app: Option<Named> = None;
     let mut var_decls: Vec<VarDecl> = Vec::new();
     let mut acts: Vec<ActDecl> = Vec::new();
     let mut i = 0usize;
@@ -642,6 +644,27 @@ pub fn parse_play(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
                         diagnostics.push(diag_at(
                             Code::DslMissingHeader,
                             "Description must be 1..=200 characters",
+                            line.span(path),
+                        ));
+                    }
+                }
+                Err(diag) => diagnostics.push(diag),
+            }
+            i += 1;
+        }
+    }
+
+    // Optional App (directly after Play or Description).
+    if let Some(line) = lines.get(i) {
+        if line.depth == 0 && line.content.starts_with("App:") {
+            match header_text(line, "App", path) {
+                Ok((text, span)) => {
+                    if strings::free_text_ok(&text) && !text.contains(char::is_whitespace) {
+                        app = Some(Named { name: text, span });
+                    } else {
+                        diagnostics.push(diag_at(
+                            Code::DslMissingHeader,
+                            "App must name an app definition (no spaces), e.g. 'App: shop'",
                             line.span(path),
                         ));
                     }
@@ -838,6 +861,7 @@ pub fn parse_play(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
             name,
             name_span,
             description,
+            app,
             var_decls,
             acts,
         }),

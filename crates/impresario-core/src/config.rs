@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
+use crate::home::Home;
 use crate::platforms::Platform;
 use crate::span::Span;
 use crate::strings::free_text_ok;
@@ -171,6 +172,11 @@ impl CdpBackend {
             CdpBackend::Chromiumoxide => "chromiumoxide",
         }
     }
+
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == CdpBackend::default()
+    }
 }
 
 /// `key_dispatch` option (spec 4.3).
@@ -191,56 +197,251 @@ impl KeyDispatch {
             KeyDispatch::Js => "js",
         }
     }
+
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == KeyDispatch::default()
+    }
 }
 
-/// Per-device `options` map (spec 4.3); every option is optional and carries
-/// the documented default.
+/// How the master reaches a device (TASK-2 4.3). `auto` is resolved from the
+/// platform and the connection fields at run time; the wizard writes the
+/// resolved value so a hand-edited file is explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TransportKind {
+    #[default]
+    Auto,
+    Usb,
+    Tcp,
+    Network,
+    Cdp,
+    Launch,
+    Ssh,
+    Sdb,
+}
+
+impl TransportKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TransportKind::Auto => "auto",
+            TransportKind::Usb => "usb",
+            TransportKind::Tcp => "tcp",
+            TransportKind::Network => "network",
+            TransportKind::Cdp => "cdp",
+            TransportKind::Launch => "launch",
+            TransportKind::Ssh => "ssh",
+            TransportKind::Sdb => "sdb",
+        }
+    }
+
+    #[must_use]
+    pub fn is_auto(self) -> bool {
+        self == TransportKind::Auto
+    }
+}
+
+/// Connection half of a device definition (TASK-2 4.3). A device never names
+/// an app; `endpoint` is the device-side endpoint (CDP URL, agent override or
+/// inspector address), never an app URL.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceConnection {
+    #[serde(default)]
+    pub transport: TransportKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Transport port. Defaults: webOS 9922, Tizen 26101, Android TCP 5555.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Android/Tizen serial (`emulator-5554`, USB serial or DUID).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial: Option<String>,
+    /// Apple UDID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udid: Option<String>,
+    /// Device-side endpoint (CDP `ws://...`, inspector or agent override).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+impl DeviceConnection {
+    /// The documented default port for a TCP-style transport.
+    #[must_use]
+    pub fn port_or_default(&self, platform: Platform) -> Option<u16> {
+        self.port.or(match platform {
+            Platform::WebOs => Some(9922),
+            Platform::Tizen => Some(26101),
+            Platform::Android | Platform::AndroidTv => Some(5555),
+            Platform::Web | Platform::Ios | Platform::Tvos => None,
+        })
+    }
+}
+
+/// Secret/identity references of a device (TASK-2 4.3). Values are references
+/// (`keychain:<name>`, a key name under `keys/`, a signing identity or a Tizen
+/// certificate profile); plaintext secrets are rejected by the wizard.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceAuth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+impl DeviceAuth {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.key.is_none() && self.identity.is_none() && self.profile.is_none()
+    }
+}
+
+/// Per-device transport `options` map (TASK-2 4.3). App options (clear data,
+/// package path, launch params) live on the app, never here.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceOptions {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "CdpBackend::is_default")]
     pub cdp_backend: CdpBackend,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "KeyDispatch::is_default")]
     pub key_dispatch: KeyDispatch,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_match: Option<String>,
-    #[serde(default)]
-    pub clear_app_data: bool,
-    /// Host path of the app under test (`.app` bundle or `.ipa`); Apple
-    /// platforms only. With `clear_app_data` the Apple transport reinstalls it
-    /// so every test starts from a clean container (I-84).
-    #[serde(default)]
-    pub app_path: Option<String>,
-    #[serde(default)]
+    /// Address the master's embedded connector listens on (web runtimes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_port: Option<u16>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub animations_disabled: bool,
 }
 
-/// One device entry of `impresario.devices.config` (spec 4.2).
+impl DeviceOptions {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self == &DeviceOptions::default()
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// An adb serial is a network address when it ends in `:port`.
+fn serial_is_tcp(serial: &str) -> bool {
+    serial
+        .rsplit_once(':')
+        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
+}
+
+/// One device entry of a devices file (TASK-2 4.3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceConfig {
     pub name: String,
     pub platform: Platform,
-    pub target_endpoint: String,
     #[serde(default)]
-    pub app_id: Option<String>,
-    #[serde(default)]
-    pub app_url: Option<String>,
-    #[serde(default)]
-    pub agent_address: Option<String>,
-    #[serde(default)]
-    pub connector: Option<String>,
-    #[serde(default)]
+    pub connection: DeviceConnection,
+    #[serde(default, skip_serializing_if = "DeviceAuth::is_empty")]
+    pub auth: DeviceAuth,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "DeviceOptions::is_default")]
     pub options: DeviceOptions,
 }
 
 impl DeviceConfig {
-    /// The agent address: `agent_address`, else the `connector` alias.
+    /// The transport, with `auto` resolved from the platform and fields.
     #[must_use]
-    pub fn agent_address(&self) -> Option<&str> {
-        self.agent_address.as_deref().or(self.connector.as_deref())
+    pub fn effective_transport(&self) -> TransportKind {
+        if !self.connection.transport.is_auto() {
+            return self.connection.transport;
+        }
+        match self.platform {
+            Platform::Web => {
+                if self
+                    .connection
+                    .endpoint
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("ws://") || value.starts_with("wss://"))
+                {
+                    TransportKind::Cdp
+                } else {
+                    TransportKind::Launch
+                }
+            }
+            Platform::WebOs => TransportKind::Ssh,
+            Platform::Tizen => TransportKind::Sdb,
+            Platform::Android | Platform::AndroidTv => {
+                if self
+                    .connection
+                    .serial
+                    .as_deref()
+                    .is_some_and(|serial| !serial_is_tcp(serial))
+                {
+                    TransportKind::Usb
+                } else {
+                    TransportKind::Tcp
+                }
+            }
+            Platform::Ios | Platform::Tvos => {
+                if self.connection.host.is_some() {
+                    TransportKind::Network
+                } else {
+                    TransportKind::Usb
+                }
+            }
+        }
+    }
+
+    /// The endpoint the agent handshake reports (spec 7.1). It is the device
+    /// target, not an app URL: CDP URL for web runtimes, serial/UDID for native
+    /// devices.
+    #[must_use]
+    pub fn target_endpoint(&self) -> String {
+        match self.platform {
+            Platform::Web => self
+                .connection
+                .endpoint
+                .clone()
+                .unwrap_or_else(|| "launch".to_string()),
+            Platform::WebOs | Platform::Tizen => {
+                self.connection.endpoint.clone().unwrap_or_default()
+            }
+            Platform::Android | Platform::AndroidTv => {
+                if let Some(serial) = &self.connection.serial {
+                    serial.clone()
+                } else {
+                    let host = self.connection.host.as_deref().unwrap_or_default();
+                    let port = self
+                        .connection
+                        .port_or_default(self.platform)
+                        .unwrap_or(5555);
+                    if host.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{host}:{port}")
+                    }
+                }
+            }
+            Platform::Ios | Platform::Tvos => self.connection.udid.clone().unwrap_or_default(),
+        }
+    }
+
+    /// The connector listen address (web runtimes), with the documented default.
+    #[must_use]
+    pub fn connector_address(&self) -> Option<&str> {
+        self.options
+            .connector_address
+            .as_deref()
+            .or(match self.platform {
+                Platform::Web | Platform::WebOs | Platform::Tizen => Some("127.0.0.1:50051"),
+                _ => None,
+            })
     }
 
     /// The device-side agent port, with the documented default per platform.
@@ -256,17 +457,41 @@ impl DeviceConfig {
         }
     }
 
-    /// Default agent address for platforms that have one (spec 4.2).
+    /// Human-readable one-line connection summary for `device list`.
     #[must_use]
-    pub fn default_agent_address(&self) -> Option<&'static str> {
+    pub fn connection_summary(&self) -> String {
+        let transport = self.effective_transport().as_str();
         match self.platform {
-            Platform::Web | Platform::WebOs | Platform::Tizen => Some("127.0.0.1:50051"),
-            _ => None,
+            Platform::Web => format!("{transport} {}", self.target_endpoint()),
+            Platform::WebOs | Platform::Tizen => {
+                let host = self.connection.host.as_deref().unwrap_or("?");
+                let port = self
+                    .connection
+                    .port_or_default(self.platform)
+                    .map_or_else(|| "-".to_string(), |p| p.to_string());
+                format!("{transport} {host}:{port} -> {}", self.target_endpoint())
+            }
+            Platform::Android | Platform::AndroidTv => {
+                if let Some(serial) = &self.connection.serial {
+                    format!("{transport} {serial}")
+                } else {
+                    let host = self.connection.host.as_deref().unwrap_or("?");
+                    let port = self
+                        .connection
+                        .port_or_default(self.platform)
+                        .unwrap_or(5555);
+                    format!("{transport} {host}:{port}")
+                }
+            }
+            Platform::Ios | Platform::Tvos => {
+                format!("{transport} {}", self.target_endpoint())
+            }
         }
     }
 }
 
-/// `impresario.devices.config` (spec 4.2).
+/// `impresario.devices.config` (workspace) and `~/.impresario/devices.yaml`
+/// (global), TASK-2 3.3/4.3.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DevicesConfig {
@@ -303,20 +528,21 @@ const CONFIG_KEYS: &[&str] = &[
 const DEVICE_KEYS: &[&str] = &[
     "name",
     "platform",
-    "target_endpoint",
-    "app_id",
-    "app_url",
-    "agent_address",
-    "connector",
+    "connection",
+    "auth",
+    "labels",
     "options",
 ];
+
+const CONNECTION_KEYS: &[&str] = &["transport", "host", "port", "serial", "udid", "endpoint"];
+
+const AUTH_KEYS: &[&str] = &["key", "identity", "profile"];
 
 const OPTION_KEYS: &[&str] = &[
     "cdp_backend",
     "key_dispatch",
     "page_match",
-    "clear_app_data",
-    "app_path",
+    "connector_address",
     "agent_port",
     "animations_disabled",
 ];
@@ -356,13 +582,19 @@ fn find_key(lines: &[&str], key: &str, from: usize, until: usize) -> Option<(usi
     None
 }
 
-fn span_of(lines: &[&str], key: &str, from: usize, until: usize, file: &Path) -> Option<Span> {
+pub(crate) fn span_of(
+    lines: &[&str],
+    key: &str,
+    from: usize,
+    until: usize,
+    file: &Path,
+) -> Option<Span> {
     find_key(lines, key, from, until)
         .map(|(line, col)| Span::new(file, line, col, key.chars().count()))
 }
 
 /// The 0-based line index of the top-level `key`, if present.
-fn top_level_line(lines: &[&str], key: &str) -> Option<usize> {
+pub(crate) fn top_level_line(lines: &[&str], key: &str) -> Option<usize> {
     let needle = format!("{key}:");
     lines.iter().position(|line| {
         line.strip_prefix(&needle)
@@ -372,7 +604,7 @@ fn top_level_line(lines: &[&str], key: &str) -> Option<usize> {
 
 /// Ranges `(first_line, last_line)` (0-based, inclusive) of each `- ` list
 /// item that follows the `devices:` line.
-fn device_ranges(lines: &[&str], devices_line: usize) -> Vec<(usize, usize)> {
+pub(crate) fn device_ranges(lines: &[&str], devices_line: usize) -> Vec<(usize, usize)> {
     let list_indent = lines
         .get(devices_line)
         .map(|line| line.len() - line.trim_start().len())
@@ -901,6 +1133,62 @@ pub fn load_devices(path: &Path) -> ConfigOutcome<DevicesConfig> {
     }
 }
 
+/// Load the global `~/.impresario/devices.yaml` and the workspace devices file
+/// and merge them by name (workspace wins, TASK-2 3.3). Missing files are empty
+/// layers, so a workspace without devices still loads (and `run` explains that
+/// no devices are configured). Diagnostics carry the file they came from.
+#[must_use]
+pub fn load_devices_merged(workspace_path: &Path) -> ConfigOutcome<DevicesConfig> {
+    let mut diagnostics = Diagnostics::new();
+    let mut merged: Vec<DeviceConfig> = Vec::new();
+    let global_path = Home::resolve().ok().map(|home| home.devices_path());
+    if let Some(path) = global_path.as_deref() {
+        if let Some(source) = read_optional_layer(path, &mut diagnostics) {
+            let outcome = parse_devices(&source, path);
+            diagnostics.extend(outcome.diagnostics);
+            if let Some(config) = outcome.config {
+                merge_devices(&mut merged, &config.devices);
+            }
+        }
+    }
+    if let Some(source) = read_optional_layer(workspace_path, &mut diagnostics) {
+        let outcome = parse_devices(&source, workspace_path);
+        diagnostics.extend(outcome.diagnostics);
+        if let Some(config) = outcome.config {
+            merge_devices(&mut merged, &config.devices);
+        }
+    }
+    let config = (!diagnostics.has_errors()).then_some(DevicesConfig { devices: merged });
+    ConfigOutcome {
+        config,
+        diagnostics,
+    }
+}
+
+fn merge_devices(merged: &mut Vec<DeviceConfig>, layer: &[DeviceConfig]) {
+    for device in layer {
+        if let Some(existing) = merged.iter_mut().find(|item| item.name == device.name) {
+            *existing = device.clone();
+        } else {
+            merged.push(device.clone());
+        }
+    }
+}
+
+pub(crate) fn read_optional_layer(path: &Path, diagnostics: &mut Diagnostics) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => Some(source),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            diagnostics.push(Diagnostic::error(
+                Code::CfgInvalidValue,
+                format!("cannot read {}: {err}", path.display()),
+            ));
+            None
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_device(
     diagnostics: &mut Diagnostics,
@@ -934,7 +1222,15 @@ fn validate_device(
             let mut diag =
                 Diagnostic::error(Code::CfgUnknownKey, format!("unknown device key '{key}'"))
                     .with_span(key_span(key));
-            if let Some(hint) = suggest(key, DEVICE_KEYS) {
+            if matches!(
+                key,
+                "target_endpoint" | "app_id" | "app_url" | "agent_address" | "connector"
+            ) {
+                diag = diag.with_help(
+                    "this is the legacy device schema; run `impresario migrate` to split the \
+                     device and its app, then use `connection`/`auth`/`labels`/`options`",
+                );
+            } else if let Some(hint) = suggest(key, DEVICE_KEYS) {
                 diag = diag.with_help(hint);
             }
             diagnostics.push(diag);
@@ -995,108 +1291,505 @@ fn validate_device(
         ),
     }
 
-    // target_endpoint
-    match map.get("target_endpoint").and_then(Value::as_str) {
-        Some(endpoint) => {
-            if let Some(platform) = parsed_platform {
-                if let Err(reason) = validate_endpoint(platform, endpoint) {
+    if let Some(platform) = parsed_platform {
+        validate_connection(diagnostics, lines, path, map, platform, from, until);
+        validate_auth(diagnostics, lines, path, map, platform, from, until);
+        validate_labels(diagnostics, lines, path, map, from, until);
+        validate_options(diagnostics, lines, path, map, platform, from, until);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_connection(
+    diagnostics: &mut Diagnostics,
+    lines: &[&str],
+    path: &Path,
+    device: &Mapping,
+    platform: Platform,
+    from: usize,
+    until: usize,
+) {
+    let key_span = |key: &str| {
+        span_of(lines, key, from, until, path).unwrap_or_else(|| Span::new(path, from + 1, 1, 0))
+    };
+    let Some(connection_value) = device.get("connection") else {
+        diagnostics.push(
+            Diagnostic::error(Code::CfgMissingField, "missing required key 'connection'")
+                .with_span(key_span("name"))
+                .with_help("a device is only a platform plus its connection; apps live separately"),
+        );
+        return;
+    };
+    let Some(connection) = connection_value.as_mapping() else {
+        diagnostics.push(
+            Diagnostic::error(Code::CfgInvalidValue, "'connection' must be a YAML mapping")
+                .with_span(key_span("connection")),
+        );
+        return;
+    };
+    let invalid = |diagnostics: &mut Diagnostics, key: &str, reason: String| {
+        diagnostics.push(
+            Diagnostic::error(
+                Code::CfgInvalidValue,
+                format!("invalid value for 'connection.{key}': {reason}"),
+            )
+            .with_span(key_span(key)),
+        );
+    };
+    for key in connection.keys().filter_map(Value::as_str) {
+        if !CONNECTION_KEYS.contains(&key) {
+            let mut diag = Diagnostic::error(
+                Code::CfgUnknownKey,
+                format!("unknown connection key '{key}'"),
+            )
+            .with_span(key_span(key));
+            if let Some(hint) = suggest(key, CONNECTION_KEYS) {
+                diag = diag.with_help(hint);
+            }
+            diagnostics.push(diag);
+        }
+    }
+
+    let transport = match connection.get("transport") {
+        Some(value) => match value.as_str() {
+            Some(text) => match text {
+                "auto" => Some(TransportKind::Auto),
+                "usb" => Some(TransportKind::Usb),
+                "tcp" => Some(TransportKind::Tcp),
+                "network" => Some(TransportKind::Network),
+                "cdp" => Some(TransportKind::Cdp),
+                "launch" => Some(TransportKind::Launch),
+                "ssh" => Some(TransportKind::Ssh),
+                "sdb" => Some(TransportKind::Sdb),
+                _ => {
+                    invalid(
+                        diagnostics,
+                        "transport",
+                        format!(
+                            "unknown transport '{text}'; expected auto, usb, tcp, network, cdp, \
+                             launch, ssh or sdb"
+                        ),
+                    );
+                    None
+                }
+            },
+            None => {
+                invalid(
+                    diagnostics,
+                    "transport",
+                    "expected a transport name".to_string(),
+                );
+                None
+            }
+        },
+        None => Some(TransportKind::Auto),
+    };
+    if let Some(transport) = transport {
+        let allowed: &[TransportKind] = match platform {
+            Platform::Web => &[
+                TransportKind::Auto,
+                TransportKind::Launch,
+                TransportKind::Cdp,
+            ],
+            Platform::WebOs => &[TransportKind::Auto, TransportKind::Ssh],
+            Platform::Tizen => &[TransportKind::Auto, TransportKind::Sdb],
+            Platform::Android | Platform::AndroidTv => {
+                &[TransportKind::Auto, TransportKind::Usb, TransportKind::Tcp]
+            }
+            Platform::Ios | Platform::Tvos => &[
+                TransportKind::Auto,
+                TransportKind::Usb,
+                TransportKind::Network,
+            ],
+        };
+        if !allowed.contains(&transport) {
+            let names: Vec<&str> = allowed.iter().map(|t| t.as_str()).collect();
+            invalid(
+                diagnostics,
+                "transport",
+                format!(
+                    "'{}' is not valid on platform '{platform}'; valid: {}",
+                    transport.as_str(),
+                    names.join(", ")
+                ),
+            );
+        }
+    }
+
+    let host = connection.get("host").and_then(Value::as_str);
+    if connection.get("host").is_some() && host.is_none_or(|value| !valid_host(value)) {
+        invalid(
+            diagnostics,
+            "host",
+            "expected a non-empty hostname or IP address without spaces".to_string(),
+        );
+    }
+    let port = connection.get("port");
+    match port.and_then(Value::as_u64) {
+        Some(value) if (1..=65535).contains(&value) => {}
+        Some(value) => invalid(
+            diagnostics,
+            "port",
+            format!("{value} is not a port in 1..=65535"),
+        ),
+        None if port.is_some() => {
+            invalid(diagnostics, "port", "expected an integer port".to_string());
+        }
+        None => {}
+    }
+    let serial = connection.get("serial").and_then(Value::as_str);
+    if connection.get("serial").is_some() && serial.is_none_or(|value| value.trim().is_empty()) {
+        invalid(
+            diagnostics,
+            "serial",
+            "expected a non-empty serial".to_string(),
+        );
+    }
+    let udid = connection.get("udid").and_then(Value::as_str);
+    if let Some(value) = udid {
+        if !valid_udid(value) {
+            invalid(
+                diagnostics,
+                "udid",
+                format!("'{value}' is not a UDID or simulator UUID"),
+            );
+        }
+    } else if connection.get("udid").is_some() {
+        invalid(diagnostics, "udid", "expected a string UDID".to_string());
+    }
+    let endpoint = connection.get("endpoint").and_then(Value::as_str);
+    if connection.get("endpoint").is_some() && endpoint.is_none_or(|value| value.is_empty()) {
+        invalid(
+            diagnostics,
+            "endpoint",
+            "expected a non-empty endpoint".to_string(),
+        );
+    }
+
+    match platform {
+        Platform::Web => {
+            if host.is_some() || port.is_some() || serial.is_some() || udid.is_some() {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgInvalidValue,
+                        "web devices only use transport, endpoint and page_match; host/port/serial/udid belong to native or TV devices",
+                    )
+                    .with_span(key_span("connection")),
+                );
+            }
+            match transport.unwrap_or(TransportKind::Auto) {
+                TransportKind::Cdp | TransportKind::Auto
+                    if endpoint.is_some_and(|value| {
+                        value.starts_with("ws://") || value.starts_with("wss://")
+                    }) => {}
+                TransportKind::Cdp => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgMissingField,
+                            "transport 'cdp' needs connection.endpoint with a ws:// URL",
+                        )
+                        .with_span(key_span("endpoint"))
+                        .with_help(endpoint_help(platform)),
+                    );
+                }
+                TransportKind::Launch | TransportKind::Auto => {
+                    if let Some(value) = endpoint {
+                        if value != "launch" && value != "launch:headless" {
+                            diagnostics.push(
+                                Diagnostic::error(
+                                    Code::CfgInvalidValue,
+                                    "transport 'launch' cannot take a CDP endpoint; use transport 'cdp' or remove connection.endpoint",
+                                )
+                                .with_span(key_span("endpoint")),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Platform::WebOs => {
+            if host.is_none() {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgMissingField,
+                        "webOS devices need connection.host (the TV's IP or hostname)",
+                    )
+                    .with_span(key_span("host")),
+                );
+            }
+            if let Some(value) = endpoint {
+                if let Err(reason) = validate_endpoint(platform, value) {
                     diagnostics.push(
                         Diagnostic::error(
                             Code::CfgBadEndpoint,
-                            format!("invalid target_endpoint for platform '{platform}': {reason}"),
+                            format!("invalid connection.endpoint for '{platform}': {reason}"),
                         )
-                        .with_span(key_span("target_endpoint"))
+                        .with_span(key_span("endpoint"))
                         .with_help(endpoint_help(platform)),
                     );
                 }
             }
-        }
-        None => diagnostics.push(
-            Diagnostic::error(
-                Code::CfgMissingField,
-                "missing required key 'target_endpoint'",
-            )
-            .with_span(key_span("target_endpoint")),
-        ),
-    }
-
-    // Platform-conditioned fields.
-    if let Some(platform) = parsed_platform {
-        let needs_app_id = platform.is_android_family() || platform.is_apple_family();
-        if needs_app_id && map.get("app_id").and_then(Value::as_str).is_none() {
-            diagnostics.push(
-                Diagnostic::error(
-                    Code::CfgMissingField,
-                    format!("missing required key 'app_id' for platform '{platform}'"),
-                )
-                .with_span(key_span("name"))
-                .with_help("android/tv/ios/tvos devices need the package name or bundle id"),
-            );
-        }
-        if !needs_app_id && map.get("app_id").is_some() {
-            diagnostics.push(invalid_here(
-                "app_id",
-                format!("'app_id' is not valid for platform '{platform}'"),
-            ));
-        }
-        if !platform.is_web_runtime() && map.get("app_url").is_some() {
-            diagnostics.push(invalid_here(
-                "app_url",
-                format!("'app_url' is only valid for web, webos and tizen (not '{platform}')"),
-            ));
-        }
-        if !platform.is_web_runtime() && map.get("connector").is_some() {
-            diagnostics.push(invalid_here(
-                "connector",
-                format!("'connector' is only valid for web, webos and tizen (not '{platform}')"),
-            ));
-        }
-        if map.get("connector").is_some() && map.get("agent_address").is_some() {
-            diagnostics.push(invalid_here(
-                "connector",
-                "'connector' is an alias of 'agent_address'; set only one".to_string(),
-            ));
-        }
-        if platform == Platform::Tvos && map.get("agent_address").is_none() {
-            diagnostics.push(
-                Diagnostic::error(
-                    Code::CfgMissingField,
-                    "missing required key 'agent_address' for platform 'tvos'",
-                )
-                .with_span(key_span("name"))
-                .with_help(
-                    "tvOS has no USB auto-forwarding; Bonjour discovery is not implemented \
-                     (see docs/STATUS.md) so agent_address is required",
-                ),
-            );
-        }
-        if let Some(address) = map
-            .get("agent_address")
-            .or_else(|| map.get("connector"))
-            .and_then(Value::as_str)
-        {
-            if !valid_host_port(address) {
-                let key = if map.get("agent_address").is_some() {
-                    "agent_address"
-                } else {
-                    "connector"
-                };
-                diagnostics.push(invalid_here(key, format!("'{address}' is not host:port")));
+            if serial.is_some() || udid.is_some() {
+                invalid(
+                    diagnostics,
+                    "serial",
+                    "webOS devices use host/port, not serial/udid".to_string(),
+                );
             }
         }
-        if let Some(url) = map.get("app_url").and_then(Value::as_str) {
-            if !(url.starts_with("http://")
-                || url.starts_with("https://")
-                || url.starts_with("file://"))
+        Platform::Tizen => {
+            if host.is_none() {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgMissingField,
+                        "Tizen devices need connection.host (the TV's IP or hostname)",
+                    )
+                    .with_span(key_span("host")),
+                );
+            }
+            if let Some(value) = endpoint {
+                if let Err(reason) = validate_endpoint(platform, value) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgBadEndpoint,
+                            format!("invalid connection.endpoint for '{platform}': {reason}"),
+                        )
+                        .with_span(key_span("endpoint"))
+                        .with_help(endpoint_help(platform)),
+                    );
+                }
+            }
+            if udid.is_some() {
+                invalid(
+                    diagnostics,
+                    "udid",
+                    "Tizen devices use serial (DUID) or host, not udid".to_string(),
+                );
+            }
+        }
+        Platform::Android | Platform::AndroidTv => {
+            if udid.is_some() {
+                invalid(
+                    diagnostics,
+                    "udid",
+                    "Android devices use serial (USB/TCP), not udid".to_string(),
+                );
+            }
+            let transport = transport.unwrap_or(TransportKind::Auto);
+            let tcp = matches!(transport, TransportKind::Tcp)
+                || (transport == TransportKind::Auto && serial.is_none() && host.is_some());
+            if tcp {
+                if host.is_none() {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgMissingField,
+                            "Android TCP devices need connection.host",
+                        )
+                        .with_span(key_span("host")),
+                    );
+                }
+                if serial.is_some() {
+                    invalid(
+                        diagnostics,
+                        "serial",
+                        "TCP devices use host/port; remove serial or select transport 'usb'"
+                            .to_string(),
+                    );
+                }
+            } else {
+                if serial.is_none() {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            Code::CfgMissingField,
+                            "Android USB devices need connection.serial",
+                        )
+                        .with_span(key_span("serial")),
+                    );
+                }
+                if host.is_some() {
+                    invalid(
+                        diagnostics,
+                        "host",
+                        "USB devices use serial; remove host or select transport 'tcp'".to_string(),
+                    );
+                }
+            }
+            if let Some(value) = endpoint {
+                if !valid_host_port(value) {
+                    invalid(
+                        diagnostics,
+                        "endpoint",
+                        format!("'{value}' is not host:port (agent override)"),
+                    );
+                }
+            }
+        }
+        Platform::Ios | Platform::Tvos => {
+            if serial.is_some() {
+                invalid(
+                    diagnostics,
+                    "serial",
+                    "Apple devices use udid, not serial".to_string(),
+                );
+            }
+            if udid.is_none() {
+                diagnostics.push(
+                    Diagnostic::error(Code::CfgMissingField, "Apple devices need connection.udid")
+                        .with_span(key_span("udid")),
+                );
+            }
+            if let Some(value) = endpoint {
+                if !valid_host_port(value) {
+                    invalid(
+                        diagnostics,
+                        "endpoint",
+                        format!("'{value}' is not host:port (agent override)"),
+                    );
+                }
+            }
+            if platform == Platform::Tvos
+                && transport.unwrap_or(TransportKind::Auto) != TransportKind::Network
+                && endpoint.is_none()
             {
-                diagnostics.push(invalid_here(
-                    "app_url",
-                    "expected an http://, https:// or file:// URL. Do not pass an app id here"
-                        .to_string(),
-                ));
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgMissingField,
+                        "tvOS over USB needs connection.endpoint (agent host:port)",
+                    )
+                    .with_span(key_span("endpoint"))
+                    .with_help(
+                        "Bonjour discovery is not implemented (docs/STATUS.md); use transport \
+                         'network' with discovery or set connection.endpoint",
+                    ),
+                );
             }
         }
-        validate_options(diagnostics, lines, path, map, platform, from, until);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_auth(
+    diagnostics: &mut Diagnostics,
+    lines: &[&str],
+    path: &Path,
+    device: &Mapping,
+    platform: Platform,
+    from: usize,
+    until: usize,
+) {
+    let key_span = |key: &str| {
+        span_of(lines, key, from, until, path).unwrap_or_else(|| Span::new(path, from + 1, 1, 0))
+    };
+    let Some(auth_value) = device.get("auth") else {
+        return;
+    };
+    let Some(auth) = auth_value.as_mapping() else {
+        diagnostics.push(
+            Diagnostic::error(Code::CfgInvalidValue, "'auth' must be a YAML mapping")
+                .with_span(key_span("auth")),
+        );
+        return;
+    };
+    for key in auth.keys().filter_map(Value::as_str) {
+        if !AUTH_KEYS.contains(&key) {
+            let mut diag =
+                Diagnostic::error(Code::CfgUnknownKey, format!("unknown auth key '{key}'"))
+                    .with_span(key_span(key));
+            if let Some(hint) = suggest(key, AUTH_KEYS) {
+                diag = diag.with_help(hint);
+            }
+            diagnostics.push(diag);
+        }
+    }
+    for key in AUTH_KEYS {
+        if let Some(value) = auth.get(*key) {
+            match value.as_str() {
+                Some(text) if !text.trim().is_empty() => {
+                    if text.starts_with("keychain:") && text.len() == "keychain:".len() {
+                        diagnostics.push(
+                            Diagnostic::error(
+                                Code::CfgInvalidValue,
+                                format!("auth.{key} has an empty keychain reference"),
+                            )
+                            .with_span(key_span(key)),
+                        );
+                    }
+                }
+                _ => diagnostics.push(
+                    Diagnostic::error(
+                        Code::CfgInvalidValue,
+                        format!("auth.{key} must be a non-empty reference"),
+                    )
+                    .with_span(key_span(key)),
+                ),
+            }
+        }
+    }
+    if platform == Platform::Web
+        && auth
+            .keys()
+            .filter_map(Value::as_str)
+            .any(|key| AUTH_KEYS.contains(&key))
+    {
+        diagnostics.push(
+            Diagnostic::error(
+                Code::CfgInvalidValue,
+                "web devices do not use auth; credentials belong to native/TV transports",
+            )
+            .with_span(key_span("auth")),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_labels(
+    diagnostics: &mut Diagnostics,
+    lines: &[&str],
+    path: &Path,
+    device: &Mapping,
+    from: usize,
+    until: usize,
+) {
+    let key_span = |key: &str| {
+        span_of(lines, key, from, until, path).unwrap_or_else(|| Span::new(path, from + 1, 1, 0))
+    };
+    let Some(labels_value) = device.get("labels") else {
+        return;
+    };
+    let Some(labels) = labels_value.as_sequence() else {
+        diagnostics.push(
+            Diagnostic::error(
+                Code::CfgInvalidValue,
+                "'labels' must be a list of label strings",
+            )
+            .with_span(key_span("labels")),
+        );
+        return;
+    };
+    let mut seen: HashSet<&str> = HashSet::new();
+    for label in labels {
+        let Some(text) = label.as_str() else {
+            diagnostics.push(
+                Diagnostic::error(Code::CfgInvalidValue, "each label must be a string")
+                    .with_span(key_span("labels")),
+            );
+            continue;
+        };
+        if !valid_label(text) {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::CfgInvalidValue,
+                    format!("invalid label '{text}'; expected ^[a-z0-9][a-z0-9_-]{{0,31}}$"),
+                )
+                .with_span(key_span("labels")),
+            );
+        } else if !seen.insert(text) {
+            diagnostics.push(
+                Diagnostic::error(Code::CfgInvalidValue, format!("duplicate label '{text}'"))
+                    .with_span(key_span("labels")),
+            );
+        }
     }
 }
 
@@ -1130,7 +1823,11 @@ fn validate_options(
                 format!("unknown device option '{key}'"),
             )
             .with_span(key_span(key));
-            if let Some(hint) = suggest(key, OPTION_KEYS) {
+            if matches!(key, "clear_app_data" | "app_path") {
+                diag = diag.with_help(
+                    "app options moved to the apps file (TASK-2 5); run `impresario migrate`",
+                );
+            } else if let Some(hint) = suggest(key, OPTION_KEYS) {
                 diag = diag.with_help(hint);
             }
             diagnostics.push(diag);
@@ -1156,12 +1853,16 @@ fn validate_options(
             ))
         }
     };
+    let web_runtimes = [Platform::Web, Platform::WebOs, Platform::Tizen];
+    let native = [
+        Platform::Android,
+        Platform::AndroidTv,
+        Platform::Ios,
+        Platform::Tvos,
+    ];
 
     if let Some(value) = options.get("cdp_backend") {
-        if let Some(reason) = platform_problem(
-            "cdp_backend",
-            &[Platform::Web, Platform::WebOs, Platform::Tizen],
-        ) {
+        if let Some(reason) = platform_problem("cdp_backend", &web_runtimes) {
             invalid(diagnostics, "cdp_backend", reason);
         }
         if !value
@@ -1176,10 +1877,7 @@ fn validate_options(
         }
     }
     if let Some(value) = options.get("key_dispatch") {
-        if let Some(reason) = platform_problem(
-            "key_dispatch",
-            &[Platform::Web, Platform::WebOs, Platform::Tizen],
-        ) {
+        if let Some(reason) = platform_problem("key_dispatch", &web_runtimes) {
             invalid(diagnostics, "key_dispatch", reason);
         }
         if !value.as_str().is_some_and(|s| matches!(s, "cdp" | "js")) {
@@ -1191,7 +1889,7 @@ fn validate_options(
         }
     }
     if let Some(value) = options.get("page_match") {
-        if let Some(reason) = platform_problem("page_match", &[Platform::WebOs, Platform::Tizen]) {
+        if let Some(reason) = platform_problem("page_match", &web_runtimes) {
             invalid(diagnostics, "page_match", reason);
         }
         if value.as_str().is_none_or(|s| s.is_empty()) {
@@ -1202,48 +1900,21 @@ fn validate_options(
             );
         }
     }
-    if let Some(value) = options.get("clear_app_data") {
-        if let Some(reason) = platform_problem(
-            "clear_app_data",
-            &[
-                Platform::Android,
-                Platform::AndroidTv,
-                Platform::Ios,
-                Platform::Tvos,
-            ],
-        ) {
-            invalid(diagnostics, "clear_app_data", reason);
+    if let Some(value) = options.get("connector_address") {
+        if let Some(reason) = platform_problem("connector_address", &web_runtimes) {
+            invalid(diagnostics, "connector_address", reason);
         }
-        if value.as_bool().is_none() {
-            invalid(
+        match value.as_str() {
+            Some(text) if valid_host_port(text) => {}
+            _ => invalid(
                 diagnostics,
-                "clear_app_data",
-                "expected true or false".to_string(),
-            );
-        }
-    }
-    if let Some(value) = options.get("app_path") {
-        if let Some(reason) = platform_problem("app_path", &[Platform::Ios, Platform::Tvos]) {
-            invalid(diagnostics, "app_path", reason);
-        }
-        if value.as_str().is_none_or(|s| s.trim().is_empty()) {
-            invalid(
-                diagnostics,
-                "app_path",
-                "expected a path to the app under test (.app bundle or .ipa)".to_string(),
-            );
+                "connector_address",
+                "expected host:port".to_string(),
+            ),
         }
     }
     if let Some(value) = options.get("agent_port") {
-        if let Some(reason) = platform_problem(
-            "agent_port",
-            &[
-                Platform::Android,
-                Platform::AndroidTv,
-                Platform::Ios,
-                Platform::Tvos,
-            ],
-        ) {
+        if let Some(reason) = platform_problem("agent_port", &native) {
             invalid(diagnostics, "agent_port", reason);
         }
         match value.as_u64() {
@@ -1269,6 +1940,23 @@ fn validate_options(
             );
         }
     }
+}
+
+fn valid_host(text: &str) -> bool {
+    !text.is_empty()
+        && !text.contains(char::is_whitespace)
+        && !text.contains('/')
+        && !text.contains('\\')
+}
+
+fn valid_label(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && text.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 fn endpoint_help(platform: Platform) -> &'static str {
@@ -1538,25 +2226,32 @@ reporters: [console, json, consle, console]
 devices:
   - name: living_room_tv
     platform: webos
-    target_endpoint: ws://192.168.1.50:9998
-    app_url: http://localhost:8080/index.html
+    connection:
+      transport: ssh
+      host: 192.168.1.50
+      endpoint: ws://192.168.1.50:9998
+    labels: [tv, living_room]
   - name: flagship_android
     platform: android
-    target_endpoint: emulator-5554
-    app_id: com.example.shop
+    connection:
+      serial: emulator-5554
+    options:
+      agent_port: 50061
   - name: shield_tv
     platform: androidtv
-    target_endpoint: 192.168.1.60:5555
-    app_id: com.example.shop.tv
+    connection:
+      transport: tcp
+      host: 192.168.1.60
+      port: 5555
   - name: test_iphone
     platform: ios
-    target_endpoint: 00008110-001A2345021E001E
-    app_id: com.example.shop
+    connection:
+      udid: 00008110-001A2345021E001E
   - name: apple_tv
     platform: tvos
-    target_endpoint: 00008110-001B3456021E002F
-    agent_address: 192.168.1.70:50062
-    app_id: com.example.shop.tv
+    connection:
+      udid: 00008110-001B3456021E002F
+      endpoint: 192.168.1.70:50062
 ";
         let outcome = parse_devices(source, devices_path());
         assert!(
@@ -1568,15 +2263,19 @@ devices:
         assert_eq!(devices.devices.len(), 5);
         let webos = &devices.devices[0];
         assert_eq!(webos.platform, Platform::WebOs);
-        assert_eq!(webos.agent_address(), None);
+        assert_eq!(webos.connector_address(), Some("127.0.0.1:50051"));
+        assert_eq!(webos.target_endpoint(), "ws://192.168.1.50:9998");
         assert_eq!(
-            webos.app_url.as_deref(),
-            Some("http://localhost:8080/index.html")
+            webos.connection.port_or_default(Platform::WebOs),
+            Some(9922)
         );
+        assert_eq!(webos.labels, ["tv", "living_room"]);
         let android = &devices.devices[1];
+        assert_eq!(android.effective_transport(), TransportKind::Usb);
         assert_eq!(android.effective_agent_port(), Some(50061));
         let ios = &devices.devices[3];
         assert_eq!(ios.effective_agent_port(), Some(50062));
+        assert_eq!(ios.effective_transport(), TransportKind::Usb);
     }
 
     #[test]
@@ -1585,12 +2284,12 @@ devices:
 devices:
   - name: one
     platform: android
-    target_endpoint: emulator-5554
-    app_id: com.example.one
+    connection:
+      serial: emulator-5554
   - name: one
     platform: android
-    target_endpoint: emulator-5556
-    app_id: com.example.one
+    connection:
+      serial: emulator-5556
 ";
         let outcome = parse_devices(source, devices_path());
         let errors: Vec<_> = outcome.diagnostics.errors().collect();
@@ -1625,44 +2324,41 @@ devices:
     }
 
     #[test]
-    fn app_id_required_for_native_platforms() {
+    fn legacy_device_fields_point_at_migrate() {
         let source = "\
 devices:
   - name: phone
     platform: ios
     target_endpoint: 00008110-001A2345021E001E
+    app_id: com.example.shop
 ";
         let outcome = parse_devices(source, devices_path());
         let errors: Vec<_> = outcome.diagnostics.errors().collect();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].code, Code::CfgMissingField);
-        assert!(errors[0].message.contains("app_id"));
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|d| d.code == Code::CfgUnknownKey)
+                .count(),
+            2
+        );
+        assert!(errors
+            .iter()
+            .filter(|d| d.message.contains("target_endpoint") || d.message.contains("app_id"))
+            .all(|d| d.help.as_deref().unwrap_or("").contains("migrate")));
     }
 
     #[test]
-    fn app_id_not_allowed_on_web_runtimes() {
-        let source = "\
-devices:
-  - name: site
-    platform: web
-    target_endpoint: launch
-    app_id: com.example.web
-";
-        let outcome = parse_devices(source, devices_path());
-        let errors: Vec<_> = outcome.diagnostics.errors().collect();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].code, Code::CfgInvalidValue);
-        assert!(errors[0].message.contains("app_id"));
-    }
-
-    #[test]
-    fn connector_alias_and_conflict() {
+    fn connector_address_option_is_web_only() {
         let ok = "\
 devices:
   - name: tv
     platform: webos
-    target_endpoint: ws://192.168.1.50:9998
-    connector: 192.168.1.50:50051
+    connection:
+      host: 192.168.1.50
+      endpoint: ws://192.168.1.50:9998
+    options:
+      connector_address: 192.168.1.50:50051
 ";
         let outcome = parse_devices(ok, devices_path());
         assert!(
@@ -1672,41 +2368,57 @@ devices:
         );
         let devices = outcome.config.expect("devices");
         assert_eq!(
-            devices.devices[0].agent_address(),
+            devices.devices[0].connector_address(),
             Some("192.168.1.50:50051")
         );
 
-        let conflict = "\
+        let bad = "\
 devices:
-  - name: tv
-    platform: webos
-    target_endpoint: ws://192.168.1.50:9998
-    connector: 192.168.1.50:50051
-    agent_address: 192.168.1.51:50051
+  - name: phone
+    platform: android
+    connection:
+      serial: emulator-5554
+    options:
+      connector_address: 192.168.1.50:50051
 ";
-        let outcome = parse_devices(conflict, devices_path());
+        let outcome = parse_devices(bad, devices_path());
         assert_eq!(outcome.diagnostics.errors().count(), 1);
         assert!(outcome
             .diagnostics
             .errors()
             .next()
-            .is_some_and(|d| d.message.contains("alias")));
+            .is_some_and(|d| d.message.contains("connector_address")));
     }
 
     #[test]
-    fn tvos_requires_agent_address() {
+    fn tvos_requires_endpoint() {
         let source = "\
 devices:
   - name: apple_tv
     platform: tvos
-    target_endpoint: 00008110-001B3456021E002F
-    app_id: com.example.shop.tv
+    connection:
+      udid: 00008110-001B3456021E002F
 ";
         let outcome = parse_devices(source, devices_path());
         let errors: Vec<_> = outcome.diagnostics.errors().collect();
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("agent_address"));
+        assert!(errors[0].message.contains("connection.endpoint"));
         assert!(errors[0].help.as_deref().unwrap_or("").contains("Bonjour"));
+
+        let network = "\
+devices:
+  - name: apple_tv
+    platform: tvos
+    connection:
+      transport: network
+      udid: 00008110-001B3456021E002F
+";
+        let outcome = parse_devices(network, devices_path());
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "{:?}",
+            outcome.diagnostics
+        );
     }
 
     #[test]
@@ -1715,8 +2427,8 @@ devices:
 devices:
   - name: phone
     platform: android
-    target_endpoint: emulator-5554
-    app_id: com.example.shop
+    connection:
+      serial: emulator-5554
     options:
       key_dispatch: js
       agent_port: 70000
@@ -1728,9 +2440,16 @@ devices:
             .errors()
             .map(|d| d.message.clone())
             .collect();
-        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages.len(), 3, "{messages:?}");
         assert!(messages.iter().any(|m| m.contains("key_dispatch")));
         assert!(messages.iter().any(|m| m.contains("agent_port")));
+        assert!(messages.iter().any(|m| m.contains("clear_app_data")));
+        assert!(outcome
+            .diagnostics
+            .errors()
+            .find(|d| d.message.contains("clear_app_data"))
+            .and_then(|d| d.help.as_deref())
+            .is_some_and(|help| help.contains("apps file")));
     }
 
     #[test]
@@ -1739,11 +2458,11 @@ devices:
 devices:
   - name: phone
     platform: android
-    target_endpoint: emulator-5554
-    app_id: com.example.shop
+    connection:
+      serial: emulator-5554
     plataform: android
     options:
-      clear_appdata: true
+      agent_prot: 50061
 ";
         let outcome = parse_devices(source, devices_path());
         let errors: Vec<_> = outcome.diagnostics.errors().collect();
@@ -1751,7 +2470,33 @@ devices:
         assert!(errors.iter().all(|d| d.code == Code::CfgUnknownKey));
         assert!(errors
             .iter()
-            .any(|d| { d.help.as_deref().unwrap_or("").contains("clear_app_data") }));
+            .any(|d| { d.help.as_deref().unwrap_or("").contains("agent_port") }));
+    }
+
+    #[test]
+    fn labels_and_auth_are_validated() {
+        let source = "\
+devices:
+  - name: phone
+    platform: android
+    connection:
+      serial: emulator-5554
+    labels: [TV, tv, bad label]
+    auth:
+      keychain: \"keychain:android\"
+";
+        let outcome = parse_devices(source, devices_path());
+        let messages: Vec<String> = outcome
+            .diagnostics
+            .errors()
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages.iter().any(|m| m.contains("unknown auth key")));
+        assert!(messages.iter().any(|m| m.contains("invalid label 'TV'")));
+        assert!(messages
+            .iter()
+            .any(|m| m.contains("invalid label 'bad label'")));
     }
 
     #[test]
@@ -1776,5 +2521,42 @@ devices:
             .errors()
             .next()
             .is_some_and(|d| d.span.is_some()));
+    }
+
+    #[test]
+    fn android_tcp_endpoint_is_host_and_default_port() {
+        let source = "\
+devices:
+  - name: phone
+    platform: android
+    connection:
+      transport: tcp
+      host: 192.168.1.5
+";
+        let device = parse_devices(source, devices_path())
+            .config
+            .expect("tcp device")
+            .devices
+            .remove(0);
+        assert_eq!(device.effective_transport().as_str(), "tcp");
+        assert_eq!(device.target_endpoint(), "192.168.1.5:5555");
+    }
+
+    #[test]
+    fn android_wireless_serial_resolves_to_tcp() {
+        let source = "\
+devices:
+  - name: phone
+    platform: android
+    connection:
+      serial: 192.168.1.5:39373
+";
+        let device = parse_devices(source, devices_path())
+            .config
+            .expect("wireless device")
+            .devices
+            .remove(0);
+        assert_eq!(device.effective_transport().as_str(), "tcp");
+        assert_eq!(device.target_endpoint(), "192.168.1.5:39373");
     }
 }

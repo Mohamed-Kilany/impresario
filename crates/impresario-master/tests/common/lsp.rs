@@ -251,9 +251,14 @@ impl TestLsp {
     async fn wait_until(&self, uri: &str, after: u64, accept: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            // Register for the wake-up before looking, so a publish between
-            // the two cannot be missed.
+            // `notified()` does not register until first poll, and
+            // `notify_waiters()` stores no permit. Enable it before looking,
+            // otherwise a publish between the check and the await is lost and
+            // the wait hangs until the (long) timeout - observed under a
+            // parallel test run.
             let notified = self.shared.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
                 let publishes = self.shared.publishes.lock().expect("publishes");
                 if let Some((seq, params)) = publishes.get(uri) {
@@ -267,7 +272,7 @@ impl TestLsp {
                 !remaining.is_zero(),
                 "timed out waiting for diagnostics of {uri}"
             );
-            let _ = timeout(remaining, notified).await;
+            let _ = timeout(remaining, &mut notified).await;
         }
     }
 
@@ -383,11 +388,22 @@ pub fn config_text() -> &'static str {
 pub fn devices_text(devices: &[(&str, &str)]) -> String {
     let mut yaml = String::from("devices:\n");
     for (name, platform) in devices {
-        yaml.push_str(&format!(
-            "  - name: {name}\n    platform: {platform}\n    target_endpoint: launch\n    agent_address: 127.0.0.1:1\n"
-        ));
-        if matches!(*platform, "android" | "androidtv" | "ios" | "tvos") {
-            yaml.push_str("    app_id: com.example.app\n");
+        yaml.push_str(&format!("  - name: {name}\n    platform: {platform}\n"));
+        match *platform {
+            "web" => yaml.push_str("    connection:\n      transport: launch\n"),
+            "webos" | "tizen" => yaml.push_str(
+                "    connection:\n      host: 127.0.0.1\n      endpoint: ws://127.0.0.1:9998\n",
+            ),
+            "android" | "androidtv" => {
+                yaml.push_str("    connection:\n      serial: emulator-5554\n");
+            }
+            "ios" => yaml.push_str(
+                "    connection:\n      udid: 00008110-001A2345021E001E\n",
+            ),
+            "tvos" => yaml.push_str(
+                "    connection:\n      udid: 00008110-001A2345021E001E\n      endpoint: 127.0.0.1:1\n",
+            ),
+            _ => {}
         }
     }
     yaml

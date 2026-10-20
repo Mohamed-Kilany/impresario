@@ -13,6 +13,16 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 | `IMP-CFG-003` | invalid value (range, enum, type, kind of file) | `impresario-core::config`, CLI |
 | `IMP-CFG-004` | duplicate device name | `impresario-core::config` |
 | `IMP-CFG-005` | bad `target_endpoint` for the device platform | `impresario-core::config` |
+| `IMP-CFG-006` | duplicate app name (within the merged app layers) | `impresario-core::apps` |
+
+## Apps (`IMP-APP-*`)
+
+| Code | Meaning | Emitted by |
+|---|---|---|
+| `IMP-APP-001` | a play's `App:` (or `--app`) names an app that is not defined | planner, `validate`, LSP |
+| `IMP-APP-002` | the app has no entry (or no id) for a selected device's platform | planner, `app check` |
+| `IMP-APP-003` | the app's `package` artifact does not exist at the resolved path | planner, `app check` |
+| `IMP-APP-004` | selected plays bind different apps without `--app` | planner |
 
 ## DSL (`IMP-DSL-*`)
 

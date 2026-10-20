@@ -15,13 +15,68 @@ The master is always the gRPC **client**. Every executor is a gRPC **server**:
 - Android → an **instrumentation process** started over `adb`,
 - iOS/tvOS → a UI-test runner started with `iproxy`/direct network.
 
-`impresario devices check` probes one device end to end: transport →
-handshake → `Shutdown` (no `Session` stream).
+`impresario device check` probes one device end to end: transport →
+handshake → `Shutdown` (no `Session` stream). `devices check` remains an alias.
 
-Device config fields used below: `target_endpoint` (platform-specific address),
-`app_id` (Android package / Apple bundle id), `app_url` (web family),
-`agent_address` (only where the master dials directly), `agent_port`,
-`options`.
+**Devices and apps are separate** (D-21, TASK-2 §5). A device owns how to reach
+the hardware; an app owns what runs on it. Fields used below:
+
+```yaml
+# impresario.devices.config (workspace) / ~/.impresario/devices.yaml (global)
+devices:
+  - name: living_room_tv
+    platform: webos            # web | webos | tizen | android | androidtv | ios | tvos
+    connection:
+      transport: ssh           # auto | usb | tcp | network | cdp | launch | ssh | sdb
+      host: 192.168.1.50       # where the master reaches the platform service
+      port: 9922               # optional; defaults: webOS 9922, Tizen 26101, Android 5555
+      endpoint: ws://192.168.1.50:9998   # device-side CDP/agent endpoint
+    auth: { key: living_room_tv }        # references, never secret values
+    labels: [tv, living_room]
+    options:
+      connector_address: 127.0.0.1:47654  # where the master's connector listens
+      cdp_backend: raw                    # web family only
+      key_dispatch: cdp                   # web family only
+      page_match: "index.html"            # web family only
+
+  - name: pocket_phone
+    platform: android
+    connection:
+      transport: tcp
+      host: 192.168.1.61
+      port: 5555
+      # serial: emulator-5554            # USB instead of TCP
+    options:
+      agent_port: 50061                   # Android/Apple agent port
+
+  - name: iphone
+    platform: ios
+    connection:
+      transport: usb
+      udid: 00008110-...                  # Apple UDID
+      # endpoint: 192.168.1.42:50062      # WLAN agent override
+    options:
+      animations_disabled: true           # iOS/tvOS only
+```
+
+```yaml
+# impresario.apps.config (workspace) / ~/.impresario/apps.yaml (global)
+apps:
+  - name: shop
+    platforms:
+      android: { id: com.example.shop, package: ./build/app.apk }
+      webos:   { id: com.example.shop, package: ./build/shop.ipk }
+      web:     { url: http://localhost:8080/index.html }
+    options:
+      clear_data: true
+```
+
+A play binds with `App: shop` (after `Play:`/`Description:`, before `Var:`);
+`--app shop` overrides it. Global and workspace layers merge by name, and the
+workspace wins. `impresario device add`/`app add` default to the global layer;
+pass `--workspace` to edit the workspace file. Secrets stay in the OS
+credential store and are referenced by `auth.key`/`auth.identity`/
+`auth.profile`.
 
 ---
 
@@ -35,9 +90,9 @@ Device config fields used below: `target_endpoint` (platform-specific address),
   with an explanation.
 - `impresario-connector` is resolved as `$IMPRESARIO_CONNECTOR_BIN`, else a
   sibling of the master binary, else `impresario-connector` on `PATH` (I-33).
-  A loopback `agent_address` that already has something listening is used
-  directly without spawning anything.
-- `target_endpoint` values:
+  A loopback `options.connector_address` that already has something listening
+  is used directly without spawning anything.
+- `connection.endpoint` values:
   - `launch` / `launch:headless` — the connector starts Chromium with a private
     profile and owns the process;
   - `ws://host:port` — an existing CDP endpoint (Chrome started with
@@ -45,14 +100,21 @@ Device config fields used below: `target_endpoint` (platform-specific address),
     resolves its page through `/json/list`, filtered by `options.page_match`
     (I-38).
 
-Example device:
+Example device and app:
 
 ```yaml
 devices:
   - name: desktop_chrome
     platform: web
-    target_endpoint: launch:headless
-    app_url: file:///D:/fixtures/web/index.html
+    connection:
+      transport: launch
+      endpoint: launch:headless
+
+apps:
+  - name: desktop_page
+    platforms:
+      web:
+        url: file:///D:/fixtures/web/index.html
 ```
 
 Commands (verified):
@@ -60,14 +122,15 @@ Commands (verified):
 ```powershell
 cargo build --workspace
 cargo test -p impresario-connector     # headless-Chrome fixture suite (spec 10.3)
-impresario devices check --device desktop_chrome
+impresario device check --device desktop_chrome
+impresario run --play plays/login.play --device desktop_chrome --app desktop_page
 ```
 
 Notes:
 
-- This host's port `50051` is held by an unrelated service (`multipassd`); the
-  example workspace pins the connector to `127.0.0.1:47654` via
-  `agent_address`.
+- This host's port `50051` is held by an unrelated service (`multipassd`); a
+  workspace can pin the connector with
+  `options.connector_address: 127.0.0.1:47654`.
 - `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
   backend needs the browser websocket from `/json/version` (I-39).
 
@@ -75,25 +138,27 @@ Notes:
 
 1. On the TV: install/enable the **Developer Mode** app, turn on Dev Mode
    Status and the Key Server, note the passphrase.
-2. Host: register the TV with the webOS CLI (`ares-setup-device`, SSH port
-   9922, passphrase from step 1) and check it with `ares-device -i`.
-3. Forward the app's inspector socket with `ares-inspect` (it prints the
-   forwarded local port and opens the app with inspection enabled).
-4. Point `target_endpoint` at the forwarded CDP endpoint
-   (`ws://127.0.0.1:<forwarded-port>` — page resolution picks the page), set
-   `app_url`, and keep `options.cdp_backend: raw`: old TV Chromium builds break
+2. Host: point `connection.host` at the TV and keep the default SSH port
+   (`9922`). Impresario's own Rust client fetches
+   `http://<tv>:9991/webos_rsa` and authenticates as `prisoner` (I-99); the
+   built-in key/install flow is Phase 2+ work, so today the CDP endpoint must
+   already be reachable.
+3. Point `connection.endpoint` at the inspector's CDP endpoint
+   (`ws://<tv-or-forwarded-host>:<port>` — page resolution picks the page) and
+   set the app's `platforms.webos.id` (and `package` when it should be
+   installed). Keep `options.cdp_backend: raw`: old TV Chromium builds break
    strict typed bindings (D-03).
 
 ### Tizen (TV) — not verified here (no TV hardware)
 
 1. On the TV: **Developer mode** (Apps panel; enter the host PC's IP), then
    reboot the TV so the developer mode daemon accepts connections.
-2. Host: connect the SDB bridge (`sdb connect <tv-ip>:26101`) — Tizen Studio's
-   `sdb` (or the standalone binary) must be on `PATH`.
-3. Forward the app's web-inspector port to a local port (`sdb forward
-   tcp:<local> tcp:<remote>` once the app is running and exposes it).
-4. Same as webOS: `target_endpoint: ws://127.0.0.1:<local>`,
-   `options.cdp_backend: raw`.
+2. Host: connect the SDB bridge with impresario's own Rust client (I-93;
+   `connection.transport: sdb`, default port `26101`). The built-in install and
+   forward commands are Phase 2+ work, so today the CDP endpoint must already
+   be reachable.
+3. Same CDP shape as webOS: `connection.endpoint: ws://<tv>:<inspector-port>`,
+   `options.cdp_backend: raw`, and the app's `platforms.tizen.id`/`package`.
 
 In both cases the D-pad verbs (`key`, `focus`, `scroll`) are supported through
 the connector's JS key dispatch; `options.key_dispatch` picks the mechanism
@@ -108,7 +173,7 @@ own app** (I-62): the master installs three APKs — the agent app `:agent`
 (`com.impresario.agent`), its `am instrument` test APK and, for the acceptance
 fixture, the separate app-under-test stub (`com.impresario.stub`) — starts
 `AgentRunner` over `adb`, then **dials the agent over the network**:
-`options.agent_address` first, else the adb serial's own host when it is
+`connection.endpoint` first, else the adb serial's own host when it is
 `ip:port` (adb-over-TCP), else the device's address from `ip route` /
 `ip -f inet addr show`. `adb forward` remains the fallback for devices with no
 reachable address. The agent binds `0.0.0.0`, so every command travels over
@@ -378,23 +443,32 @@ was removed).
 devices:
   - name: living_room_tv
     platform: androidtv                  # `android` for phones
-    target_endpoint: 192.168.93.84:5555  # adb serial (host:5555 = adb over TCP)
-    app_id: com.impresario.stub          # the app under test
+    connection:
+      transport: tcp
+      host: 192.168.93.84                # adb over TCP; use serial for USB
+      port: 5555
+      # endpoint: 192.168.93.84:50061    # optional agent-address override
+
+apps:
+  - name: stub
+    platforms:
+      androidtv:
+        id: com.impresario.stub
     options:
-      clear_app_data: true               # `pm clear` before each reset
+      clear_data: true                   # `pm clear` before each reset
 ```
 
 - The master installs the three APKs, starts the instrumentation with
-  `-e port`, then **dials the agent over the network**: `options.
-  agent_address` if set, else the serial's own host for `ip:port` serials,
-  else `ip route`/`ip -f inet addr show` on the device; `adb forward` is the
-  fallback when the device has no reachable address. All commands, checks,
+  `-e port`, then **dials the agent over the network**: `connection.endpoint`
+  if set, else the serial's own host for `ip:port` serials, else `ip route`/
+  `ip -f inet addr show` on the device; `adb forward` is the fallback when the
+  device has no reachable address. All commands, checks,
   events and screenshots travel over that TCP connection — adb is used only
   for device checks, installs, `am instrument` and logcat.
 - Every reset policy works against any target (I-62): the agent is its own
   process, so `terminate`/`restart`/clear-data/`background` of the app under
   test never kill the agent. The E2E workspace sets `app_reset: per_play`
-  plus `clear_app_data: true` and the smoke play asserts `taps=` counters
+  plus the app's `clear_data: true` and the smoke play asserts `taps=` counters
   reset across `app restart`.
 - The master runs `pm clear` on the app under test before a reset and
   `am force-stop` on the agent package at teardown (spec 9).
@@ -423,10 +497,18 @@ unsupported — D-13/I-57).
 devices:
   - name: pocket_phone
     platform: android
-    target_endpoint: 192.168.93.76:39373  # wireless-debugging adb serial
-    app_id: com.impresario.stub
+    connection:
+      transport: tcp
+      host: 192.168.93.76                 # wireless debugging
+      port: 39373                        # random; re-read on the phone
+
+apps:
+  - name: stub
+    platforms:
+      android:
+        id: com.impresario.stub
     options:
-      clear_app_data: true
+      clear_data: true
 ```
 
 - Connect first: `adb connect 192.168.93.76:39373`. Wireless-debugging ports
@@ -468,7 +550,7 @@ devices:
   --user 0` and clear-after-force-stop behave identically, so the device
   policy (not the package) is the cause. The agent treats a refused clear as
   a WARN on the log stream plus a force-stop cold start (I-82): the
-  `clear_app_data: true` option still relaunches the app but cannot guarantee
+  `clear_data: true` app option still relaunches the app but cannot guarantee
   empty data on this device. `run 20261019-064750-dca4` (the build with the
   I-82 fix) passed through MCP afterwards.
 
@@ -488,7 +570,7 @@ devices:
   only, D-11) — collect `adb logcat` host-side in the master.
 - `adb` over Wi-Fi: `adb connect <device-ip>:5555` makes the serial address a
   network endpoint; the master then dials `192.168.x.y:50061` directly
-  (`agent_port`, `options.agent_address` overrides the discovery).
+  (`options.agent_port`, `connection.endpoint` overrides the discovery).
 - Only the agent app needs `INTERNET` (I-62); the app under test is driven
   cross-app and needs no permissions (the stub declares none).
 - `terminate`/`restart`/clear-data/`background` of the app under test never
@@ -537,7 +619,7 @@ brew install xcodegen
 cd agents/apple
 xcodegen generate                                  # ImpresarioApple.xcodeproj
 
-# the fixture app under test (what plays point app_id at)
+# the fixture app under test (what the app definition's id/package point at)
 xcodebuild build -scheme AgentTargetStub-iOS \
   -destination 'platform=iOS,id=<udid>' -derivedDataPath build
 xcodebuild build -scheme AgentTargetStub-tvOS \
@@ -570,33 +652,42 @@ plutil -insert TestingEnvironmentVariables.IMPRESARIO_NO_BONJOUR -string 1 \
 
 Master side:
 
-```toml
-[[devices]]
-id = "<udid>"                       # what xcodebuild -destination takes
-platform = "ios"                    # or "tvos"
-app_id = "com.impresario.agent.AgentTargetStub-iOS"
+```yaml
+devices:
+  - name: iphone
+    platform: ios                     # or tvos
+    connection:
+      transport: usb                  # network over WLAN
+      udid: "<udid>"                  # what xcodebuild -destination takes
+      # endpoint: "192.168.1.42:50062"  # WLAN agent address; omit over USB
 
-[devices.options]
-clear_app_data = true
-app_path = "/abs/path/build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app"
-# agent_address = "192.168.1.42:50062"   # WLAN; not needed over USB (iproxy)
+apps:
+  - name: stub
+    platforms:
+      ios:
+        id: com.impresario.agent.AgentTargetStub-iOS
+        package: /abs/path/build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app
+    options:
+      clear_data: true
 ```
 
 ```bash
 IMPRESARIO_XCTESTRUN=build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun \
-  impresario run --config impresario.toml
+  impresario run --play plays/login.play --device iphone --app stub
 ```
 
 Endpoint resolution for Apple devices (`AppleTransport`): a **simulator** is
 reached on loopback; an **iOS device** over USB gets an `iproxy` tunnel the
 transport starts itself (port `50062` by default, `IMPRESARIO_AGENT_PORT`
 changes both sides); an iOS device or Apple TV over **WLAN** uses
-`options.agent_address` — the address the runner logs at start
+`connection.endpoint` — the address the runner logs at start
 (`impresario agent: addresses en0=…`). macOS only: without `xcodebuild`/
-`iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84).
+`iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84). These host tools
+are a **recorded D-19 gap**; replacing them with the Rust `idevice` path is
+Phase 2/3 work.
 
-Clean state per test is a host-side uninstall + reinstall (`clear_app_data` +
-`options.app_path`, I-84); the tool is chosen automatically
+Clean state per test is a host-side uninstall + reinstall (`clear_data` +
+the app platform's `package`, I-84); the tool is chosen automatically
 (`simctl` → `devicectl` → `ideviceinstaller`, the latter from
 `brew install libimobiledevice`). When none is available the option degrades to
 a cold start and one WARN line.
@@ -609,7 +700,7 @@ it for good (I-88). Uninstall + reinstall does **not** reset that permission,
 so it is a one-time cost per device.
 
 Apple TV specifics: no USB path, so WLAN is the only way (put the logged
-address into `agent_address`); the runner presses remote buttons through
+address into `connection.endpoint`); the runner presses remote buttons through
 `XCUIRemote` (D-pad/Select/Menu/PlayPause; `home` = `XCUIDevice.press(.home)`),
 and the stub app's focused row is visible in its `stub_key_log`/`stub_status`
 labels while a play runs.

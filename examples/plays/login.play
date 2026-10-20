@@ -1,5 +1,6 @@
 Play: User Authentication Feature
 Description: Validating secure user entry across platforms.
+App: shop
 Var: USER = 'test_user_impresario'
 
 Act: Successful Login Flow

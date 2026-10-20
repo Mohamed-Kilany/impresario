@@ -11,6 +11,7 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand};
 use impresario_clients::agent_client::{AgentClient, DeviceInfo, HandshakeParams};
 use impresario_clients::transport::{transport_for, DeviceTransport};
+use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::{Code, Diagnostic, Diagnostics};
 use impresario_core::home::Home;
@@ -83,11 +84,19 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Device utilities.
-    Devices {
+    /// Device definitions: add, edit, list, check, import, export.
+    #[command(alias = "devices")]
+    Device {
         #[command(subcommand)]
-        command: DevicesCommand,
+        command: DeviceCommand,
     },
+    /// App definitions: add, edit, list, check, import, export.
+    App {
+        #[command(subcommand)]
+        command: AppCommand,
+    },
+    /// Convert a legacy flat devices file into devices + apps (TASK-2 8.9).
+    Migrate(MigrateArgs),
     /// Plan and execute plays on devices (spec section 8.2/8.3).
     Run(RunArgs),
     /// Run the embedded language server on stdio (spec section 13).
@@ -111,16 +120,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Subcommand)]
-pub enum DevicesCommand {
-    /// List the configured devices.
-    List,
-    /// Transport prepare + handshake + DeviceInfo, then teardown.
-    Check {
-        /// Device names (default: all).
-        names: Vec<String>,
-    },
-}
+use crate::definitions::{AppCommand, DeviceCommand, MigrateArgs};
 
 /// `--global` / `--workspace` scope selector; the workspace is the default.
 #[derive(Debug, Args)]
@@ -227,6 +227,9 @@ pub struct RunArgs {
     /// Play file, directory or glob (repeatable; default: plays_dir).
     #[arg(long, value_name = "FILE|DIR|GLOB")]
     pub play: Vec<String>,
+    /// App definition to bind (beats each play's `App:` header).
+    #[arg(long, value_name = "NAME")]
+    pub app: Option<String>,
     /// Device name (repeatable) or `all`.
     #[arg(long, value_name = "NAME")]
     pub device: Vec<String>,
@@ -295,12 +298,17 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Workspace { command } => cmd_workspace(command, &home, &base, base_source),
         Command::Validate { paths } => cmd_validate(&base, &config_path, &devices_path, paths),
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
-        Command::Devices { command } => match command {
-            DevicesCommand::List => cmd_devices_list(&devices_path),
-            DevicesCommand::Check { names } => {
+        Command::Device { command } => match command {
+            DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)
             }
+            other => crate::definitions::run_device(other, &home, &devices_path),
         },
+        Command::App { command } => {
+            let apps_path = base.join("impresario.apps.config");
+            crate::definitions::run_app(command, &home, &apps_path)
+        }
+        Command::Migrate(args) => crate::definitions::migrate(&base, args.dry_run),
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&base, &config_path, &devices_path),
@@ -378,31 +386,61 @@ const EXAMPLE_DEVICES: &str = "\
 devices:
   - name: living_room_tv
     platform: webos
-    target_endpoint: ws://192.168.1.50:9998
-    app_url: http://localhost:8080/index.html   # optional
+    connection:
+      transport: ssh
+      host: 192.168.1.50
+      endpoint: ws://192.168.1.50:9998
+    labels: [tv, living_room]
   - name: flagship_android
     platform: android
-    target_endpoint: emulator-5554
-    app_id: com.example.shop
+    connection:
+      transport: usb
+      serial: emulator-5554
   - name: shield_tv
     platform: androidtv
-    target_endpoint: 192.168.1.60:5555
-    app_id: com.example.shop.tv
+    connection:
+      transport: tcp
+      host: 192.168.1.60
+      port: 5555
   - name: test_iphone
     platform: ios
-    target_endpoint: 00008110-001A2345021E001E
-    app_id: com.example.shop
+    connection:
+      udid: 00008110-001A2345021E001E
   - name: apple_tv
     platform: tvos
-    target_endpoint: 00008110-001B3456021E002F
-    agent_address: 192.168.1.70:50062
-    app_id: com.example.shop.tv
+    connection:
+      udid: 00008110-001B3456021E002F
+      endpoint: 192.168.1.70:50062
   # A local Chromium instance started by the connector; uncomment to try the
-  # example on this machine (spec section 4.2).
+  # example on this machine (TASK-2 section 4.3).
   # - name: local_chrome
   #   platform: web
-  #   target_endpoint: launch
-  #   app_url: http://localhost:8080/index.html
+  #   connection:
+  #     transport: launch
+";
+
+const EXAMPLE_APPS: &str = "\
+# Apps are separate from devices (D-21); a play binds one with `App: shop`.
+apps:
+  - name: shop
+    description: Example store app across phone, TV and web
+    platforms:
+      web:
+        url: http://localhost:8080/index.html
+      webos:
+        id: com.example.shop
+      tizen:
+        id: AbCdEf1234.Shop
+      android:
+        id: com.example.shop
+      androidtv:
+        id: com.example.shop.tv
+      ios:
+        id: com.example.shop
+      tvos:
+        id: com.example.shop.tv
+    options:
+      clear_data: false
 ";
 
 const EXAMPLE_LOGIN_SCENE: &str = "\
@@ -428,6 +466,7 @@ Pieces:
 const EXAMPLE_LOGIN_PLAY: &str = "\
 Play: User Authentication Feature
 Description: Validating secure user entry across platforms.
+App: shop
 Var: USER = 'test_user_impresario'
 
 Act: Successful Login Flow
@@ -1103,6 +1142,7 @@ fn cmd_workspace_new(root: &Path, example: bool, force: bool) -> i32 {
     if example {
         files.extend([
             ("impresario.devices.config", EXAMPLE_DEVICES),
+            ("impresario.apps.config", EXAMPLE_APPS),
             ("scenes/LoginScreen.scene", EXAMPLE_LOGIN_SCENE),
             ("scenes/DashboardScreen.scene", EXAMPLE_DASHBOARD_SCENE),
             ("plays/login.play", EXAMPLE_LOGIN_PLAY),
@@ -1219,9 +1259,12 @@ pub(crate) struct ValidateOutcome {
     pub config_ok: bool,
     /// False when `impresario.devices.config` could not be read at all.
     pub devices_ok: bool,
+    /// False when `impresario.apps.config` could not be read at all.
+    pub apps_ok: bool,
     pub scenes: usize,
     pub plays: usize,
     pub devices: usize,
+    pub apps: usize,
 }
 
 pub(crate) fn validate_workspace(
@@ -1239,22 +1282,41 @@ pub(crate) fn validate_workspace(
             diagnostics: all,
             config_ok: false,
             devices_ok: true,
+            apps_ok: true,
             scenes: 0,
             plays: 0,
             devices: 0,
+            apps: 0,
         };
     };
 
-    let devices_outcome = config::load_devices(devices_path);
+    let devices_outcome = config::load_devices_merged(devices_path);
     all.extend(devices_outcome.diagnostics.iter().cloned());
     let Some(devices) = devices_outcome.config else {
         return ValidateOutcome {
             diagnostics: all,
             config_ok: true,
             devices_ok: false,
+            apps_ok: true,
             scenes: 0,
             plays: 0,
             devices: 0,
+            apps: 0,
+        };
+    };
+    let apps_path = base.join("impresario.apps.config");
+    let apps_outcome = apps::load_apps_merged(&apps_path);
+    all.extend(apps_outcome.diagnostics.iter().cloned());
+    let Some(app_list) = apps_outcome.config else {
+        return ValidateOutcome {
+            diagnostics: all,
+            config_ok: true,
+            devices_ok: true,
+            apps_ok: false,
+            scenes: 0,
+            plays: 0,
+            devices: devices.devices.len(),
+            apps: 0,
         };
     };
 
@@ -1295,13 +1357,35 @@ pub(crate) fn validate_workspace(
     let semantic = validation::validate(&loaded.workspace, &device_refs);
     all.extend(semantic.iter().cloned());
 
+    // Resolve each play's `App:` header against the merged app layer.
+    for play in &loaded.workspace.plays {
+        let Some(named) = &play.app else {
+            continue;
+        };
+        if !app_list.apps.iter().any(|app| app.name == named.name) {
+            let names: Vec<&str> = app_list.apps.iter().map(|app| app.name.as_str()).collect();
+            let help = if names.is_empty() {
+                "add an app definition or run `impresario app add`".to_string()
+            } else {
+                format!("available apps: {}", names.join(", "))
+            };
+            all.push(
+                Diagnostic::error(Code::AppUnknown, format!("unknown app '{}'", named.name))
+                    .with_span(named.span.clone())
+                    .with_help(help),
+            );
+        }
+    }
+
     ValidateOutcome {
         diagnostics: all,
         config_ok: true,
         devices_ok: true,
+        apps_ok: true,
         scenes: loaded.workspace.scenes.len(),
         plays: loaded.workspace.plays.len(),
         devices: devices.devices.len(),
+        apps: app_list.apps.len(),
     }
 }
 
@@ -1322,6 +1406,13 @@ fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[P
         );
         return EXIT_USAGE;
     }
+    if !outcome.apps_ok {
+        eprintln!(
+            "validate: configuration errors in {}",
+            base.join("impresario.apps.config").display()
+        );
+        return EXIT_USAGE;
+    }
     let errors = outcome.diagnostics.errors().count();
     let warnings = outcome.diagnostics.warnings().count();
     if errors > 0 {
@@ -1329,8 +1420,8 @@ fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[P
         return EXIT_USAGE;
     }
     println!(
-        "validate: ok ({} scene(s), {} play(s), {} device(s), {} warning(s))",
-        outcome.scenes, outcome.plays, outcome.devices, warnings
+        "validate: ok ({} scene(s), {} play(s), {} device(s), {} app(s), {} warning(s))",
+        outcome.scenes, outcome.plays, outcome.devices, outcome.apps, warnings
     );
     EXIT_OK
 }
@@ -1421,28 +1512,6 @@ fn report_parse(
 // devices
 // ---------------------------------------------------------------------------
 
-fn cmd_devices_list(devices_path: &Path) -> i32 {
-    let outcome = config::load_devices(devices_path);
-    render::eprint_all(&outcome.diagnostics);
-    let Some(devices) = outcome.config else {
-        eprintln!(
-            "devices list: configuration errors in {}",
-            devices_path.display()
-        );
-        return EXIT_USAGE;
-    };
-    println!("{:<20} {:<10} TARGET", "NAME", "PLATFORM");
-    for device in &devices.devices {
-        println!(
-            "{:<20} {:<10} {}",
-            device.name,
-            device.platform.as_str(),
-            device.target_endpoint
-        );
-    }
-    EXIT_OK
-}
-
 fn cmd_devices_check(
     base: &Path,
     config_path: &Path,
@@ -1458,7 +1527,7 @@ fn cmd_devices_check(
         );
         return EXIT_USAGE;
     };
-    let outcome = config::load_devices(devices_path);
+    let outcome = config::load_devices_merged(devices_path);
     render::eprint_all(&outcome.diagnostics);
     let Some(devices) = outcome.config else {
         eprintln!(
@@ -1499,7 +1568,9 @@ fn cmd_devices_check(
     let results: Vec<Result<DeviceInfo, String>> = runtime.block_on(async {
         let mut results = Vec::new();
         for device in &selected {
-            results.push(check_device(device, timeout_ms, token.as_deref(), &master_version).await);
+            results.push(
+                check_device(device, None, timeout_ms, token.as_deref(), &master_version).await,
+            );
         }
         results
     });
@@ -1544,12 +1615,21 @@ fn cmd_devices_check(
 /// then teardown (spec 8.1); every failure is a message, never a panic.
 pub(crate) async fn check_device(
     device: &DeviceConfig,
+    app: Option<&AppConfig>,
     timeout_ms: u64,
     token: Option<&str>,
     master_version: &str,
 ) -> Result<DeviceInfo, String> {
     let mut transport = transport_for(device.platform);
-    let outcome = check_transport(&mut *transport, device, timeout_ms, token, master_version).await;
+    let outcome = check_transport(
+        &mut *transport,
+        device,
+        app,
+        timeout_ms,
+        token,
+        master_version,
+    )
+    .await;
     let teardown = transport
         .teardown()
         .await
@@ -1566,12 +1646,13 @@ pub(crate) async fn check_device(
 async fn check_transport(
     transport: &mut dyn DeviceTransport,
     device: &DeviceConfig,
+    app: Option<&AppConfig>,
     timeout_ms: u64,
     token: Option<&str>,
     master_version: &str,
 ) -> Result<DeviceInfo, String> {
     let endpoint = transport
-        .prepare(device)
+        .prepare(device, app)
         .await
         .map_err(|error| error.to_string())?;
     let client = AgentClient::connect_retry(endpoint.address(), Duration::from_millis(timeout_ms))
@@ -1581,11 +1662,12 @@ async fn check_transport(
     let mut params = HandshakeParams::new(
         device.name.clone(),
         device.platform,
-        device.target_endpoint.clone(),
+        device.target_endpoint(),
         master_version,
     );
-    params.app_id = device.app_id.clone();
-    params.app_url = device.app_url.clone();
+    let entry = app.and_then(|app| app.platform(device.platform));
+    params.app_id = entry.and_then(|entry| entry.id.clone());
+    params.app_url = entry.and_then(|entry| entry.url.clone());
     params.auth_token = token.map(str::to_string);
     let handshake = client
         .handshake(&params)
@@ -1746,7 +1828,7 @@ pub(crate) fn run_workspace(
             diagnostics_detail(&config_outcome.diagnostics),
         );
     };
-    let devices_outcome = config::load_devices(devices_path);
+    let devices_outcome = config::load_devices_merged(devices_path);
     render::eprint_all(&devices_outcome.diagnostics);
     let Some(device_list) = devices_outcome.config else {
         let message = format!("run: configuration errors in {}", devices_path.display());
@@ -1755,6 +1837,18 @@ pub(crate) fn run_workspace(
             EXIT_USAGE,
             message,
             diagnostics_detail(&devices_outcome.diagnostics),
+        );
+    };
+    let apps_path = base.join("impresario.apps.config");
+    let apps_outcome = apps::load_apps_merged(&apps_path);
+    render::eprint_all(&apps_outcome.diagnostics);
+    let Some(app_list) = apps_outcome.config else {
+        let message = format!("run: configuration errors in {}", apps_path.display());
+        eprintln!("{message}");
+        return RunOutcome::refusal_with_detail(
+            EXIT_USAGE,
+            message,
+            diagnostics_detail(&apps_outcome.diagnostics),
         );
     };
 
@@ -1857,7 +1951,10 @@ pub(crate) fn run_workspace(
     let input = plan::PlanInput {
         config: &config,
         workspace: &ws,
+        base,
         devices: &selected_devices,
+        apps: &app_list.apps,
+        cli_app: args.app.as_deref(),
         plays: &ws.plays,
         selection: &selection,
         cli_vars: &cli_vars,
@@ -2188,10 +2285,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_without_configs_fails() {
+    fn validate_without_configs_uses_defaults() {
+        // Missing files are empty layers (TASK-2 4.2), so an empty workspace is
+        // valid with the schema defaults.
         let dir = temp_workspace("validate-noconfig");
         let code = run_with(&argv(&dir, &["validate"]));
-        assert_eq!(code, EXIT_USAGE);
+        assert_eq!(code, EXIT_OK);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2243,11 +2342,12 @@ mod tests {
         let device = |name: &str| DeviceConfig {
             name: name.to_string(),
             platform: Platform::Android,
-            target_endpoint: "emulator-5554".to_string(),
-            app_id: None,
-            app_url: None,
-            agent_address: None,
-            connector: None,
+            connection: impresario_core::config::DeviceConnection {
+                serial: Some("emulator-5554".to_string()),
+                ..Default::default()
+            },
+            auth: Default::default(),
+            labels: Vec::new(),
             options: Default::default(),
         };
         let devices = vec![device("a"), device("b")];

@@ -93,7 +93,7 @@ fn readme_mock_quick_start_runs_green() {
     let devices_path = temp.path().join("impresario.devices.config");
     let mut devices = std::fs::read_to_string(&devices_path).expect("read devices");
     devices.push_str(&format!(
-        "  - name: mock_device\n    platform: webos\n    target_endpoint: ws://127.0.0.1:9999\n    connector: {address}\n"
+        "  - name: mock_device\n    platform: webos\n    connection:\n      host: 127.0.0.1\n      endpoint: ws://127.0.0.1:9999\n    options:\n      connector_address: {address}\n"
     ));
     std::fs::write(&devices_path, devices).expect("write devices");
 

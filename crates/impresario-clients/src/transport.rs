@@ -13,6 +13,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use impresario_core::apps::AppConfig;
 use impresario_core::command::{WireError, WireErrorCode};
 use impresario_core::config::DeviceConfig;
 use impresario_core::platforms::{Platform, TransportFamily};
@@ -252,16 +253,23 @@ pub fn apple_reset_commands(
 #[async_trait]
 pub trait DeviceTransport: Send {
     /// Prepare the device and return the executor endpoint (spec 7.3 step 1).
-    async fn prepare(&mut self, device: &DeviceConfig) -> Result<Endpoint, TransportError>;
+    /// `app` is `None` for an app-less web run; native transports use it for
+    /// the app id/package when they need one.
+    async fn prepare(
+        &mut self,
+        device: &DeviceConfig,
+        app: Option<&AppConfig>,
+    ) -> Result<Endpoint, TransportError>;
 
     /// Host-side clean state before a reset `AppControl` (spec 7.3 step 4,
     /// I-84). The Android family wipes the package inside the agent, so its
     /// transport keeps this default (`NotRequested`: no host-side work). The
-    /// Apple family reinstalls the app under test from `options.app_path` and
-    /// returns `Reset`, or `Unavailable` when the host cannot.
+    /// Apple family reinstalls the app under test from the app's platform
+    /// `package` and returns `Reset`, or `Unavailable` when the host cannot.
     async fn reset_app_data(
         &mut self,
         _device: &DeviceConfig,
+        _app: Option<&AppConfig>,
     ) -> Result<ResetOutcome, TransportError> {
         Ok(ResetOutcome::NotRequested)
     }
@@ -566,13 +574,16 @@ impl Default for ConnectorTransport {
 
 #[async_trait]
 impl DeviceTransport for ConnectorTransport {
-    async fn prepare(&mut self, device: &DeviceConfig) -> Result<Endpoint, TransportError> {
+    async fn prepare(
+        &mut self,
+        device: &DeviceConfig,
+        _app: Option<&AppConfig>,
+    ) -> Result<Endpoint, TransportError> {
         let address = device
-            .agent_address()
-            .or_else(|| device.default_agent_address())
+            .connector_address()
             .ok_or_else(|| {
                 TransportError::Transport(format!(
-                    "device '{}' has no agent_address and no default for {}",
+                    "device '{}' has no connector_address and no default for {}",
                     device.name, device.platform
                 ))
             })?
@@ -776,16 +787,23 @@ impl AdbTransport {
         Ok(())
     }
 
-    /// `pm clear <app_id>` when the device option asks for it.
+    /// `pm clear <app id>` when the app option asks for it.
     async fn maybe_clear_data(
         &self,
         serial: &str,
-        device: &DeviceConfig,
+        app: Option<&AppConfig>,
+        platform: Platform,
     ) -> Result<(), TransportError> {
-        if !device.options.clear_app_data {
+        let Some(app) = app else {
+            return Ok(());
+        };
+        if !app.options.clear_data {
             return Ok(());
         }
-        let Some(app_id) = device.app_id.as_deref() else {
+        let Some(app_id) = app
+            .platform_with_fallback(platform)
+            .and_then(|entry| entry.id.as_deref())
+        else {
             return Ok(());
         };
         let output = self
@@ -891,9 +909,13 @@ impl AdbTransport {
     async fn spawn_logcat(
         &mut self,
         serial: &str,
-        device: &DeviceConfig,
+        app: Option<&AppConfig>,
+        platform: Platform,
     ) -> Result<(), TransportError> {
-        let pid = match device.app_id.as_deref() {
+        let pid = match app
+            .and_then(|app| app.platform_with_fallback(platform))
+            .and_then(|entry| entry.id.as_deref())
+        {
             Some(app_id) => self
                 .adb_output(&["-s", serial, "shell", "pidof", app_id], ADB_QUERY_TIMEOUT)
                 .await
@@ -926,21 +948,25 @@ impl AdbTransport {
 
 #[async_trait]
 impl DeviceTransport for AdbTransport {
-    async fn prepare(&mut self, device: &DeviceConfig) -> Result<Endpoint, TransportError> {
-        let serial = device.target_endpoint.clone();
+    async fn prepare(
+        &mut self,
+        device: &DeviceConfig,
+        app: Option<&AppConfig>,
+    ) -> Result<Endpoint, TransportError> {
+        let serial = device.target_endpoint();
         self.serial = Some(serial.clone());
         self.device_port = device.effective_agent_port().unwrap_or(ANDROID_AGENT_PORT);
 
         self.verify_device(&serial).await?;
         self.ensure_agent_installed(&serial).await?;
-        self.maybe_clear_data(&serial, device).await?;
+        self.maybe_clear_data(&serial, app, device.platform).await?;
 
         // The master dials the agent's own network address whenever the
-        // device has one (`agent_address` config first, else the adb serial's
-        // host, else `ip route` on the device); `adb forward` is only the
-        // fallback. The agent binds every interface, so the fallback can be
-        // taken even after the session has started (docs/DECISIONS.md I-62).
-        let network = match device.agent_address() {
+        // device has one (`connection.endpoint` override, else the adb
+        // serial's host, else `ip route` on the device); `adb forward` is only
+        // the fallback. The agent binds every interface, so the fallback can
+        // be taken even after the session has started (docs/DECISIONS.md I-62).
+        let network = match device.connection.endpoint.as_deref() {
             Some(configured) => Some(configured.to_string()),
             None => self.network_address(&serial).await,
         };
@@ -949,7 +975,7 @@ impl DeviceTransport for AdbTransport {
         }
 
         self.spawn_instrumentation(&serial).await?;
-        self.spawn_logcat(&serial, device).await?;
+        self.spawn_logcat(&serial, app, device.platform).await?;
 
         if let Some(address) = network {
             match wait_for_port(&address, start_timeout()).await {
@@ -1245,23 +1271,35 @@ impl AppleTransport {
     async fn reset_app_data_for(
         &mut self,
         device: &DeviceConfig,
+        app: Option<&AppConfig>,
     ) -> Result<ResetOutcome, TransportError> {
-        if !device.options.clear_app_data {
+        let Some(app) = app else {
+            return Ok(ResetOutcome::NotRequested);
+        };
+        if !app.options.clear_data {
             return Ok(ResetOutcome::NotRequested);
         }
-        let Some(app_id) = device.app_id.as_deref() else {
-            return Ok(ResetOutcome::Unavailable(
-                "clear_app_data needs app_id (the app under test)".to_string(),
-            ));
+        let Some(entry) = app.platform_with_fallback(device.platform) else {
+            return Ok(ResetOutcome::Unavailable(format!(
+                "app '{}' has no entry for platform {}",
+                app.name, device.platform
+            )));
         };
-        let Some(app_path) = device.options.app_path.as_deref() else {
-            return Ok(ResetOutcome::Unavailable(
-                "set options.app_path to a signed .app bundle or .ipa so the host can reinstall \
-                 the app; without it the agent only cold-starts it (docs/DEVICES.md section 3)"
-                    .to_string(),
-            ));
+        let Some(app_id) = entry.id.as_deref() else {
+            return Ok(ResetOutcome::Unavailable(format!(
+                "app '{}' has no id for platform {}",
+                app.name, device.platform
+            )));
         };
-        let udid = device.target_endpoint.clone();
+        let Some(app_path) = entry.package.as_deref() else {
+            return Ok(ResetOutcome::Unavailable(format!(
+                "app '{}' has no package for platform {}; set package to a signed .app bundle \
+                 or .ipa so the host can reinstall it, otherwise the agent only cold-starts it \
+                 (docs/DEVICES.md section 3)",
+                app.name, device.platform
+            )));
+        };
+        let udid = device.target_endpoint();
         let tool = self.reset_tool(&udid).await;
         for step in apple_reset_commands(tool, &udid, app_id, app_path) {
             let program = find_in_path(&step.program).ok_or_else(|| {
@@ -1301,7 +1339,11 @@ impl AppleTransport {
 
 #[async_trait]
 impl DeviceTransport for AppleTransport {
-    async fn prepare(&mut self, device: &DeviceConfig) -> Result<Endpoint, TransportError> {
+    async fn prepare(
+        &mut self,
+        device: &DeviceConfig,
+        _app: Option<&AppConfig>,
+    ) -> Result<Endpoint, TransportError> {
         if !cfg!(target_os = "macos") {
             return Err(TransportError::DeviceUnavailable(format!(
                 "device '{}' ({}) needs a macOS host: iproxy/xcodebuild are not available on {}",
@@ -1310,13 +1352,13 @@ impl DeviceTransport for AppleTransport {
                 std::env::consts::OS
             )));
         }
-        let udid = device.target_endpoint.clone();
+        let udid = device.target_endpoint();
         let agent_port = device.effective_agent_port().unwrap_or(APPLE_AGENT_PORT);
         match device.platform {
             Platform::Tvos => {
-                let address = device.agent_address().ok_or_else(|| {
+                let address = device.connection.endpoint.as_deref().ok_or_else(|| {
                     TransportError::DeviceUnavailable(format!(
-                        "tvOS device '{}' requires agent_address (Bonjour discovery is not \
+                        "tvOS device '{}' requires connection.endpoint (Bonjour discovery is not \
                          implemented, I-09)",
                         device.name
                     ))
@@ -1370,6 +1412,7 @@ impl DeviceTransport for AppleTransport {
     async fn reset_app_data(
         &mut self,
         device: &DeviceConfig,
+        app: Option<&AppConfig>,
     ) -> Result<ResetOutcome, TransportError> {
         if !cfg!(target_os = "macos") {
             return Err(TransportError::DeviceUnavailable(format!(
@@ -1377,7 +1420,7 @@ impl DeviceTransport for AppleTransport {
                 device.name, device.platform
             )));
         }
-        self.reset_app_data_for(device).await
+        self.reset_app_data_for(device, app).await
     }
 
     async fn teardown(&mut self) -> Result<(), TransportError> {
@@ -1543,12 +1586,35 @@ mod tests {
         DeviceConfig {
             name: "apple-device".to_string(),
             platform,
-            target_endpoint: udid.to_string(),
-            app_id: Some("com.example.app".to_string()),
-            app_url: None,
-            agent_address: None,
-            connector: None,
+            connection: impresario_core::config::DeviceConnection {
+                udid: Some(udid.to_string()),
+                ..impresario_core::config::DeviceConnection::default()
+            },
+            auth: impresario_core::config::DeviceAuth::default(),
+            labels: Vec::new(),
             options: impresario_core::config::DeviceOptions::default(),
+        }
+    }
+
+    fn apple_app(clear_data: bool, package: Option<&str>) -> AppConfig {
+        let mut platforms = std::collections::BTreeMap::new();
+        platforms.insert(
+            Platform::Ios,
+            impresario_core::apps::AppPlatform {
+                id: Some("com.example.app".to_string()),
+                package: package.map(str::to_string),
+                launch_activity: None,
+                url: None,
+            },
+        );
+        AppConfig {
+            name: "example".to_string(),
+            description: None,
+            platforms,
+            options: impresario_core::apps::AppOptions {
+                clear_data,
+                launch_params: std::collections::BTreeMap::new(),
+            },
         }
     }
 
@@ -1638,8 +1704,9 @@ mod tests {
     async fn apple_reset_is_a_noop_without_clear_app_data() {
         let mut transport = AppleTransport::new();
         let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let app = apple_app(false, None);
         let outcome = transport
-            .reset_app_data_for(&device)
+            .reset_app_data_for(&device, Some(&app))
             .await
             .expect("no-op reset");
         assert_eq!(outcome, ResetOutcome::NotRequested);
@@ -1648,15 +1715,15 @@ mod tests {
     #[tokio::test]
     async fn apple_reset_reports_a_missing_app_path() {
         let mut transport = AppleTransport::new();
-        let mut device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
-        device.options.clear_app_data = true;
+        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let app = apple_app(true, None);
         let outcome = transport
-            .reset_app_data_for(&device)
+            .reset_app_data_for(&device, Some(&app))
             .await
             .expect("unavailable reset");
         match outcome {
             ResetOutcome::Unavailable(reason) => {
-                assert!(reason.contains("app_path"), "{reason}");
+                assert!(reason.contains("package"), "{reason}");
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
@@ -1669,8 +1736,9 @@ mod tests {
         }
         let mut transport = AppleTransport::new();
         let device = apple_device(Platform::Tvos, "00008110-000123456789001E");
+        let app = apple_app(true, Some("/tmp/Example.ipa"));
         let error = transport
-            .reset_app_data(&device)
+            .reset_app_data(&device, Some(&app))
             .await
             .expect_err("host check");
         assert!(matches!(error, TransportError::DeviceUnavailable(_)));
