@@ -11,7 +11,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 authors = ["impresario contributors"]
 
@@ -55,7 +55,16 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "ans
 # networking / websockets
 tokio-tungstenite = { version = "0.30.0", features = ["connect", "handshake"] }
 base64 = "0.23.1"
-mdns-sd = "0.21.5"
+mdns-sd = "=0.21.6"
+
+# Android Debug Bridge protocol (TASK-2 6.1): no adb binary.
+libadb = { version = "=0.6.0", default-features = false, features = ["tokio", "host-keys", "tls", "pairing", "nusb"] }
+nusb = "=0.1.14"
+
+# Managed tool downloads (TASK-2 6.0 rung 3): checksum-verified archives.
+ureq = "=2.12.1"
+sha2 = "=0.10.9"
+zip = { version = "=7.3.0", default-features = false, features = ["deflate-flate2"] }
 
 # reporting
 quick-junit = "0.8.0"

@@ -883,7 +883,11 @@ async fn run_fixture_suite(backend: &str) {
     let mut container_scroll = action(pb::ActionType::Scroll, Some(css("#scroller")));
     container_scroll.direction = pb::Direction::Down as i32;
     container_scroll.count = 1;
-    scrolling.run_ok(body(container_scroll), 2_000).await;
+    // The second browser is launched while the first suite is still warm;
+    // Chrome for Testing occasionally needs longer than the old 2 s to serve
+    // the static fixture under load. Let the connector's normal auto-wait do
+    // its job instead of making the gate timing-dependent.
+    scrolling.run_ok(body(container_scroll), 15_000).await;
     scrolling.text_is(css("#scroller-state"), "scrolled").await;
     // `scrollto` inside the list resolves the container as the primary
     // scrollable and walks it to the end.

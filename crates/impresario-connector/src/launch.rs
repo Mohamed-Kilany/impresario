@@ -64,7 +64,8 @@ pub async fn launch_chromium_at(
 ) -> Result<LaunchedBrowser, ConnectorError> {
     let binary = find_chromium().ok_or_else(|| {
         ConnectorError::device_unavailable(
-            "no Chromium found: set CHROME_BIN or install google-chrome/chromium on PATH"
+            "no Chromium found: set CHROME_BIN, install google-chrome/chromium, or run \
+             `impresario tools install chromium`"
                 .to_string(),
         )
     })?;
@@ -204,70 +205,12 @@ pub fn split_ws_endpoint(ws_url: &str) -> Option<(String, u16)> {
     Some((host, port))
 }
 
-/// `CHROME_BIN`, then PATH, then well-known install locations
-/// (decision I-35: Windows/macOS installers do not add Chrome to PATH).
+/// `CHROME_BIN`, then the managed Chrome for Testing build (TASK-2 6.0
+/// rung 3), then PATH, then well-known install locations (decision I-35:
+/// Windows/macOS installers do not add Chrome to PATH).
 #[must_use]
 pub fn find_chromium() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CHROME_BIN") {
-        if !path.is_empty() {
-            let path = PathBuf::from(path);
-            if path.is_file() {
-                return Some(path);
-            }
-            tracing::warn!(path = %path.display(), "CHROME_BIN does not point at a file; continuing the search");
-        }
-    }
-    for name in [
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-        "chrome",
-    ] {
-        if let Some(found) = find_in_path(name) {
-            return Some(found);
-        }
-    }
-    for candidate in WELL_KNOWN_BINARIES {
-        let path = PathBuf::from(candidate);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    None
-}
-
-#[cfg(windows)]
-const WELL_KNOWN_BINARIES: &[&str] = &[
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-];
-
-#[cfg(target_os = "macos")]
-const WELL_KNOWN_BINARIES: &[&str] = &[
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-];
-
-#[cfg(all(unix, not(target_os = "macos")))]
-const WELL_KNOWN_BINARIES: &[&str] = &[
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/snap/bin/chromium",
-];
-
-fn find_in_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    impresario_core::tools::find_chromium()
 }
 
 #[cfg(test)]

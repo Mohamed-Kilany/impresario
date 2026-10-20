@@ -79,6 +79,28 @@ pub enum DeviceCommand {
         #[arg(long, conflicts_with = "workspace")]
         merged: bool,
     },
+    /// List USB and wireless-debugging devices using the native transport.
+    Discover {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+        /// mDNS browse window in seconds.
+        #[arg(long, default_value_t = 2)]
+        timeout: u64,
+    },
+    /// Pair an Android 11+ wireless-debugging device (six-digit code).
+    Pair {
+        /// Pairing endpoint shown on the device (`HOST:PORT`).
+        target: String,
+        /// Six-digit pairing code shown on the device.
+        #[arg(long)]
+        code: String,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Interactive wizard with discovery, pairing, preview and scope choice.
+    Wizard(crate::wizard::WizardArgs),
 }
 
 #[derive(Debug, Args)]
@@ -223,6 +245,13 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
             scope,
         } => rename_device(name, new_name, home, workspace_path, !scope.workspace),
         DeviceCommand::List { json } => list_devices(home, workspace_path, *json),
+        DeviceCommand::Discover { json, timeout } => {
+            crate::wizard::run_discover(home, *json, *timeout)
+        }
+        DeviceCommand::Pair { target, code, json } => {
+            crate::wizard::run_pair(home, target, code, *json)
+        }
+        DeviceCommand::Wizard(args) => crate::wizard::run(args, home, workspace_path),
         DeviceCommand::Show { name } => show_device(name, home, workspace_path),
         DeviceCommand::Check { names } => {
             // The actual connectivity check lives in cli.rs (it needs the
@@ -347,6 +376,59 @@ fn add_device(args: &DeviceAddArgs, home: &Home, workspace_path: &Path, replace:
             EXIT_USAGE
         }
     }
+}
+
+/// Path of the layer a wizard/tool write would touch.
+pub(crate) fn device_layer_path(
+    home: &Home,
+    workspace_path: &Path,
+    workspace_scope: bool,
+) -> PathBuf {
+    layer_path(home, workspace_path, !workspace_scope, true)
+}
+
+/// Upsert one device definition through the same validated mutation path as
+/// `device add`/`device edit`. The wizard uses this after its preview, so a
+/// cancelled or invalid session never writes anything.
+pub(crate) fn save_device(
+    home: &Home,
+    workspace_path: &Path,
+    workspace_scope: bool,
+    replace: bool,
+    device: &DeviceConfig,
+) -> Result<PathBuf, String> {
+    let path = device_layer_path(home, workspace_path, workspace_scope);
+    mutate_devices(&path, |source| {
+        let outcome = config::parse_devices(source, &path);
+        let Some(mut parsed) = outcome.config else {
+            return Err(render_diagnostics(&outcome.diagnostics));
+        };
+        if let Some(index) = parsed
+            .devices
+            .iter()
+            .position(|item| item.name == device.name)
+        {
+            if !replace {
+                return Err(format!(
+                    "device '{}' already exists; use `device edit` to replace it",
+                    device.name
+                ));
+            }
+            let Some(slot) = parsed.devices.get_mut(index) else {
+                return Err(format!(
+                    "device '{}' disappeared during the edit",
+                    device.name
+                ));
+            };
+            *slot = device.clone();
+        } else if replace {
+            return Err(format!("device '{}' does not exist", device.name));
+        } else {
+            parsed.devices.push(device.clone());
+        }
+        Ok(parsed)
+    })?;
+    Ok(path)
 }
 
 fn remove_device(name: &str, home: &Home, workspace_path: &Path, global: bool) -> i32 {

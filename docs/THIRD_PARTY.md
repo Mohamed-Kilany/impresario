@@ -32,25 +32,34 @@ facts only).
 | `app-store-connect` | 0.7.0 | Apache-2.0 OR MIT | App Store Connect API (certs/profiles/devices) | candidate — I-96(b) |
 | `isideload` | 0.5.0 | MIT | free-Apple-ID sideloading prior art (not a dependency — studied) | reference |
 | `rusbmux` | 0.3.0 | MIT OR Apache-2.0 | pure-Rust usbmuxd over nusb (candidate replacement for Apple's service) | candidate, experimental (190 downloads; needs hardware) |
-| `adb_client` | 3.2.3 | MIT | Android: direct ADB over TCP/TLS (STLS + token auth), shell, sync, install, framebuffer, mDNS | chosen — I-97 |
-| `rusb` | 0.9.4 | MIT | Android USB transport (Windows WinUSB) | candidate (S-1; `adb_client`'s `usb` feature) |
-| `curve25519-dalek` | 5.0.0 | BSD-3-Clause | pairing: Edwards point/scalar arithmetic | chosen — I-97 |
-| `sha2` | 0.11.1 | MIT OR Apache-2.0 | pairing: SHA-512 transcripts | chosen — I-97 |
-| `hkdf` | 0.13.0 | MIT OR Apache-2.0 | pairing: AES key derivation | chosen — I-97 |
-| `aes-gcm` | 0.11.1 | Apache-2.0 OR MIT | pairing: peer-info encryption | chosen — I-97 |
-| `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | pairing TLS 1.3 channel (any-cert verifier) | chosen — I-97 |
-| `tokio-rustls` | 0.26.6 | MIT OR Apache-2.0 | async TLS glue | chosen — I-97 |
-| `rcgen` | 0.14.10 | MIT OR Apache-2.0 | pairing self-signed certificate | chosen — I-97 |
-| `mdns-sd` | 0.21.6 | Apache-2.0 OR MIT | discovery of `_adb-tls-pairing` / `_adb-tls-connect` | chosen — I-97 |
+| `libadb` | 0.6.0 | MIT | Android: direct TCP/USB ADB, TLS/RSA auth, Android 11+ pairing (SPAKE2), shell v2, sync, install, instrumentation, forwarding, logcat, screencap | chosen - I-121 (supersedes `adb_client`, I-97) |
+| `nusb` | 0.1.14 | Apache-2.0 OR MIT | Android USB backend for `libadb` (WinUSB on Windows) | chosen - I-121 |
+| `adb_client` | 3.2.3 | MIT | Android direct ADB (S-1 candidate) | **not used** - superseded by I-121 before shipping |
+| `rusb` | 0.9.4 | MIT | Android USB transport (S-1 candidate) | **not used** - `libadb` uses `nusb` (I-121) |
+| `curve25519-dalek` | 5.0.0 | BSD-3-Clause | pairing: Edwards point/scalar arithmetic (S-1 plan) | **not used** - own pairing superseded by `libadb` (I-121) |
+| `sha2` | 0.10.9 | MIT OR Apache-2.0 | managed Chromium archive SHA-256; `libadb` uses its own pairing hashes | chosen - I-123 |
+| `hkdf` | 0.13.0 | MIT OR Apache-2.0 | pairing: AES key derivation (S-1 plan) | **not used** - own pairing superseded (I-121) |
+| `aes-gcm` | 0.11.1 | Apache-2.0 OR MIT | pairing: peer-info encryption (S-1 plan) | **not used** - own pairing superseded (I-121) |
+| `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | pairing TLS 1.3 channel (S-1 plan; transitive via `libadb` only) | **not a direct dependency** - I-121 |
+| `tokio-rustls` | 0.26.6 | MIT OR Apache-2.0 | async TLS glue (S-1 plan) | **not used** - I-121 |
+| `rcgen` | 0.14.10 | MIT OR Apache-2.0 | pairing self-signed certificate (S-1 plan) | **not used** - I-121 |
+| `mdns-sd` | 0.21.6 | Apache-2.0 OR MIT | discovery of `_adb-tls-pairing` / `_adb-tls-connect` | chosen - I-121 |
+| `ureq` | 2.12.1 | MIT OR Apache-2.0 | managed Chromium HTTPS download (consented, pinned) | chosen - I-123 |
+| `zip` | 7.3.0 | MIT | managed Chromium archive extraction | chosen - I-123 |
+| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Windows AppContainer ACL grant for the managed browser (Windows-only) | chosen - I-123 |
 | `russh` | 0.63.3 | Apache-2.0 | webOS SSH transport (`ring` backend, no NASM/OpenSSL) | chosen — I-99 |
 | `russh-sftp` | 3.0.1 | Apache-2.0 | webOS SFTP upload (exec `cat` fallback) | chosen — I-99 |
 | `ssh2` | 0.9.6 | MIT OR Apache-2.0 | libssh2 binding; would drag OpenSSL/Perl into the Windows build | rejected — I-99 |
 
 ## Managed payloads (ladder rung 2/3, TASK-2 §6.0)
 
-None yet. Chromium builds / Apple DDI assets are expected here in Phases 3/7;
-they ship only via the explicit, checksummed, cancellable download flow the user
-approved (§12 question 4).
+| Payload | Version | License | Used for | Status |
+|---|---|---|---|---|
+| Chrome for Testing (Chromium) | 155.0.8059.84 | Chromium source is BSD-3-Clause; the Chrome for Testing binary is distributed by Google under its own Chrome terms, not redistributed here | optional managed browser for the web connector; pinned per platform with size + SHA-256 | chosen - I-123. Downloaded only by `impresario tools install chromium` after consent; never redistributed by Impresario |
+| Apple Developer Disk Image / DDI | TBD | Apple terms | iOS/tvOS device support (Phase 7) | planned; consent + checksum/verification required |
+
+The build embeds no browser and no Apple DDI. `doctor` only reports their
+presence; it never downloads.
 
 ## Host prerequisites (cannot be shipped; D-19 allows them explicitly)
 
@@ -73,7 +82,7 @@ approved (§12 question 4).
 | `alibaba/tidevice` | MIT | instruments/process-control technique | S-2 |
 | `SideStore` / `Feather` | AGPL-3.0 / GPL-3.0 | free-Apple-ID flow limits (anisette, 7-day expiry) | S-6 — facts only |
 | `AOSP platform/packages/modules/adb` | Apache-2.0 | ADB pairing protocol (SPAKE2 over TLS 1.3, exporter `adb-label`, AES-GCM framing, PeerInfo), mDNS service names | S-1 |
-| `BoringSSL` | Apache-2.0 | `spake25519` = SPAKE2 draft-02 (M/N points, scalar hack, SHA-512 transcript) — ported to Rust, not linked | S-1 |
+| `BoringSSL` | Apache-2.0 | `spake25519` = SPAKE2 draft-02 (M/N points, scalar hack, SHA-512 transcript) - facts only; the shipped implementation uses `libadb`, not a port | S-1 |
 | `webosose/ares-cli` | Apache-2.0 | webOS command strings (luna services), install/upload flow, IPK layout | S-3 |
 | `webosbrew/ares-cli-rs` | Apache-2.0 | webOS dev target (`prisoner:9922`), `/webos_rsa` getkey, luna over SSH | S-3 |
 | `webosbrew/dev-manager-desktop` | Apache-2.0 | webOS key validation and device setup prior art | S-3 |

@@ -31,5 +31,6 @@ pub mod settings;
 pub mod span;
 pub mod strings;
 pub mod support;
+pub mod tools;
 pub mod validation;
 pub mod workspace;

@@ -15,6 +15,7 @@
 
 pub mod cli;
 pub mod definitions;
+pub mod doctor;
 pub mod exec;
 pub mod lsp;
 pub mod mcp;
@@ -24,3 +25,5 @@ pub mod render;
 pub mod report;
 pub mod reporters;
 pub mod time_fmt;
+pub mod tools_cmd;
+pub mod wizard;

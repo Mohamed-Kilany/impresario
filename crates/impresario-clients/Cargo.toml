@@ -21,6 +21,9 @@ thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+libadb.workspace = true
+nusb.workspace = true
+mdns-sd.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

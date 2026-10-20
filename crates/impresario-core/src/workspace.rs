@@ -630,13 +630,15 @@ mod tests {
 
     #[test]
     fn global_config_then_current_dir_are_the_last_resort() {
-        let dir = location_dir("global");
-        let found = resolve_root(None, None, &dir, Some(Path::new("w")));
-        assert_eq!(found.root, dir.join("w"));
+        // Do not use a temp directory here: on Windows it lives under the
+        // user profile, and a real `~/.impresario` would be found as a marker
+        // above it. This test is only about the fallback order, not files.
+        let cwd = Path::new("impresario-no-marker-cwd");
+        let found = resolve_root(None, None, cwd, Some(Path::new("w")));
+        assert_eq!(found.root, cwd.join("w"));
         assert_eq!(found.source, WorkspaceSource::GlobalConfig);
-        let found = resolve_root(None, None, &dir, None);
-        assert_eq!(found.root, dir);
+        let found = resolve_root(None, None, cwd, None);
+        assert_eq!(found.root, cwd);
         assert_eq!(found.source, WorkspaceSource::CurrentDir);
-        let _ = fs::remove_dir_all(&dir);
     }
 }

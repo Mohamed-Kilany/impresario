@@ -16,22 +16,18 @@ use async_trait::async_trait;
 use impresario_core::apps::AppConfig;
 use impresario_core::command::{WireError, WireErrorCode};
 use impresario_core::config::DeviceConfig;
+use impresario_core::home::Home;
 use impresario_core::platforms::{Platform, TransportFamily};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::time::Instant;
 
+use crate::adb::{AdbClient, AdbError, AdbTarget};
 use crate::log::{unix_ms_now, LogBuffer, LogLevel, LogRecord};
 
 /// How long the executor may take to start listening after `prepare` spawned
 /// it. Overridable with `IMPRESARIO_AGENT_START_TIMEOUT_MS`.
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Timeout for quick `adb` queries.
-const ADB_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Timeout for `adb install`.
-const ADB_INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Timeout for the Apple clean-state reinstall (`simctl`/`devicectl`).
 const APPLE_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -496,7 +492,8 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 
 /// The connector binary: `$IMPRESARIO_CONNECTOR_BIN`, else a sibling of the
 /// current executable, else `PATH`.
-fn resolve_connector_binary() -> Option<PathBuf> {
+#[must_use]
+pub fn connector_binary() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("IMPRESARIO_CONNECTOR_BIN") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -594,7 +591,7 @@ impl DeviceTransport for ConnectorTransport {
             return Ok(Endpoint::new(address));
         }
 
-        let binary = resolve_connector_binary().ok_or_else(|| {
+        let binary = connector_binary().ok_or_else(|| {
             TransportError::Transport(format!(
                 "nothing is listening on {address} and impresario-connector was not found; \
                  build it (cargo build -p impresario-connector -p impresario-master) or start it manually"
@@ -641,19 +638,20 @@ impl DeviceTransport for ConnectorTransport {
 // AdbTransport (android, androidtv)
 // ---------------------------------------------------------------------------
 
-/// Android-family transport (spec section 9): adb checks, agent APK
+/// Android-family transport (spec section 9): native ADB checks, agent APK
 /// install/refresh, instrumentation runner and host-side logcat. The master
 /// dials the agent over the network whenever the device has a discoverable
-/// address; `adb forward` is only the fallback (docs/DECISIONS.md I-62).
-/// Every adb invocation uses argument arrays, never a shell string.
+/// address; a direct protocol forward is only the fallback (I-62). No `adb`
+/// binary is spawned (D-19).
 pub struct AdbTransport {
-    adb: String,
+    client: Option<AdbClient>,
     serial: Option<String>,
     local_port: Option<u16>,
     device_port: u16,
-    forwarded: bool,
-    instrument: Option<ManagedChild>,
-    logcat: Option<ManagedChild>,
+    forward: Option<tokio::task::JoinHandle<()>>,
+    instrument: Option<tokio::task::JoinHandle<()>>,
+    logcat: Option<tokio::task::JoinHandle<()>>,
+    home: Option<Home>,
     logs: LogBuffer,
 }
 
@@ -667,85 +665,53 @@ impl AdbTransport {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            adb: std::env::var("IMPRESARIO_ADB").unwrap_or_else(|_| "adb".to_string()),
+            client: None,
             serial: None,
             local_port: None,
             device_port: ANDROID_AGENT_PORT,
-            forwarded: false,
+            forward: None,
             instrument: None,
             logcat: None,
+            home: None,
             logs: LogBuffer::new(2000),
         }
     }
 
-    async fn adb_output(
-        &self,
-        args: &[&str],
-        timeout: Duration,
-    ) -> Result<std::process::Output, TransportError> {
-        let mut cmd = Command::new(&self.adb);
-        cmd.args(args);
-        command_output(&mut cmd, timeout, "adb").await
-    }
-
-    /// Verify the serial is present and in state `device`.
-    async fn verify_device(&self, serial: &str) -> Result<(), TransportError> {
-        let output = self.adb_output(&["devices"], ADB_QUERY_TIMEOUT).await?;
-        let listed = parse_adb_devices(&String::from_utf8_lossy(&output.stdout));
-        match listed.get(serial) {
-            Some(state) if state == "device" => Ok(()),
-            Some(state) => Err(TransportError::DeviceUnavailable(format!(
-                "adb device '{serial}' is in state '{state}' (expected 'device')"
-            ))),
-            None => Err(TransportError::DeviceUnavailable(format!(
-                "adb does not list device '{serial}' (checked 'adb devices')"
-            ))),
+    /// Use an explicit home instead of resolving `IMPRESARIO_HOME`. Tests and
+    /// embedders use this to keep the real user home untouched.
+    #[must_use]
+    pub fn with_home(home: Home) -> Self {
+        Self {
+            home: Some(home),
+            ..Self::new()
         }
     }
 
-    async fn is_package_installed(
-        &self,
-        serial: &str,
-        package: &str,
-    ) -> Result<bool, TransportError> {
-        let output = self
-            .adb_output(
-                &["-s", serial, "shell", "pm", "list", "packages"],
-                ADB_QUERY_TIMEOUT,
-            )
-            .await?;
-        Ok(package_installed_in(&output_text(&output), package))
-    }
-
-    async fn install_apk(&self, serial: &str, apk: &Path) -> Result<(), TransportError> {
-        let apk_str = apk.to_string_lossy().to_string();
-        let output = self
-            .adb_output(
-                &["-s", serial, "install", "-r", "-t", apk_str.as_str()],
-                ADB_INSTALL_TIMEOUT,
-            )
-            .await?;
-        let text = output_text(&output);
-        if !output.status.success() || !text.contains("Success") {
-            return Err(TransportError::Transport(format!(
-                "adb install of {} failed: {}",
-                apk.display(),
-                text.trim()
-            )));
+    fn adb_error(error: AdbError) -> TransportError {
+        match error {
+            AdbError::Connect { .. } => TransportError::DeviceUnavailable(error.to_string()),
+            other => TransportError::Transport(other.to_string()),
         }
-        Ok(())
     }
 
     /// Install/refresh the agent APKs when their version hash differs
-    /// (spec section 9). The installed-hash cache lives in the temp dir,
-    /// keyed by serial.
-    async fn ensure_agent_installed(&self, serial: &str) -> Result<(), TransportError> {
+    /// (spec section 9). The installed-hash cache lives under
+    /// `$IMPRESARIO_HOME/cache`, keyed by serial.
+    async fn ensure_agent_installed(
+        &self,
+        client: &AdbClient,
+        home: &Home,
+    ) -> Result<(), TransportError> {
+        let serial = client.target().label();
         let apks = resolve_android_apks();
         if apks.is_empty() {
-            let installed = self.is_package_installed(serial, AGENT_PACKAGE).await?;
+            let installed = client
+                .package_installed(AGENT_PACKAGE)
+                .await
+                .map_err(Self::adb_error)?;
             if installed {
                 tracing::debug!(
-                    serial,
+                    %serial,
                     "no local agent APK found; using the package already installed on the device"
                 );
                 return Ok(());
@@ -758,25 +724,33 @@ impl AdbTransport {
             ));
         }
 
-        let cache_path = std::env::temp_dir().join(format!(
-            "impresario-adb-install-{}.cache",
-            sanitize_for_filename(serial)
+        let cache_path = home.cache_dir().join(format!(
+            "adb-install-{}.cache",
+            sanitize_for_filename(&serial)
         ));
         let cached = read_cache(&cache_path);
         let mut current = BTreeMap::new();
         for (label, path) in &apks {
             current.insert(label.clone(), file_hash(path)?);
         }
-        if cached == current {
-            tracing::debug!(serial, "agent APKs already installed with the same hashes");
+        let installed = client
+            .package_installed(AGENT_PACKAGE)
+            .await
+            .map_err(Self::adb_error)?
+            && client
+                .package_installed(AGENT_INSTRUMENTATION_PACKAGE)
+                .await
+                .map_err(Self::adb_error)?;
+        if cached == current && installed {
+            tracing::debug!(%serial, "agent APKs already installed with the same hashes");
             return Ok(());
         }
         for (label, path) in &apks {
-            if cached.get(label) == current.get(label) {
+            if installed && cached.get(label) == current.get(label) {
                 continue;
             }
-            tracing::info!(serial, apk = %path.display(), "installing agent APK");
-            self.install_apk(serial, path).await?;
+            tracing::info!(%serial, apk = %path.display(), "installing agent APK");
+            client.install_apk(path).await.map_err(Self::adb_error)?;
         }
         self.logs.push(LogRecord::new(
             "adb",
@@ -790,7 +764,7 @@ impl AdbTransport {
     /// `pm clear <app id>` when the app option asks for it.
     async fn maybe_clear_data(
         &self,
-        serial: &str,
+        client: &AdbClient,
         app: Option<&AppConfig>,
         platform: Platform,
     ) -> Result<(), TransportError> {
@@ -806,16 +780,14 @@ impl AdbTransport {
         else {
             return Ok(());
         };
-        let output = self
-            .adb_output(
-                &["-s", serial, "shell", "pm", "clear", app_id],
-                ADB_QUERY_TIMEOUT,
-            )
-            .await?;
-        let text = output_text(&output);
+        let output = client
+            .clear_package(app_id)
+            .await
+            .map_err(Self::adb_error)?;
+        let text = output.stdout_text();
         if !text.contains("Success") {
             tracing::warn!(
-                serial,
+                serial = client.target().label(),
                 app_id,
                 "pm clear did not report success: {}",
                 text.trim()
@@ -824,124 +796,104 @@ impl AdbTransport {
         Ok(())
     }
 
-    /// `adb forward tcp:<free local> tcp:<device_port>`, remembered so
-    /// teardown removes it. Idempotent.
-    async fn forward_port(&mut self, serial: &str) -> Result<(), TransportError> {
-        if self.forwarded {
+    /// Bind a loopback listener bridged directly to `tcp:<device_port>`.
+    async fn forward_port(&mut self, client: &AdbClient) -> Result<(), TransportError> {
+        if self.forward.is_some() {
             return Ok(());
         }
         let local_port = free_local_port().await?;
-        let forward = format!("tcp:{local_port}");
-        let remote = format!("tcp:{}", self.device_port);
-        let output = self
-            .adb_output(
-                &["-s", serial, "forward", &forward, &remote],
-                ADB_QUERY_TIMEOUT,
-            )
-            .await?;
-        if !output.status.success() {
-            return Err(TransportError::Transport(format!(
-                "adb forward {forward} {remote} failed: {}",
-                output_text(&output).trim()
-            )));
-        }
+        let handle = crate::adb::spawn_forward(client, self.device_port, local_port)
+            .await
+            .map_err(Self::adb_error)?;
         self.local_port = Some(local_port);
-        self.forwarded = true;
+        self.forward = Some(handle);
+        wait_for_port(&format!("127.0.0.1:{local_port}"), Duration::from_secs(3)).await?;
         Ok(())
     }
 
-    /// Best-effort reachable address of the device itself: the adb serial's
-    /// host when it is an `ip:port` (adb over TCP), else the source address
-    /// of the device's default route.
-    async fn network_address(&self, serial: &str) -> Option<String> {
-        if let Some(host) = serial_host(serial) {
-            if !is_loopback_address(&host) {
-                return Some(format!("{host}:{}", self.device_port));
+    /// Reachable address of the device itself: the configured override, the
+    /// TCP target host, or the source address of the device's default route.
+    async fn network_address(&self, device: &DeviceConfig, client: &AdbClient) -> Option<String> {
+        if let Some(configured) = device.connection.endpoint.as_deref() {
+            return Some(configured.to_string());
+        }
+        client
+            .network_host()
+            .await
+            .map(|host| format!("{host}:{}", self.device_port))
+    }
+
+    fn spawn_stream(
+        client: &AdbClient,
+        command: String,
+        source: &'static str,
+        logs: &LogBuffer,
+    ) -> tokio::task::JoinHandle<()> {
+        let client = client.clone();
+        let logs = logs.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                crate::adb::stream_shell(&client, &command, source, logs.clone()).await
+            {
+                logs.push(LogRecord::new(
+                    source,
+                    LogLevel::Warn,
+                    format!("stream stopped: {error}"),
+                ));
             }
-        }
-        let route = self
-            .adb_output(&["-s", serial, "shell", "ip", "route"], ADB_QUERY_TIMEOUT)
-            .await
-            .ok()?;
-        if let Some(ip) = parse_route_source(&output_text(&route)) {
-            return Some(format!("{ip}:{}", self.device_port));
-        }
-        let addr = self
-            .adb_output(
-                &["-s", serial, "shell", "ip", "-f", "inet", "addr", "show"],
-                ADB_QUERY_TIMEOUT,
-            )
-            .await
-            .ok()?;
-        parse_inet_address(&output_text(&addr)).map(|ip| format!("{ip}:{}", self.device_port))
+        })
     }
 
-    /// Spawn `adb -s S shell am instrument -w -r ...` as a monitored child
-    /// (stdout captured for diagnostics).
-    async fn spawn_instrumentation(&mut self, serial: &str) -> Result<(), TransportError> {
-        let port = self.device_port.to_string();
+    /// Run `am instrument -w -r ...` over shell v2 and capture its output.
+    fn spawn_instrumentation(&mut self, client: &AdbClient) -> Result<(), TransportError> {
         let runner = format!("{AGENT_INSTRUMENTATION_PACKAGE}/{ANDROID_JUNIT_RUNNER}");
-        let mut cmd = Command::new(&self.adb);
-        cmd.args([
-            "-s",
-            serial,
-            "shell",
-            "am",
+        let command = format!(
+            "am instrument -w -r --user 0 -e class {AGENT_RUNNER_CLASS} -e port {} {runner}",
+            self.device_port
+        );
+        self.instrument = Some(Self::spawn_stream(
+            client,
+            command,
             "instrument",
-            "-w",
-            "-r",
-            "-e",
-            "class",
-            AGENT_RUNNER_CLASS,
-            "-e",
-            "port",
-            port.as_str(),
-            runner.as_str(),
-        ]);
-        let mut child = ManagedChild::spawn("am instrument", &mut cmd)?;
-        drain_child(&mut child, &self.logs, "instrument");
-        self.instrument = Some(child);
+            &self.logs,
+        ));
         Ok(())
     }
 
-    /// Optional host-side `adb logcat`, filtered to the app pid when the app
-    /// is already running.
+    /// Optional host-side `logcat`, filtered to the app pid when the app is
+    /// already running. USB carries a single ADB session, so it is skipped
+    /// there; the instrumentation output and agent logs still flow.
     async fn spawn_logcat(
         &mut self,
-        serial: &str,
+        client: &AdbClient,
         app: Option<&AppConfig>,
         platform: Platform,
     ) -> Result<(), TransportError> {
+        if client.target().is_usb() {
+            self.logs.push(LogRecord::new(
+                "logcat",
+                LogLevel::Debug,
+                "host-side logcat is unavailable over the single USB ADB session",
+            ));
+            return Ok(());
+        }
         let pid = match app
             .and_then(|app| app.platform_with_fallback(platform))
             .and_then(|entry| entry.id.as_deref())
         {
-            Some(app_id) => self
-                .adb_output(&["-s", serial, "shell", "pidof", app_id], ADB_QUERY_TIMEOUT)
-                .await
-                .ok()
-                .map(|output| output_text(&output))
-                .and_then(|text| text.split_whitespace().next().map(str::to_string))
-                .filter(|pid| pid.chars().all(|c| c.is_ascii_digit())),
+            Some(app_id) => client.pid_of(app_id).await.map_err(Self::adb_error)?,
             None => None,
         };
-        let mut cmd = Command::new(&self.adb);
-        cmd.args(["-s", serial, "logcat", "-v", "epoch"]);
-        match &pid {
-            Some(pid) => {
-                cmd.args(["--pid", pid.as_str()]);
-            }
-            None => {
-                self.logs.push(LogRecord::new(
-                    "logcat",
-                    LogLevel::Debug,
-                    "app pid unknown at prepare time; capturing unfiltered logcat",
-                ));
-            }
+        let mut command = "logcat -v epoch".to_string();
+        match pid {
+            Some(pid) => command.push_str(&format!(" --pid {pid}")),
+            None => self.logs.push(LogRecord::new(
+                "logcat",
+                LogLevel::Debug,
+                "app pid unknown at prepare time; capturing unfiltered logcat",
+            )),
         }
-        let mut child = ManagedChild::spawn("adb logcat", &mut cmd)?;
-        drain_child(&mut child, &self.logs, "logcat");
-        self.logcat = Some(child);
+        self.logcat = Some(Self::spawn_stream(client, command, "logcat", &self.logs));
         Ok(())
     }
 }
@@ -953,85 +905,109 @@ impl DeviceTransport for AdbTransport {
         device: &DeviceConfig,
         app: Option<&AppConfig>,
     ) -> Result<Endpoint, TransportError> {
-        let serial = device.target_endpoint();
-        self.serial = Some(serial.clone());
-        self.device_port = device.effective_agent_port().unwrap_or(ANDROID_AGENT_PORT);
-
-        self.verify_device(&serial).await?;
-        self.ensure_agent_installed(&serial).await?;
-        self.maybe_clear_data(&serial, app, device.platform).await?;
-
-        // The master dials the agent's own network address whenever the
-        // device has one (`connection.endpoint` override, else the adb
-        // serial's host, else `ip route` on the device); `adb forward` is only
-        // the fallback. The agent binds every interface, so the fallback can
-        // be taken even after the session has started (docs/DECISIONS.md I-62).
-        let network = match device.connection.endpoint.as_deref() {
-            Some(configured) => Some(configured.to_string()),
-            None => self.network_address(&serial).await,
+        let home = match self.home.clone() {
+            Some(home) => home,
+            None => Home::resolve().map_err(|error| {
+                TransportError::Transport(format!("cannot resolve home: {error}"))
+            })?,
         };
-        if network.is_none() {
-            self.forward_port(&serial).await?;
+        home.ensure_dirs()
+            .map_err(|error| TransportError::Transport(format!("cannot create home: {error}")))?;
+        let target = AdbTarget::for_device(device).map_err(Self::adb_error)?;
+        let client = AdbClient::new(target, &home);
+        self.serial = Some(client.target().label());
+        self.device_port = device.effective_agent_port().unwrap_or(ANDROID_AGENT_PORT);
+        self.client = Some(client.clone());
+
+        let probe = client.probe().await.map_err(Self::adb_error)?;
+        self.logs.push(LogRecord::new(
+            "adb",
+            LogLevel::Info,
+            format!(
+                "{} {} (Android {}, {}) via {}",
+                probe.manufacturer,
+                probe.model,
+                probe.release,
+                probe.form_factor(),
+                client.target().label()
+            ),
+        ));
+        if probe.tv != matches!(device.platform, Platform::AndroidTv) {
+            tracing::warn!(
+                device = %device.name,
+                detected = probe.form_factor(),
+                configured = %device.platform,
+                "the device's form factor differs from its configured platform"
+            );
         }
 
-        self.spawn_instrumentation(&serial).await?;
-        self.spawn_logcat(&serial, app, device.platform).await?;
+        self.ensure_agent_installed(&client, &home).await?;
+        self.maybe_clear_data(&client, app, device.platform).await?;
+
+        // The master dials the agent's own network address whenever the
+        // device has one; the direct forward is only the fallback. The agent
+        // binds every interface, so the fallback can also be taken after the
+        // session has started (docs/DECISIONS.md I-62).
+        let network = self.network_address(device, &client).await;
+        if network.is_none() {
+            self.forward_port(&client).await?;
+        }
+
+        self.spawn_instrumentation(&client)?;
+        self.spawn_logcat(&client, app, device.platform).await?;
 
         if let Some(address) = network {
             match wait_for_port(&address, start_timeout()).await {
                 Ok(()) => return Ok(Endpoint::new(address)),
-                Err(e) => {
+                Err(error) => {
+                    if client.target().is_usb() {
+                        return Err(TransportError::Transport(format!(
+                            "the Android agent is not reachable on {address} ({error}); \
+                             USB ADB carries one session, so the forward fallback cannot \
+                             coexist with instrumentation. Enable Wi-Fi or set \
+                             connection.endpoint to a reachable agent address"
+                        )));
+                    }
                     tracing::warn!(
-                        serial,
-                        address,
-                        "the Android agent is not reachable over the network ({e}); using adb forward"
+                        %address,
+                        "the Android agent is not reachable over the network ({error}); \
+                         using the direct forward"
                     );
-                    self.forward_port(&serial).await?;
+                    self.forward_port(&client).await?;
                 }
             }
         }
 
         let local_port = self.local_port.ok_or_else(|| {
-            TransportError::Transport("no local port for adb forward".to_string())
+            TransportError::Transport("no local port for the ADB forward".to_string())
         })?;
         let address = format!("127.0.0.1:{local_port}");
         wait_for_port(&address, start_timeout())
             .await
-            .map_err(|e| {
+            .map_err(|error| {
                 TransportError::Transport(format!(
-                    "the Android agent did not start listening on {address}: {e}"
+                    "the Android agent did not start listening on {address}: {error}"
                 ))
             })?;
         Ok(Endpoint::new(address))
     }
 
     async fn teardown(&mut self) -> Result<(), TransportError> {
-        let serial = self.serial.clone();
-        if let (Some(serial), Some(local_port)) = (serial.as_deref(), self.local_port) {
-            if self.forwarded {
-                let forward = format!("tcp:{local_port}");
-                let _ = self
-                    .adb_output(
-                        &["-s", serial, "forward", "--remove", &forward],
-                        ADB_QUERY_TIMEOUT,
-                    )
-                    .await;
-                self.forwarded = false;
-            }
+        if let Some(handle) = self.instrument.take() {
+            handle.abort();
+            let _ = handle.await;
         }
-        if let Some(mut instrument) = self.instrument.take() {
-            instrument.stop().await;
+        if let Some(handle) = self.logcat.take() {
+            handle.abort();
+            let _ = handle.await;
         }
-        if let Some(mut logcat) = self.logcat.take() {
-            logcat.stop().await;
+        if let Some(handle) = self.forward.take() {
+            handle.abort();
+            let _ = handle.await;
         }
-        if let Some(serial) = self.serial.as_deref() {
-            let _ = self
-                .adb_output(
-                    &["-s", serial, "shell", "am", "force-stop", AGENT_PACKAGE],
-                    ADB_QUERY_TIMEOUT,
-                )
-                .await;
+        self.local_port = None;
+        if let Some(client) = self.client.as_ref() {
+            client.force_stop(AGENT_PACKAGE).await.ok();
         }
         Ok(())
     }
@@ -1048,70 +1024,6 @@ impl DeviceTransport for AdbTransport {
     fn logs(&self) -> LogBuffer {
         self.logs.clone()
     }
-}
-
-/// Parse `adb devices` output into serial -> state.
-fn parse_adb_devices(text: &str) -> BTreeMap<String, String> {
-    let mut devices = BTreeMap::new();
-    for line in text.lines().skip(1) {
-        let mut tokens = line.split_whitespace();
-        if let (Some(serial), Some(state)) = (tokens.next(), tokens.next()) {
-            devices.insert(serial.to_string(), state.to_string());
-        }
-    }
-    devices
-}
-
-fn package_installed_in(listing: &str, package: &str) -> bool {
-    listing
-        .lines()
-        .any(|line| line.trim() == format!("package:{package}"))
-}
-
-/// The host of an `ip:port` adb serial (adb over TCP) when it is an IPv4
-/// literal; `None` for USB serials and mDNS hostnames.
-fn serial_host(serial: &str) -> Option<String> {
-    let (host, port) = serial.rsplit_once(':')?;
-    if !port.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    host.parse::<std::net::Ipv4Addr>()
-        .ok()
-        .map(|_| host.to_string())
-}
-
-/// Source address of the default route in `ip route` output.
-fn parse_route_source(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let mut tokens = line.split_whitespace();
-        while let Some(token) = tokens.next() {
-            if token == "src" {
-                if let Some(address) = tokens.next() {
-                    if address.parse::<std::net::Ipv4Addr>().is_ok() && !address.starts_with("127.")
-                    {
-                        return Some(address.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// First non-loopback `inet` address in `ip addr` output.
-fn parse_inet_address(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let mut tokens = line.split_whitespace();
-        if tokens.next() == Some("inet") {
-            if let Some(cidr) = tokens.next() {
-                let host = cidr.split('/').next().unwrap_or("");
-                if host.parse::<std::net::Ipv4Addr>().is_ok() && !host.starts_with("127.") {
-                    return Some(host.to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Local agent APKs: env overrides first, then the Gradle debug outputs of
@@ -1468,62 +1380,6 @@ mod tests {
         assert!(!Endpoint::new("192.168.1.50:9998").is_loopback());
         assert_eq!(Endpoint::new("a:1").address(), "a:1");
         assert_eq!(Endpoint::new("a:1").to_string(), "a:1");
-    }
-
-    #[test]
-    fn adb_devices_parsing() {
-        let text =
-            "List of devices attached\nemulator-5554\tdevice\n192.168.1.60:5555\toffline\n\n";
-        let devices = parse_adb_devices(text);
-        assert_eq!(
-            devices.get("emulator-5554").map(String::as_str),
-            Some("device")
-        );
-        assert_eq!(
-            devices.get("192.168.1.60:5555").map(String::as_str),
-            Some("offline")
-        );
-        assert_eq!(devices.len(), 2);
-    }
-
-    #[test]
-    fn device_network_address_parsing() {
-        let route = "192.168.93.0/24 dev wlan0 proto kernel scope link src 192.168.93.84\n\
-                     10.0.0.0/8 dev eth0 proto kernel scope link src 10.0.1.5\n";
-        assert_eq!(parse_route_source(route).as_deref(), Some("192.168.93.84"));
-        assert_eq!(parse_route_source("no routes"), None);
-        assert_eq!(
-            parse_route_source("192.168.0.0/16 dev wlan0 src 127.0.0.1"),
-            None
-        );
-
-        let inet = "2: wlan0: <BROADCAST,MULTICAST,UP> mtu 1500\n    \
-                    inet 192.168.93.84/24 brd 192.168.93.255 scope global wlan0\n";
-        assert_eq!(parse_inet_address(inet).as_deref(), Some("192.168.93.84"));
-        assert_eq!(
-            parse_inet_address("    inet 127.0.0.1/8 scope host lo"),
-            None
-        );
-        assert_eq!(parse_inet_address("no addresses"), None);
-    }
-
-    #[test]
-    fn serial_host_detection() {
-        assert_eq!(
-            serial_host("192.168.93.84:5555").as_deref(),
-            Some("192.168.93.84")
-        );
-        assert_eq!(serial_host("NR9T6TS4MJVSAEIB"), None);
-        assert_eq!(serial_host("emulator-5554"), None);
-        assert_eq!(serial_host("adb-1234._adb-tls-connect._tcp:5555"), None);
-        assert_eq!(serial_host("192.168.93.84:notaport"), None);
-    }
-
-    #[test]
-    fn package_listing_detection() {
-        let listing = "package:com.android.settings\npackage:com.impresario.agent\n";
-        assert!(package_installed_in(listing, "com.impresario.agent"));
-        assert!(!package_installed_in(listing, "com.impresario.agen"));
     }
 
     #[test]

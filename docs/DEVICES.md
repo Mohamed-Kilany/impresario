@@ -12,7 +12,8 @@ The master is always the gRPC **client**. Every executor is a gRPC **server**:
 
 - web/webOS/Tizen → the `impresario-connector` process (spawned or dialed by
   the master),
-- Android → an **instrumentation process** started over `adb`,
+- Android -> an **instrumentation process** started over Impresario's native
+  ADB transport (no `adb` binary at runtime; I-121),
 - iOS/tvOS → a UI-test runner started with `iproxy`/direct network.
 
 `impresario device check` probes one device end to end: transport →
@@ -84,10 +85,20 @@ credential store and are referenced by `auth.key`/`auth.identity`/
 
 ### Setup — verified on this host (headless Chrome)
 
-- A Chromium-based browser is required: `$CHROME_BIN` (must name a file), else
-  the well-known names on `PATH` (`google-chrome`, `chrome`, `chromium`, …),
-  else OS-specific install locations (I-35). Nothing found → `DEVICE_UNAVAILABLE`
-  with an explanation.
+- A Chromium-based browser is required. Lookup order is `$CHROME_BIN` (must
+  name a file), then the managed Chrome for Testing install
+  (`~/.impresario/tools/chromium/<version>/<platform>`), then `PATH`
+  (`google-chrome`, `chrome`, `chromium`, ...), then OS-specific install
+  locations (I-35/I-123). Nothing found -> `DEVICE_UNAVAILABLE` with an
+  explanation.
+- Optional managed browser: `impresario tools install chromium` downloads the
+  pinned Chrome for Testing build after consent (or `--yes`), verifies its
+  SHA-256 (the pinned size is shown for consent), and extracts it under the
+  Impresario home. `doctor` only
+  reports whether it is present; a run never downloads. On Windows the
+  installer also grants the AppContainer RX ACEs the sandbox needs (I-123).
+  The managed build is live-verified here; `CHROME_BIN` and system Chrome
+  remain supported.
 - `impresario-connector` is resolved as `$IMPRESARIO_CONNECTOR_BIN`, else a
   sibling of the master binary, else `impresario-connector` on `PATH` (I-33).
   A loopback `options.connector_address` that already has something listening
@@ -175,30 +186,36 @@ the connector's JS key dispatch; `options.key_dispatch` picks the mechanism
 
 ---
 
-## 2. Android — platforms `android`, `androidtv` (adb + instrumentation agent)
+## 2. Android - platforms `android`, `androidtv` (native ADB + instrumentation agent)
 
 The Android executor is an **instrumentation process launched from the agent's
-own app** (I-62): the master installs three APKs — the agent app `:agent`
+own app** (I-62): the master installs three APKs - the agent app `:agent`
 (`com.impresario.agent`), its `am instrument` test APK and, for the acceptance
-fixture, the separate app-under-test stub (`com.impresario.stub`) — starts
-`AgentRunner` over `adb`, then **dials the agent over the network**:
-`connection.endpoint` first, else the adb serial's own host when it is
-`ip:port` (adb-over-TCP), else the device's address from `ip route` /
-`ip -f inet addr show`. `adb forward` remains the fallback for devices with no
-reachable address. The agent binds `0.0.0.0`, so every command travels over
-TCP, never through adb; `adb` is used only for device checks, APK installs,
-`am instrument` and logcat. The JVM-library parts (`agent-core`) are plain
-Kotlin tests.
+fixture, the separate app-under-test stub (`com.impresario.stub`) - starts
+`AgentRunner` through Impresario's native `libadb` transport, then **dials the
+agent over the network**: `connection.endpoint` first, else the ADB target's
+own host when it is `host:port` (ADB-over-TCP), else the device's address from
+`ip route` / `ip -f inet addr show`. A direct native `tcp:` forwarding channel
+remains the fallback for devices with no reachable address. The agent binds
+`0.0.0.0`, so every command travels over TCP; the native transport is used only
+for device checks, APK installs, `am instrument`, logcat and screenshots. No
+`adb` process is spawned (I-121). The JVM-library parts (`agent-core`) are
+plain Kotlin tests.
 
 ### 2.1 Prerequisites
 
-- Android SDK with `platform-tools` (`adb`), `emulator`, `cmdline-tools`
-  (`sdkmanager`, `avdmanager`) and `build-tools;36.1.0` (for `aapt`).
-  On this host: `C:\Users\user\AppData\Local\Android\Sdk`.
+- For **using** an Android device with the product: nothing beyond the device
+  and network/USB access. The product creates its own ADB host key under
+  `~/.impresario/keys/adbkey` and speaks the protocol itself (D-19/I-121).
+- For **building or manually debugging** the agent: Android SDK with
+  `platform-tools` (`adb`), `emulator`, `cmdline-tools` (`sdkmanager`,
+  `avdmanager`) and `build-tools;36.1.0` (for `aapt`). On this host:
+  `C:\Users\user\AppData\Local\Android\Sdk`. These tools are development-only
+  and are not invoked by a run.
 - JDK 17 or newer (this host: JDK 24).
 - Environment: `ANDROID_HOME`/`ANDROID_SDK_ROOT` pointing at the SDK (the
-  Gradle build reads it or a local `local.properties`), `adb` on `PATH` or
-  called by absolute path.
+  Gradle build reads it or a local `local.properties`); the optional manual
+  commands below call `adb` by absolute path.
 
 ### 2.2 Build the agent (exact commands, verified)
 
@@ -472,7 +489,7 @@ devices:
     platform: androidtv                  # `android` for phones
     connection:
       transport: tcp
-      host: 10.102.93.233                # adb over TCP; use serial for USB
+      host: 10.102.93.233                # ADB-over-TCP; use serial for USB
       port: 5555
       # endpoint: 10.102.93.233:50061    # optional agent-address override
 
@@ -487,11 +504,12 @@ apps:
 
 - The master installs the three APKs, starts the instrumentation with
   `-e port`, then **dials the agent over the network**: `connection.endpoint`
-  if set, else the serial's own host for `ip:port` serials, else `ip route`/
-  `ip -f inet addr show` on the device; `adb forward` is the fallback when the
-  device has no reachable address. All commands, checks,
-  events and screenshots travel over that TCP connection — adb is used only
-  for device checks, installs, `am instrument` and logcat.
+  if set, else the ADB target's own host for `host:port` targets, else
+  `ip route`/`ip -f inet addr show` on the device; a direct native `tcp:`
+  forwarding channel is the fallback when the device has no reachable
+  address. All commands, checks, events and screenshots travel over that TCP
+  connection; the native ADB transport is used only for device checks,
+  installs, `am instrument`, logcat and screenshots (I-121).
 - Every reset policy works against any target (I-62): the agent is its own
   process, so `terminate`/`restart`/clear-data/`background` of the app under
   test never kill the agent. The E2E workspace sets `app_reset: per_play`
@@ -535,7 +553,7 @@ devices:
     connection:
       transport: tcp
       host: 10.102.93.196                 # wireless debugging
-      port: 37565                        # random; re-read on the phone
+      port: 40997                        # random; re-read on the phone
 
 apps:
   - name: stub
@@ -546,11 +564,14 @@ apps:
       clear_data: true
 ```
 
-- Connect first: `adb connect 10.102.93.196:37565` (2026-10-20; the address
-  and port follow the session). Wireless-debugging ports are random and rotate
-  per session, so re-read the port on the phone when the connection drops.
-  Verified devices: Realme RMX3997, Android 16 (SDK 36), 720×1604 @ 2.0, and
-  SM-A515F, Android 13 (SDK 33), 1080×2400 @ 420 dpi.
+- Add the device with `impresario device wizard` (route `m` for an mDNS
+  connect endpoint, or `p` for a fresh pairing code), or non-interactively
+  with `impresario device add`; `adb connect` is only a development
+  convenience and is not used by the product (I-121/I-124). Wireless-debugging
+  ports are random and rotate per session, so re-read the port on the phone
+  when the connection drops (the Phase 3 E2E used `:40997`). Verified devices:
+  Realme RMX3997, Android 16 (SDK 36), 720x1604 @ 2.0, and SM-A515F,
+  Android 13 (SDK 33), 1080x2400 @ 420 dpi.
 - Touch semantics on this path: `click`/`longpress` tap the element,
   `scroll`/`swipe` are real gestures, `scrollto` searches down and reverses
   as soon as the container stops moving (I-75: the driver reports movement
@@ -571,7 +592,7 @@ apps:
   fix (the TV regression was re-run green afterwards: wire suite 26+2, TV
   E2E `run 20261018-104405-4f10`).
 - Second verified phone (2026-10-19): **Realme RMX3997, Android 16 (SDK 36)**,
-  720×1604 @ 2.0, wireless-debugging serial `10.102.93.196:37565` on
+  720×1604 @ 2.0, wireless-debugging serial `10.102.93.196:40997` on
   2026-10-20 (the port rotates per session). Driven
   end-to-end **through the MCP server alone** (decision I-80): `devices_check`
   reported the device, then `run` of the bare play name `mobile_smoke.play`
@@ -598,6 +619,12 @@ apps:
   green — `run 20261020-134217-2dfe: passed (1m35s,
   exit 0)`, 2 acts, 86 steps, 0 failed. The expected `pm clear` denial warning
   above appeared once and the I-82 cold-start fallback kept the run green.
+- Phase 3 native-ADB re-run (2026-10-20) with `PATH` reduced to
+  `C:\Windows\System32;C:\Windows` (`Get-Command adb` empty):
+  `run 20261020-153947-986f` passed 2 acts/86 steps in 1m43s using the native
+  transport, with the same expected `pm clear` WARN. A fresh Impresario key
+  paired through the wireless-debugging pairing-code screen in the wizard and
+  then passed `device check` (see 2.9).
 
 ### 2.8 Platform notes
 
@@ -611,16 +638,58 @@ apps:
   events carry the same timestamp and the up degrades into a click.
 - Screenshots use `UiDevice.takeScreenshot()`; windows with `FLAG_SECURE`
   render black (documented limitation).
-- App logs are not part of the agent's `StreamLogs` (agent-internal logs
-  only, D-11) — collect `adb logcat` host-side in the master.
-- `adb` over Wi-Fi: `adb connect <device-ip>:5555` makes the serial address a
-  network endpoint; the master then dials `192.168.x.y:50061` directly
-  (`options.agent_port`, `connection.endpoint` overrides the discovery).
+- App logs are not part of the agent's `StreamLogs` (agent-internal logs only,
+  D-11); the master collects device logcat natively for diagnostics. Over USB,
+  host-side logcat is skipped because the single USB ADB session is busy with
+  instrumentation; use TCP for full logcat/forwarding, or the agent log stream
+  (I-121).
+- ADB-over-TCP devices are the normal path; `adb connect` is development-only
+  and not needed by the product. The master derives the agent address from
+  `connection.endpoint`, the target host or `ip route` and dials
+  `<device>:50061` directly (`options.agent_port`).
+- USB: `libadb`/`nusb` needs a WinUSB-compatible ADB driver on Windows. USB
+  discovery is implemented but not live-verified here; host logcat is skipped
+  and the forwarding fallback refuses to run with instrumentation, returning
+  explicit guidance.
 - Only the agent app needs `INTERNET` (I-62); the app under test is driven
   cross-app and needs no permissions (the stub declares none).
 - `terminate`/`restart`/clear-data/`background` of the app under test never
   touch the agent (it is a separate process, I-62) — all reset policies work
   against any target, including the stub.
+
+### 2.9 Native ADB transport, discovery, pairing and doctor (Phase 3)
+
+- No `adb` executable is started. The master opens the ADB connection with
+  `libadb` over TCP or USB (`nusb`), authenticates with the key at
+  `~/.impresario/keys/adbkey` (created on first use), and uses shell v2, sync
+  install and native `tcp:` forwarding. On Windows, a fresh key is created by
+  Impresario because of the `libadb` key-store path bug recorded as I-122.
+- `impresario device discover [--json] [--timeout SECS]` browses USB, classic
+  TCP and mDNS connect/pairing services. The wizard runs the same discovery
+  with a 5 s mDNS window and offers `m` (manual/mDNS connect), `p` (pairing
+  code), `r` (re-scan), `u` (USB serial) and numbered routes.
+- `impresario device pair HOST:PORT --code 123456 [--json]` performs the
+  Android 11+ SPAKE2/TLS pairing. The pairing port is different from the
+  connect port: after pairing, the device shows a new wireless-debugging port
+  that must be used for `device check`/runs. The wizard asks for both.
+- `impresario device wizard [--edit NAME] [--workspace] [--no-check]` writes
+  only after the final preview; Enter accepts every default, `b` goes back
+  and `q` cancels without writing. On a phone it detects the real form factor
+  and offers to switch `android`/`androidtv` if the declaration disagrees.
+- The TCP forwarding fallback was live-checked on the phone on 2026-10-20 by
+  setting `connection.endpoint` to `127.0.0.1:59999` (unreachable). After the
+  30 s network wait the transport logged the fallback, opened a native
+  `tcp:` forward and `device check pocket_phone` exited 0.
+- `impresario device check NAME` and `impresario doctor [--json]` are the
+  non-interactive diagnostics. `doctor` reports each platform as
+  `ready`/`degraded`/`unavailable`/`planned`, shows the chosen rung and fix,
+  probes configured devices, and never downloads or installs. With `adb`
+  absent from `PATH` on this host it reported Android, Android TV and web all
+  `ready` (exit 0; `target/phase3-doctor.json`).
+- Keys are per Impresario home, not the system `~/.android` store. A pairing
+  code is shown on the phone under Developer options -> Wireless debugging ->
+  Pair device with pairing code; it expires quickly. Do not store the phone
+  PIN or the pairing code in configuration.
 
 ---
 
@@ -749,4 +818,3 @@ address into `connection.endpoint`); the runner presses remote buttons through
 `XCUIRemote` (D-pad/Select/Menu/PlayPause; `home` = `XCUIDevice.press(.home)`),
 and the stub app's focused row is visible in its `stub_key_log`/`stub_status`
 labels while a play runs.
-

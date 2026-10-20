@@ -26,7 +26,7 @@ project/agent research whose artefact exists but which was not re-run here;
 
 | ID | Capability (spec) | Status | Verdict | Rung | Decision |
 |---|---|---|---|---|---|
-| S-1 | Android without `adb` (§6.1) | settled | **go** — `adb_client` covers the transport/commands; pairing is implemented by us from AOSP/BoringSSL (RustCrypto `spake2` is **incompatible**); phone validation pending | 1 | I-97 |
+| S-1 | Android without `adb` (§6.1) | settled | **go** - shipped on `libadb` 0.6.0 (MIT): USB/TCP/TLS/SPAKE2 pairing, shell v2, install/instrument, forwarding, logcat, screencap; live phone/TV with `adb` absent; USB data implemented but unverified | 1 | I-121/I-122 |
 | S-2 | iOS/tvOS without Xcode tools (§6.2) | settled | **go** with recorded constraints (no direct-USB in `idevice`; iOS 17+ tunnel needs OS plumbing; XCTest end-to-end unverified) | 1 | I-95 |
 | S-3 | webOS without `ares-*` (§6.3) | settled | **go** — `russh`/`russh-sftp` build and pass a loopback probe on Windows; protocol facts cited from ares-cli 2.4.0/ares-cli-rs; no webOS TV to validate against | 1 | I-99 |
 | S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware validation pending | 1 | I-93 |
@@ -265,8 +265,9 @@ services, external). Evidence:
 
 ## S-1 · Android without `adb`
 
-**Verdict: go** — rung 1. Two pieces: the transport/command layer is an existing
-crate; **pairing** is written by us.
+**Verdict: go** — rung 1. **Phase 3 shipped this on `libadb` 0.6.0, not the `adb_client` +
+own-pairing plan below; the original spike analysis is retained as history and
+the outcome is at the end of this section (I-121).**
 
 **Transport + commands.** `adb_client` 3.2.3 (MIT), used through
 `message_devices` (direct protocol, **no adb server**): TCP with `STLS` → TLS
@@ -340,6 +341,28 @@ pairing, connect after pairing, `am instrument`, logcat, screencap, install,
 USB on Windows (driver), mDNS on the user's LAN. `adb_client`'s TCP/TLS path
 and token signing were read in source but have not been run against a device
 on this host.
+
+**Phase 3 outcome (shipped; supersedes the plan above).** The implementation
+does not use `adb_client` or our SPAKE2 port: `libadb` 0.6.0 (MIT) provides
+TCP/TLS, the USB `nusb` backend and Android 11+ pairing (TLS 1.3 + SPAKE2 +
+PeerInfo) behind direct host APIs, with no adb server or adb binary. The
+`AdbTransport` uses it for USB/TCP/mDNS discovery, key auth, shell v2/exec,
+sync install, instrumentation streams, `tcp:` forwarding, logcat, screencap,
+`pm clear`/force-stop, `getprop` and `ip route`. First-run key creation works
+around a Windows path bug in libadb's store (I-122).
+
+Live on 2026-10-20, `PATH` reduced to `C:\Windows\System32;C:\Windows`:
+Realme RMX3997 Android 16 (`run 20261020-153947-986f`, 86/86 steps), TCL
+Smart TV Pro Android 11 (`run 20261020-154152-216d`, 89/89 steps) and the
+managed-Chromium web run (`20261020-154341-d767`, 9/9). mDNS discovered both
+Android targets; a fresh key paired through the pairing-code dialog and then
+passed `device check`; the wizard drove the same pairing flow from a fresh
+home and wrote `wizard_pair_phone`. Shell v2, getprop, `ip route` and a
+PNG-validated screencap were exercised live. The USB data path is implemented
+but not hardware-verified (no ADB interface was exposed by USB here; gap 15);
+host logcat is skipped over USB and forward+instrumentation is refused with
+explicit guidance. Decision I-121, key-store I-122.
+
 
 ## S-3 · webOS without `ares-*`
 

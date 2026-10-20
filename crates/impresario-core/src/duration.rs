@@ -49,9 +49,9 @@ impl DslDuration {
 impl fmt::Display for DslDuration {
     /// Canonical rendering: `500ms`, `2s`, `1m`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.millis % 60_000 == 0 {
+        if self.millis.is_multiple_of(60_000) {
             write!(f, "{}m", self.millis / 60_000)
-        } else if self.millis % 1000 == 0 {
+        } else if self.millis.is_multiple_of(1000) {
             write!(f, "{}s", self.millis / 1000)
         } else {
             write!(f, "{}ms", self.millis)

@@ -12,9 +12,10 @@ target* (or next to it) instead of shelling out screen taps from the host.
   all three file kinds; `impresario migrate` converts old workspaces.
 - **Everything is gRPC to an executor.** The Android/TV agent, the Apple
   agent (see `docs/STATUS.md`) and the web connector all speak the
-  same `Agent` service (`proto/impresario/v1/impresario.proto`). `adb` /
-  `xcodebuild` are used only to install and start the executor; every action
-  then travels over the network (see `docs/PROTOCOL.md`).
+  same `Agent` service (`proto/impresario/v1/impresario.proto`). Android uses
+  Impresario's native ADB transport (no `adb` binary); Apple's `xcodebuild` is
+  used only to install and start the executor for now. Every action then
+  travels over the network (see `docs/PROTOCOL.md`).
 - **Honest support matrix.** TVs get D-pad semantics, phones get touch,
   `swipe` is refused on TV platforms, `focus` on touch platforms — all
   documented in `docs/PARITY.md`, generated from the planner's own tables.
@@ -43,12 +44,14 @@ target* (or next to it) instead of shelling out screen taps from the host.
 
 ## Requirements
 
-- Rust stable **1.85+** (developed against 1.94). Nothing else is needed for
-  the quick start below.
+- Rust stable **1.87+** (developed against 1.94; `libadb` requires 1.87).
+  Nothing else is needed for the quick start below.
 - Optional, only for the matching targets:
-  - Chrome/Chromium for `web` runs (the connector launches or attaches to it),
-  - JDK 17+ and the Android SDK (with `adb`) to build/install the Android
-    agent — see `docs/DEVICES.md`,
+  - Chrome/Chromium for `web` runs, or the pinned managed browser:
+    `impresario tools install chromium` (consent + SHA-256 verified; I-123),
+  - JDK 17+ and the Android SDK (with `adb`) only to build or manually debug
+    the Android agent; using a device needs no `adb` (I-121) - see
+    `docs/DEVICES.md`,
   - macOS + Xcode to build the Apple agent's XCUITest runner (the Swift package
   itself builds on Linux; `docs/DEVICES.md` §3).
 
@@ -68,6 +71,7 @@ cargo install --path crates/impresario-connector --locked
 mkdir demo && cd demo
 impresario workspace new --example  # writes config, devices, apps, scenes/, theatres/ and plays/
 impresario validate    # parse + resolve the whole workspace, no device touched
+impresario doctor      # what each platform needs, what was found, and the fix
 impresario fmt --check # canonical table/stage formatting
 ```
 

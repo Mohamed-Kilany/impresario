@@ -2,9 +2,11 @@
 //! address handling, connector fast paths and platform explanations.
 
 use impresario_clients::transport::{
-    transport_for, AppleTransport, ConnectorTransport, DeviceTransport, TransportError,
+    transport_for, AdbTransport, AppleTransport, ConnectorTransport, DeviceTransport,
+    TransportError,
 };
 use impresario_core::config::{DeviceConfig, DeviceConnection, DeviceOptions};
+use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
 
 fn device(
@@ -124,17 +126,24 @@ async fn apple_transport_explains_on_non_macos_hosts() {
 }
 
 #[tokio::test]
-async fn adb_transport_reports_a_missing_adb_binary() {
-    std::env::set_var("IMPRESARIO_ADB", "definitely-not-adb-impresario");
-    let mut transport = transport_for(Platform::Android);
-    let dev = device("flagship_android", Platform::Android, "emulator-5554", None);
-    let error = transport.prepare(&dev, None).await.expect_err("no adb");
+async fn adb_transport_reports_an_unknown_usb_serial_without_an_adb_binary() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let mut transport = AdbTransport::with_home(Home::at(home.path()));
+    let dev = device(
+        "flagship_android",
+        Platform::Android,
+        "definitely-not-a-connected-device",
+        None,
+    );
+    let error = transport.prepare(&dev, None).await.expect_err("no device");
     match &error {
-        TransportError::Transport(message) => assert!(message.contains("adb"), "{message}"),
+        TransportError::DeviceUnavailable(message) => {
+            assert!(message.contains("device not found"), "{message}");
+            assert!(!message.contains("No such file"), "{message}");
+        }
         other => panic!("unexpected error: {other}"),
     }
-    assert_eq!(error.to_wire().code.as_str(), "TRANSPORT");
-    std::env::remove_var("IMPRESARIO_ADB");
+    assert_eq!(error.to_wire().code.as_str(), "DEVICE_UNAVAILABLE");
 }
 
 #[tokio::test]

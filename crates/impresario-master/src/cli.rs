@@ -98,6 +98,17 @@ pub enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
+    /// Explain what every platform needs, what was found and how to fix gaps.
+    Doctor {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Managed tool downloads (pinned, checksum verified, explicit consent).
+    Tools {
+        #[command(subcommand)]
+        command: crate::tools_cmd::ToolsCommand,
+    },
     /// App definitions: add, edit, list, check, import, export.
     App {
         #[command(subcommand)]
@@ -314,12 +325,23 @@ pub fn run_with(argv: &[String]) -> i32 {
             DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)
             }
+            DeviceCommand::Discover { json, timeout } => {
+                crate::wizard::run_discover(&home, *json, *timeout)
+            }
+            DeviceCommand::Pair { target, code, json } => {
+                crate::wizard::run_pair(&home, target, code, *json)
+            }
+            DeviceCommand::Wizard(args) => crate::wizard::run(args, &home, &devices_path),
             other => crate::definitions::run_device(other, &home, &devices_path),
         },
         Command::App { command } => {
             let apps_path = base.join("impresario.apps.config");
             crate::definitions::run_app(command, &home, &apps_path)
         }
+        Command::Doctor { json } => {
+            crate::doctor::run(&home, &base, &config_path, &devices_path, *json)
+        }
+        Command::Tools { command } => crate::tools_cmd::run(command, &home),
         Command::Migrate(args) => crate::definitions::migrate(&base, &config_path, args.dry_run),
         Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
@@ -336,7 +358,11 @@ fn init_logging(verbose: u8, quiet: bool) {
         } else if verbose > 0 {
             "debug"
         } else {
-            "warn"
+            // libadb logs one WARN per session for ADB banner features it
+            // does not use (`server_status`, `track_mdns`). Those are benign
+            // and would otherwise drown the CLI output; RUST_LOG overrides
+            // this filter for protocol debugging.
+            "warn,libadb=error"
         };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));
