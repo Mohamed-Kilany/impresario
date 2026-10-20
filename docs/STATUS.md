@@ -53,10 +53,11 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
 | Live E2E (master CLI → Android agent → TCL Android TV) | verified | `impresario run` on the scratch TV workspace over Wi-Fi: agent auto-installed + started, network dial + handshake + session, full smoke play green — `run 20261018-094855-ddb9: passed (1m46s, exit 0)`, 1 device, 1 play, 2 acts, 89 steps, 0 failed (Act 1 scenario tour 1m02s incl. D-pad `scrollto` row 29/0, text entry, selection, key log; Act 2 app-control lifecycle 19.5s incl. `background`/`launch`, `restart`, `terminate`); agent process ≈ 100 s < the ~223 s freeze budget (I-68). First attempt hung silently before the play — fixed as I-74 (lazy `StreamLogs` headers vs a tonic client that awaits the open); re-verified after I-75: `run 20261018-104405-4f10` (1m42s, 89 steps, 0 failed) |
 | Live E2E (master CLI → Android agent → Android phone) | verified | `impresario run` on the scratch phone workspace over Wi-Fi (Galaxy A51, Android 13, device `pocket_phone`, `docs/DEVICES.md` §2.7): agent + stub auto-installed, network dial + handshake + session, full touch smoke play green — `run 20261018-103702-ee29: passed (1m53s, exit 0)`, 1 device, 1 play, 2 acts, 86 steps, 0 failed (Act 1 scenario tour 1m19s incl. touch `scroll`/`swipe up`/`swipe down`/`scrollto` both ways, text entry with `key backspace` echo checks, selection, `key back`/`key home`, device info `tv=false`; Act 2 app-control lifecycle 16.3s). The first attempts exposed the I-75 `scrollto` bug (end-of-container signal) |
 | Live E2E via MCP (MCP server → Android agent → Realme phone) | verified | the whole loop through `impresario mcp` alone — a small-agent smoke with no CLI and no hand-run adb (the server's own prepare installed the APKs and started the agent): `devices_check` reported RMX3997 / Android 16 / UiAutomator2 / 720×1604, then `run` of the bare play name `mobile_smoke.play` passed — `run 20261019-061207-92f9: passed (1m43s, exit 0)`, 2 acts, 86 steps, 0 failed (touch `scroll`/`swipe`/`scrollto` both ways, text entry with echo checks, selection, `back`/`home`, device info `tv=false`; lifecycle `background`/`launch`, `restart`, `terminate`); the screenshot and report came back through `impresario_artifact_get`/`impresario_report_get` and stdout stayed protocol-only all session. The first attempt exposed the bare-play-name + refusal-detail gap fixed the same day (I-80) |
+| Live E2E (Phase 2 theatrical DSL, migrated workspaces: web + phone + TV) | verified | The three legacy Phase-1 scratch workspaces were copied and converted with `impresario migrate` on 2026-10-20: split devices/apps, table scenes, generated `.theatre` files, and plays rewritten to `Perform:`. All three then validated with **0 warnings** and were `fmt --check`-clean; a second `migrate` was a no-op. The phone scene needed one cleanup after migration: four TV-only pieces (`KeysRow`, `Alpha`, `Bravo`, `KeyLog`) that the shared legacy `Pieces:` block declared but the touch play never used were removed to clear `IMP-DSL-043`; this did not touch the generated theatre and the final run used the cleaned workspace. Real runs: headless Chrome `run 20261020-133846-23c0` passed 9/9 steps in 1.87 s; Realme RMX3997 `run 20261020-134217-2dfe` passed 2 acts/86 steps in 1m35s; Smart TV Pro `run 20261020-133548-61d9` passed 2 acts/89 steps in 1m38s. All reports are schema v2 with stage spans and JUnit `stage_sources` pointing into the generated theatres. Workspaces/logs are under `%TEMP%\impresario-phase2-e2e` on this host (not committed). Two environment quirks: `multipassd` owns port 50051, so the web run pinned `options.connector_address: 127.0.0.1:47654`; the TV agent APK had been installed only for secondary user 10, fixed by reinstalling all three APKs with `install --user 0` (`docs/DEVICES.md` §2.6) |
 | Reporters (console/junit/json/html) | done | `tests/reporters.rs` insta snapshots (console plain + color, junit.xml, report.json schema v2, report.html with base64 embed and missing-file fallback); Act example display names, stage source spans and secret-key masking are covered |
 | `impresario fmt` / DSL migration | done | `impresario_core::fmt` (idempotence property test, comments/blanks, Unicode-width table alignment, absent cells) and `impresario_core::migrate` (table scenes, generated theatres, duplicate suffixes, idempotence, fail-closed on invalid generated text) have unit tests; `tests/golden_dsl.rs` covers the formatter golden files and a complete legacy migration snapshot; `tests/definitions_cli.rs` drives `migrate --dry-run`, `.bak`, idempotence and generated theatre output; committed `examples/` are migrated and `fmt --check`-clean |
 | `impresario run --arg` / theatrical runtime | done | planner tests cover `--arg` precedence (CLI > Examples > default), unknown/malformed arguments (IMP-DSL-032), nested stage expansion, cycles/depth and report display data; MCP `args` maps to the same code path |
-| Docs (`docs/*.md`, examples, fixtures) + `README.md` | done (DSL, PROTOCOL, DECISIONS, DEVICES, STATUS, ERRORS, LSP, MCP, PARITY, CONFIG, SPIKES, THIRD_PARTY, README) | DSL.md covers syntax, semantics and selectors; PROTOCOL.md documents the wire contract as implemented (sequences, 7.2 rules, error-code table, endpoint resolution, I-74 lazy log stream); PARITY.md is generated from the planner's support tables and guarded by `tests/parity_doc.rs` (`IMPRESARIO_PARITY_BLESS=1` rewrites); CONFIG.md is generated from `settings::docs_table()` and guarded by `tests/config_doc.rs`; DECISIONS.md holds I-01..I-119 (I-91..I-98: the phase-0 spikes; I-99: webOS; I-100: `--workspace` placement; I-101: the yaml-edit list workaround; I-102: `init` replaced by `workspace new`, superseding I-11; I-103..I-108: the device/app split, migration, app binding, diagnostics and deferred wizard; I-109: the TV stub gap; I-110..I-119: theatrical DSL compatibility, formatter, Examples/`--arg`, report v2, migration, workspace scans, LSP, qualified references/interpolation scope, lints 049/050 and reporter/migration fail-closed behavior); SPIKES.md carries the S-1..S-8 evidence and verdicts; THIRD_PARTY.md records every dependency/reference license; DEVICES.md records per-platform setup and hardware evidence (§3 covers the Apple package and the Xcode commands); LSP.md documents the language server; MCP.md documents the stdio MCP server (tools, resources, per-client wiring, I-80); README.md's quick start is executed by `tests/mock_cli.rs` (workspace create/validate/run against `mock-agent`) |
+| Docs (`docs/*.md`, examples, fixtures) + `README.md` | done (DSL, PROTOCOL, DECISIONS, DEVICES, STATUS, ERRORS, LSP, MCP, PARITY, CONFIG, SPIKES, THIRD_PARTY, README) | DSL.md covers syntax, semantics and selectors; PROTOCOL.md documents the wire contract as implemented (sequences, 7.2 rules, error-code table, endpoint resolution, I-74 lazy log stream); PARITY.md is generated from the planner's support tables and guarded by `tests/parity_doc.rs` (`IMPRESARIO_PARITY_BLESS=1` rewrites); CONFIG.md is generated from `settings::docs_table()` and guarded by `tests/config_doc.rs`; DECISIONS.md holds I-01..I-120 (I-91..I-98: the phase-0 spikes; I-99: webOS; I-100: `--workspace` placement; I-101: the yaml-edit list workaround; I-102: `init` replaced by `workspace new`, superseding I-11; I-103..I-108: the device/app split, migration, app binding, diagnostics and deferred wizard; I-109: the TV stub gap; I-110..I-119: theatrical DSL compatibility, formatter, Examples/`--arg`, report v2, migration, workspace scans, LSP, qualified references/interpolation scope, lints 049/050 and reporter/migration fail-closed behavior; I-120: Phase 2 live acceptance and spacing verification); SPIKES.md carries the S-1..S-8 evidence and verdicts; THIRD_PARTY.md records every dependency/reference license; DEVICES.md records per-platform setup and hardware evidence (§3 covers the Apple package and the Xcode commands); LSP.md documents the language server; MCP.md documents the stdio MCP server (tools, resources, per-client wiring, I-80); README.md's quick start is executed by `tests/mock_cli.rs` (workspace create/validate/run against `mock-agent`) |
 | CI workflows | committed, not yet executed | `.github/workflows/ci.yml`: `rust` job on `ubuntu-latest` (`fmt --check`, `clippy --workspace --all-targets -- -D warnings`, `test --workspace`; the runner ships google-chrome, so the connector fixture suite runs for real), `android` job (`setup-java` 17 + `setup-android`, `gradlew --no-daemon test`; `gradlew` is committed non-executable → `chmod +x`), and `apple` job (`setup-swift` 6.4.1 + `zlib1g-dev`, then `swift package resolve`/`swift build`/`swift test` in `agents/apple` — the Linux-buildable half of the Apple agent; the Xcode runner targets cannot build there). This host has **no GitHub remote**, so Actions has not executed the workflow yet (recorded gap); the underlying commands are green locally and the document itself is parse-checked by `tests/ci_workflow.rs` (valid YAML + the exact gate commands) |
 
 ## TASK-2 phase status
@@ -66,9 +67,12 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
 | 0 | settled (S-1..S-8) | Verdicts and ladder rungs in `docs/SPIKES.md`; licenses in `docs/THIRD_PARTY.md`. Go: Android (S-1), Apple (S-2), webOS (S-3), Tizen (S-4), CLI/TUI/config (S-5), signing (S-6/S-7), WASM editor (S-8). Hardware validation is scoped per spike. |
 | 1A | done | `home.rs`, layered `settings.rs`, workspace resolution, `config`/`workspace` commands, generated `docs/CONFIG.md`; full Rust gate green (commit `61751f8`). |
 | 1B | done (wizard deferred) | Split device/app models and merged layers, endpoint/auth/options derivation, `device`/`app` commands, `migrate` with `.bak`/dry-run/idempotency, plan/exec/transport/MCP/LSP app awareness, examples updated. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` are green. The interactive wizard and installed/signature `app check` are recorded as gap 9, not silently skipped. |
-| 2 | code done; live E2E blocked | Table-form scenes, `.theatre` stages, `Perform:` / nested expansion, Act parameters, `Examples:` one-row-per-execution, `${param.*}`/`${example.*}`, `--arg` precedence, formatter, migration, lints 042..050, report schema v2, stage source locations in console/HTML/JUnit, qualified `Theatre.Stage` references and LSP theatre/formatting support. Legacy forms stay accepted (I-110), all choices are recorded as I-110..I-119. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` are green on this host; the migrated `examples/` validate and are `fmt --check`-clean. The Phase 2 exit criteria that require a **live web + phone + TV E2E** are not met because no TV/phone is reachable (gap 11); web-headless and mock paths are covered. |
+| 2 | done (live E2E verified 2026-10-20) | Table-form scenes, `.theatre` stages, `Perform:` / nested expansion, Act parameters, `Examples:` one-row-per-execution, `${param.*}`/`${example.*}`, `--arg` precedence, formatter, migration, lints 042..050, report schema v2, stage source locations in console/HTML/JUnit, qualified `Theatre.Stage` references and LSP theatre/formatting support. Legacy forms stay accepted (I-110), all choices are recorded as I-110..I-120. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` are green on this host; the migrated `examples/` validate and are `fmt --check`-clean. The exit criterion that required a **live web + phone + TV E2E with migrated workspaces** is met: the three Phase-1 legacy workspaces were migrated, validated with 0 warnings, and run green on headless Chrome, the Realme phone and the Smart TV Pro (run IDs in the Live E2E row and gap 11 closure). Code/docs are committed as `b551ec1`/`f5a11d0`; the hardware close-out is recorded here. |
 
 ## Known gaps and risks
+
+Items 8 and 11 were closed on 2026-10-20; they stay in place, clearly
+marked, so the numbers used elsewhere remain stable.
 
 1. Apple agent: the Swift **package** (`AgentCore`/`ImpresarioWire`/`AgentService`)
    is built and unit-tested on this host through WSL (see above). What has
@@ -105,15 +109,12 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
    commands here, `gradlew test` on this host, and the Apple job's
    `swift package resolve`/`build`/`test` through WSL (its `zlib1g-dev`
    step mirrors the dependency the WSL build needed, `docs/DEVICES.md` §3.1).
-8. Stub spacing on TV: the phone rhythm (one 10 dp vertical rhythm through
-   `Ui.addStacked`, I-81) was verified on the A51, but the same screens still
-   looked too airy on a TV ("too spaced between buttons", user report).
-   `Ui.kt` now selects a 6 dp television profile (uiMode `TELEVISION` or the
-   leanback feature) while phones keep 10 dp (I-109). The **visual result is
-   unverified**: no TV or phone is reachable from the current Wi-Fi (host is
-   on `10.102.93.101`; the known devices were on `192.168.93.x`), so the
-   `tv_smoke` re-run and a phone regression check remain blocked, and the
-   change is recorded as pending rather than a pass.
+8. **Stub spacing on TV — closed 2026-10-20 (I-120).** The phone keeps the
+   I-81-verified 10 dp rhythm and Android TV selects 6 dp (I-109), as shown by
+   the phone `stub_home.png` from run `20261020-134217-2dfe` and a fresh TV home
+   capture at `%TEMP%\impresario-phase2-e2e\tv-home.png` from the same build.
+   The TV is visibly tighter without crowding, and the phone layout is
+   unchanged. The previous hardware blocker is gone.
 9. Phase 1B's interactive device/app wizard, discovery and pairing steps are
    deferred (I-108). The flag commands, layering and migration are implemented
    and unit/integration tested, but no prompt loop or `device discover`/`pair`
@@ -121,10 +122,9 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
    verifies ids and package existence — `app install`/`uninstall`, installed
    state, code signature and re-signing are Phase 3. `migrate` handles the
    workspace devices file only, not app data in a legacy global
-   `~/.impresario/config.yaml`; and without a legacy workspace on hardware
-   here, the migrated endpoint paths have not been re-run live on a phone or
-   TV. `DevicePlan.app` binding is covered by planner/CLI tests and the mock
-   agent, not by a live app launch.
+   `~/.impresario/config.yaml`. The migrated endpoint paths have now been
+   re-run live on a phone and a TV (gap 11), and `--app` binding launched the
+   app live; only the interactive selection/pairing flow remains deferred.
 10. D-19 (no external platform tools at runtime) is **not yet fully applied**
     by the transports. Phase 1B changed their signatures and app binding, but
     `AdbTransport` still shells out to `adb`, and `AppleTransport` still uses
@@ -133,11 +133,15 @@ repository on this machine (Windows 11, Rust stable 1.94.x).
     known, explicit deviation rather than a silent claim of compliance. The
     webOS/Tizen SSH/SDB clients exist at the spike level (I-99/I-93) and are
     not wired into the installer flows yet.
-11. Phase 2's live acceptance (web + phone + TV) is blocked by hardware
-    availability: no Android phone/TV is reachable from the current host
-    network, so the theatrical examples have not been run on a device. The
-    planner/executor/report path is covered by unit tests and the mock agent;
-    this is a verification gap, not a claim of a green hardware run.
+11. **Phase 2 live acceptance (web + phone + TV) — closed 2026-10-20.** The
+    three Phase-1 legacy workspaces were migrated with `impresario migrate`
+    (split devices/apps, table scenes, generated theatres, `Perform:` plays),
+    validated with 0 warnings, formatted, and run against headless Chrome
+    (`20261020-133846-23c0`, 9/9 steps), the Realme RMX3997 phone
+    (`20261020-134217-2dfe`, 86/86 steps) and the Smart TV Pro
+    (`20261020-133548-61d9`, 89/89 steps). Report schema v2 stage spans and
+    JUnit `stage_sources` point into the generated theatres. See the Live E2E
+    row for the environment quirks (connector port 50051, TV user 10).
 12. The old `Pieces:` scene syntax and inline-`Stage:` play syntax remain
     accepted for compatibility (I-110). They are converted by `fmt`/`migrate`
     but not yet deprecated with warnings, so both forms remain supported in

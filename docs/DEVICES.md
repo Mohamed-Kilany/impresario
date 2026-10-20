@@ -126,11 +126,20 @@ impresario device check --device desktop_chrome
 impresario run --play plays/login.play --device desktop_chrome --app desktop_page
 ```
 
+Phase 2 theatrical acceptance (2026-10-20): the legacy web fixture workspace
+was migrated with `impresario migrate` (table scene, generated
+`theatres/web_smoke.theatre`, play rewritten to `Perform:`), validated with 0
+warnings, and run green — `run 20261020-133846-23c0: passed (1.87 s, exit 0)`,
+9 steps, 0 failed, including click/type/select/scrollto. The run used the
+`launch:headless` device and the local `fixtures/web/index.html`.
+
 Notes:
 
 - This host's port `50051` is held by an unrelated service (`multipassd`); a
   workspace can pin the connector with
-  `options.connector_address: 127.0.0.1:47654`.
+  `options.connector_address: 127.0.0.1:47654`. Without the pin the master sees
+  the unrelated listener and the handshake fails; this was hit and fixed during
+  the Phase 2 run.
 - `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
   backend needs the browser websocket from `/json/version` (I-39).
 
@@ -318,9 +327,11 @@ You can confirm both packages with
 
 ### 2.5 Real Android TV (verified on this host)
 
-Device: **Smart TV Pro** (`G03_4K_GB` / `BeyondTV4`), `adb` serial
-`192.168.93.84:5555` (adb itself over TCP), Android 11 (SDK 30),
-armeabi-v7a, `ro.build.characteristics=nosdcard,tv`. There is no USB
+Device: **Smart TV Pro** (`G03_4K_GB` / `BeyondTV4`), currently
+`adb` serial `10.102.93.233:5555` (adb itself over TCP; the port/address
+follow the network), Android 11 (SDK 30), armeabi-v7a,
+`ro.build.characteristics=nosdcard,tv`. The 2026-10-18 commands below used
+`192.168.93.84:5555`; substitute the current serial. There is no USB
 connection; `adb connect` first:
 
 ```powershell
@@ -338,6 +349,22 @@ $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 & $adb -s 192.168.93.84:5555 shell am instrument -w -r `
   -e class com.impresario.agent.AgentServerInstrumentedTest `
   com.impresario.agent.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+**Check the Android user profile after an install.** This TV has a secondary
+user 10, and `adb install` once landed the agent only there while
+`adb shell am instrument` ran as user 0, producing
+`INSTRUMENTATION_FAILED: … Unable to find instrumentation target package:
+com.impresario.agent` even though `pm list packages` showed the APK (observed
+2026-10-20). Reinstall all three for the owner user:
+
+```powershell
+$tv = "10.102.93.233:5555"
+& $adb -s $tv install --user 0 -r -t agents/android/agent/build/outputs/apk/debug/agent-debug.apk
+& $adb -s $tv install --user 0 -r -t agents/android/agent-instrumentation/build/outputs/apk/debug/agent-instrumentation-debug.apk
+& $adb -s $tv install --user 0 -r -t agents/android/agent-target-stub/build/outputs/apk/debug/agent-target-stub-debug.apk
+& $adb -s $tv shell pm list users          # 0 = Owner
+& $adb -s $tv shell pm list packages --user 0 | Select-String impresario
 ```
 
 Give every test class its own `am instrument` invocation (one agent process
@@ -445,9 +472,9 @@ devices:
     platform: androidtv                  # `android` for phones
     connection:
       transport: tcp
-      host: 192.168.93.84                # adb over TCP; use serial for USB
+      host: 10.102.93.233                # adb over TCP; use serial for USB
       port: 5555
-      # endpoint: 192.168.93.84:50061    # optional agent-address override
+      # endpoint: 10.102.93.233:50061    # optional agent-address override
 
 apps:
   - name: stub
@@ -480,6 +507,14 @@ apps:
   covers `background`/`launch`, `restart` (counter reset) and
   `terminate`/relaunch. The agent process lived ≈ 100 s — inside the ~223 s
   freeze budget (I-68).
+- Phase 2 theatrical re-run (2026-10-20): the legacy TV workspace was migrated
+  with `impresario migrate` (table scene, generated
+  `theatres/tv_smoke.theatre`, play rewritten to `Perform:`), validated with 0
+  warnings, and run green — `run 20261020-133548-61d9: passed (1m38s, exit 0)`,
+  2 acts, 89 steps, 0 failed, including D-pad `scrollto`, text entry,
+  selection, key log and the app-control lifecycle. The initial `device check`
+  failed on the TV user-profile quirk above (agent installed only for user 10);
+  after `install --user 0` for all three APKs it passed.
 - `StreamLogs` opens with a marker entry (I-74): grpc-java sends response
   headers only with the first message, and the master awaits the log stream
   before its first command — an idle log bus would hang the run forever with
@@ -499,8 +534,8 @@ devices:
     platform: android
     connection:
       transport: tcp
-      host: 192.168.93.76                 # wireless debugging
-      port: 39373                        # random; re-read on the phone
+      host: 10.102.93.196                 # wireless debugging
+      port: 37565                        # random; re-read on the phone
 
 apps:
   - name: stub
@@ -511,10 +546,11 @@ apps:
       clear_data: true
 ```
 
-- Connect first: `adb connect 192.168.93.76:39373`. Wireless-debugging ports
-  are random and rotate per session, so re-read the port on the phone when
-  the connection drops. Verified device: SM-A515F, Android 13 (SDK 33),
-  1080×2400 @ 420 dpi.
+- Connect first: `adb connect 10.102.93.196:37565` (2026-10-20; the address
+  and port follow the session). Wireless-debugging ports are random and rotate
+  per session, so re-read the port on the phone when the connection drops.
+  Verified devices: Realme RMX3997, Android 16 (SDK 36), 720×1604 @ 2.0, and
+  SM-A515F, Android 13 (SDK 33), 1080×2400 @ 420 dpi.
 - Touch semantics on this path: `click`/`longpress` tap the element,
   `scroll`/`swipe` are real gestures, `scrollto` searches down and reverses
   as soon as the container stops moving (I-75: the driver reports movement
@@ -535,7 +571,8 @@ apps:
   fix (the TV regression was re-run green afterwards: wire suite 26+2, TV
   E2E `run 20261018-104405-4f10`).
 - Second verified phone (2026-10-19): **Realme RMX3997, Android 16 (SDK 36)**,
-  720×1604 @ 2.0, wireless-debugging serial `10.102.93.196:42777`. Driven
+  720×1604 @ 2.0, wireless-debugging serial `10.102.93.196:37565` on
+  2026-10-20 (the port rotates per session). Driven
   end-to-end **through the MCP server alone** (decision I-80): `devices_check`
   reported the device, then `run` of the bare play name `mobile_smoke.play`
   passed — `run 20261019-061207-92f9: passed (1m43s, exit 0)`, 2 acts,
@@ -553,6 +590,14 @@ apps:
   `clear_data: true` app option still relaunches the app but cannot guarantee
   empty data on this device. `run 20261019-064750-dca4` (the build with the
   I-82 fix) passed through MCP afterwards.
+- Phase 2 theatrical re-run (2026-10-20) on the same Realme: the legacy phone
+  workspace was migrated with `impresario migrate` (table scene, generated
+  `theatres/mobile_smoke.theatre`, play rewritten to `Perform:`). The migrated
+  scene declared four TV-only pieces the touch play never used, so they were
+  removed to clear `IMP-DSL-043`; it then validated with 0 warnings and ran
+  green — `run 20261020-134217-2dfe: passed (1m35s,
+  exit 0)`, 2 acts, 86 steps, 0 failed. The expected `pm clear` denial warning
+  above appeared once and the I-82 cold-start fallback kept the run green.
 
 ### 2.8 Platform notes
 
