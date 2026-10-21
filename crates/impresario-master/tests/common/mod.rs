@@ -238,6 +238,7 @@ pub fn exec_options(
         shutdown: CancellationToken::new(),
         master_version: "0.1.0-test".to_string(),
         session_options: test_session_options(),
+        events: None,
     }
 }
 

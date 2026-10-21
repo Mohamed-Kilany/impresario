@@ -1,0 +1,36 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 120, 32)"
+---
+ impresario  demo  [plain colours]
+ home  runs  tests  devices  apps  config
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌────────────────────────────────────────────┐┌20261021-120000-run01  running  0s──────────────────────────────────────┐
+│Jobs (1)                                    ││current: Action: click => B                                             │
+│Enter follow  b background  x stop  f log   ││[>] web1  session started                                               │
+│tail                                        ││[>] web1  act Pass started                                              │
+│Tab device  / filter  ? help  r rerun  F    ││  [ok] web1  step 1/3 check A                                           │
+│failed                                      ││  [ok] web1  step 2/3 click B                                           │
+│o report  p screenshot  X remove            ││  [>] web1  step 3/3 type Input                                         │
+│device: web1  (Tab cycles, Shift-Tab clears)││[>] phone  session started                                              │
+│                                            ││[>] phone  act Pass started                                             │
+│[>] 20261021-120000-run01  running          ││                                                                        │
+│                                            ││                                                                        │
+│                                            ││                                                                        │
+│                                            ││                                                                        │
+│                                            │└────────────────────────────────────────────────────────────────────────┘
+│                                            │┌logs  (following · f pauses)────────────────────────────────────────────┐
+│                                            ││[web1] validating A                                                     │
+│                                            ││[web1] click B ok                                                       │
+│                                            ││[phone] connecting to id:a                                              │
+│                                            ││[phone] waiting for the keyboard                                        │
+│                                            ││                                                                        │
+│                                            ││                                                                        │
+└────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────┘
+┌prompt  (Tab focuses the prompt)──────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Enter follow · b background · x stop · f log tail · Tab device · / filter · ? help · Esc prompt
+job 20261021-120000-run01 running 0s
+run 20261021-120000-run01 submitted

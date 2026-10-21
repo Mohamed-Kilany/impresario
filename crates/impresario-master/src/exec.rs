@@ -22,6 +22,7 @@ use impresario_core::apps::AppConfig;
 use impresario_core::ast::AppOp;
 use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::{Id, JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -75,6 +76,81 @@ pub struct ExecOptions {
     pub master_version: String,
     /// Session tunables (tests shrink the deadlines).
     pub session_options: SessionOptions,
+    /// Optional live progress stream for a job view (TASK-2 W-CLI).
+    pub events: Option<std::sync::mpsc::Sender<ExecEvent>>,
+}
+
+/// One live executor event. Every text field is already redacted and safe to
+/// persist; `source` intentionally carries the unresolved DSL source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum ExecEvent {
+    RunStarted {
+        run_id: String,
+        devices: Vec<String>,
+        acts: usize,
+    },
+    DeviceStarted {
+        device: String,
+        platform: String,
+    },
+    ActStarted {
+        device: String,
+        play: String,
+        act: String,
+        attempt: u32,
+        example: BTreeMap<String, String>,
+    },
+    ActFinished {
+        device: String,
+        play: String,
+        act: String,
+        status: String,
+        duration_ms: u64,
+    },
+    StepStarted {
+        device: String,
+        play: String,
+        act: String,
+        stage: String,
+        index: usize,
+        label: String,
+        source: String,
+    },
+    StepFinished {
+        device: String,
+        play: String,
+        act: String,
+        stage: String,
+        index: usize,
+        status: String,
+        duration_ms: u64,
+        error: Option<String>,
+    },
+    LogLine {
+        device: String,
+        level: String,
+        source: String,
+        message: String,
+        unix_ms: u64,
+    },
+    DeviceFinished {
+        device: String,
+        status: String,
+        error: Option<String>,
+    },
+    RunFinished {
+        status: String,
+        exit_code: i32,
+        duration_ms: u64,
+    },
+}
+
+fn emit(events: Option<&std::sync::mpsc::Sender<ExecEvent>>, event: ExecEvent) {
+    if let Some(sender) = events {
+        // A disconnected viewer must never affect a run.
+        let _ = sender.send(event);
+    }
 }
 
 impl ExecOptions {
@@ -113,6 +189,31 @@ pub async fn execute(plan: &ExecutionPlan, options: &ExecOptions) -> ExecOutcome
     });
     let permits = usize::try_from(options.config.parallel_devices.max(1)).unwrap_or(1);
     let semaphore = Arc::new(Semaphore::new(permits));
+
+    let devices: Vec<String> = plan
+        .devices
+        .iter()
+        .map(|device| device.device.name.clone())
+        .collect();
+    let act_count = plan
+        .devices
+        .first()
+        .map(|device| {
+            device
+                .plays
+                .iter()
+                .map(|play| play.acts.len())
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+    emit(
+        options.events.as_ref(),
+        ExecEvent::RunStarted {
+            run_id: options.run_id.clone(),
+            devices,
+            acts: act_count,
+        },
+    );
 
     let mut set: JoinSet<(usize, DeviceOutcome)> = JoinSet::new();
     let mut index_of: HashMap<Id, usize> = HashMap::new();
@@ -210,6 +311,14 @@ pub async fn execute(plan: &ExecutionPlan, options: &ExecOptions) -> ExecOutcome
         exit_code,
         devices,
     };
+    emit(
+        options.events.as_ref(),
+        ExecEvent::RunFinished {
+            status: status.as_str().to_string(),
+            exit_code,
+            duration_ms: report.duration_ms,
+        },
+    );
     ExecOutcome { report, exit_code }
 }
 
@@ -264,6 +373,14 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
         .map(|play| play.acts.iter().map(|_| None).collect())
         .collect();
 
+    emit(
+        shared.options.events.as_ref(),
+        ExecEvent::DeviceStarted {
+            device: device.name.clone(),
+            platform: device.platform.as_str().to_string(),
+        },
+    );
+
     let initial = establish(
         &mut *transport,
         device,
@@ -310,10 +427,25 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
                     if shared.options.shutdown.is_cancelled() || shared.fail_fast.is_cancelled() {
                         break 'plays;
                     }
-                    let outcome = run.run_act(act, act_index == 0).await;
+                    let outcome = run.run_act(play.name.as_str(), act, act_index == 0).await;
                     if outcome.report.status == Status::Failed && shared.options.fail_fast {
                         shared.fail_fast.cancel();
                     }
+                    emit(
+                        shared.options.events.as_ref(),
+                        ExecEvent::ActFinished {
+                            device: device.name.clone(),
+                            play: play.name.clone(),
+                            act: outcome.report.name.clone(),
+                            status: outcome.report.status.as_str().to_string(),
+                            duration_ms: outcome
+                                .report
+                                .attempts
+                                .iter()
+                                .map(|attempt| attempt.duration_ms)
+                                .sum(),
+                        },
+                    );
                     if let Some(slot) = done
                         .get_mut(play_index)
                         .and_then(|acts| acts.get_mut(act_index))
@@ -338,14 +470,34 @@ async fn run_device(plan: &DevicePlan, shared: &Shared) -> DeviceOutcome {
     };
     let plays = assemble_plays(plan, &done, default_status);
     let error = device_error.map(|error| error_json(shared, &error));
-    DeviceOutcome {
-        report: DeviceReport {
-            name: device.name.clone(),
-            platform: device.platform.as_str().to_string(),
-            device_info,
-            error,
-            plays,
+    let report = DeviceReport {
+        name: device.name.clone(),
+        platform: device.platform.as_str().to_string(),
+        device_info,
+        error,
+        plays,
+    };
+    let status = if report.error.is_some() {
+        "error"
+    } else if report
+        .plays
+        .iter()
+        .any(|play| play.acts.iter().any(|act| act.status == Status::Failed))
+    {
+        "failed"
+    } else {
+        "passed"
+    };
+    emit(
+        shared.options.events.as_ref(),
+        ExecEvent::DeviceFinished {
+            device: device.name.clone(),
+            status: status.to_string(),
+            error: report.error.as_ref().map(|error| error.message.clone()),
         },
+    );
+    DeviceOutcome {
+        report,
         infra_zero_failure: infra_zero,
     }
 }
@@ -401,10 +553,26 @@ async fn establish(
         {
             Ok(Ok(mut stream)) => {
                 let buffer = agent_logs.clone();
+                let events = shared.options.events.clone();
+                let redactor = shared.redactor.clone();
+                let device_name = device.name.clone();
                 Some(tokio::spawn(async move {
                     while let Some(entry) = stream.next().await {
                         match entry {
-                            Ok(record) => buffer.push(record),
+                            Ok(record) => {
+                                let message = redactor.redact(&record.message);
+                                emit(
+                                    events.as_ref(),
+                                    ExecEvent::LogLine {
+                                        device: device_name.clone(),
+                                        level: record.level.as_str().to_string(),
+                                        source: record.source.clone(),
+                                        message,
+                                        unix_ms: u64::try_from(record.unix_ms).unwrap_or(0),
+                                    },
+                                );
+                                buffer.push(record);
+                            }
                             Err(error) => {
                                 tracing::debug!(%error, "agent log stream ended");
                                 break;
@@ -726,7 +894,12 @@ impl DeviceRun<'_> {
         }
     }
 
-    async fn run_act(&mut self, act: &PlannedAct, first_act_of_play: bool) -> ActOutcome {
+    async fn run_act(
+        &mut self,
+        play_name: &str,
+        act: &PlannedAct,
+        first_act_of_play: bool,
+    ) -> ActOutcome {
         let total = self.shared.options.retries.saturating_add(1);
         let mut attempts: Vec<(AttemptReport, usize, Option<WireErrorCode>)> = Vec::new();
         let mut final_status = Status::Failed;
@@ -740,6 +913,16 @@ impl DeviceRun<'_> {
             {
                 break;
             }
+            emit(
+                self.shared.options.events.as_ref(),
+                ExecEvent::ActStarted {
+                    device: self.device.name.clone(),
+                    play: play_name.to_string(),
+                    act: act.name.clone(),
+                    attempt: attempt_n,
+                    example: redacted_example(act, Some(&self.shared.redactor)),
+                },
+            );
             let policy = self.shared.options.config.app_reset;
             let reset_due = policy != AppReset::Never
                 && (attempt_n > 1 || first_act_of_play || matches!(policy, AppReset::PerAct));
@@ -769,7 +952,9 @@ impl DeviceRun<'_> {
                     ));
                 }
                 Ok(()) => {
-                    let outcome = self.run_attempt(act, attempt_n).await;
+                    let outcome = self
+                        .run_attempt(play_name, act.name.as_str(), act, attempt_n)
+                        .await;
                     let status = outcome.report.status;
                     let code = outcome
                         .report
@@ -804,7 +989,13 @@ impl DeviceRun<'_> {
         }
     }
 
-    async fn run_attempt(&mut self, act: &PlannedAct, attempt_n: u32) -> AttemptOutcome {
+    async fn run_attempt(
+        &mut self,
+        play_name: &str,
+        act_name: &str,
+        act: &PlannedAct,
+        attempt_n: u32,
+    ) -> AttemptOutcome {
         let started = Instant::now();
         let mut stages: Vec<StageReport> = Vec::new();
         let mut wire_results = 0usize;
@@ -832,9 +1023,34 @@ impl DeviceRun<'_> {
                     step_index += 1;
                     continue;
                 }
+                emit(
+                    self.shared.options.events.as_ref(),
+                    ExecEvent::StepStarted {
+                        device: self.device.name.clone(),
+                        play: play_name.to_string(),
+                        act: act_name.to_string(),
+                        stage: stage.name.clone(),
+                        index: step_index,
+                        label: step.label.clone(),
+                        source: step.source_text.clone(),
+                    },
+                );
                 let outcome = self.run_step(step).await;
                 match outcome {
                     StepOutcome::Passed { duration_ms, wire } => {
+                        emit(
+                            self.shared.options.events.as_ref(),
+                            ExecEvent::StepFinished {
+                                device: self.device.name.clone(),
+                                play: play_name.to_string(),
+                                act: act_name.to_string(),
+                                stage: stage.name.clone(),
+                                index: step_index,
+                                status: "passed".to_string(),
+                                duration_ms,
+                                error: None,
+                            },
+                        );
                         stage_report.steps.push(step_report(
                             self.shared,
                             step,
@@ -849,6 +1065,19 @@ impl DeviceRun<'_> {
                         duration_ms,
                         wire,
                     } => {
+                        emit(
+                            self.shared.options.events.as_ref(),
+                            ExecEvent::StepFinished {
+                                device: self.device.name.clone(),
+                                play: play_name.to_string(),
+                                act: act_name.to_string(),
+                                stage: stage.name.clone(),
+                                index: step_index,
+                                status: "failed".to_string(),
+                                duration_ms,
+                                error: Some(self.shared.redactor.redact(&error.message)),
+                            },
+                        );
                         stage_report.steps.push(step_report(
                             self.shared,
                             step,
@@ -860,6 +1089,19 @@ impl DeviceRun<'_> {
                         failure = Some((step_index, error));
                     }
                     StepOutcome::Aborted { duration_ms, wire } => {
+                        emit(
+                            self.shared.options.events.as_ref(),
+                            ExecEvent::StepFinished {
+                                device: self.device.name.clone(),
+                                play: play_name.to_string(),
+                                act: act_name.to_string(),
+                                stage: stage.name.clone(),
+                                index: step_index,
+                                status: "aborted".to_string(),
+                                duration_ms,
+                                error: None,
+                            },
+                        );
                         stage_report.steps.push(step_report(
                             self.shared,
                             step,

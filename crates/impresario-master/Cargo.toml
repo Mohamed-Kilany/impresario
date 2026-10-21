@@ -19,6 +19,7 @@ impresario-core = { path = "../impresario-core" }
 impresario-clients = { path = "../impresario-clients" }
 impresario-proto = { path = "../impresario-proto" }
 clap.workspace = true
+clap_complete.workspace = true
 tokio = { workspace = true, features = ["io-std"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
@@ -26,6 +27,7 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+yaml-edit.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true
@@ -40,12 +42,19 @@ async-trait.workspace = true
 ureq.workspace = true
 sha2.workspace = true
 zip.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+interprocess.workspace = true
+getrandom.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The managed Chromium archive is not installed by Chrome's installer, so its
 # directory lacks the AppContainer ACEs the Windows sandbox needs. Grant them
 # with the OS API; no `icacls` shell-out (TASK-2 D-19).
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true
@@ -53,3 +62,4 @@ predicates.workspace = true
 tempfile.workspace = true
 insta.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+portable-pty = "=0.9.0"

@@ -1,0 +1,7 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 30, 8)"
+---
+impresario: terminal too small
+resize to at least 40x12, or
+run with --plain

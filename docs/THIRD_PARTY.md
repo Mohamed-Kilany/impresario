@@ -16,17 +16,19 @@ facts only).
 |---|---|---|---|---|
 | `yaml-edit` | 0.3.2 | Apache-2.0 | lossless YAML config editing (rowan syntax tree) | chosen — I-91 |
 | `toml_edit` | 0.25.17 | MIT OR Apache-2.0 | recorded fallback if `yaml-edit` rots | chosen as fallback — I-91 |
-| `ratatui` | 0.30.2 | MIT | TUI (snapshot-testable via `TestBackend`) | chosen — I-92 |
-| `crossterm` | 0.29.0 | MIT | terminal I/O backend | chosen — I-92 |
+| `ratatui` | 0.30.2 | MIT | TUI (snapshot-testable via `TestBackend`) | chosen, shipped — I-92/I-125 |
+| `crossterm` | 0.29.0 | MIT | terminal I/O backend | chosen, shipped — I-92/I-125 |
 | `clap` | 4.6.7 | MIT OR Apache-2.0 | CLI parsing | chosen — I-92 |
-| `clap_complete` | 4.6.11 | MIT OR Apache-2.0 | shell completions (5 shells incl. PowerShell) | chosen — I-92 |
-| `interprocess` | 2.4.6 | 0BSD OR Apache-2.0 | daemon IPC (named pipes / UDS) | chosen — I-92 |
-| `portable-pty` | 0.9.0 | MIT | ConPTY/PTY-based tests | chosen — I-92 |
-| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets (Windows Credential Manager etc.) | chosen — I-92 |
+| `clap_complete` | 4.6.11 | MIT OR Apache-2.0 | `impresario completions` for bash/zsh/fish/powershell/elvish | chosen, shipped — I-92/I-125 |
+| `interprocess` | 2.4.6 | 0BSD OR Apache-2.0 | daemon IPC (named pipe / Unix socket, no TCP fallback) | chosen, shipped — I-92/I-126 |
+| `portable-pty` | 0.9.0 | MIT | ConPTY/PTY-based acceptance tests (dev-dependency only) | chosen, shipped — I-92/I-128 |
+| `getrandom` | 0.4.3 | MIT OR Apache-2.0 | daemon socket token (OS CSPRNG) | chosen — I-126 |
+| `libc` | 0.2.190 | MIT OR Apache-2.0 | Unix pid liveness and daemon `setsid` (Unix-only dependency) | chosen — I-126 |
+| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets (Windows Credential Manager etc.) | candidate — probed in S-5, no Phase 4 code path uses it yet |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | display-width math (tables, reports) | chosen |
-| `inquire` | 0.9.4 | MIT | interactive wizards | candidate (compiles; behaviour under test in work package) |
-| `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate |
-| `indicatif` | 0.18.6 | MIT | progress bars | candidate |
+| `inquire` | 0.9.4 | MIT | interactive wizards | candidate — not adopted; Phase 4 wizard/prompt is line-based |
+| `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate — not adopted |
+| `indicatif` | 0.18.6 | MIT | progress bars | candidate — not adopted |
 | `idevice` | 0.1.68 | MIT | iOS/tvOS: usbmuxd client, lockdown, pairing, AFC, install, DDI, DVT, RSD | chosen — I-95 |
 | `apple-codesign` | 0.29.0 | **MPL-2.0** | Mach-O / `.app` / `.ipa` signing, entitlements | chosen, **flagged to the user** (weak copyleft, unmodified dependency) — I-96 |
 | `app-store-connect` | 0.7.0 | Apache-2.0 OR MIT | App Store Connect API (certs/profiles/devices) | candidate — I-96(b) |
@@ -46,7 +48,7 @@ facts only).
 | `mdns-sd` | 0.21.6 | Apache-2.0 OR MIT | discovery of `_adb-tls-pairing` / `_adb-tls-connect` | chosen - I-121 |
 | `ureq` | 2.12.1 | MIT OR Apache-2.0 | managed Chromium HTTPS download (consented, pinned) | chosen - I-123 |
 | `zip` | 7.3.0 | MIT | managed Chromium archive extraction | chosen - I-123 |
-| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Windows AppContainer ACL grant for the managed browser (Windows-only) | chosen - I-123 |
+| `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Windows AppContainer ACL grant for the managed browser; daemon `CreateProcess`/standard-handle inheritance and console features (Windows-only) | chosen - I-123/I-126 |
 | `russh` | 0.63.3 | Apache-2.0 | webOS SSH transport (`ring` backend, no NASM/OpenSSL) | chosen — I-99 |
 | `russh-sftp` | 3.0.1 | Apache-2.0 | webOS SFTP upload (exec `cat` fallback) | chosen — I-99 |
 | `ssh2` | 0.9.6 | MIT OR Apache-2.0 | libssh2 binding; would drag OpenSSL/Perl into the Windows build | rejected — I-99 |

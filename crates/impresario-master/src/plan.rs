@@ -28,7 +28,8 @@ use impresario_core::support;
 use impresario_core::workspace::Workspace;
 
 /// Act selection from the CLI (`--tag` / `--exclude-tag` / `--act`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Selection {
     /// `--tag` (repeatable = OR).
     pub tags: Vec<String>,
@@ -58,7 +59,7 @@ impl Selection {
 }
 
 /// What kind of master work a planned step is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PlannedWork {
     /// A command that crosses the wire.
     Wire,
@@ -70,7 +71,7 @@ pub enum PlannedWork {
 }
 
 /// One compiled step (spec 8.2: `PlannedStep`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlannedStep {
     pub span: Span,
     /// The source text as written (never the resolved string, 5.6).
@@ -84,7 +85,7 @@ pub struct PlannedStep {
     pub work: PlannedWork,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlannedStage {
     pub name: String,
     /// Location of the stage declaration in its `.theatre` file.
@@ -92,7 +93,7 @@ pub struct PlannedStage {
     pub steps: Vec<PlannedStep>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlannedAct {
     pub name: String,
     pub tags: Vec<String>,
@@ -101,7 +102,7 @@ pub struct PlannedAct {
     pub stages: Vec<PlannedStage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlannedPlay {
     pub name: String,
     pub file: String,
@@ -109,7 +110,7 @@ pub struct PlannedPlay {
 }
 
 /// One selected device with everything it will run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DevicePlan {
     pub device: DeviceConfig,
     /// The app bound to this run, or `None` for an app-less web run.
@@ -118,7 +119,7 @@ pub struct DevicePlan {
 }
 
 /// The complete plan for a `run` invocation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionPlan {
     pub devices: Vec<DevicePlan>,
     /// Resolved `${env.*}` values, for report/log redaction (5.6).

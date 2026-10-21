@@ -1,0 +1,38 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 100, 34)"
+---
+ impresario  demo  [plain colours]
+ home  runs  tests  devices  apps  config
+────────────────────────────────────────────────────────────────────────────────────────────────────
+┌─────────┌ help · Esc closes ───────────────────────────────────────────────────────────┐─────────┐
+│Jobs (1) │impresario interactive                                                        │         │
+│Enter fol│                                                                              │         │
+│f log tai│Prompt: type a CLI command; /run --tag smoke is a shortcut. Tab completes.    │         │
+│Tab devic│        Ctrl-R reverse search, Up/Down history, Alt+Enter newline.            │         │
+│rerun  F │        Ctrl-C clears the prompt, twice quits. Ctrl-Q quits. Ctrl-Z suspends. │         │
+│o report │                                                                              │n tree.  │
+│filter: p│Screens: F2 home, F3 runs, F4 tests, F5 devices, F6 apps, F7 config.          │         │
+│to clear)│Focus:  Tab switches to content in most screens; Esc returns to the prompt.   │         │
+│         │                                                                              │         │
+│[>] 20261│Runs:   Enter follow, b background/detach, x stop, f pause/resume log tail,   │         │
+│         │        Tab cycle device, / filter, ? help, r rerun, F rerun failed,          │         │
+│         │        o report, p screenshot, X or Delete remove a finished job.            │         │
+│         │Tests:  Enter edit, Space mark, r run selected/marked, d dry-run matrix.      │         │
+│         │        Selectors live in the prompt: /tests --tag smoke --platform android.  │─────────┘
+│         │Devices/Apps/Config: j/k scroll, Enter open the relevant file.                │─────────┐
+│         │                                                                              │         │
+│         │Slash:  /run /jobs /devices /apps /config /tests /open /doctor /fmt           │         │
+│         │        /validate /plan /attach /logs /stop /report /profile /help /quit      │         │
+│         │                                                                              │         │
+│         │Everything is scriptable outside the TUI: impresario run --detach,            │         │
+│         │impresario jobs --json, impresario wait <id>, impresario report <id>.         │         │
+│         │                                                                              │         │
+└─────────│                                                                              │─────────┘
+┌prompt  (│                                                                              │─────────┐
+│❯        │                                                                              │         │
+└─────────└──────────────────────────────────────────────────────────────────────────────┘─────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────
+F1 help · F2 home · F3 runs · F4 tests · F5 devices · F6 apps · F7 config · Ctrl-Q quit
+job 20261021-120000-run01 running
+run 20261021-120000-run01 submitted

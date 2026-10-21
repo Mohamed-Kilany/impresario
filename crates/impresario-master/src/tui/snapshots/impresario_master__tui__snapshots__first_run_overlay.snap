@@ -1,0 +1,30 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 90, 26)"
+---
+ impresario  demo  [plain colours]
+ home  runs  tests  devices  apps  config
+──────────────────────────────────────────────────────────────────────────────────────────
+┌workspac┌ help · Esc closes ───────────────────────────────────────────────────┐────────┐
+│Dashboar│Welcome to impresario                                                 │        │
+│        │                                                                      │        │
+│workspac│workspace  demo                                                       │        │
+│config  │global home demo-home                                                 │        │
+│devices │                                                                      │        │
+│        │No workspace config was found yet. Create the workspace skeleton now? │        │
+│tests   │                                                                      │        │
+│play(s) │  [y] create impresario.config, plays/, scenes/, theatres/ and an     │        │
+│devices │example play                                                          │        │
+│apps    │  [n] or Esc skip; you can create it later with:                      │        │
+│jobs    │      impresario workspace new . --example                            │        │
+│        │                                                                      │        │
+│Recent j│After creating it, use /doctor to check devices and /tests to explore │        │
+│  no job│the DSL.                                                              │        │
+└────────│Press F1 at any time for keys and slash commands.                     │────────┘
+┌prompt  │                                                                      │────────┐
+│❯       │                                                                      │        │
+└────────│                                                                      │────────┘
+─────────└──────────────────────────────────────────────────────────────────────┘─────────
+F1 help · F2 home · F3 runs · F4 tests · F5 devices · F6 apps · F7 config · Ctrl-Q quit
+no job selected
+ready

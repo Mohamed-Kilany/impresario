@@ -399,15 +399,51 @@ fn absolute(path: &Path, cwd: &Path) -> PathBuf {
 /// Walk up from `start` looking for a workspace marker.
 ///
 /// A directory containing `.impresario/` or `impresario.config` is a
-/// workspace. The marker lookup stops at the filesystem root.
+/// workspace. The marker lookup stops at the filesystem root. The global home
+/// (`~/.impresario`) is not a workspace marker: without this exclusion every
+/// directory below the user's profile would resolve to the home directory.
 #[must_use]
 pub fn find_marker(start: &Path) -> Option<PathBuf> {
+    let global_home = crate::home::Home::resolve()
+        .ok()
+        .map(|home| home.root().to_path_buf());
+    find_marker_excluding(start, global_home.as_deref())
+}
+
+fn find_marker_excluding(start: &Path, global_home: Option<&Path>) -> Option<PathBuf> {
     for dir in start.ancestors() {
-        if dir.join(".impresario").is_dir() || dir.join("impresario.config").is_file() {
+        let dot_marker = dir.join(".impresario");
+        let is_global_home = is_global_home(&dot_marker, global_home);
+        if (dot_marker.is_dir() && !is_global_home) || dir.join("impresario.config").is_file() {
             return Some(dir.to_path_buf());
         }
     }
     None
+}
+
+/// The configured home, plus the platform default (`%USERPROFILE%\.impresario`
+/// or `$HOME/.impresario`), is not a workspace marker. A portable
+/// `IMPRESARIO_HOME` must not turn an old default home into a workspace root
+/// for every directory below the user profile.
+fn is_global_home(candidate: &Path, configured: Option<&Path>) -> bool {
+    if configured.is_some_and(|home| same_path(home, candidate)) {
+        return true;
+    }
+    ["USERPROFILE", "HOME"].iter().any(|variable| {
+        std::env::var_os(variable).is_some_and(|base| {
+            !base.is_empty() && same_path(&PathBuf::from(base).join(".impresario"), candidate)
+        })
+    })
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -592,6 +628,27 @@ mod tests {
         fs::create_dir_all(dir.join(".impresario")).expect("marker");
         assert_eq!(find_marker(&nested), Some(dir.clone()));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_global_home_is_not_a_workspace_marker() {
+        // The default home is itself called `.impresario`, so its parent must
+        // not resolve to a workspace just because that directory exists.
+        let home = crate::home::Home::resolve().expect("home resolves");
+        assert_eq!(find_marker_excluding(home.root(), Some(home.root())), None);
+        // Only the configured home is excluded: a workspace that happens to
+        // contain a `.impresario` directory still wins.
+        let dir = location_dir("global-home");
+        let other = location_dir("other-home");
+        fs::create_dir_all(dir.join(".impresario")).expect("marker");
+        let nested = dir.join("scratch");
+        fs::create_dir_all(&nested).expect("nested");
+        assert_eq!(
+            find_marker_excluding(&nested, Some(other.as_path())),
+            Some(dir.clone())
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&other);
     }
 
     #[test]

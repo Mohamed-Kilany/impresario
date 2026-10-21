@@ -5,6 +5,7 @@
 mod common;
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use assert_cmd::Command;
 use base64::Engine as _;
@@ -19,6 +20,15 @@ use impresario_master::cli::run_with;
 const EXIT_OK: i32 = 0;
 const EXIT_TEST_FAILED: i32 = 1;
 const EXIT_USAGE: i32 = 2;
+
+/// Jobs state must never touch the real `~/.impresario`; every CLI call in
+/// this suite shares one disposable home for the lifetime of the test process.
+fn test_home() -> &'static Path {
+    static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let home = HOME.get_or_init(|| tempfile::tempdir().expect("home tempdir"));
+    std::env::set_var("IMPRESARIO_HOME", home.path());
+    home.path()
+}
 
 /// The spawned binary's argv (assert_cmd already knows the program).
 fn binary_args(workspace: &Path, rest: &[&str]) -> Vec<String> {
@@ -39,6 +49,7 @@ fn run_defaults_write_console_junit_and_json() {
     let output = Command::cargo_bin("impresario")
         .expect("binary")
         .args(binary_args(temp.path(), &["run"]))
+        .env("IMPRESARIO_HOME", test_home())
         .output()
         .expect("child runs");
     assert_eq!(output.status.code(), Some(EXIT_OK));
@@ -78,6 +89,7 @@ fn run_writes_html_with_embedded_screenshot() {
         &[("shot.play", PLAY_SHOT)],
     );
 
+    let _ = test_home();
     let code = run_with(&argv(temp.path(), &["run", "--reporter", "html"]));
     assert_eq!(code, EXIT_TEST_FAILED);
     let dir = run_dir(temp.path());
@@ -154,6 +166,7 @@ fn run_in_missing_workspace_exits_2() {
     let output = Command::cargo_bin("impresario")
         .expect("binary")
         .args(binary_args(temp.path(), &["run"]))
+        .env("IMPRESARIO_HOME", test_home())
         .output()
         .expect("child runs");
     assert_eq!(output.status.code(), Some(EXIT_USAGE));

@@ -30,7 +30,7 @@ project/agent research whose artefact exists but which was not re-run here;
 | S-2 | iOS/tvOS without Xcode tools (§6.2) | settled | **go** with recorded constraints (no direct-USB in `idevice`; iOS 17+ tunnel needs OS plumbing; XCTest end-to-end unverified) | 1 | I-95 |
 | S-3 | webOS without `ares-*` (§6.3) | settled | **go** — `russh`/`russh-sftp` build and pass a loopback probe on Windows; protocol facts cited from ares-cli 2.4.0/ares-cli-rs; no webOS TV to validate against | 1 | I-99 |
 | S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware validation pending | 1 | I-93 |
-| S-5 | CLI/TUI/daemon/IPC/lossless config (§3, §4.2, §3.5) | settled | **go** — 26/26 probe checks pass on Windows; config **stays YAML** | 1 | I-91, I-92 |
+| S-5 | CLI/TUI/daemon/IPC/lossless config (§3, §4.2, §3.5) | settled, implemented in Phase 4 | **go** — 26/26 probe checks pass on Windows; config **stays YAML**; the TUI, daemon, PTY harness and profiles shipped | 1 | I-91, I-92, I-125…I-130 |
 | S-6 | Apple signing sources (§7.1) | settled | **go** for (a) local `.p12` re-sign (verified on Windows), **conditional go** for (b) ASC API and (c) free-Apple-ID sideloading (external services) | 1/3 | I-96 |
 | S-7 | Tizen certificates (§7.3) | settled | **go** for import/inspection; creation needs Samsung account services (external, optional) | 1/3 | I-94 |
 | S-8 | Standalone editor without LSP (§9.2) | settled | **go** — `impresario-core` builds unchanged for `wasm32-unknown-unknown` | 1 | I-98 |
@@ -192,9 +192,40 @@ config format **stays YAML** (D-04 unchanged) and no `migrate`-to-TOML is
 needed; `toml_edit` remains the recorded fallback should `yaml-edit` rot
 (recorded in I-91).
 
-**Not probed here:** `inquire`/`cliclack` (compiled only; prompt behaviour is
-tested in the work package via the step-model abstraction), `indicatif`.
-Daemon supervision and job control are Phase-4 work; the IPC primitive is proven.
+**Phase 4 outcome (2026-10-21).** The probe choices carried into the product:
+
+- `ratatui` 0.30.2 + `crossterm` 0.29 drive the six-screen TUI (home, runs,
+  tests, devices, apps, config); `TestBackend` + `insta` cover six frames
+  (`src/tui/snapshots.rs`), and the TUI remains a client that spawns the real
+  CLI (I-125).
+- `portable-pty` 0.9.0 (dev-dependency) drives the real binary through ConPTY:
+  first-run scaffold, slash completion + Ctrl-R history, and run view with
+  `MockAgent` → detach → close → attach → report (`tests/tui_pty.rs`, I-128).
+  The probe's `ESC[6n]` warning was necessary but not sufficient: the PTY
+  master must stay alive and UTF-8 tails must be trimmed on a character
+  boundary.
+- `interprocess` 2.4.6 local sockets back the auto-started per-home daemon.
+  Job/lease state is file-based under `~/.impresario/jobs`, the socket name is
+  home-scoped, the token is private, and idle exit, recovery, all three
+  `--on-busy` policies and the Windows pipe-release regression are covered
+  (`tests/jobs_cli.rs`, I-126).
+- `clap_complete` 4.6.11 now ships as `impresario completions <shell>`.
+- `yaml-edit` 0.3.2 passed the scalar no-op probe but mis-indents a block
+  mapping inserted under an existing block key, so profile saving uses a
+  validated text splice for the `profiles:` section; every other config edit
+  still uses `yaml-edit` (I-127).
+- The workspace MSRV moved from 1.87 to **1.88** because `ratatui` 0.30.2
+  requires it.
+
+Live Phase 4 evidence is a detached web run (`20261021-073144-2763`, 9/9
+steps) followed by `attach`/`report`; the three-device concurrent run and the
+manual three-shell checklist remain open and are recorded as STATUS gaps 17–18.
+
+**Not probed or not adopted:** `inquire`/`cliclack` were compiled in the probe
+but the wizard/prompt is line-based, `indicatif` was not needed, and `keyring`
+is not used yet (no secret store path landed in Phase 4). Those crates stay
+candidates in `docs/THIRD_PARTY.md`; the daemon/IPC and job-control gaps the
+spike left open are now implemented (I-126).
 
 ---
 

@@ -570,6 +570,11 @@ pub fn parse_settings(source: &str, path: &Path) -> SettingsFile {
 }
 
 fn flatten<'a>(prefix: &str, value: &'a Value, out: &mut Vec<(String, &'a Value)>) {
+    // `profiles:` is a structured, user-editable section owned by
+    // `impresario profile`, not a scalar setting. It is validated there.
+    if prefix == "profiles" {
+        return;
+    }
     if !prefix.is_empty() && definition(prefix).is_some() {
         out.push((prefix.to_string(), value));
         return;

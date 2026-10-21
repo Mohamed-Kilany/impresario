@@ -26,6 +26,13 @@ target* (or next to it) instead of shelling out screen taps from the host.
 - **A Model Context Protocol server** (`impresario mcp`): any MCP-capable AI
   agent can validate workspaces, check or list devices, run plays on real
   hardware and read reports plus screenshots over stdio — `docs/MCP.md`.
+- **A TUI and background jobs.** Run `impresario` in a terminal for the
+  six-screen TUI (home, runs, tests, devices, apps, config) with slash
+  commands and history; `run --detach` hands a job to a per-user daemon so
+  closing the terminal does not kill it. `jobs`, `attach`, `logs`, `stop`,
+  `rm`, `report` and `wait` work from any shell, device leases prevent two
+  jobs from driving one device, and profiles save run selections —
+  `docs/CLI.md`.
 
 ## Repository layout
 
@@ -39,13 +46,13 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub` |
 | `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
 | `editors/vscode` | VS Code client + TextMate grammar |
-| `docs/` | DSL, protocol, devices, parity, LSP, errors, decisions, status |
+| `docs/` | DSL, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
 | `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example` (table scenes, `theatres/login.theatre`, theatrical play), CDP fixture pages |
 
 ## Requirements
 
-- Rust stable **1.87+** (developed against 1.94; `libadb` requires 1.87).
-  Nothing else is needed for the quick start below.
+- Rust stable **1.88+** (developed against 1.94; `libadb` requires 1.87 and
+  `ratatui` 0.30.2 requires 1.88). Nothing else is needed for the quick start below.
 - Optional, only for the matching targets:
   - Chrome/Chromium for `web` runs, or the pinned managed browser:
     `impresario tools install chromium` (consent + SHA-256 verified; I-123),
@@ -193,6 +200,7 @@ cargo test --workspace          # mock-driven; no device required
 | `docs/PARITY.md` | action/check/key support per platform, generated + reconciled |
 | `docs/LSP.md` | language server features, settings, editor setup |
 | `docs/MCP.md` | MCP server: tools, resources, per-client wiring |
+| `docs/CLI.md` | TUI screens/keys, slash commands, jobs/daemon, leases, profiles, test explorer, three-shell checklist |
 | `docs/ERRORS.md` | every `IMP-*` code with cause and fix |
 | `docs/DECISIONS.md` | the binding decision log (spec + implementation) |
 | `docs/STATUS.md` | what is done, verified where, and every known gap |

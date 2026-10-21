@@ -16,13 +16,14 @@ use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::{Code, Diagnostic, Diagnostics};
 use impresario_core::home::Home;
 use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
+use impresario_core::platforms::Platform;
 use impresario_core::settings::{self, EffectiveSettings, LayerSource, SettingValue, SettingsFile};
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::{self, WorkspaceSource};
 use tokio_util::sync::CancellationToken;
 
 use crate::report::RunReport;
-use crate::{exec, plan, render, reporters, time_fmt};
+use crate::{exec, jobs, plan, render, reporters, time_fmt};
 
 /// Exit codes (spec section 8.3): 0 pass · 1 test failure · 2 config/DSL ·
 /// 3 infrastructure · 130 interrupted.
@@ -56,8 +57,15 @@ pub struct Cli {
     /// Disable colored diagnostics.
     #[arg(long, global = true)]
     pub no_color: bool,
+    /// Never start the interactive TUI; print the plain dashboard instead.
+    #[arg(long, global = true)]
+    pub no_tui: bool,
+    /// Plain, scriptable output (also disables the TUI).
+    #[arg(long, global = true)]
+    pub plain: bool,
+    /// Command to run; with no command, start the interactive TUI on a TTY.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -84,6 +92,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Explore and edit test files (tree, JSON, grep, rename, new, open).
+    Tests(crate::tests_cmd::TestsArgs),
     /// Format .scene, .theatre and .play files canonically.
     Fmt {
         /// Files or directories (default: the configured workspace dirs).
@@ -118,6 +128,30 @@ pub enum Command {
     Migrate(MigrateArgs),
     /// Plan and execute plays on devices (spec section 8.2/8.3).
     Run(RunArgs),
+    /// Save and inspect reusable run profiles (`profiles:` in config.yaml).
+    Profile(crate::profile_cmd::ProfileArgs),
+    /// List active jobs, or every job with `--all`.
+    Jobs(crate::jobs_cmd::JobsArgs),
+    /// Attach to a running job (Ctrl-C detaches, `--stop` stops it).
+    Attach(crate::jobs_cmd::AttachArgs),
+    /// Print or follow a job's log.
+    Logs(crate::jobs_cmd::LogsArgs),
+    /// Ask a job to stop at the next command boundary.
+    Stop(crate::jobs_cmd::StopArgs),
+    /// Remove a finished job's state and logs.
+    Rm(crate::jobs_cmd::RemoveArgs),
+    /// Wait for a job and exit with its code.
+    Wait(crate::jobs_cmd::WaitArgs),
+    /// Print a finished job's report.
+    Report(crate::jobs_cmd::ReportArgs),
+    /// Run the per-user job supervisor (auto-started by `run --detach`).
+    Daemon(crate::jobs_cmd::DaemonArgs),
+    /// Print shell completion code (bash, zsh, fish, PowerShell, Elvish).
+    Completions {
+        /// Shell to generate for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Run the embedded language server on stdio (spec section 13).
     Lsp,
     /// Serve the Model Context Protocol on stdio for AI agents (decision I-80).
@@ -241,10 +275,10 @@ pub enum WorkspaceCommand {
     },
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub struct RunArgs {
     /// Play file, directory or glob (repeatable; default: plays_dir).
-    #[arg(long, value_name = "FILE|DIR|GLOB")]
+    #[arg(long, visible_alias = "file", value_name = "FILE|DIR|GLOB")]
     pub play: Vec<String>,
     /// App definition to bind (beats each play's `App:` header).
     #[arg(long, value_name = "NAME")]
@@ -252,6 +286,9 @@ pub struct RunArgs {
     /// Device name (repeatable) or `all`.
     #[arg(long, value_name = "NAME")]
     pub device: Vec<String>,
+    /// Only devices on this platform (repeatable or comma list).
+    #[arg(long, value_name = "PLATFORM")]
+    pub platform: Vec<String>,
     /// Only run acts with this tag (repeatable; OR).
     #[arg(long, value_name = "TAG")]
     pub tag: Vec<String>,
@@ -261,6 +298,12 @@ pub struct RunArgs {
     /// Only run acts with this exact name (repeatable).
     #[arg(long, value_name = "NAME")]
     pub act: Vec<String>,
+    /// Use a saved run profile (see `impresario profile`).
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+    /// Run only acts that failed in the newest report under report_output.
+    #[arg(long)]
+    pub only_failed: bool,
     /// Variable override K=V (repeatable, beats play vars).
     #[arg(long, value_name = "K=V")]
     pub var: Vec<String>,
@@ -279,6 +322,15 @@ pub struct RunArgs {
     /// Stop the whole run at the first failure.
     #[arg(long)]
     pub fail_fast: bool,
+    /// Print the resolved device/play/act matrix and exit without touching a device.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Hand the job to the background supervisor and return immediately.
+    #[arg(long)]
+    pub detach: bool,
+    /// What to do when another job holds a device lease.
+    #[arg(long, value_enum, default_value_t = crate::jobs::OnBusy::Wait)]
+    pub on_busy: crate::jobs::OnBusy,
 }
 
 /// Entry point used by `main.rs`.
@@ -315,11 +367,16 @@ pub fn run_with(argv: &[String]) -> i32 {
     let config_path = resolve_path(&base, &cli.config, "impresario.config");
     let devices_path = resolve_path(&base, &cli.devices_config, "impresario.devices.config");
 
-    match &cli.command {
+    let Some(command) = cli.command.as_ref() else {
+        return cmd_home(&home, &base, &config_path, &devices_path, &cli);
+    };
+
+    match command {
         Command::Config { command } => cmd_config(command, &home, &config_path),
         Command::Workspace { command } => cmd_workspace(command, &home, &base, base_source),
         Command::Validate { paths } => cmd_validate(&base, &config_path, &devices_path, paths),
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
+        Command::Tests(args) => crate::tests_cmd::run(&base, &config_path, args),
         Command::Fmt { paths, check } => cmd_fmt(&base, &config_path, paths, *check),
         Command::Device { command } => match command {
             DeviceCommand::Check { names } => {
@@ -343,7 +400,29 @@ pub fn run_with(argv: &[String]) -> i32 {
         }
         Command::Tools { command } => crate::tools_cmd::run(command, &home),
         Command::Migrate(args) => crate::definitions::migrate(&base, &config_path, args.dry_run),
-        Command::Run(args) => cmd_run(&base, &config_path, &devices_path, args, cli.no_color),
+        Command::Run(args) => cmd_run(
+            &home,
+            &base,
+            &config_path,
+            &devices_path,
+            args,
+            cli.no_color,
+        ),
+        Command::Profile(args) => crate::profile_cmd::run(&home, args),
+        Command::Jobs(args) => crate::jobs_cmd::run_jobs(&home, args),
+        Command::Attach(args) => crate::jobs_cmd::attach(&home, args),
+        Command::Logs(args) => crate::jobs_cmd::logs(&home, args),
+        Command::Stop(args) => crate::jobs_cmd::stop(&home, args),
+        Command::Rm(args) => crate::jobs_cmd::remove(&home, args),
+        Command::Wait(args) => crate::jobs_cmd::wait(&home, args),
+        Command::Report(args) => crate::jobs_cmd::report(&home, args),
+        Command::Daemon(args) => crate::jobs_cmd::daemon(&home, args),
+        Command::Completions { shell } => {
+            use clap::CommandFactory as _;
+            let mut command = Cli::command();
+            clap_complete::generate(*shell, &mut command, "impresario", &mut std::io::stdout());
+            EXIT_OK
+        }
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&base, &config_path, &devices_path),
         Command::MockAgent { port } => cmd_mock_agent(*port),
@@ -812,7 +891,7 @@ fn edit_config_file(path: &Path) -> i32 {
     }
 }
 
-fn editor_command() -> Result<(String, Vec<String>), String> {
+pub(crate) fn editor_command() -> Result<(String, Vec<String>), String> {
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .map_err(|_| "set VISUAL or EDITOR to your editor".to_string())?;
@@ -1977,7 +2056,86 @@ fn diagnostics_detail(diagnostics: &Diagnostics) -> String {
         .join("\n")
 }
 
+/// No subcommand: enter the TUI on a real terminal, otherwise print a plain
+/// dashboard. This path never prompts and never waits for input.
+fn cmd_home(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, cli: &Cli) -> i32 {
+    use std::io::IsTerminal as _;
+
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let ci = std::env::var("CI").is_ok_and(|value| {
+        !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
+    });
+    let color = !cli.no_color
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var("TERM").map_or(true, |term| !term.eq_ignore_ascii_case("dumb"));
+    if tty && !ci && !cli.no_tui && !cli.plain {
+        let context = crate::tui::Context::new(
+            home.clone(),
+            base.to_path_buf(),
+            config_path.to_path_buf(),
+            devices_path.to_path_buf(),
+            color,
+        );
+        return crate::tui::run(context);
+    }
+
+    let reason = if cli.no_tui {
+        "--no-tui"
+    } else if cli.plain {
+        "--plain"
+    } else if ci {
+        "CI is set"
+    } else {
+        "stdin or stdout is not a terminal"
+    };
+    let jobs = crate::jobs::JobStore::new(home).list();
+    let devices = config::load_devices(devices_path)
+        .config
+        .map_or(0, |devices| devices.devices.len());
+    let apps = apps::load_apps_merged(base)
+        .config
+        .map_or(0, |apps| apps.apps.len());
+    let active = jobs
+        .iter()
+        .filter(|record| !record.status.terminal())
+        .count();
+    println!("impresario");
+    println!("  workspace   {}", base.display());
+    println!("  config      {}", config_path.display());
+    println!(
+        "  devices     {} configured in {}",
+        devices,
+        devices_path.display()
+    );
+    println!("  apps        {apps} configured");
+    println!("  jobs        {active} active, {} total", jobs.len());
+    println!("  ui          plain output ({reason})");
+    if !jobs.is_empty() {
+        println!();
+        println!("recent jobs");
+        for record in jobs.iter().take(5) {
+            println!(
+                "  {:<22} {:<12} {}",
+                record.id,
+                record.status.label(),
+                record.duration_ms.map_or_else(
+                    || record.created_at.clone(),
+                    |millis| format!("{} ms", millis)
+                )
+            );
+        }
+    }
+    println!();
+    println!("next");
+    println!("  impresario doctor");
+    println!("  impresario tests --tag smoke");
+    println!("  impresario run --detach --tag smoke");
+    println!("  impresario jobs --json");
+    EXIT_OK
+}
+
 fn cmd_run(
+    home: &Home,
     base: &Path,
     config_path: &Path,
     devices_path: &Path,
@@ -1986,8 +2144,16 @@ fn cmd_run(
 ) -> i32 {
     use std::io::IsTerminal;
 
+    let mut args = args.clone();
+    if let Some(profile) = args.profile.clone() {
+        if let Err(message) = crate::profile_cmd::apply(home, &profile, &mut args) {
+            eprintln!("run: {message}");
+            return EXIT_USAGE;
+        }
+        eprintln!("run: using profile '{profile}'");
+    }
     let color = !no_color && std::io::stdout().is_terminal();
-    run_workspace(base, config_path, devices_path, args, color, true).exit_code
+    run_workspace(base, config_path, devices_path, &args, color, true).exit_code
 }
 
 /// Plan and execute `args`. `color` styles the console reporter (the CLI
@@ -2063,7 +2229,7 @@ pub(crate) fn run_workspace(
         }
     }
 
-    let selected_devices = match select_devices(&device_list.devices, &args.device) {
+    let mut selected_devices = match select_devices(&device_list.devices, &args.device) {
         Ok(selected) => selected,
         Err(message) => {
             eprintln!("run: {message}");
@@ -2077,6 +2243,51 @@ pub(crate) fn run_workspace(
         );
         eprintln!("{message}");
         return RunOutcome::refusal(EXIT_USAGE, message);
+    }
+    let mut platform_filter: Vec<String> = Vec::new();
+    for raw in &args.platform {
+        for name in raw.split(',') {
+            let name = name.trim();
+            if !name.is_empty() {
+                platform_filter.push(name.to_ascii_lowercase());
+            }
+        }
+    }
+    if !platform_filter.is_empty() {
+        let unknown: Vec<&str> = platform_filter
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                !impresario_core::platforms::Platform::ALL
+                    .iter()
+                    .any(|platform| platform.as_str() == *name)
+            })
+            .collect();
+        if !unknown.is_empty() {
+            let message = format!(
+                "run: unknown platform (expected web, webos, tizen, android, androidtv, ios or tvos; got {})",
+                unknown.join(", ")
+            );
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
+        }
+        let filtered: Vec<DeviceConfig> = selected_devices
+            .into_iter()
+            .filter(|device| {
+                platform_filter
+                    .iter()
+                    .any(|name| name == device.platform.as_str())
+            })
+            .collect();
+        if filtered.is_empty() {
+            let message = format!(
+                "run: none of the selected devices run on {}",
+                platform_filter.join(", ")
+            );
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
+        }
+        selected_devices = filtered;
     }
     if let Some(diagnostic) = config::check_report_output(&base.join(&config.report_output)) {
         let mut diagnostics = Diagnostics::new();
@@ -2118,11 +2329,69 @@ pub(crate) fn run_workspace(
         );
     }
 
-    let selection = plan::Selection {
+    let mut selection = plan::Selection {
         tags: args.tag.clone(),
         exclude_tags: args.exclude_tag.clone(),
         acts: args.act.clone(),
     };
+    let mut selected_plays = ws.plays.clone();
+    if args.only_failed {
+        let Some(failed) = jobs::last_failed(base, &config.report_output) else {
+            let message = format!(
+                "run: --only-failed found no previous report under {}",
+                base.join(&config.report_output).display()
+            );
+            eprintln!("{message}");
+            return RunOutcome::refusal(EXIT_USAGE, message);
+        };
+        if failed.is_empty() {
+            println!("run: the newest report has no failed acts; nothing to run");
+            return RunOutcome {
+                exit_code: EXIT_OK,
+                run_id: None,
+                run_dir: None,
+                report: None,
+                messages: Vec::new(),
+                detail: None,
+            };
+        }
+        let failed_acts: Vec<String> = failed
+            .iter()
+            .filter_map(|key| key.split('\u{1f}').nth(1).map(str::to_string))
+            .collect();
+        let failed_files: Vec<&str> = failed
+            .iter()
+            .filter_map(|key| key.split('\u{1f}').next())
+            .filter(|file| !file.is_empty())
+            .collect();
+        selected_plays.retain(|play| {
+            let path = play.path.to_string_lossy().replace('\\', "/");
+            failed_files.iter().any(|file| {
+                let file = file.replace('\\', "/");
+                path == file || path.ends_with(&file) || file.ends_with(&path)
+            })
+        });
+        if selected_plays.is_empty() {
+            // The report may store only an Act name; fall back to the name
+            // filter over the current selection.
+            selected_plays = ws.plays.clone();
+            selection.acts = failed_acts.clone();
+        } else if !failed_acts.is_empty() {
+            selection.acts = failed_acts;
+        }
+        if selection.acts.is_empty() || selected_plays.is_empty() {
+            println!("run: the newest report has no retryable failed acts; nothing to run");
+            return RunOutcome {
+                exit_code: EXIT_OK,
+                run_id: None,
+                run_dir: None,
+                report: None,
+                messages: Vec::new(),
+                detail: None,
+            };
+        }
+    }
+    let selection = selection;
     let cli_vars = match plan::parse_cli_vars(&args.var) {
         Ok(vars) => vars,
         Err(diagnostics) => {
@@ -2156,7 +2425,7 @@ pub(crate) fn run_workspace(
         devices: &selected_devices,
         apps: &app_list.apps,
         cli_app: args.app.as_deref(),
-        plays: &ws.plays,
+        plays: &selected_plays,
         selection: &selection,
         cli_vars: &cli_vars,
         cli_args: &cli_args,
@@ -2179,8 +2448,99 @@ pub(crate) fn run_workspace(
         }
     };
 
+    if args.dry_run {
+        print_dry_run(
+            &plan,
+            &config,
+            &reporter_list,
+            &selection,
+            &ws,
+            &selected_devices,
+            &selected_plays,
+            &platform_filter,
+        );
+        return RunOutcome {
+            exit_code: EXIT_OK,
+            run_id: None,
+            run_dir: None,
+            report: None,
+            messages: Vec::new(),
+            detail: None,
+        };
+    }
+
     let run_id = time_fmt::run_id(std::time::SystemTime::now());
     let report_dir = base.join(&config.report_output);
+    if interrupts {
+        let home = match Home::resolve() {
+            Ok(home) => home,
+            Err(error) => {
+                let message = format!("run: {error}");
+                eprintln!("{message}");
+                return RunOutcome::refusal(EXIT_INFRA, message);
+            }
+        };
+        let spec = jobs::JobSpec {
+            id: run_id.clone(),
+            base: base.to_path_buf(),
+            report_dir: report_dir.clone(),
+            config: config.clone(),
+            plan: plan.clone(),
+            retries: args.retries.unwrap_or(config.retries),
+            fail_fast: args.fail_fast,
+            token: agent_token(),
+            master_version: env!("CARGO_PKG_VERSION").to_string(),
+            reporters: reporter_list.clone(),
+            color,
+            on_busy: args.on_busy,
+            detached: args.detach,
+            label: format!(
+                "{} play(s) x {} device(s)",
+                selected_plays.len(),
+                selected_devices.len()
+            ),
+        };
+        if args.detach {
+            return match jobs::submit_detached(&home, spec, false) {
+                Ok(id) => {
+                    println!("job {id} submitted");
+                    println!("attach: impresario attach {id}");
+                    println!("logs:   impresario logs {id} -f");
+                    RunOutcome {
+                        exit_code: EXIT_OK,
+                        run_id: Some(id.clone()),
+                        run_dir: Some(report_dir.join(id)),
+                        report: None,
+                        messages: Vec::new(),
+                        detail: None,
+                    }
+                }
+                Err(message) => {
+                    eprintln!("run: {message}");
+                    RunOutcome::refusal(EXIT_INFRA, format!("run: {message}"))
+                }
+            };
+        }
+        return match jobs::run_foreground(&home, &spec, true) {
+            Ok(job) => {
+                for message in &job.reporter_errors {
+                    eprintln!("run: {message}");
+                }
+                RunOutcome {
+                    exit_code: job.record.exit_code.unwrap_or(EXIT_INFRA),
+                    run_id: Some(run_id),
+                    run_dir: Some(PathBuf::from(&job.record.run_dir)),
+                    report: job.report,
+                    messages: job.reporter_errors,
+                    detail: None,
+                }
+            }
+            Err(message) => {
+                eprintln!("run: {message}");
+                RunOutcome::refusal(EXIT_INFRA, format!("run: {message}"))
+            }
+        };
+    }
     let options = exec::ExecOptions {
         config: config.clone(),
         run_id: run_id.clone(),
@@ -2191,6 +2551,7 @@ pub(crate) fn run_workspace(
         shutdown: CancellationToken::new(),
         master_version: env!("CARGO_PKG_VERSION").to_string(),
         session_options: impresario_clients::agent_client::SessionOptions::default(),
+        events: None,
     };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -2235,6 +2596,184 @@ pub(crate) fn run_workspace(
         messages: reporter_errors,
         detail: None,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_dry_run(
+    plan: &plan::ExecutionPlan,
+    config: &ImpresarioConfig,
+    reporter_list: &[impresario_core::config::Reporter],
+    selection: &plan::Selection,
+    workspace: &workspace::Workspace,
+    devices: &[DeviceConfig],
+    selected_plays: &[impresario_core::ast::PlayFile],
+    platform_filter: &[String],
+) {
+    let device_count = plan.devices.len();
+    let acts: usize = plan
+        .devices
+        .iter()
+        .map(|device| {
+            device
+                .plays
+                .iter()
+                .map(|play| play.acts.len())
+                .sum::<usize>()
+        })
+        .sum();
+    println!("run (dry): {acts} act(s) on {device_count} device(s); nothing was executed");
+    println!(
+        "  selection: tags=[{}] exclude=[{}] acts=[{}]",
+        selection.tags.join(", "),
+        selection.exclude_tags.join(", "),
+        selection.acts.join(", ")
+    );
+    let redactor = crate::redact::Redactor::new(plan.secrets.clone());
+    for device in &plan.devices {
+        let app = device
+            .app
+            .as_ref()
+            .map(|app| format!(" app={}", app.name))
+            .unwrap_or_default();
+        println!(
+            "  device {} ({}){app}",
+            device.device.name,
+            device.device.platform.as_str()
+        );
+        for play in &device.plays {
+            println!("    play {} [{}]", play.name, play.file);
+            for act in &play.acts {
+                let tags = if act.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", act.tags.join(", "))
+                };
+                let example = if act.example.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " {{{}}}",
+                        act.example
+                            .iter()
+                            .map(|(key, value)| format!("{key}={}", redactor.redact(value)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let steps: usize = act.stages.iter().map(|stage| stage.steps.len()).sum();
+                println!(
+                    "      act {}{tags}{example}: {} stage(s), {steps} step(s)",
+                    act.name,
+                    act.stages.len()
+                );
+            }
+        }
+    }
+    println!(
+        "  reporters: {}",
+        reporter_list
+            .iter()
+            .map(|reporter| reporter.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut skipped = Vec::new();
+    for device in devices {
+        for play in &workspace.plays {
+            let play_selected = selected_plays
+                .iter()
+                .any(|selected| selected.path == play.path);
+            for act in &play.acts {
+                if plan_contains_act(plan, &device.name, &play.name, &act.name) {
+                    continue;
+                }
+                let reason = if !play_selected {
+                    "play not in the --only-failed selection".to_string()
+                } else if let Some(reason) = act_skip_reason(act, selection, device.platform) {
+                    reason
+                } else {
+                    "not in the resolved plan".to_string()
+                };
+                skipped.push(format!(
+                    "    {} :: {} :: {}: {}",
+                    device.name, play.name, act.name, reason
+                ));
+            }
+        }
+    }
+    if skipped.is_empty() {
+        println!("  skipped: none");
+    } else {
+        println!("  skipped:");
+        for line in skipped {
+            println!("{line}");
+        }
+    }
+    if !platform_filter.is_empty() {
+        println!(
+            "  platform filter: {} (devices outside it are absent from this plan)",
+            platform_filter.join(", ")
+        );
+    }
+    let _ = config;
+}
+
+fn plan_contains_act(plan: &plan::ExecutionPlan, device: &str, play: &str, act: &str) -> bool {
+    plan.devices.iter().any(|planned| {
+        planned.device.name == device
+            && planned.plays.iter().any(|planned_play| {
+                planned_play.name == play
+                    && planned_play
+                        .acts
+                        .iter()
+                        .any(|planned_act| planned_act.name == act)
+            })
+    })
+}
+
+fn act_skip_reason(
+    act: &impresario_core::ast::ActDecl,
+    selection: &plan::Selection,
+    platform: Platform,
+) -> Option<String> {
+    let tags: Vec<&str> = act.tags.iter().map(|tag| tag.name.as_str()).collect();
+    if let Some(excluded) = selection
+        .exclude_tags
+        .iter()
+        .find(|excluded| tags.contains(&excluded.as_str()))
+    {
+        return Some(format!("excluded by --exclude-tag {excluded}"));
+    }
+    if !selection.tags.is_empty()
+        && !tags
+            .iter()
+            .any(|tag| selection.tags.iter().any(|wanted| wanted == tag))
+    {
+        return Some(format!("filtered by --tag {}", selection.tags.join(", ")));
+    }
+    if !selection.acts.is_empty() && !selection.acts.iter().any(|name| name == &act.name) {
+        return Some(format!("filtered by --act {}", selection.acts.join(", ")));
+    }
+    if !act.platforms.is_empty() {
+        let applies = act.platforms.iter().any(|named| {
+            named
+                .name
+                .parse::<Platform>()
+                .is_ok_and(|declared| declared == platform)
+        });
+        if !applies {
+            return Some(format!(
+                "Platforms: {} excludes {}",
+                act.platforms
+                    .iter()
+                    .map(|named| named.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                platform.as_str()
+            ));
+        }
+    }
+    None
 }
 
 /// Expand `--play` file/dir/glob patterns (default: the configured
