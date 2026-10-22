@@ -26,12 +26,14 @@ target* (or next to it) instead of shelling out screen taps from the host.
 - **A Model Context Protocol server** (`impresario mcp`): any MCP-capable AI
   agent can validate workspaces, check or list devices, run plays on real
   hardware and read reports plus screenshots over stdio — `docs/MCP.md`.
-- **A TUI and background jobs.** Run `impresario` in a terminal for the
-  six-screen TUI (home, runs, tests, devices, apps, config) with slash
-  commands and history; `run --detach` hands a job to a per-user daemon so
-  closing the terminal does not kill it. `jobs`, `attach`, `logs`, `stop`,
-  `rm`, `report` and `wait` work from any shell, device leases prevent two
-  jobs from driving one device, and profiles save run selections —
+- **A TUI and background jobs.** Run `impresario` in a terminal for a
+  landing-first TUI: pick a remembered workspace, then use the overview,
+  runs, tests, devices, apps and config screens with slash commands and
+  history. The first start also puts `impresario` on your user `PATH` (opt
+  out with `IMPRESARIO_NO_PATH_INSTALL`); `run --detach` hands a job to a
+  per-user daemon so closing the terminal does not kill it. `jobs`, `attach`,
+  `logs`, `stop`, `rm`, `report` and `wait` work from any shell, device leases
+  prevent two jobs from driving one device, and profiles save run selections —
   `docs/CLI.md`.
 
 ## Repository layout

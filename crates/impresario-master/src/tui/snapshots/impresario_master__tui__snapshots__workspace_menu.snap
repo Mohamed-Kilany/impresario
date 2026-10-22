@@ -1,0 +1,32 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 100, 28)"
+---
+ IMPRESARIO  /  demo  [plain colours]                                  0 active · 2 devices · 1 app
+ Workspace  ›  Workspace menu                                 Esc workspaces · ? help · Ctrl-Q quit
+────────────────────────────────────────────────────────────────────────────────────────────────────
+┌ Workspace menu · Enter opens ─────────────────────┐ ┌ Workspace ─────────────────────────────────┐
+│   Overview                                        │ │ demo                                       │
+│ > Runs              background jobs and live logs │ │ demo                                       │
+│   Tests                                           │ │                                            │
+│   Devices                                         │ │ tests     8 entries                        │
+│   Apps                                            │ │ devices   2 devices                        │
+│   Config                                          │ │ apps      1 app                            │
+│   Doctor                                          │ │ runs      1 run                            │
+│   Switch workspace                                │ │ active    0                                │
+│   Quit                                            │ └────────────────────────────────────────────┘
+│                                                   │ ┌ Navigation ────────────────────────────────┐
+│                                                   │ │ Arrows move; Enter opens; Esc returns to   │
+│                                                   │ │ the picker; Tab opens the prompt.          │
+│                                                   │ │                                            │
+│                                                   │ │ /run, /attach, /logs and the other slash   │
+│                                                   │ │ commands still work here.                  │
+│                                                   │ │                                            │
+└───────────────────────────────────────────────────┘ └────────────────────────────────────────────┘
+┌ Command ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ ❯ Type a command, or /help for keys                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────
+↑↓ move · Enter open · Esc workspaces · Tab prompt · ? help                  0 active · Ctrl-Q quit
+workspace menu
+run 20261021-120000-run01 submitted

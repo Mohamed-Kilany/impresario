@@ -2,37 +2,37 @@
 source: crates/impresario-master/src/tui/snapshots.rs
 expression: "render(&app, 100, 34)"
 ---
- impresario  demo  [plain colours]
- home  runs  tests  devices  apps  config
+ IMPRESARIO  /  demo  [plain colours]                                  1 active · 2 devices · 1 app
+ Workspace  ›  Runs                                                 Esc menu · ? help · Ctrl-Q quit
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┌─────────┌ help · Esc closes ───────────────────────────────────────────────────────────┐─────────┐
-│Jobs (1) │impresario interactive                                                        │         │
-│Enter fol│                                                                              │         │
-│f log tai│Prompt: type a CLI command; /run --tag smoke is a shortcut. Tab completes.    │         │
-│Tab devic│        Ctrl-R reverse search, Up/Down history, Alt+Enter newline.            │         │
-│rerun  F │        Ctrl-C clears the prompt, twice quits. Ctrl-Q quits. Ctrl-Z suspends. │         │
-│o report │                                                                              │n tree.  │
-│filter: p│Screens: F2 home, F3 runs, F4 tests, F5 devices, F6 apps, F7 config.          │         │
-│to clear)│Focus:  Tab switches to content in most screens; Esc returns to the prompt.   │         │
-│         │                                                                              │         │
-│[>] 20261│Runs:   Enter follow, b background/detach, x stop, f pause/resume log tail,   │         │
-│         │        Tab cycle device, / filter, ? help, r rerun, F rerun failed,          │         │
-│         │        o report, p screenshot, X or Delete remove a finished job.            │         │
-│         │Tests:  Enter edit, Space mark, r run selected/marked, d dry-run matrix.      │         │
-│         │        Selectors live in the prompt: /tests --tag smoke --platform android.  │─────────┘
-│         │Devices/Apps/Config: j/k scroll, Enter open the relevant file.                │─────────┐
-│         │                                                                              │         │
-│         │Slash:  /run /jobs /devices /apps /config /tests /open /doctor /fmt           │         │
-│         │        /validate /plan /attach /logs /stop /report /profile /help /quit      │         │
-│         │                                                                              │         │
-│         │Everything is scriptable outside the TUI: impresario run --detach,            │         │
-│         │impresario jobs --json, impresario wait <id>, impresario report <id>.         │         │
-│         │                                                                              │         │
-└─────────│                                                                              │─────────┘
-┌prompt  (│                                                                              │─────────┐
-│❯        │                                                                              │         │
-└─────────└──────────────────────────────────────────────────────────────────────────────┘─────────┘
+┌ Runs ────────────────────────────────┐ ┌ Run · running ──────────────────────────────────────────┐
+│ 1 run · 1 active                     │ │ 20261021-120000-run01                                   │
+│ filter: phone  (/ change · empty     │ │                                                         │
+│ clear)   ┌ Help · Esc closes ─────────────────────────────────────────────────────────┐          │
+│          │ impresario interactive                                                     │          │
+│ [>] 20261│                                                                            │          │
+│          │ Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.                │          │
+│          │ Workspace menu · Up/Down, Enter opens, Esc goes back.                      │          │
+│          │   Overview · Runs · Tests · Devices · Apps · Config · Doctor               │          │
+│          │   Switch workspace returns to the landing screen.                          │.         │
+│          │ Content · arrows move; Esc menu; Tab prompt.                               │          │
+│          │ Prompt · type a CLI command; /run --tag smoke is a shortcut.               │          │
+│          │   Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline      │          │
+│          │   Ctrl-C clears (twice quits) · Ctrl-Q quits · Ctrl-Z suspends             │──────────┘
+│          │                                                                            │
+│          │ Runs · Enter follow · b detach · x stop · f logs · t device · / filter     │──────────┐
+│          │   r rerun · F rerun failed · o report · p screenshot · X remove            │          │
+│          │ Tests · Enter edit · Space mark · r run · d dry-run · j/k move             │          │
+│          │ Devices / Apps / Config · j/k move · Enter open · r reload                 │          │
+│          │                                                                            │          │
+│          │ Commands · /run /jobs /devices /apps /config /tests /open /doctor          │          │
+│          │   /fmt /validate /plan /attach /logs /stop /report /profile /quit          │          │
+│          │ Scriptable · run --detach · jobs --json · wait · report                    │          │
+└──────────│   /menu /workspaces                                                        │──────────┘
+┌ Command ─└────────────────────────────────────────────────────────────────────────────┘──────────┐
+│ ❯ Type a command, or /help for keys                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-F1 help · F2 home · F3 runs · F4 tests · F5 devices · F6 apps · F7 config · Ctrl-Q quit
-job 20261021-120000-run01 running
+Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help              1 active · Ctrl-Q quit
+[>] 20261021-120000-run01  running
 run 20261021-120000-run01 submitted

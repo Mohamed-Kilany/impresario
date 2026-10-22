@@ -111,6 +111,12 @@ impl Home {
         self.root.join("keys")
     }
 
+    /// `bin/` - the self-installed CLI used by the first-run PATH setup.
+    #[must_use]
+    pub fn bin_dir(&self) -> PathBuf {
+        self.root.join("bin")
+    }
+
     /// `agents/` - extracted/cached executor payloads.
     #[must_use]
     pub fn agents_dir(&self) -> PathBuf {

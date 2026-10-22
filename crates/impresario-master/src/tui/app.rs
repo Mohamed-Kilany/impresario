@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,14 @@ pub(super) enum TestKind {
     #[default]
     Play,
     Act,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct WorkspaceRow {
+    pub path: PathBuf,
+    pub name: String,
+    pub current: bool,
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -440,6 +448,9 @@ pub(super) struct App {
     pub prompt: Prompt,
     pub history: History,
     pub search: Option<ReverseSearch>,
+    pub workspaces: Vec<WorkspaceRow>,
+    pub landing_index: usize,
+    pub menu_index: usize,
     pub jobs: Vec<JobRecord>,
     pub job_index: usize,
     pub follow: Option<String>,
@@ -466,6 +477,7 @@ pub(super) struct App {
     pub device_filter: Option<String>,
     pub log_follow: bool,
     pub first_run: bool,
+    pub first_run_prompt: bool,
     store: JobStore,
     last_refresh: Instant,
     history_path: PathBuf,
@@ -483,12 +495,15 @@ impl App {
         let history_path = ctx.home.history_path();
         let state_path = ctx.home.state_path();
         let first_run = !ctx.config_path.exists();
-        let mut app = Self {
-            screen: Screen::Home,
+        Self {
+            screen: Screen::Landing,
             focus: Focus::Prompt,
             prompt: Prompt::default(),
             history: History::load(&history_path, history_limit),
             search: None,
+            workspaces: Vec::new(),
+            landing_index: 0,
+            menu_index: 0,
             jobs: store.list(),
             job_index: 0,
             follow: None,
@@ -515,17 +530,14 @@ impl App {
             device_filter: None,
             log_follow: false,
             first_run,
+            first_run_prompt: false,
             store,
             last_refresh: Instant::now(),
             history_path,
             history_limit,
             state_path,
             ctx,
-        };
-        if first_run {
-            app.overlay = Some(first_run_text(&app.ctx));
         }
-        app
     }
 
     pub(super) fn new(ctx: Context) -> Self {
@@ -536,8 +548,209 @@ impl App {
         app.load_tests();
         app.refresh_completion_context();
         app.load_state();
-        app.push_activity("Welcome. Type a command, or /help for keys and examples.".to_string());
+        app.load_workspaces();
+        app.screen = Screen::Landing;
+        app.focus = Focus::Content;
+        app.overlay = None;
+        app.push_activity("Welcome. Choose a workspace to begin.".to_string());
         app
+    }
+
+    /// Read the remembered workspace list and put the active workspace first.
+    pub(super) fn load_workspaces(&mut self) {
+        self.workspaces.clear();
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let mut paths = vec![self.ctx.base.clone()];
+        let global = settings::SettingsFile::load(&self.ctx.home.config_path());
+        if let Some(SettingValue::List(values)) = global.values.get("workspaces") {
+            for value in values {
+                let path = PathBuf::from(value);
+                if !seen.iter().any(|seen| same_path(seen, &path))
+                    && !same_path(&self.ctx.base, &path)
+                {
+                    paths.push(path.clone());
+                    seen.push(path);
+                }
+            }
+        }
+        for path in paths {
+            let missing = !path.is_dir();
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .map_or_else(|| path.display().to_string(), str::to_string);
+            let current = same_path(&path, &self.ctx.base);
+            self.workspaces.push(WorkspaceRow {
+                path,
+                name,
+                current,
+                missing,
+            });
+        }
+        self.landing_index = self.landing_index.min(self.landing_len().saturating_sub(1));
+    }
+
+    pub(super) fn landing_len(&self) -> usize {
+        self.workspaces.len() + 3
+    }
+
+    pub(super) fn move_landing(&mut self, delta: i32) {
+        let len = self.landing_len();
+        if len == 0 {
+            return;
+        }
+        if delta < 0 {
+            self.landing_index = self.landing_index.saturating_sub(1);
+        } else {
+            self.landing_index = (self.landing_index + 1).min(len - 1);
+        }
+    }
+
+    pub(super) fn move_menu(&mut self, delta: i32) {
+        const MENU_LEN: usize = 9;
+        if delta < 0 {
+            self.menu_index = self.menu_index.saturating_sub(1);
+        } else {
+            self.menu_index = (self.menu_index + 1).min(MENU_LEN - 1);
+        }
+    }
+
+    pub(super) fn activate_landing(&mut self) -> Action {
+        let index = self.landing_index;
+        if let Some(workspace) = self.workspaces.get(index) {
+            let path = workspace.path.clone();
+            if !path.is_dir() {
+                self.push_activity(format!("workspace is missing: {}", path.display()));
+                return Action::None;
+            }
+            self.enter_workspace(path);
+            return Action::None;
+        }
+        match index.saturating_sub(self.workspaces.len()) {
+            0 => {
+                self.add_current_workspace();
+                Action::None
+            }
+            1 => {
+                self.run_doctor();
+                Action::None
+            }
+            _ => Action::Quit,
+        }
+    }
+
+    pub(super) fn activate_landing_action(&mut self, action: usize) {
+        let index = self.workspaces.len().saturating_add(action);
+        if index < self.landing_len() {
+            self.landing_index = index;
+            let _ = self.activate_landing();
+        }
+    }
+
+    pub(super) fn activate_menu(&mut self) -> Action {
+        match self.menu_index {
+            0 => self.set_screen(Screen::Home),
+            1 => self.set_screen(Screen::Runs),
+            2 => self.set_screen(Screen::Tests),
+            3 => self.set_screen(Screen::Devices),
+            4 => self.set_screen(Screen::Apps),
+            5 => self.set_screen(Screen::Config),
+            6 => self.run_doctor(),
+            7 => {
+                self.screen = Screen::Landing;
+                self.focus = Focus::Content;
+                self.overlay = None;
+            }
+            _ => return Action::Quit,
+        }
+        Action::None
+    }
+
+    fn enter_workspace(&mut self, path: PathBuf) {
+        if !same_path(&path, &self.ctx.base) {
+            self.ctx.base = path.clone();
+            self.ctx.config_path = path.join("impresario.config");
+            self.ctx.devices_path = path.join("impresario.devices.config");
+            self.store = JobStore::new(&self.ctx.home);
+            self.jobs = self.store.list();
+            self.job_index = 0;
+            self.test_index = 0;
+            self.tests.clear();
+            self.test_error = None;
+            self.devices.clear();
+            self.apps.clear();
+            self.config_rows.clear();
+            self.follow = None;
+            self.tree.clear();
+            self.logs.clear();
+            self.load_devices();
+            self.load_apps();
+            self.load_config();
+            self.load_tests();
+            self.refresh_completion_context();
+            let path_text = path.display().to_string();
+            let _ = self.run_child(&[
+                "workspace".to_string(),
+                "use".to_string(),
+                path_text.clone(),
+            ]);
+            let _ = self.run_child(&["workspace".to_string(), "add".to_string(), path_text]);
+        }
+        self.screen = Screen::Menu;
+        self.focus = Focus::Content;
+        self.overlay = None;
+        self.first_run = !self.ctx.config_path.exists();
+        self.first_run_prompt = self.first_run;
+        if self.first_run {
+            self.overlay = Some(first_run_text(&self.ctx));
+        }
+        self.push_activity(format!("Opened workspace {}", self.ctx.base.display()));
+        self.load_workspaces();
+    }
+
+    fn add_current_workspace(&mut self) {
+        let path = self.ctx.base.display().to_string();
+        match self.run_child(&["workspace".to_string(), "add".to_string(), path.clone()]) {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("already listed") {
+                    self.push_activity(format!("Workspace already remembered: {path}"));
+                } else {
+                    self.push_activity(format!("Added workspace {path}"));
+                }
+                self.load_workspaces();
+            }
+            Ok(output) => {
+                let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                self.push_activity(if message.is_empty() {
+                    "workspace add failed".to_string()
+                } else {
+                    message
+                });
+            }
+            Err(message) => self.push_activity(message),
+        }
+    }
+
+    fn run_doctor(&mut self) {
+        match self.run_child(&["doctor".to_string()]) {
+            Ok(output) => {
+                let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                if !stderr.is_empty() {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&stderr);
+                }
+                if text.is_empty() {
+                    text = "doctor produced no output".to_string();
+                }
+                self.overlay = Some(format!("Doctor\n{text}"));
+            }
+            Err(message) => self.push_activity(message),
+        }
     }
 
     fn refresh_completion_context(&mut self) {
@@ -612,6 +825,8 @@ impl App {
             }
         };
         self.screen = match state.screen.as_str() {
+            "landing" => Screen::Landing,
+            "menu" => Screen::Menu,
             "runs" => Screen::Runs,
             "tests" => Screen::Tests,
             "devices" => Screen::Devices,
@@ -985,7 +1200,8 @@ impl App {
 
     pub(super) fn load_apps(&mut self) {
         self.apps.clear();
-        let outcome = apps::load_apps_merged(&self.ctx.base);
+        let apps_path = self.ctx.base.join("impresario.apps.config");
+        let outcome = apps::load_apps_merged(&apps_path);
         if let Some(apps) = outcome.config {
             for app in apps.apps {
                 self.apps.push(AppRow {
@@ -1124,7 +1340,7 @@ impl App {
             Screen::Devices => self.load_devices(),
             Screen::Apps => self.load_apps(),
             Screen::Config => self.load_config(),
-            Screen::Home | Screen::Runs => {}
+            Screen::Landing | Screen::Menu | Screen::Home | Screen::Runs => {}
         }
     }
 
@@ -1228,9 +1444,7 @@ impl App {
             self.tree.clear();
             self.current_command.clear();
             self.logs.clear();
-            self.push_activity(format!(
-                "Job {id} continues in the background; reattach with /attach {id}."
-            ));
+            self.push_activity(format!("Detached {id} · reattach with /attach {id}."));
         } else if let Some(record) = self.selected_job() {
             self.push_activity(format!(
                 "Job {} is already running in the background; press Enter to view it.",
@@ -1293,7 +1507,7 @@ impl App {
         }
         match next {
             Some(name) => self.push_activity(format!(
-                "Device filter: {name} (Tab cycles, Shift-Tab clears)."
+                "Device filter: {name} (t cycles, / sets a text filter)."
             )),
             None => self.push_activity("Device filter cleared.".to_string()),
         }
@@ -1338,6 +1552,7 @@ impl App {
                 self.push_activity(text);
                 if output.status.success() {
                     self.first_run = false;
+                    self.first_run_prompt = false;
                     self.overlay = None;
                     self.load_devices();
                     self.load_apps();
@@ -1529,6 +1744,17 @@ impl App {
             Ok(output) => {
                 let stdout = trim_output(&output.stdout);
                 let stderr = trim_output(&output.stderr);
+                if dry_run {
+                    let plan = [stdout, stderr]
+                        .into_iter()
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !plan.is_empty() {
+                        self.overlay = Some(format!("Run plan\n{plan}"));
+                    }
+                    return;
+                }
                 if !stdout.is_empty() {
                     self.push_activity(stdout);
                 }
@@ -1536,9 +1762,6 @@ impl App {
                     self.push_activity(stderr);
                 }
                 if !output.status.success() {
-                    return;
-                }
-                if dry_run {
                     return;
                 }
                 self.last_run_tokens = Some(args);
@@ -1552,6 +1775,7 @@ impl App {
                     self.follow_notified = false;
                     self.refresh_follow(&new.id);
                     self.screen = Screen::Runs;
+                    self.focus = Focus::Content;
                     self.jobs = self.store.list();
                     if let Some(index) = self.jobs.iter().position(|r| r.id == new.id) {
                         self.job_index = index;
@@ -1627,7 +1851,11 @@ impl App {
                     trim_output(&output.stdout),
                     trim_output(&output.stderr)
                 );
-                self.push_activity(text);
+                if text.is_empty() {
+                    self.push_activity("The dry run produced no output.".to_string());
+                } else {
+                    self.overlay = Some(format!("Run plan\n{text}"));
+                }
             }
             Err(message) => self.push_activity(message),
         }
@@ -1683,9 +1911,19 @@ impl App {
                 self.activity.clear();
                 Action::None
             }
-            "home" => {
-                self.screen = Screen::Home;
-                self.focus = Focus::Prompt;
+            "home" | "menu" => {
+                self.screen = if command == "home" {
+                    Screen::Home
+                } else {
+                    Screen::Menu
+                };
+                self.focus = Focus::Content;
+                Action::None
+            }
+            "workspaces" | "landing" => {
+                self.screen = Screen::Landing;
+                self.focus = Focus::Content;
+                self.load_workspaces();
                 Action::None
             }
             "runs" | "jobs" => {
@@ -1807,7 +2045,7 @@ impl App {
             }
             other => {
                 self.push_activity(format!(
-                    "Unknown slash command '/{other}'. Press F1 for help."
+                    "Unknown slash command '/{other}'. Press ? for help."
                 ));
                 Action::None
             }
@@ -1965,12 +2203,18 @@ impl App {
 
     pub(super) fn set_screen(&mut self, screen: Screen) {
         self.screen = screen;
-        self.focus = Focus::Prompt;
+        self.focus = Focus::Content;
         self.reload_screen();
     }
 
     pub(super) fn scroll(&mut self, delta: i32) {
         match self.screen {
+            Screen::Landing => {
+                self.move_landing(delta);
+            }
+            Screen::Menu => {
+                self.move_menu(delta);
+            }
             Screen::Runs => {
                 if delta < 0 {
                     self.select_previous_job();
@@ -1990,6 +2234,26 @@ impl App {
     }
 }
 
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => {
+            #[cfg(windows)]
+            {
+                left.to_string_lossy()
+                    .eq_ignore_ascii_case(&right.to_string_lossy())
+            }
+            #[cfg(not(windows))]
+            {
+                false
+            }
+        }
+    }
+}
+
 fn child_command(ctx: &Context) -> Result<Command, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("cannot locate the impresario executable: {error}"))?;
@@ -2003,7 +2267,8 @@ fn child_command(ctx: &Context) -> Result<Command, String> {
         .arg(&ctx.devices_path)
         .arg("--no-tui")
         .arg("--plain")
-        .arg("--no-color");
+        .arg("--no-color")
+        .env("IMPRESARIO_NO_PATH_INSTALL", "1");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -2070,7 +2335,7 @@ fn event_device(event: &ExecEvent) -> Option<&str> {
     }
 }
 
-fn first_run_text(ctx: &Context) -> String {
+pub(super) fn first_run_text(ctx: &Context) -> String {
     [
         "Welcome to impresario".to_string(),
         String::new(),
@@ -2086,7 +2351,7 @@ fn first_run_text(ctx: &Context) -> String {
         String::new(),
         "After creating it, use /doctor to check devices and /tests to explore the DSL."
             .to_string(),
-        "Press F1 at any time for keys and slash commands.".to_string(),
+        "Press ? at any time for keys and slash commands.".to_string(),
     ]
     .join("\n")
 }
@@ -2325,6 +2590,9 @@ fn candidates() -> Vec<&'static str> {
         "/report ",
         "/stop ",
         "/home",
+        "/menu",
+        "/workspaces",
+        "/landing",
         "/runs",
         "/help",
         "/clear",
@@ -2418,25 +2686,24 @@ pub(super) fn help_text() -> String {
     [
         "impresario interactive",
         "",
-        "Prompt: type a CLI command; /run --tag smoke is a shortcut. Tab completes.",
-        "        Ctrl-R reverse search, Up/Down history, Alt+Enter newline.",
-        "        Ctrl-C clears the prompt, twice quits. Ctrl-Q quits. Ctrl-Z suspends.",
+        "Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.",
+        "Workspace menu · Up/Down, Enter opens, Esc goes back.",
+        "  Overview · Runs · Tests · Devices · Apps · Config · Doctor",
+        "  Switch workspace returns to the landing screen.",
+        "Content · arrows move; Esc menu; Tab prompt.",
+        "Prompt · type a CLI command; /run --tag smoke is a shortcut.",
+        "  Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline",
+        "  Ctrl-C clears (twice quits) · Ctrl-Q quits · Ctrl-Z suspends",
         "",
-        "Screens: F2 home, F3 runs, F4 tests, F5 devices, F6 apps, F7 config.",
-        "Focus:  Tab switches to content in most screens; Esc returns to the prompt.",
+        "Runs · Enter follow · b detach · x stop · f logs · t device · / filter",
+        "  r rerun · F rerun failed · o report · p screenshot · X remove",
+        "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
+        "Devices / Apps / Config · j/k move · Enter open · r reload",
         "",
-        "Runs:   Enter follow, b background/detach, x stop, f pause/resume log tail,",
-        "        Tab cycle device, / filter, ? help, r rerun, F rerun failed,",
-        "        o report, p screenshot, X or Delete remove a finished job.",
-        "Tests:  Enter edit, Space mark, r run selected/marked, d dry-run matrix.",
-        "        Selectors live in the prompt: /tests --tag smoke --platform android.",
-        "Devices/Apps/Config: j/k scroll, Enter open the relevant file.",
-        "",
-        "Slash:  /run /jobs /devices /apps /config /tests /open /doctor /fmt",
-        "        /validate /plan /attach /logs /stop /report /profile /help /quit",
-        "",
-        "Everything is scriptable outside the TUI: impresario run --detach,",
-        "impresario jobs --json, impresario wait <id>, impresario report <id>.",
+        "Commands · /run /jobs /devices /apps /config /tests /open /doctor",
+        "  /fmt /validate /plan /attach /logs /stop /report /profile /quit",
+        "Scriptable · run --detach · jobs --json · wait · report",
+        "  /menu /workspaces",
     ]
     .join("\n")
 }
@@ -2473,6 +2740,27 @@ mod tests {
         prompt.left();
         prompt.backspace();
         assert_eq!(prompt.text(), "hélo");
+    }
+
+    #[test]
+    fn load_apps_reads_the_workspace_layer() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(
+            dir.path().join("impresario.apps.config"),
+            "apps:\n  - name: shop\n    description: Storefront\n    platforms:\n      web: { url: 'https://shop.example' }\n",
+        )
+        .expect("apps file");
+        let context = Context::new(
+            impresario_core::home::Home::at(dir.path().join("home")),
+            dir.path().to_path_buf(),
+            dir.path().join("impresario.config"),
+            dir.path().join("impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.load_apps();
+        assert_eq!(app.apps.len(), 1);
+        assert_eq!(app.apps.first().map(|row| row.name.as_str()), Some("shop"));
     }
 
     #[test]

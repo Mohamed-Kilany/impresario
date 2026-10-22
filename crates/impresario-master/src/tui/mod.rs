@@ -33,6 +33,8 @@ use app::App;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum Screen {
     #[default]
+    Landing,
+    Menu,
     Home,
     Runs,
     Tests,
@@ -44,7 +46,9 @@ pub(super) enum Screen {
 impl Screen {
     pub(super) fn label(self) -> &'static str {
         match self {
-            Screen::Home => "home",
+            Screen::Landing => "landing",
+            Screen::Menu => "menu",
+            Screen::Home => "overview",
             Screen::Runs => "runs",
             Screen::Tests => "tests",
             Screen::Devices => "devices",
@@ -236,15 +240,33 @@ pub fn run(ctx: Context) -> i32 {
         }
     };
     let mut app = App::new(ctx);
+    let mut last_size = None;
     let code = loop {
         app.tick();
+        if let Ok(size) = guard.terminal.size() {
+            let size = (size.width, size.height);
+            if last_size != Some(size) {
+                // A resize can arrive before the first draw or be missed by the
+                // backend; force one full repaint at every observed size.
+                let _ = guard.terminal.clear();
+                last_size = Some(size);
+            }
+        }
         if let Err(error) = guard.terminal.draw(|frame| render::draw(frame, &app)) {
             eprintln!("impresario: cannot draw the TUI: {error}");
             break EXIT_INFRA;
         }
         let action = match event::poll(Duration::from_millis(200)) {
             Ok(true) => match event::read() {
-                Ok(event) => app.handle_event(event),
+                Ok(event) => {
+                    if matches!(event, Event::Resize(_, _)) {
+                        // Conhost can leave cells from the old size behind when
+                        // ratatui's diff thinks they are unchanged. Clear once
+                        // so the next draw repaints the whole viewport.
+                        let _ = guard.terminal.clear();
+                    }
+                    app.handle_event(event)
+                }
                 Err(error) => {
                     app.push_activity(format!("input: {error}"));
                     Action::None
@@ -333,27 +355,23 @@ impl App {
         if modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
             return Action::Quit;
         }
-        if key.code == KeyCode::F(1) {
-            self.overlay = Some(app::help_text());
-            return Action::None;
-        }
-        if let Some(screen) = function_screen(key.code) {
-            self.set_screen(screen);
-            self.overlay = None;
-            return Action::None;
-        }
         if modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
             return Action::Suspend;
         }
-        if self.first_run && self.overlay.is_some() {
+        if self.first_run_prompt && self.overlay.is_some() {
             match key.code {
                 KeyCode::Char('y' | 'Y') => self.create_first_workspace(),
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.first_run = false;
+                    self.first_run_prompt = false;
                     self.overlay = None;
                 }
                 _ => {}
             }
+            return Action::None;
+        }
+        if key.code == KeyCode::F(1) {
+            self.overlay = Some(app::help_text());
             return Action::None;
         }
         if self.filter_input.is_some() {
@@ -371,7 +389,25 @@ impl App {
                 self.prompt.completion_visible = false;
                 return Action::None;
             }
-            self.focus = Focus::Prompt;
+            match self.screen {
+                Screen::Landing => {}
+                Screen::Menu => {
+                    self.screen = Screen::Landing;
+                    self.focus = Focus::Content;
+                }
+                _ if self.focus == Focus::Prompt => {
+                    self.focus = Focus::Content;
+                }
+                _ => {
+                    self.screen = Screen::Menu;
+                    self.focus = Focus::Content;
+                }
+            }
+            return Action::None;
+        }
+        if self.overlay.is_some() {
+            // Help, doctor output and first-run prompts are modal: navigation
+            // and prompt keys must not change the screen behind them.
             return Action::None;
         }
         if modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -397,6 +433,15 @@ impl App {
             );
             return Action::None;
         }
+        if key.code == KeyCode::Char('?')
+            && (self.focus == Focus::Content || self.prompt.text().is_empty())
+        {
+            self.overlay = Some(app::help_text());
+            return Action::None;
+        }
+        if self.screen == Screen::Landing {
+            return self.handle_landing_key(key);
+        }
         if self.search.is_some() {
             return self.handle_search_key(key);
         }
@@ -404,10 +449,64 @@ impl App {
             self.start_reverse_search();
             return Action::None;
         }
+        if self.screen == Screen::Menu {
+            if self.focus == Focus::Prompt {
+                return self.handle_prompt_key(key);
+            }
+            return self.handle_menu_key(key);
+        }
         if self.focus == Focus::Content {
             return self.handle_content_key(key);
         }
         self.handle_prompt_key(key)
+    }
+
+    fn handle_landing_key(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_landing(-1);
+                Action::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_landing(1);
+                Action::None
+            }
+            KeyCode::Enter => self.activate_landing(),
+            KeyCode::Char('a') => {
+                self.activate_landing_action(0);
+                Action::None
+            }
+            KeyCode::Char('d') => {
+                self.activate_landing_action(1);
+                Action::None
+            }
+            KeyCode::Char('q') => Action::Quit,
+            _ => Action::None,
+        }
+    }
+
+    fn handle_menu_key(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_menu(-1);
+                Action::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_menu(1);
+                Action::None
+            }
+            KeyCode::Enter => self.activate_menu(),
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.focus = Focus::Prompt;
+                Action::None
+            }
+            KeyCode::Char('s') => {
+                self.screen = Screen::Landing;
+                self.focus = Focus::Content;
+                Action::None
+            }
+            _ => Action::None,
+        }
     }
 
     fn handle_search_key(&mut self, key: KeyEvent) -> Action {
@@ -489,7 +588,7 @@ impl App {
                 }
                 Action::None
             }
-            KeyCode::Tab if self.screen == Screen::Runs => {
+            KeyCode::Char('t') if self.screen == Screen::Runs => {
                 self.cycle_device_filter();
                 Action::None
             }
@@ -518,7 +617,7 @@ impl App {
                 Screen::Config => self.open_config(),
                 Screen::Devices => Action::OpenEditor(self.ctx.devices_path.clone()),
                 Screen::Apps => Action::OpenEditor(self.ctx.base.join("impresario.apps.config")),
-                Screen::Home => Action::None,
+                Screen::Landing | Screen::Menu | Screen::Home => Action::None,
             },
             KeyCode::Char('r') => {
                 if self.screen == Screen::Runs {
@@ -682,18 +781,6 @@ impl App {
     }
 }
 
-fn function_screen(code: KeyCode) -> Option<Screen> {
-    match code {
-        KeyCode::F(2) => Some(Screen::Home),
-        KeyCode::F(3) => Some(Screen::Runs),
-        KeyCode::F(4) => Some(Screen::Tests),
-        KeyCode::F(5) => Some(Screen::Devices),
-        KeyCode::F(6) => Some(Screen::Apps),
-        KeyCode::F(7) => Some(Screen::Config),
-        _ => None,
-    }
-}
-
 pub(crate) fn format_duration(millis: u64) -> String {
     let seconds = millis / 1_000;
     if seconds < 60 {
@@ -754,6 +841,17 @@ fn open_external(path: &std::path::Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn test_context() -> Context {
+        Context {
+            home: impresario_core::home::Home::at("demo-home"),
+            base: std::path::PathBuf::from("demo"),
+            config_path: std::path::PathBuf::from("demo/impresario.config"),
+            devices_path: std::path::PathBuf::from("demo/impresario.devices.config"),
+            color: false,
+            ascii: true,
+        }
+    }
+
     #[test]
     fn duration_is_compact() {
         assert_eq!(format_duration(5_000), "5s");
@@ -762,9 +860,31 @@ mod tests {
     }
 
     #[test]
-    fn function_keys_map_to_screens() {
-        assert_eq!(function_screen(KeyCode::F(3)), Some(Screen::Runs));
-        assert_eq!(function_screen(KeyCode::F(7)), Some(Screen::Config));
-        assert_eq!(function_screen(KeyCode::F(8)), None);
+    fn question_mark_opens_help_on_the_landing_screen() {
+        let mut app = App::empty(test_context());
+        app.screen = Screen::Landing;
+        app.focus = Focus::Content;
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT));
+        assert!(app
+            .overlay
+            .as_deref()
+            .is_some_and(|text| text.contains("impresario interactive")));
+    }
+
+    #[test]
+    fn control_keys_are_recognized() {
+        let mut app = App::empty(test_context());
+        app.screen = Screen::Menu;
+        app.focus = Focus::Content;
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Action::None
+        ));
+        assert!(app.search.is_some());
+        app.search = None;
+        assert!(matches!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            Action::Quit
+        ));
     }
 }

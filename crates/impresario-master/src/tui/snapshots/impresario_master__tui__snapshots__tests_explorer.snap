@@ -2,33 +2,33 @@
 source: crates/impresario-master/src/tui/snapshots.rs
 expression: "render(&app, 120, 30)"
 ---
- impresario  demo  [plain colours]
- home  runs  tests  devices  apps  config
+ IMPRESARIO  /  demo  [plain colours]                                                      0 active · 2 devices · 1 app
+ Workspace  ›  Tests                                                                    Esc menu · ? help · Ctrl-Q quit
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-┌─────────────────────────────────────────────────────────────────────────────┐┌details────────────────────────────────┐
-│Test explorer (8 row(s), 2 marked)                                           ││Selection                              │
-│Enter edit  Space mark  r run  d dry-run                                     ││                                       │
-│                                                                             ││name  LoginAct                         │
-│[*] scene TestScreen  [scene]  demo/scenes/TestScreen.scene:1                ││kind  act                              │
-│    piece A  [piece]  demo/scenes/TestScreen.scene:4                         ││file  demo/plays/perform.play          │
-│    piece B  [piece]  demo/scenes/TestScreen.scene:5                         ││line  3                                │
-│  theatre Auth  [theatre]  demo/theatres/auth.theatre:1                      ││                                       │
-│    stage Login  [stage]  demo/theatres/auth.theatre:3                       ││r runs the selected play/act; marked   │
-│  play Perform  [play]  demo/plays/perform.play:1                            ││rows are added. d prints the dry-run   │
-│[*]   act LoginAct [auth, smoke]  [act]  demo/plays/perform.play:3           ││matrix.                                │
-│    act WebAct  [act]  demo/plays/perform.play:15                            ││                                       │
-│                                                                             ││run:  --play demo/plays/perform.play   │
-│                                                                             ││                                       │
-│                                                                             ││Filters: /tests --tag smoke            │
-│                                                                             ││         /tests --play plays/login.play│
-│                                                                             ││         /tests --platform android     │
-│                                                                             ││--exclude-tag slow                     │
-│                                                                             ││                                       │
-└─────────────────────────────────────────────────────────────────────────────┘└───────────────────────────────────────┘
-┌prompt  (Tab focuses the prompt)──────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                      │
+┌ Tests ────────────────────────────────────────────────────────────────────────┐ ┌ Selected ──────────────────────────┐
+│ 8 entries · 2 marked                                                          │ │ LoginAct                           │
+│                                                                               │ │ act                                │
+│ *  S TestScreen                                                        scene  │ │                                    │
+│      p A                                                               piece  │ │ file      plays/perform.play       │
+│      p B                                                               piece  │ │ line      3                        │
+│    T Auth                                                            theatre  │ │ tags      auth, smoke              │
+│      s Login                                                           stage  │ │                                    │
+│    P Perform                                                            play  │ │ Enter opens it.                    │
+│ *>   a LoginAct [auth, smoke]                                            act  │ │ Space mark · r run · d dry-run     │
+│      a WebAct                                                            act  │ │                                    │
+│                                                                               │ │ Selectors                          │
+│                                                                               │ │ /tests --tag smoke                 │
+│                                                                               │ │ /tests --platform android          │
+│                                                                               │ │                                    │
+│                                                                               │ │                                    │
+│                                                                               │ │                                    │
+│                                                                               │ │                                    │
+│                                                                               │ │                                    │
+└───────────────────────────────────────────────────────────────────────────────┘ └────────────────────────────────────┘
+┌ Command ─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ❯ Type a command, or /help for keys                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Enter edit · Space mark · r run · d dry-run · j/k move · Tab prompt
-job 20261021-114500-run00 passed 12s
+Enter edit · Space mark · r run · d dry-run · Esc menu · Tab prompt                              0 active · Ctrl-Q quit
+a LoginAct  act  plays/perform.play:3
 run 20261021-120000-run01 submitted

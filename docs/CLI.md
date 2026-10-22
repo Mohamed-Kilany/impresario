@@ -25,6 +25,18 @@ terminals, `CI` is unset/empty/`0`/`false`, and neither `--no-tui` nor
 the next commands, then exits 0 without reading stdin. A missing required
 value is a usage error (exit 2), never a prompt in a non-interactive session.
 
+On a normal `impresario` start (no subcommand) the binary also makes the
+`impresario` name convenient from a fresh shell: it copies the current
+executable to `~/.impresario/bin` and adds that directory to the **user**
+`PATH` (Windows `HKCU\Environment`, broadcast to open windows; Unix the first
+existing/created profile file). Subcommands (`doctor`, `lsp`, `mcp`, tests,
+scripts) never rewrite the environment. The operation is idempotent and prints
+a restart notice only when it changes `PATH`. It is skipped when
+`IMPRESARIO_NO_PATH_INSTALL` is set, and when `IMPRESARIO_HOME` is set (tests
+and portable homes must not mutate the real user environment).
+The current process `PATH` is updated too, so a same-session `impresario` can
+resolve.
+
 `--workspace <DIR>` is a top-level option and must appear **before** the
 subcommand (`impresario --workspace . run`). After a `config` subcommand the
 same flag selects the config *scope* instead (I-100).
@@ -174,22 +186,43 @@ then `code` (the same helper as `config edit`).
 
 ## TUI
 
-### Screens and keys
+### Landing, menu and keys
 
-| Key | Screen |
+With no arguments, `impresario` opens on a landing screen, not directly in a
+workspace. The colorful five-row `IMPRESARIO` wordmark sits above the
+remembered-workspace list. The current workspace is first and marked
+`current`; a remembered path that no longer exists is marked `missing`.
+The details panel shows the selected path, whether its config exists and
+whether it is the active workspace. The workspace menu shows the test, device,
+app and run counts. Below the workspace rows are `Add current workspace`,
+`Doctor` and `Quit`.
+
+| Key | Action |
 |---|---|
-| F1 | Help overlay (keys, slash commands, examples) |
-| F2 / F3 / F4 / F5 / F6 / F7 | Home / Runs / Tests / Devices / Apps / Config |
+| Up/Down, `j`/`k` | Move |
+| `Enter` | Open the selected workspace or menu row |
+| `Esc` | Back one level (overlay/completion/filter first) |
+| `Tab` | Focus the prompt on a workspace screen |
+| `?` or F1 | Help overlay (keys, slash commands, examples) |
 | Ctrl-Q, or Ctrl-C twice within 1.2 s | Quit (terminal restored) |
 | Ctrl-Z | Suspend (Unix); terminal is restored and re-entered |
-| Esc | Close overlay/completion/filter, or return focus to the prompt |
 
-The Home screen shows the workspace and config paths, config/devices/apps
-counts, test counts and active/recent jobs. The global home appears in the
-first-run overlay and the help text. The TUI deliberately does not probe
-device reachability or run `doctor` in the background: use `/doctor` or
-`impresario device check` when live state matters. In-app completion notices
-appear when a followed job reaches a terminal state.
+On the landing screen: `a` adds the current workspace, `d` runs doctor and `q`
+quits. `Enter` on a missing workspace reports it in the status line instead of
+trying to enter it. Entering a workspace opens the workspace menu:
+`Overview`, `Runs`, `Tests`, `Devices`, `Apps`, `Config`, `Doctor`,
+`Switch workspace` and `Quit`. `Esc` from menu content returns to the landing
+screen; `Esc` from the menu prompt returns to menu content. `/menu`,
+`/workspaces` and `/landing` jump directly.
+
+The first-run welcome overlay appears after the first workspace is entered,
+not on the landing screen. The Overview/Home screen shows the workspace,
+config, devices and apps paths; device/app, scene/theatre/play and run counts;
+and active/recent jobs. The global home appears in the first-run overlay. The TUI
+deliberately does not probe device reachability or run `doctor` in the
+background: use `/doctor` or `impresario device check` when live state
+matters. In-app completion notices appear when a followed job reaches a
+terminal state.
 
 Prompt editing: history with Up/Down, Ctrl-R reverse search, Tab completion
 (device/app/play/act/stage/tag names and slash-command flags), Shift-Tab for
@@ -197,7 +230,10 @@ the previous completion, Ctrl-A/E/U/K/W, Alt+Enter or Ctrl-J for a newline,
 and bracketed paste. History is `~/.impresario/history` (permission 0600 on
 Unix, capped by `ui.history_size`).
 
-**Run view** (`F3`, or `/run`/`/attach` which submit/follow a job): left pane = jobs, right pane = the followed
+### Screens and the run view
+
+**Run view** (from the menu, `/runs`, `/jobs`, `/run` or `/attach` which
+submit/follow a job): left pane = jobs, right pane = the followed
 job's device → play → act → stage → step tree, current command and rolling log.
 The detail pane shows status, duration, devices, plays, message and the
 failure screenshot path.
@@ -209,19 +245,20 @@ failure screenshot path.
 | `b` or `d` | Send the followed job to the background (clears the follow view) |
 | `x` or `s` | Stop the selected job at the next command boundary |
 | `f` | Pause/resume the log tail |
-| `Tab` | Cycle the device filter |
+| `t` | Cycle the device filter (`Tab` focuses the prompt) |
 | `/` | Filter the run list (Enter applies, Esc cancels) |
 | `r` / `F` | Rerun the selection / rerun failed acts from its report |
 | `o` / `p` | Open the report / the failure screenshot |
 | `X` or Delete | Remove a finished job's state and logs |
 | `?` | Help overlay |
 
-**Tests screen** (`F4`): `j`/`k` move, `g`/`G` first/last, Space marks,
+**Tests screen** (menu → Tests, or `/tests`): `j`/`k` move, `g`/`G` first/last, Space marks,
 `Enter` opens the file in the editor, `r` runs the selected/marked play or act
 (detached), `d` prints the dry-run matrix for the selection. `Tab` returns to
 the prompt.
 
-**Devices/Apps/Config screens** (`F5`–`F7`): `j`/`k` scroll, `Enter` opens the
+**Devices/Apps/Config screens** (menu → the section, or `/devices`, `/apps`,
+`/config`): `j`/`k` scroll, `Enter` opens the
 relevant file in `$VISUAL`/`$EDITOR`, `r` reloads from disk. The Config screen
 shows the effective setting, its value and its winning layer, plus the typed
 `impresario.config` values. These screens are viewers: add/edit/remove is the
@@ -234,6 +271,8 @@ in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 |---|---|
 | `/run [flags]` | Submit a detached job; `/run --dry-run` prints the plan instead |
 | `/jobs`, `/runs` | Open the runs screen (same store as `impresario jobs`) |
+| `/menu` | Open the workspace menu |
+| `/workspaces`, `/landing` | Return to the landing/workspace picker |
 | `/devices`, `/apps`, `/config` | Open those screens |
 | `/tests [args]` | Open the explorer; with args runs `impresario tests ...` |
 | `/open <path>` | Open a file/directory with the OS handler |
@@ -243,7 +282,8 @@ in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 | `/attach <id>` | Follow a job inside the TUI (does not spawn a terminal) |
 | `/logs <id>`, `/report <id>`, `/stop <id>`, `/rm <id>` | Run the matching CLI command |
 | `/profile [args]` | Run `impresario profile ...` |
-| `/history`, `/clear`, `/home` | Show history, clear activity, go home |
+| `/history`, `/clear` | Show prompt history, clear the activity panel |
+| `/home` | Open the Overview screen |
 | `/help`, `/?` | Help overlay |
 | `/quit`, `/q` | Quit (same as Ctrl-Q) |
 
@@ -260,7 +300,9 @@ the activity line; on Windows the child is created with `CREATE_NO_WINDOW`.
 
 ### First run
 
-In a directory without `impresario.config`, the TUI opens an overlay:
+The landing screen always comes first. After a workspace without
+`impresario.config` is entered (for example the current directory listed as
+`current`), the TUI opens an overlay:
 
 ```text
 Welcome to impresario
@@ -272,7 +314,8 @@ No workspace config was found yet. Create the workspace skeleton now?
 
 `y` runs `impresario workspace new <base> --example`; `n`/Esc only dismisses
 the overlay. The generated example includes one playable act (`Check: Sample`),
-so a fresh workspace immediately validates and can run against a mock.
+so a fresh workspace immediately validates and can run against a mock. The
+first-run overlay is not shown again while that workspace remains open.
 
 ### Persistence and crash safety
 
@@ -290,23 +333,30 @@ so a fresh workspace immediately validates and can run against a mock.
 The interactive surface is covered automatically on Windows:
 
 - `crates/impresario-master/tests/tui_pty.rs` drives the **real binary**
-  through ConPTY: first-run scaffold (`y` → files on disk → quit), slash
-  completion + Ctrl-R history, and run view (`MockAgent`, `b` detach → quit →
-  `attach` → `report --json`). The harness answers ConPTY's startup cursor
-  query (`ESC[6n` with `ESC[1;1R`), keeps the PTY master alive, resolves ANSI
-  cursor movement/erases in a small screen model and asserts visible text.
-- `crates/impresario-master/src/tui/snapshots.rs` renders six frames through
-  ratatui `TestBackend` + `insta`: home, followed run view, tests explorer,
-  help/filter overlay, first-run overlay and a small terminal (the
-  "too small" path).
+  through ConPTY: landing → workspace menu → first-run scaffold (`Enter`, `y`
+  → files on disk → quit), landing → menu → slash completion + help overlay,
+  and run view (`MockAgent`, `b` detach → quit → `attach` → `report --json`).
+  The harness answers ConPTY's startup cursor query (`ESC[6n` with
+  `ESC[1;1R`), keeps the PTY master alive, resolves ANSI cursor
+  movement/erases in a small screen model and asserts visible text.
+- `crates/impresario-master/src/tui/snapshots.rs` renders eleven frames
+  through ratatui `TestBackend` + `insta`: landing wide/narrow, workspace
+  menu, home wide/narrow, tests explorer wide/narrow, help/filter overlay,
+  first-run overlay, followed run view and a small terminal (the "too small"
+  path).
 - `tests/jobs_cli.rs` covers the daemon and leases: detach returns before the
   daemon exits, a second caller on a live lease follows `--on-busy
   wait|fail|queue`, a stopped job exits 130, recovery marks orphaned jobs
   `interrupted`, and a detached submission releases the caller's stdout
   pipes (Windows regression test).
-- Live detach → attach → report on the web device: run
-  `20261021-073144-2763` passed 9/9 steps (Chrome for Testing over managed
-  Chromium); see `docs/STATUS.md` for the multi-device status.
+- Live acceptance: the detached four-device run
+  `20261021-080459-ec51` passed 4 devices / 4 plays / 6 acts / 189 steps
+  (local Chrome, Android phone, Android TV, LG webOS TV), was attached after
+  detaching and produced `report.json` with status `passed`. The LG-only
+  diagnosis run `20261021-080418-843e` passed 2/2; the connector fixture
+  suite passed 2/2 after `elements()` was fixed to include the collection
+  root. The earlier single-web run `20261021-073144-2763` (9/9) remains the
+  focused managed-Chromium check.
 
 ## Manual checklist: the three Windows shells
 
@@ -333,39 +383,55 @@ and exit 0.
 
 ### 1. Windows Terminal + PowerShell 7
 
-- [ ] Start Windows Terminal, open a PowerShell tab, `cd` to the workspace.
-- [ ] `impresario` starts the TUI, the header shows the workspace and the tabs
-      `home runs tests devices apps config`, and no prompt is left in the
+- [x] Start Windows Terminal, open a PowerShell tab, `cd` to the workspace.
+- [x] `impresario` starts on the landing screen with the colorful `IMPRESARIO`
+      wordmark and remembered workspaces; no shell prompt is left in the
       scrollback.
-- [ ] F1 opens help; Esc closes it. F2–F7 switch screens without flicker.
-- [ ] Type `/he`, see `/help` in the completion popup, press Tab, Enter; the
-      help overlay says `help · Esc closes`.
-- [ ] Ctrl-R, type `run`, Enter recalls the line; Up/Down walks history.
-- [ ] `/run --dry-run` prints the matrix in the activity/status area; a real
-      `/run` shows `Jobs (1)` and a running job, `b` detaches with
-      `continues in the background`, and `/attach <id>` follows it again.
-- [ ] Resize the window while following a job: content reflows, no panic, no
+- [x] Enter opens the workspace menu; Esc returns to landing; `?`/F1 opens
+      help and Esc closes it.
+- [x] Type `/he`, see `/help` in the completion popup, press Tab, Enter; the
+      help overlay says `Help · Esc closes`.
+- [x] Ctrl-R, type `run`, Enter recalls the line; Up/Down walks history.
+- [x] `/run --dry-run` shows the matrix overlay; a real `/run` shows
+      `Run · running`, `b` detaches with `Detached ... continues in the
+      background`, and `/attach <id>` follows it again after completion.
+- [x] Resize the window while following a job: content reflows, no panic, no
       duplicated frame. Ctrl-Q restores the original screen and the shell
       prompt is usable.
-- [ ] `impresario --no-tui` and `impresario --plain` print the plain
+- [x] `impresario --no-tui` and `impresario --plain` print the plain
       dashboard; `impresario --no-color` removes colour but keeps the layout.
-- [ ] `impresario completions powershell | Out-String | Invoke-Expression` and
+- [x] `impresario completions powershell | Out-String | Invoke-Expression` and
       Tab-complete `impresario ru` → `run`.
 
 Expected: the same layout at 120×30 and at 80×24; box drawing is unbroken;
 the status area shows keys, the selected job and the last activity message.
 
-### 2. Windows PowerShell 5.1 (conhost)
+### 2. Windows PowerShell 5.1
 
-- [ ] Start `powershell.exe` (not `pwsh`) from the Start menu or `Win+R`.
-- [ ] Repeat the TUI startup, F1/F2–F7, `/he` + Tab, Ctrl-R, `/run`, `b`,
-      `/attach`, resize and Ctrl-Q checks.
-- [ ] Confirm the alternate screen is restored on quit and that the console
-      cursor is visible again.
-- [ ] Run `impresario --plain | more` and `impresario jobs --json | ConvertFrom-Json`;
-      both must not hang and must exit 0.
-- [ ] Run `impresario` with stdin redirected (`echo. | impresario`): it must
-      print the plain dashboard, not the TUI, and must not read the pipe.
+- [x] Start `powershell.exe` (not `pwsh`) from the Start menu or `Win+R`.
+- [x] Landing, workspace menu, help, `/he` + Tab, Ctrl-R, `/run`, `b`,
+      `/attach`, resize and quit were checked; the current landing/menu/no
+      colour frames were rerun in Windows Terminal, while the earlier
+      conhost pass verified the console host's cursor restoration.
+- [x] `--no-color` shows the landing and workspace menu monochrome with the
+      same box drawing, spacing and navigation. The session exited 0 and the
+      prompt was usable.
+- [x] `impresario --plain | more` and the JSON row below do not hang and exit
+      0.
+- [x] JSON caveat: on PowerShell 5.1 a parenthesised assignment is required
+      because `ConvertFrom-Json` emits the array as one pipeline object:
+      ```powershell
+      $jobs = impresario jobs --all --json | ConvertFrom-Json
+      $jobs | Select-Object -First 2 id,status
+      # or:
+      (impresario jobs --all --json | ConvertFrom-Json) |
+        Select-Object -First 2 id,status
+      ```
+      Verified with seven jobs; the two-row table printed ids and statuses.
+      The bare `... | ConvertFrom-Json | Select-Object id,status` form prints
+      a blank row on 5.1, so the checklist no longer uses it.
+- [x] Run `impresario` with stdin redirected (`echo. | impresario`): it
+      prints the plain dashboard, not the TUI, and does not read the pipe.
 
 Known conhost detail: if the window is narrower than 40 columns or shorter
 than 12 rows, the TUI prints `terminal too small` and asks to resize or use
@@ -373,27 +439,38 @@ than 12 rows, the TUI prints `terminal too small` and asks to resize or use
 
 ### 3. cmd.exe (conhost or Windows Terminal tab)
 
-- [ ] `cmd /k` (or a Command Prompt tab), `cd` to the workspace.
-- [ ] `impresario` starts the TUI; F1, F2–F7, `/he`+Tab, Ctrl-R, `/run`,
-      `b`, `/attach`, resize, Ctrl-Q behave as above.
-- [ ] `set CI=1` then `impresario`: plain dashboard, exit 0, no TUI.
-- [ ] `set CI=` then `impresario --plain`: plain dashboard.
-- [ ] `impresario run --dry-run` and `impresario jobs --json` work; JSON is
-      parseable (for example `impresario jobs --json > jobs.json`).
-- [ ] `impresario completions cmd` is not a supported shell; expect the
+- [x] `cmd /k` (or a Command Prompt tab), `cd` to the workspace.
+- [x] `impresario` starts the landing screen; Enter opens the menu; `?` help,
+      `/he`+Tab completion, Ctrl-R, `/run --dry-run`, a real `/run`, `b`,
+      `/attach <id>`, resize and Ctrl-Q all behave as above.
+- [x] `set CI=1` then `impresario`: plain dashboard, exit 0, no TUI.
+- [x] `set CI=` then `impresario --plain`: plain dashboard, exit 0.
+- [x] `impresario run --dry-run` and `impresario jobs --json` work; JSON is
+      parseable (for example `impresario jobs --json > jobs.json`; also parsed
+      by PowerShell 5.1 above).
+- [x] `impresario completions cmd` exits 2 with the
       PowerShell/bash/zsh/fish/elvish list, not a panic.
 
 Expected: command history, pasted multi-line text and box-drawing characters
 are intact; no “not a terminal” error when the TUI is expected.
 
+Screenshots and logs from the 2026-10-22 pass are under
+`%TEMP%\impresario-shell-run` on this host (`cmd-landing.png`, `cmd-menu.png`,
+`cmd-help2.png`, `cmd-run.png`, `cmd-attach.png`, `cmd-resize.png`,
+`ps51-new-landing.png`, `ps51-new-menu2.png`, `ps51-final.txt`,
+`ps51-quit-code.txt`); they are evidence, not repository fixtures.
+
 ### Automated equivalents already green on this host
 
 The PTY suite exercises the real binary through ConPTY (the same console API
-behind Windows Terminal and conhost) for the first-run flow, completion,
-Ctrl-R, the run view and detach/close/reattach/report. `cargo test --workspace`
-also covers the non-TUI paths, daemon leases and recovery. The three rows
-above remain manual because they check the *shell host* (font, resize,
-scrollback, cursor restoration), not just the application protocol.
+behind Windows Terminal and conhost) for the landing → menu → first-run flow,
+completion/help, the run view and detach/close/reattach/report. Ctrl-R and
+Ctrl-Q are covered by unit tests and the manual rows; they are not sent through
+ConPTY because its input decoder follows the host code page.
+`cargo test --workspace` also covers the non-TUI paths, daemon leases and
+recovery. The three manual rows above were executed in addition, because they
+check the *shell host* (font, resize, scrollback, cursor restoration), not
+just the application protocol.
 
 ## Troubleshooting
 

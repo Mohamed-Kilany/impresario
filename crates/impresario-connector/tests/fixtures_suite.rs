@@ -481,6 +481,9 @@ async fn run_fixture_suite(backend: &str) {
     let mut web = Driver::open(&mut harness.client, &session_id).await;
 
     // --- basic actions -----------------------------------------------------
+    // The document root is a valid CSS target too: `body` must be found even
+    // though it has no `body` ancestor in the collected element list.
+    web.check_visible(css("body"), 2_000).await;
     web.check_visible(css("#fixture-title"), 2_000).await;
     web.run_ok(
         body(action(pb::ActionType::Click, Some(css("#click-button")))),

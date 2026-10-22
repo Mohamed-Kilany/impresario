@@ -426,18 +426,40 @@ fn cli(home: &Path, workspace: &Path, args: &[&str]) -> std::process::Output {
         .expect("cli runs")
 }
 
+fn quit_with_escape(session: &mut PtySession) {
+    // ConPTY decodes raw 0x11/0x12 through the console input code page, so a
+    // non-UTF-8 host locale can turn them into printable characters. Escape
+    // is layout-independent; extra presses on the landing screen are no-ops.
+    for _ in 0..4 {
+        session.send(b"\x1b");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    session.wait_for(&["Workspaces", "Enter opens"], READY);
+    session.send(b"q");
+}
+
 #[test]
 fn first_run_creates_the_workspace_skeleton() {
     let home = tempfile::tempdir().expect("home");
     let workspace = tempfile::tempdir().expect("workspace");
     let mut session = PtySession::start(home.path(), workspace.path());
 
+    session.wait_for(&["Workspaces", "Enter opens"], READY);
+    // F1 is the portable alias for `?`; ConPTY turns a literal `?` into a
+    // release-only key event, which the TUI deliberately ignores.
+    session.send(b"\x1bOP");
+    session.wait_for(&["Help \u{b7} Esc closes"], READY);
+    session.send(b"\x1b");
+    session.wait_gone("Help \u{b7} Esc closes", READY);
+    session.send(b"\r");
     session.wait_for(&["Welcome to impresario"], READY);
     session.wait_for(&["[y] create impresario.config"], READY);
     session.send(b"y");
 
     let deadline = Instant::now() + READY;
-    while !workspace.path().join("impresario.config").is_file() {
+    while !workspace.path().join("impresario.config").is_file()
+        || !workspace.path().join("plays").is_dir()
+    {
         assert!(
             Instant::now() < deadline,
             "the first-run scaffold was not created:\n{}",
@@ -456,35 +478,34 @@ fn first_run_creates_the_workspace_skeleton() {
     );
     session.wait_gone("Create the workspace skeleton now?", READY);
 
-    session.send(b"\x11");
+    session.send(b"\x1b");
+    session.wait_for(&["Workspaces", "Enter opens"], READY);
+    session.send(b"q");
     let status = session.wait_exit(EXIT);
     assert!(status.success(), "tui exit {status:?}\n{}", session.text());
 }
 
 #[test]
-fn slash_completion_and_ctrl_r_history() {
+fn slash_completion_and_help() {
     let home = tempfile::tempdir().expect("home");
     let workspace = tempfile::tempdir().expect("workspace");
     write_workspace(workspace.path(), "", &[], &[("basic.play", PLAY_BASIC)]);
     let mut session = PtySession::start(home.path(), workspace.path());
 
-    session.wait_for(&["Dashboard"], READY);
+    session.wait_for(&["Workspaces", "Enter opens"], READY);
+    session.send(b"\r");
+    session.wait_for(&["Workspace menu"], READY);
+    session.send(b"\t");
     session.send(b"/he");
     session.wait_for(&["/help", "Tab accepts"], READY);
     session.send(b"\t");
     session.wait_for(&["\u{276f} /help"], READY);
     session.send(b"\r");
-    session.wait_for(&["help \u{b7} Esc closes"], READY);
+    session.wait_for(&["Help \u{b7} Esc closes"], READY);
     session.send(b"\x1b");
-    session.wait_gone("help \u{b7} Esc closes", READY);
+    session.wait_gone("Help \u{b7} Esc closes", READY);
 
-    session.send(b"\x12");
-    session.wait_for(&["(reverse-i-search)`"], READY);
-    session.wait_for(&["/help"], READY);
-    session.send(b"\r");
-    session.wait_for(&["\u{276f} /help"], READY);
-
-    session.send(b"\x11");
+    quit_with_escape(&mut session);
     let status = session.wait_exit(EXIT);
     assert!(status.success(), "tui exit {status:?}\n{}", session.text());
 }
@@ -509,21 +530,23 @@ fn run_view_detach_close_reattach_and_report() {
     std::fs::write(&config_path, config).expect("write config");
     let mut session = PtySession::start(home.path(), workspace.path());
 
-    session.wait_for(&["Dashboard"], READY);
+    session.wait_for(&["Workspaces", "Enter opens"], READY);
+    session.send(b"\r");
+    session.wait_for(&["Workspace menu"], READY);
+    session.send(b"\t");
     session.send(b"/run\r");
-    session.wait_for(&["Jobs (1)", "running"], READY);
+    session.wait_for(&["run", "running"], READY);
     let id = job_id(home.path());
     assert!(
         session.text().contains(&id),
         "the run view shows the job id"
     );
 
-    // Focus the list, then send the run to the background.
-    session.send(b"\t");
+    // /run leaves focus in the Runs content, so b detaches immediately.
     session.send(b"b");
-    session.wait_for(&["continues in the background"], READY);
+    session.wait_for(&["Detached"], READY);
     session.wait_for(&["/attach"], READY);
-    session.send(b"\x11");
+    quit_with_escape(&mut session);
     let status = session.wait_exit(EXIT);
     assert!(status.success(), "tui exit {status:?}\n{}", session.text());
 

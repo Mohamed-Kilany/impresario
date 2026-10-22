@@ -192,14 +192,16 @@ config format **stays YAML** (D-04 unchanged) and no `migrate`-to-TOML is
 needed; `toml_edit` remains the recorded fallback should `yaml-edit` rot
 (recorded in I-91).
 
-**Phase 4 outcome (2026-10-21).** The probe choices carried into the product:
+**Phase 4 outcome (2026-10-21; landing-first UX 2026-10-22).** The probe
+choices carried into the product:
 
-- `ratatui` 0.30.2 + `crossterm` 0.29 drive the six-screen TUI (home, runs,
-  tests, devices, apps, config); `TestBackend` + `insta` cover six frames
-  (`src/tui/snapshots.rs`), and the TUI remains a client that spawns the real
-  CLI (I-125).
+- `ratatui` 0.30.2 + `crossterm` 0.29 drive the landing-first TUI (colorful
+  `IMPRESARIO` wordmark and workspace picker, then the workspace menu and
+  home/runs/tests/devices/apps/config); `TestBackend` + `insta` cover eleven
+  frames (`src/tui/snapshots.rs`), and the TUI remains a client that spawns
+  the real CLI (I-125, I-131).
 - `portable-pty` 0.9.0 (dev-dependency) drives the real binary through ConPTY:
-  first-run scaffold, slash completion + Ctrl-R history, and run view with
+  first-run scaffold, slash completion + help, and run view with
   `MockAgent` → detach → close → attach → report (`tests/tui_pty.rs`, I-128).
   The probe's `ESC[6n]` warning was necessary but not sufficient: the PTY
   master must stay alive and UTF-8 tails must be trimmed on a character
@@ -217,9 +219,12 @@ needed; `toml_edit` remains the recorded fallback should `yaml-edit` rot
 - The workspace MSRV moved from 1.87 to **1.88** because `ratatui` 0.30.2
   requires it.
 
-Live Phase 4 evidence is a detached web run (`20261021-073144-2763`, 9/9
-steps) followed by `attach`/`report`; the three-device concurrent run and the
-manual three-shell checklist remain open and are recorded as STATUS gaps 17–18.
+Live Phase 4 evidence is the detached four-device run
+`20261021-080459-ec51` (4 devices / 4 plays / 6 acts / 189 steps: web, phone,
+Android TV, LG webOS) followed by `attach`/`report`, plus the focused web
+detach run `20261021-073144-2763` (9/9) and the LG-only diagnosis run
+`20261021-080418-843e` (2/2). The Windows Terminal/PowerShell 7, PowerShell
+5.1 and cmd.exe checklist was executed; STATUS gaps 17–18 are closed.
 
 **Not probed or not adopted:** `inquire`/`cliclack` were compiled in the probe
 but the wizard/prompt is line-based, `indicatif` was not needed, and `keyring`

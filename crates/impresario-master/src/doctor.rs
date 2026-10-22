@@ -94,24 +94,44 @@ struct Report {
     workspace: String,
     platforms: Vec<PlatformReport>,
     tools: Vec<ToolReport>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    config_errors: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    device_errors: Vec<String>,
 }
 
 /// Execute doctor and return a process exit code.
+///
+/// Doctor is intentionally resilient: a broken workspace config or a broken
+/// device file is a finding, not a reason to stop before probing the toolchain.
 pub fn run(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, json: bool) -> i32 {
     let config_outcome = load_effective_config(base, config_path);
+    let mut config_errors = Vec::new();
     if config_outcome.diagnostics.has_errors() {
         crate::render::eprint_all(&config_outcome.diagnostics);
+        config_errors.extend(
+            config_outcome
+                .diagnostics
+                .errors()
+                .map(|diagnostic| diagnostic.one_line()),
+        );
         eprintln!("doctor: configuration errors in {}", config_path.display());
-        return EXIT_USAGE;
     }
     let outcome = config::load_devices_merged(devices_path);
+    let mut device_errors = Vec::new();
     if outcome.diagnostics.has_errors() {
         crate::render::eprint_all(&outcome.diagnostics);
-    }
-    let Some(devices) = outcome.config else {
+        device_errors.extend(
+            outcome
+                .diagnostics
+                .errors()
+                .map(|diagnostic| diagnostic.one_line()),
+        );
         eprintln!("doctor: configuration errors in {}", devices_path.display());
-        return EXIT_USAGE;
-    };
+    }
+    let devices = outcome
+        .config
+        .map_or_else(Vec::new, |config| config.devices);
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -123,7 +143,12 @@ pub fn run(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, js
             return EXIT_INFRA;
         }
     };
-    let report = runtime.block_on(collect(home, base, &devices.devices));
+    let mut report = runtime.block_on(collect(home, base, &devices));
+    report.config_errors = config_errors;
+    report.device_errors = device_errors;
+    if !report.config_errors.is_empty() || !report.device_errors.is_empty() {
+        report.ok = false;
+    }
 
     if json {
         match serde_json::to_string_pretty(&report) {
@@ -136,7 +161,9 @@ pub fn run(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, js
     } else {
         print_human(&report);
     }
-    if report.ok {
+    if !report.config_errors.is_empty() || !report.device_errors.is_empty() {
+        EXIT_USAGE
+    } else if report.ok {
         EXIT_OK
     } else {
         EXIT_INFRA
@@ -170,6 +197,8 @@ async fn collect(home: &Home, base: &Path, devices: &[DeviceConfig]) -> Report {
         workspace: base.display().to_string(),
         platforms,
         tools: tools_report,
+        config_errors: Vec::new(),
+        device_errors: Vec::new(),
     }
 }
 
@@ -501,6 +530,20 @@ fn print_human(report: &Report) {
     println!("impresario doctor");
     println!("home:      {}", report.home);
     println!("workspace: {}", report.workspace);
+    if !report.config_errors.is_empty() {
+        println!();
+        println!("configuration errors:");
+        for error in &report.config_errors {
+            println!("  {error}");
+        }
+    }
+    if !report.device_errors.is_empty() {
+        println!();
+        println!("device configuration errors:");
+        for error in &report.device_errors {
+            println!("  {error}");
+        }
+    }
     println!();
     for platform in &report.platforms {
         println!(

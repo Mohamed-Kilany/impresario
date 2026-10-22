@@ -1,0 +1,28 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&populated(), 80, 24)"
+---
+ IMPRESARIO  /  demo  [plain colours]              0 active · 2 devices · 1 app
+ Workspace  ›  Overview                         Esc menu · ? help · Ctrl-Q quit
+────────────────────────────────────────────────────────────────────────────────
+┌ Workspace ────────────────────────────────┐ ┌ Activity ──────────────────────┐
+│ demo                                      │ │ · Welcome. Type a command, or  │
+│ config    impresario.config               │ │ /help for keys and examples.   │
+│ devices   impresario.devices.config       │ │ · devices: 2 configured        │
+│ 1 scene · 1 theatre · 1 play              │ │ · tests: 1 scene(s), 1         │
+│ 2 devices · 1 app · 0 active · 1 run      │ │ theatre(s), 1 play(s)          │
+│                                           │ │ · run 20261021-120000-run01    │
+└───────────────────────────────────────────┘ │ submitted                      │
+                                              │                                │
+┌ Recent runs ──────────────────────────────┐ │                                │
+│ [ok] 20261021-114500-run00            12s │ │                                │
+│                                           │ │                                │
+│                                           │ │                                │
+└───────────────────────────────────────────┘ └────────────────────────────────┘
+┌ Command ─────────────────────────────────────────────────────────────────────┐
+│ ❯ Type a command, or /help for keys                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help
+workspace ready  ·  0 active jobs
+run 20261021-120000-run01 submitted

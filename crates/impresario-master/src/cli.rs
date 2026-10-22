@@ -363,6 +363,25 @@ pub fn run_with(argv: &[String]) -> i32 {
             return EXIT_INFRA;
         }
     };
+    // PATH setup belongs to the no-subcommand entry point (`impresario`).
+    // Subcommands are often run by scripts, editors and tests; they must not
+    // copy binaries or rewrite the user's environment as a side effect.
+    if cli.command.is_none() {
+        match crate::install::ensure_on_path(&home) {
+            Ok(Some(report)) if report.path_updated && !cli.quiet => {
+                eprintln!(
+                    "impresario: installed to {}; restart your shell to use `impresario` from PATH",
+                    report.bin_dir.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if cli.verbose > 0 {
+                    eprintln!("impresario: PATH setup: {error}");
+                }
+            }
+        }
+    }
     let (base, base_source) = workspace_base(&cli.workspace, &home);
     let config_path = resolve_path(&base, &cli.config, "impresario.config");
     let devices_path = resolve_path(&base, &cli.devices_config, "impresario.devices.config");
@@ -2092,7 +2111,7 @@ fn cmd_home(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, c
     let devices = config::load_devices(devices_path)
         .config
         .map_or(0, |devices| devices.devices.len());
-    let apps = apps::load_apps_merged(base)
+    let apps = apps::load_apps_merged(&base.join("impresario.apps.config"))
         .config
         .map_or(0, |apps| apps.apps.len());
     let active = jobs

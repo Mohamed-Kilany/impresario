@@ -54,7 +54,7 @@ libc.workspace = true
 # The managed Chromium archive is not installed by Chrome's installer, so its
 # directory lacks the AppContainer ACEs the Windows sandbox needs. Grant them
 # with the OS API; no `icacls` shell-out (TASK-2 D-19).
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

@@ -1,0 +1,28 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 80, 24)"
+---
+ IMPRESARIO  /  demo  [plain colours]              0 active · 2 devices · 1 app
+ Workspace  ›  Tests                            Esc menu · ? help · Ctrl-Q quit
+────────────────────────────────────────────────────────────────────────────────
+┌ Tests ────────────────────────────────────────────┐ ┌ Selected ──────────────┐
+│ 8 entries · 2 marked                              │ │ LoginAct               │
+│                                                   │ │ act                    │
+│ *  S TestScreen                            scene  │ │                        │
+│      p A                                   piece  │ │ file                   │
+│      p B                                   piece  │ │ plays/perform.play     │
+│    T Auth                                theatre  │ │ line      3            │
+│      s Login                               stage  │ │ tags      auth, smoke  │
+│    P Perform                                play  │ │                        │
+│ *>   a LoginAct [auth, smoke]                act  │ │ Enter opens it.        │
+│      a WebAct                                act  │ │ Space mark · r run · d │
+│                                                   │ │ dry-run                │
+│                                                   │ │                        │
+└───────────────────────────────────────────────────┘ └────────────────────────┘
+┌ Command ─────────────────────────────────────────────────────────────────────┐
+│ ❯ Type a command, or /help for keys                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+Enter edit · Space mark · r run · d dry-run · Esc menu · Tab prompt
+a LoginAct  act  plays/perform.play:3
+run 20261021-120000-run01 submitted

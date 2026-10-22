@@ -1,0 +1,28 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 80, 24)"
+---
+            ##   #   # ####  ####  ##### #####  ###  ####   ##    ###
+            ##   ## ## #   # #   # #     #     #   # #   #  ##   #   #
+            ##   # # # ####  ####  ####  ####  ##### ####   ##   #   #
+            ##   #   # #     # #   #         # #   # # #    ##   #   #
+            ##   #   # #     #  #  ##### ##### #   # #  #   ##    ###
+         workspace-first test automation  ·  scenes, theatres and plays
+┌ Workspaces · Enter opens ────────────────┐ ┌ Selection ──────────────────────┐
+│   demo                          current  │ │ shop                            │
+│ > shop                                   │ │ shop                            │
+│   archive                       missing  │ │                                 │
+│   + Add current workspace                │ │ config    missing               │
+│   D Doctor                               │ │ status    remembered workspace  │
+│   x Quit                                 │ │                                 │
+│                                          │ │ Enter switches to this          │
+│                                          │ │ workspace.                      │
+│                                          │ │                                 │
+│                                          │ │                                 │
+│                                          │ │                                 │
+│                                          │ │                                 │
+│                                          │ │                                 │
+└──────────────────────────────────────────┘ └─────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+  Up/Down choose   Enter open   a add   d doctor   ? help   q quit
+  Active workspace is remembered; add others here.

@@ -14,6 +14,7 @@
 pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
   function trim(value) { return String(value == null ? '' : value).replace(/^\s+|\s+$/g, ''); }
   function collect(root, out) {
+    if (root && root.nodeType === 1) { out.push(root); }
     var nodes = root.querySelectorAll('*');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];

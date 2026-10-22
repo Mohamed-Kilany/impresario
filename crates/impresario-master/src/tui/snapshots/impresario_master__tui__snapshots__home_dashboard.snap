@@ -2,33 +2,33 @@
 source: crates/impresario-master/src/tui/snapshots.rs
 expression: "render(&populated(), 110, 30)"
 ---
- impresario  demo  [plain colours]
- home  runs  tests  devices  apps  config
+ IMPRESARIO  /  demo  [plain colours]                                            0 active · 2 devices · 1 app
+ Workspace  ›  Overview                                                       Esc menu · ? help · Ctrl-Q quit
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-┌workspace──────────────────────────────────────────────────┐┌log────────────────────────────────────────────┐
-│Dashboard                                                  ││Activity                                       │
-│                                                           ││                                               │
-│workspace     demo                                         ││Welcome. Type a command, or /help for keys and │
-│config        demo/impresario.config                       ││examples.                                      │
-│devices       demo/impresario.devices.config               ││devices: 2 configured                          │
-│                                                           ││tests: 1 scene(s), 1 theatre(s), 1 play(s)     │
-│tests         1 scene(s), 1 theatre(s), 1 play(s)          ││run 20261021-120000-run01 submitted            │
-│devices       2 configured                                 ││                                               │
-│apps          1 configured                                 ││                                               │
-│jobs          0 active, 1 total                            ││                                               │
-│                                                           ││                                               │
-│Recent jobs                                                ││                                               │
-│[ok] 20261021-114500-run00  12s                            ││                                               │
-│                                                           ││                                               │
-│Try: run --tag smoke --detach                              ││                                               │
-│     tests --tag smoke --platform android                  ││                                               │
-│                                                           ││                                               │
-│                                                           ││                                               │
-└───────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘
-┌prompt  (Tab completes · Ctrl-R history · F1 help)──────────────────────────────────────────────────────────┐
-│❯                                                                                                           │
+┌ Workspace ──────────────────────────────────────────────────┐ ┌ Activity ──────────────────────────────────┐
+│ demo                                                        │ │ · Welcome. Type a command, or /help for    │
+│                                                             │ │ keys and examples.                         │
+│ config    impresario.config                                 │ │ · devices: 2 configured                    │
+│ devices   impresario.devices.config                         │ │ · tests: 1 scene(s), 1 theatre(s), 1       │
+│ apps      impresario.apps.config                            │ │ play(s)                                    │
+│                                                             │ │ · run 20261021-120000-run01 submitted      │
+│ 1 scene · 1 theatre · 1 play                                │ │                                            │
+│ 2 devices · 1 app · 0 active jobs · 1 run total             │ │                                            │
+│                                                             │ │                                            │
+│                                                             │ │                                            │
+└─────────────────────────────────────────────────────────────┘ │                                            │
+                                                                │                                            │
+┌ Recent runs ────────────────────────────────────────────────┐ │                                            │
+│ [ok] 20261021-114500-run00                              12s │ │                                            │
+│                                                             │ │                                            │
+│                                                             │ │                                            │
+│                                                             │ │                                            │
+│                                                             │ │                                            │
+└─────────────────────────────────────────────────────────────┘ └────────────────────────────────────────────┘
+┌ Command ───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ❯ Type a command, or /help for keys                                                                        │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-F1 help · F2 home · F3 runs · F4 tests · F5 devices · F6 apps · F7 config · Ctrl-Q quit
-job 20261021-114500-run00 passed 12s
+Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help                        0 active · Ctrl-Q quit
+workspace ready  ·  0 active jobs
 run 20261021-120000-run01 submitted

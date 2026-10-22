@@ -10,7 +10,9 @@ use impresario_core::home::Home;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use super::app::{App, AppRow, ConfigRow, DeviceRow, LineStatus, TestKind, TestRow, TreeLine};
+use super::app::{
+    App, AppRow, ConfigRow, DeviceRow, LineStatus, TestKind, TestRow, TreeLine, WorkspaceRow,
+};
 use super::{Context, Focus, Screen};
 use crate::jobs::{JobRecord, JobStatus};
 
@@ -83,6 +85,26 @@ fn populated() -> App {
     ]
     .into();
     app.screen = Screen::Home;
+    app.workspaces = vec![
+        WorkspaceRow {
+            path: PathBuf::from("demo"),
+            name: "demo".to_string(),
+            current: true,
+            missing: false,
+        },
+        WorkspaceRow {
+            path: PathBuf::from("shop"),
+            name: "shop".to_string(),
+            current: false,
+            missing: false,
+        },
+        WorkspaceRow {
+            path: PathBuf::from("archive"),
+            name: "archive".to_string(),
+            current: false,
+            missing: true,
+        },
+    ];
     app.jobs = vec![finished_job()];
     app
 }
@@ -220,6 +242,49 @@ fn tests_explorer_frame() {
 }
 
 #[test]
+fn narrow_home_frame() {
+    insta::assert_snapshot!("home_dashboard_narrow", render(&populated(), 80, 24));
+}
+
+#[test]
+fn narrow_tests_explorer_frame() {
+    let mut app = populated();
+    app.screen = Screen::Tests;
+    app.focus = Focus::Content;
+    app.test_index = 6;
+    app.test_marks.insert(0);
+    app.test_marks.insert(6);
+    insta::assert_snapshot!("tests_explorer_narrow", render(&app, 80, 24));
+}
+
+#[test]
+fn landing_frame() {
+    let mut app = populated();
+    app.screen = Screen::Landing;
+    app.focus = Focus::Content;
+    app.landing_index = 0;
+    insta::assert_snapshot!("landing", render(&app, 110, 30));
+}
+
+#[test]
+fn narrow_landing_frame() {
+    let mut app = populated();
+    app.screen = Screen::Landing;
+    app.focus = Focus::Content;
+    app.landing_index = 1;
+    insta::assert_snapshot!("landing_narrow", render(&app, 80, 24));
+}
+
+#[test]
+fn workspace_menu_frame() {
+    let mut app = populated();
+    app.screen = Screen::Menu;
+    app.focus = Focus::Content;
+    app.menu_index = 1;
+    insta::assert_snapshot!("workspace_menu", render(&app, 100, 28));
+}
+
+#[test]
 fn filter_and_help_overlay_frame() {
     let mut app = populated();
     app.screen = Screen::Runs;
@@ -231,8 +296,12 @@ fn filter_and_help_overlay_frame() {
 
 #[test]
 fn first_run_overlay_frame() {
-    let app = App::empty(context());
+    let mut app = App::empty(context());
     assert!(app.first_run);
+    app.screen = Screen::Menu;
+    app.focus = Focus::Content;
+    app.first_run_prompt = true;
+    app.overlay = Some(super::app::first_run_text(&app.ctx));
     insta::assert_snapshot!("first_run_overlay", render(&app, 90, 26));
 }
 

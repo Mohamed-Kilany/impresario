@@ -1,0 +1,34 @@
+---
+source: crates/impresario-master/src/tui/snapshots.rs
+expression: "render(&app, 110, 30)"
+---
+                           ##   #   # ####  ####  ##### #####  ###  ####   ##    ###
+                           ##   ## ## #   # #   # #     #     #   # #   #  ##   #   #
+                           ##   # # # ####  ####  ####  ####  ##### ####   ##   #   #
+                           ##   #   # #     # #   #         # #   # # #    ##   #   #
+                           ##   #   # #     #  #  ##### ##### #   # #  #   ##    ###
+                        workspace-first test automation  ·  scenes, theatres and plays
+┌ Workspaces · Enter opens ─────────────────────────────────┐ ┌ Selection ───────────────────────────────────┐
+│ > demo                                           current  │ │ demo                                         │
+│   shop                                                    │ │ demo                                         │
+│   archive                                        missing  │ │                                              │
+│   + Add current workspace                                 │ │ config    missing                            │
+│   D Doctor                                                │ │ status    active workspace                   │
+│   x Quit                                                  │ │                                              │
+│                                                           │ │ Enter opens the workspace menu.              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+│                                                           │ │                                              │
+└───────────────────────────────────────────────────────────┘ └──────────────────────────────────────────────┘
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Up/Down choose   Enter open   a add   d doctor   ? help   q quit
+  Active workspace is remembered; add others here.
