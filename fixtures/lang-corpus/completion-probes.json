@@ -1,0 +1,89 @@
+[
+  {
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 19,
+    "contains": [
+      "Fill"
+    ]
+  },
+  {
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 24,
+    "contains": [
+      "user = ",
+      "password = "
+    ]
+  },
+  {
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 38,
+    "contains": [
+      "USER"
+    ]
+  },
+  {
+    "path": "plays/broken.play",
+    "line": 7,
+    "col": 19,
+    "contains": [
+      "Fill"
+    ]
+  },
+  {
+    "path": "theatres/auth.theatre",
+    "line": 5,
+    "col": 12,
+    "contains": [
+      "LoginScreen"
+    ]
+  },
+  {
+    "path": "scenes/LoginScreen.scene",
+    "line": 4,
+    "col": 9,
+    "contains": [
+      "web",
+      "android",
+      "ios"
+    ]
+  },
+  {
+    "path": "scenes/LoginScreen.scene",
+    "line": 6,
+    "col": 2,
+    "contains": [
+      "LoginButton",
+      "UsernameInput"
+    ]
+  },
+  {
+    "path": "scenes/LoginScreen.scene",
+    "line": 6,
+    "col": 19,
+    "contains": [
+      "css:",
+      "xpath:"
+    ]
+  },
+  {
+    "path": "plays/examples.play",
+    "line": 6,
+    "col": 10,
+    "contains": [
+      "user",
+      "password"
+    ]
+  },
+  {
+    "path": "plays/examples.play",
+    "line": 9,
+    "col": 42,
+    "contains": [
+      "user",
+      "password"
+    ]
+  }
+]

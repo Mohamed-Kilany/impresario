@@ -1,0 +1,8 @@
+Play: Login
+Description: sign in
+App: shop
+Var: USER = 'alice'
+
+Act: Successful Login
+Tags: smoke
+    Perform: Auth.Fill(user = '${var.USER}')

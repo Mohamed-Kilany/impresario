@@ -1,22 +1,24 @@
 {
   "name": "impresario",
   "displayName": "Impresario",
-  "description": "Impresario DSL support for .play and .scene files: diagnostics, completion, hover, definitions and outline, served by `impresario lsp`.",
+  "description": "Impresario DSL support for .play, .scene and .theatre files: diagnostics, completion, hover, navigation, formatting and refactoring, via `impresario lsp` or a bundled WASM service.",
   "version": "0.1.0",
   "publisher": "impresario",
   "license": "MIT OR Apache-2.0",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages",
     "Linters"
   ],
-  "main": "./extension.js",
+  "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:impresario-play",
     "onLanguage:impresario-scene",
-    "workspaceContains:impresario.config"
+    "onLanguage:impresario-theatre",
+    "workspaceContains:impresario.config",
+    "onCommand:impresario.restart"
   ],
   "contributes": {
     "languages": [
@@ -41,6 +43,17 @@
           ".scene"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "impresario-theatre",
+        "aliases": [
+          "Impresario Theatre",
+          "impresario-theatre"
+        ],
+        "extensions": [
+          ".theatre"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
@@ -53,11 +66,46 @@
         "language": "impresario-scene",
         "scopeName": "source.impresario",
         "path": "./syntaxes/impresario.tmLanguage.json"
+      },
+      {
+        "language": "impresario-theatre",
+        "scopeName": "source.impresario",
+        "path": "./syntaxes/impresario.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "impresario-play",
+        "path": "./snippets/impresario.code-snippets"
+      },
+      {
+        "language": "impresario-scene",
+        "path": "./snippets/impresario.code-snippets"
+      },
+      {
+        "language": "impresario-theatre",
+        "path": "./snippets/impresario.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "impresario.restart",
+        "title": "Impresario: Restart Language Support"
       }
     ],
     "configuration": {
       "title": "Impresario",
       "properties": {
+        "impresario.mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "lsp",
+            "standalone"
+          ],
+          "default": "auto",
+          "markdownDescription": "Where language features run. `auto` uses `impresario lsp` when the binary resolves and the bundled WASM service otherwise; `standalone` never starts a child process."
+        },
         "impresario.serverPath": {
           "type": "string",
           "default": "impresario",
@@ -76,12 +124,46 @@
         "impresario.devices": {
           "type": "string",
           "default": "impresario.devices.config",
-          "description": "devices file passed as --devices-config (resolved against the workspace) and as the `impresario.devices` setting."
+          "description": "devices file passed as --devices-config (resolved against the workspace) and read by standalone mode."
+        },
+        "impresario.apps": {
+          "type": "string",
+          "default": "impresario.apps.config",
+          "description": "Apps file read by standalone mode to validate `App:` names."
+        },
+        "impresario.standalone.wasmPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to impresario_language.wasm; defaults to the bundle shipped in media/."
         }
       }
     }
   },
+  "scripts": {
+    "build": "node esbuild.js",
+    "build:wasm": "node scripts/build-wasm.js",
+    "compile": "tsc --noEmit",
+    "lint": "eslint src test esbuild.js scripts/build-wasm.js",
+    "check": "npm run compile && npm run lint",
+    "pretest": "npm run build",
+    "test": "npm run test:unit && npm run test:host",
+    "test:unit": "node --test test/*.test.js",
+    "test:host": "node test/runTest.js",
+    "package": "vsce package --no-dependencies --allow-missing-repository --skip-license",
+    "vscode:prepublish": "npm run build && npm run build:wasm"
+  },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.39.5",
+    "mocha": "^10.8.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0"
   }
 }

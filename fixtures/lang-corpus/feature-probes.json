@@ -1,0 +1,132 @@
+[
+  {
+    "op": "hover",
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 19,
+    "contains": ["**Fill**", "stage in theatre `Auth`", "4 references"]
+  },
+  {
+    "op": "hover",
+    "path": "theatres/auth.theatre",
+    "line": 6,
+    "col": 41,
+    "contains": ["UsernameInput", "fallback from web", "android"]
+  },
+  {
+    "op": "definition",
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 19,
+    "expect": [{ "path": "theatres/auth.theatre", "line": 3, "col": 8 }]
+  },
+  {
+    "op": "references",
+    "path": "theatres/auth.theatre",
+    "line": 3,
+    "col": 8,
+    "min": 5,
+    "expect_contains": [
+      { "path": "plays/login.play", "line": 8, "col": 19 },
+      { "path": "plays/examples.play", "line": 9, "col": 19 }
+    ]
+  },
+  {
+    "op": "prepareRename",
+    "path": "theatres/auth.theatre",
+    "line": 3,
+    "col": 8,
+    "placeholder": "Fill"
+  },
+  {
+    "op": "rename",
+    "path": "theatres/auth.theatre",
+    "line": 3,
+    "col": 8,
+    "new_name": "LoginFill",
+    "expected_edits": 5,
+    "changed_files": [
+      "theatres/auth.theatre",
+      "plays/broken.play",
+      "plays/examples.play",
+      "plays/login.play",
+      "plays/unknownApp.play"
+    ]
+  },
+  {
+    "op": "documentSymbols",
+    "path": "plays/login.play",
+    "contains": ["Login", "Successful Login", "Auth.Fill"]
+  },
+  {
+    "op": "workspaceSymbols",
+    "query": "Fill",
+    "contains": ["Fill"]
+  },
+  {
+    "op": "folding",
+    "path": "theatres/auth.theatre",
+    "min": 2
+  },
+  {
+    "op": "semanticTokens",
+    "path": "plays/login.play",
+    "min": 10,
+    "contains_types": ["keyword", "namespace", "function", "variable"]
+  },
+  {
+    "op": "signatureHelp",
+    "path": "plays/login.play",
+    "line": 8,
+    "col": 24,
+    "label_contains": "Stage: Fill",
+    "active_parameter": 0
+  },
+  {
+    "op": "codeActions",
+    "path": "plays/broken.play",
+    "start": { "line": 7, "col": 14 },
+    "end": { "line": 7, "col": 22 },
+    "contains_titles": ["Use the suggested spelling"]
+  },
+  {
+    "op": "codeActions",
+    "path": "plays/broken.play",
+    "start": { "line": 8, "col": 24 },
+    "end": { "line": 8, "col": 31 },
+    "contains_titles": ["Change parameter to 'password'"]
+  },
+  {
+    "op": "codeActions",
+    "path": "scenes/Ghost.scene",
+    "start": { "line": 5, "col": 5 },
+    "end": { "line": 5, "col": 16 },
+    "contains_titles": ["Make duplicate unique ('LoginButton2')"]
+  },
+  {
+    "op": "inlayHints",
+    "path": "plays/login.play",
+    "line": 8,
+    "contains": ["password = 'secret'"]
+  },
+  {
+    "op": "codeLenses",
+    "path": "plays/login.play",
+    "contains": ["Run act Successful Login", "reference(s)"]
+  },
+  {
+    "op": "rangeFormatting",
+    "path": "scenes/LoginScreen.scene",
+    "start": { "line": 4, "col": 1 },
+    "end": { "line": 6, "col": 20 },
+    "new_text_contains": "| LoginButton"
+  },
+  {
+    "op": "onTypeFormatting",
+    "path": "scenes/LoginScreen.scene",
+    "line": 4,
+    "col": 1,
+    "ch": "|",
+    "new_text_contains": "| UsernameInput"
+  }
+]

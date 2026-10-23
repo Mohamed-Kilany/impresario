@@ -21,8 +21,10 @@ target* (or next to it) instead of shelling out screen taps from the host.
   documented in `docs/PARITY.md`, generated from the planner's own tables.
 - **Reports you can file:** console tree, JUnit XML, `report.json`, and a
   self-contained HTML report (screenshots inlined).
-- **A language server** (`impresario lsp`) with diagnostics, completion,
-  hover, definitions and a shipped VS Code client — `docs/LSP.md`.
+- **A language server and standalone editor** (`impresario lsp` plus the
+  shipped VS Code client): diagnostics, completion, hover, navigation,
+  formatting and refactoring in either LSP or in-process WASM mode -
+  `docs/LSP.md`.
 - **A Model Context Protocol server** (`impresario mcp`): any MCP-capable AI
   agent can validate workspaces, check or list devices, run plays on real
   hardware and read reports plus screenshots over stdio — `docs/MCP.md`.
@@ -47,7 +49,7 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub` |
 | `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
-| `editors/vscode` | VS Code client + TextMate grammar |
+| `editors/vscode` | VS Code client (LSP or standalone WASM) + TextMate grammar |
 | `docs/` | DSL, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
 | `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example` (table scenes, `theatres/login.theatre`, theatrical play), CDP fixture pages |
 
@@ -148,9 +150,12 @@ You get the console tree on stdout and `reports/<run-id>/report.json` +
 
 ## Editor support
 
-`editors/vscode` is a ready-to-side-load client (TextMate grammar included).
-Any LSP-capable editor works — `docs/LSP.md` has VS Code and Neovim
-recipes, the settings shapes, and the completion/diagnostic feature table.
+`editors/vscode` is a ready-to-package client with a TextMate grammar,
+snippets and two interchangeable modes: the embedded LSP (when `impresario` is
+on `PATH`) or the bundled WASM service (no child process). Both use the same
+`impresario-language` service and the same corpus. Any LSP-capable editor also
+works - `docs/LSP.md` has VS Code and Neovim recipes, the settings shapes, and
+the completion/diagnostic feature table.
 
 ## Connect an AI agent (MCP)
 

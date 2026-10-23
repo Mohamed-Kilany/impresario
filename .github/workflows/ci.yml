@@ -36,6 +36,36 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
 
+  editor:
+    name: editor (TypeScript, WASM corpus, VS Code host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Build WASM
+        working-directory: editors/vscode
+        run: npm run build:wasm
+      - name: TypeScript and ESLint
+        working-directory: editors/vscode
+        run: npm run check
+      - name: Unit, corpus and extension-host tests
+        working-directory: editors/vscode
+        # The extension host needs a display; xvfb-run is preinstalled.
+        run: xvfb-run -a npm test
+      - name: Package VSIX
+        working-directory: editors/vscode
+        run: npm run package
+
   android:
     name: android (JVM unit tests)
     runs-on: ubuntu-latest

@@ -1,0 +1,5 @@
+Theatre: Ghost Theatre
+
+Stage: Ghost Stage(user)
+    Scene: Ghost
+        Check: LoginButton is visible

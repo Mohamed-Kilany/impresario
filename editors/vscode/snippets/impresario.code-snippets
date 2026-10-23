@@ -1,0 +1,66 @@
+{
+  "Impresario scene": {
+    "prefix": ["scene", "impresario-scene"],
+    "body": [
+      "Scene: ${1:LoginScreen}",
+      "Platform: ${2:cross-platform}",
+      "",
+      "| Piece | web | android | ios |",
+      "|---|---|---|---|",
+      "| ${3:LoginButton} | ${4:css:#login} | ${5:id:login_button} | ${6:accessibilityId:login} |"
+    ],
+    "description": "A canonical table scene."
+  },
+  "Impresario theatre": {
+    "prefix": ["theatre", "impresario-theatre"],
+    "body": [
+      "Theatre: ${1:Authentication}",
+      "",
+      "Stage: ${2:Navigate and Login}(${3:user}, ${4:password = 'secret'})",
+      "    Description: ${5:Sign in with the supplied credentials.}",
+      "    Scene: ${6:LoginScreen}",
+      "        Action: type '${7:\\${param.user}}' => ${8:UsernameInput}",
+      "        Action: type '${9:\\${param.password}}' => ${10:PasswordInput}",
+      "        Action: click => ${11:SubmitButton}"
+    ],
+    "description": "A reusable theatre stage."
+  },
+  "Impresario play": {
+    "prefix": ["play", "impresario-play"],
+    "body": [
+      "Play: ${1:Login flow}",
+      "Description: ${2:Sign in on every configured platform.}",
+      "App: ${3:shop}",
+      "Var: ${4:USER} = '${5:test_user}'",
+      "",
+      "Act: ${6:Successful login}",
+      "Tags: ${7:smoke}",
+      "    Perform: ${8:Authentication.Navigate and Login}(${9:user} = '${10:\\${var.USER}}')"
+    ],
+    "description": "A play that performs a theatre stage."
+  },
+  "Impresario act": {
+    "prefix": ["act"],
+    "body": [
+      "Act: ${1:Name}",
+      "Tags: ${2:smoke}",
+      "Platforms: ${3:web, android}",
+      "    Examples:",
+      "        | ${4:user} |",
+      "        |------|",
+      "        | ${5:alice} |",
+      "    Perform: ${6:Theatre.Stage}(${7:user} = '${8:\\${example.user}}')"
+    ],
+    "description": "An act with an Examples table."
+  },
+  "Impresario stage": {
+    "prefix": ["stage"],
+    "body": [
+      "Stage: ${1:Name}",
+      "    Scene: ${2:LoginScreen}",
+      "        Check: ${3:LoginTitle} is visible",
+      "        Action: click => ${4:SubmitButton}"
+    ],
+    "description": "A stage declared inside a play."
+  }
+}

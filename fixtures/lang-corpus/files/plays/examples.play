@@ -1,0 +1,9 @@
+Play: Examples
+App: shop
+
+Act: Example act
+    Examples:
+        | user | password |
+        |------|----------|
+        | alice | secret |
+    Perform: Auth.Fill(user = '${example.user}', password = '${example.password}')

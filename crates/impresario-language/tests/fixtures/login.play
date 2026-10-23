@@ -1,0 +1,18 @@
+Play: Login
+Description: sign in
+App: shop
+
+Var: USER = 'alice'
+
+Act: Successful Login(mode = 'fast')
+Tags: smoke, auth
+Platforms: android, webos
+    Examples:
+        | mode |
+        |------|
+        | fast |
+    Perform: Auth.Fill(user = '${var.USER}', password = '${param.mode}')
+
+Act: Basic
+    Perform: Navigate
+    Perform: Fill(user = 'bob')

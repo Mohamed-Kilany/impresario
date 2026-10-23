@@ -17,9 +17,13 @@ use impresario_core::settings;
 use impresario_core::span::Span;
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::Workspace;
-use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
+use impresario_language::diagnostics::DiagnosticInfo;
+use impresario_language::model::{AppInfo, SourceFile as EditorSourceFile};
+use impresario_language::service::Language as EditorLanguage;
+use tower_lsp_server::ls_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Uri,
+};
 
-use super::index::Index;
 use super::position::{Doc, Encoding};
 use super::{is_play_file, is_scene_file, is_theatre_file};
 
@@ -32,16 +36,17 @@ pub struct Overlay {
 
 /// Everything one analysis pass produces.
 pub struct Analysis {
-    pub index: Index,
     /// LSP diagnostics per file (absolute paths).
     pub by_file: BTreeMap<PathBuf, Vec<Diagnostic>>,
     /// The exact text every diagnostic was converted against (overlay content
     /// takes precedence over disk).
     pub sources: BTreeMap<PathBuf, String>,
     pub scenes_dir: PathBuf,
+    pub theatres_dir: PathBuf,
     pub plays_dir: PathBuf,
-    pub devices: Vec<DeviceRef>,
     pub apps_path: PathBuf,
+    /// The shared editor service used by every feature handler.
+    pub language: EditorLanguage,
 }
 
 type RawDiags = BTreeMap<PathBuf, Vec<(CoreDiagnostic, Span)>>;
@@ -191,7 +196,44 @@ pub fn analyze(
         absorb(&mut raw, &app_diags, None);
     }
 
-    let index = Index::build(&workspace.scenes, &workspace.theatres, &workspace.plays);
+    let app_infos = apps_outcome
+        .config
+        .as_ref()
+        .map(|config| {
+            config
+                .apps
+                .iter()
+                .map(|app| AppInfo {
+                    name: app.name.clone(),
+                    description: app.description.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let apps_authoritative = apps_outcome.config.is_some();
+    let editor_sources = sources
+        .iter()
+        .filter(|(path, _)| is_scene_file(path) || is_theatre_file(path) || is_play_file(path))
+        .map(|(path, text)| EditorSourceFile {
+            path: path.clone(),
+            text: text.clone(),
+        })
+        .collect::<Vec<_>>();
+    let language = if apps_authoritative {
+        EditorLanguage::analyze_with_apps(
+            &editor_sources,
+            &devices,
+            &app_infos,
+            Some(base.to_path_buf()),
+        )
+    } else {
+        EditorLanguage::analyze(
+            &editor_sources,
+            &devices,
+            &app_infos,
+            Some(base.to_path_buf()),
+        )
+    };
 
     let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
     for (file, entries) in raw {
@@ -205,15 +247,105 @@ pub fn analyze(
                 .collect(),
         );
     }
+    merge_editor_diagnostics(&mut by_file, &language, &sources, encoding);
 
     Analysis {
-        index,
         by_file,
         sources,
         scenes_dir,
+        theatres_dir,
         plays_dir,
-        devices,
         apps_path,
+        language,
+    }
+}
+
+/// Add the language service's workspace-wide diagnostics (notably duplicate
+/// declarations with related information on every occurrence). Parser and
+/// validation diagnostics are already present from the analysis pass above,
+/// so only the service's extra codes are merged and exact duplicates ignored.
+fn merge_editor_diagnostics(
+    by_file: &mut BTreeMap<PathBuf, Vec<Diagnostic>>,
+    language: &EditorLanguage,
+    sources: &BTreeMap<PathBuf, String>,
+    encoding: Encoding,
+) {
+    const EXTRA: &[&str] = &[
+        "IMP-DSL-006",
+        "IMP-DSL-007",
+        "IMP-DSL-016",
+        "IMP-DSL-030",
+        "IMP-DSL-033",
+        "IMP-DSL-035",
+        "IMP-DSL-038",
+        "IMP-DSL-048",
+    ];
+    for (path, diagnostics) in &language.diagnostics {
+        for info in diagnostics {
+            if !EXTRA.contains(&info.code.as_str()) {
+                continue;
+            }
+            let doc = Doc::new(sources.get(path).map_or("", String::as_str));
+            let diagnostic = info_to_lsp(&doc, encoding, info, sources);
+            let target = by_file.entry(path.clone()).or_default();
+            if target.iter().any(|existing| {
+                existing.code == diagnostic.code && existing.range == diagnostic.range
+            }) {
+                continue;
+            }
+            target.push(diagnostic);
+        }
+    }
+    for diagnostics in by_file.values_mut() {
+        diagnostics.sort_by_key(|diagnostic| {
+            (
+                diagnostic.range.start.line,
+                diagnostic.range.start.character,
+            )
+        });
+    }
+}
+
+fn info_to_lsp(
+    doc: &Doc<'_>,
+    encoding: Encoding,
+    info: &DiagnosticInfo,
+    sources: &BTreeMap<PathBuf, String>,
+) -> Diagnostic {
+    Diagnostic {
+        range: doc.range(encoding, &info.span),
+        severity: Some(if info.severity == "warning" {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        }),
+        code: Some(NumberOrString::String(info.code.clone())),
+        code_description: None,
+        source: Some("impresario".to_string()),
+        message: info.message.clone(),
+        related_information: if info.related.is_empty() {
+            None
+        } else {
+            Some(
+                info.related
+                    .iter()
+                    .filter_map(|related| {
+                        let uri = Uri::from_file_path(&related.span.file)?;
+                        let related_doc =
+                            Doc::new(sources.get(&related.span.file).map_or("", String::as_str));
+                        Some(DiagnosticRelatedInformation {
+                            location: Location {
+                                uri,
+                                range: related_doc.range(encoding, &related.span),
+                            },
+                            message: related.message.clone(),
+                        })
+                    })
+                    .collect(),
+            )
+        },
+        tags: None,
+        data: None,
     }
 }
 

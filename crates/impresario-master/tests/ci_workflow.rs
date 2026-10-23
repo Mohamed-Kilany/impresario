@@ -48,6 +48,28 @@ fn ci_workflow_stays_valid_and_runs_the_documented_gates() {
         );
     }
 
+    let editor = doc
+        .get("jobs")
+        .and_then(|jobs| jobs.get("editor"))
+        .expect("editor job");
+    assert_eq!(
+        editor.get("runs-on").and_then(|value| value.as_str()),
+        Some("ubuntu-latest")
+    );
+    let editor_runs = run_commands(editor);
+    for expected in [
+        "npm ci",
+        "npm run build:wasm",
+        "npm run check",
+        "npm test",
+        "npm run package",
+    ] {
+        assert!(
+            editor_runs.iter().any(|run| run.contains(expected)),
+            "editor job is missing `{expected}`: {editor_runs:?}"
+        );
+    }
+
     let android = doc
         .get("jobs")
         .and_then(|jobs| jobs.get("android"))

@@ -1,0 +1,8 @@
+Scene: LoginScreen
+Platform: cross-platform
+
+| Piece         | web           | android         |
+|---------------|---------------|-----------------|
+| LoginButton   | css:#login    | id:login_button |
+| UsernameInput | css:#username | id:username     |
+| PasswordInput | css:#password | id:password     |

@@ -1,0 +1,8 @@
+Play: Broken
+Description: typo exercise
+App: shop
+Var: MODE = 'fast'
+
+Act: Broken act
+    Perform: Auth.Fil(user = 'alice')
+    Perform: Auth.Fill(pasword = 'x')

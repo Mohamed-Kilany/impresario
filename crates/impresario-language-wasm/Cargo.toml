@@ -1,0 +1,16 @@
+[package]
+name = "impresario-language-wasm"
+description = "Raw-ABI WASM build of the Impresario editor language service (standalone VS Code mode)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+impresario-core = { path = "../impresario-core" }
+impresario-language = { path = "../impresario-language" }
+serde.workspace = true
+serde_json.workspace = true

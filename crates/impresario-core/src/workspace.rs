@@ -11,7 +11,7 @@ use crate::diag::{Code, Diagnostic, Diagnostics};
 use crate::parser::{parse_play, parse_scene, parse_theatre};
 
 /// All parsed scenes, theatres and plays of one run.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Workspace {
     pub scenes: Vec<SceneFile>,
     pub theatres: Vec<TheatreFile>,

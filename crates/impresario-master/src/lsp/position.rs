@@ -109,12 +109,6 @@ impl<'a> Doc<'a> {
         Range::new(start, end)
     }
 
-    /// The LSP range of a `(line, scalar col, scalar len)` triple.
-    #[must_use]
-    pub fn range_of(&self, enc: Encoding, line: usize, col: usize, len: usize) -> Range {
-        self.range(enc, &Span::new("", line, col, len))
-    }
-
     /// Convert an LSP position to `(1-based line, 0-based scalar index)`
     /// within this document. Returns `None` for lines past the end.
     #[must_use]
@@ -131,68 +125,6 @@ impl<'a> Doc<'a> {
         }
         Some((line1, chars.len()))
     }
-}
-
-/// The indentation of a line, in characters (spaces and tabs).
-#[must_use]
-pub fn indent_of(line: &str) -> usize {
-    line.chars()
-        .take_while(|ch| *ch == ' ' || *ch == '\t')
-        .count()
-}
-
-/// The scene name of the nearest enclosing `Scene:` line of lower
-/// indentation above `cursor_line` (0-based), scanning upward.
-///
-/// Returns `None` when the nearest lower-indented line is anything else.
-#[must_use]
-pub fn enclosing_scene(lines: &[&str], cursor_line: usize, indent: usize) -> Option<String> {
-    for index in (0..cursor_line).rev() {
-        let Some(line) = lines.get(index) else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if indent_of(line) < indent {
-            return trimmed
-                .strip_prefix("Scene:")
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string);
-        }
-    }
-    None
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
-}
-/// The identifier (letters, digits and `_`) containing or immediately before
-/// the 0-based scalar `index` of `line`.
-///
-/// Returns `(word, start scalar index, length in scalars)`.
-#[must_use]
-pub fn word_at(line: &str, index: usize) -> Option<(String, usize, usize)> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut at = index.min(chars.len().saturating_sub(1));
-    if !chars.get(at).copied().is_some_and(is_word_char) {
-        at = at.checked_sub(1)?;
-        if !chars.get(at).copied().is_some_and(is_word_char) {
-            return None;
-        }
-    }
-    let mut start = at;
-    while start > 0 && chars.get(start - 1).copied().is_some_and(is_word_char) {
-        start -= 1;
-    }
-    let mut end = at;
-    while chars.get(end + 1).copied().is_some_and(is_word_char) {
-        end += 1;
-    }
-    let word: String = chars.get(start..=end)?.iter().collect();
-    Some((word, start, end - start + 1))
 }
 
 #[cfg(test)]
@@ -248,16 +180,5 @@ mod tests {
         );
         assert_eq!(negotiate(&[PositionEncodingKind::UTF16]), Encoding::Utf16);
         assert_eq!(negotiate(&[]), Encoding::Utf16);
-    }
-
-    #[test]
-    fn word_at_finds_identifiers_around_the_cursor() {
-        let line = "        Action: click => LoginTitle";
-        let (word, start, len) = word_at(line, 18).expect("inside click");
-        assert_eq!(word, "click");
-        assert_eq!((start, len), (16, 5));
-        let (word, _, _) = word_at(line, line.len()).expect("end of line");
-        assert_eq!(word, "LoginTitle");
-        assert_eq!(word_at(line, 15), None); // the space after "Action:"
     }
 }

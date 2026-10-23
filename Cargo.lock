@@ -1796,6 +1796,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "impresario-language"
+version = "0.1.0"
+dependencies = [
+ "impresario-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "impresario-language-wasm"
+version = "0.1.0"
+dependencies = [
+ "impresario-core",
+ "impresario-language",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "impresario-master"
 version = "0.1.0"
 dependencies = [
@@ -1810,6 +1830,7 @@ dependencies = [
  "glob",
  "impresario-clients",
  "impresario-core",
+ "impresario-language",
  "impresario-proto",
  "insta",
  "interprocess",

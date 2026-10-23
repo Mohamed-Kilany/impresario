@@ -231,6 +231,17 @@ impl TestLsp {
         .await;
     }
 
+    /// The most recent `publishDiagnostics` params for `path`, if any.
+    pub fn latest_diagnostics(&self, path: &Path) -> Option<Value> {
+        let uri = Self::uri(path);
+        self.shared
+            .publishes
+            .lock()
+            .expect("publishes")
+            .get(&uri)
+            .map(|(_, params)| params.clone())
+    }
+
     /// Wait for a diagnostics publish of `path` that happens after `after`
     /// (a [`Self::mark`] taken before the triggering call).
     pub async fn wait_diagnostics(&self, path: &Path, after: u64) -> Value {

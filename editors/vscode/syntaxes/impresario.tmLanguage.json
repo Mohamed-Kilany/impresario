@@ -23,11 +23,11 @@
     "sections": {
       "patterns": [
         {
-          "match": "^\\s*(Play|Act|Stage|Scene|Pieces|Var)\\s*:",
+          "match": "^\\s*(Play|Theatre|Act|Stage|Scene|Pieces|Var|Params|Examples)\\s*:",
           "name": "keyword.control.section.impresario"
         },
         {
-          "match": "^\\s*(Description|Tags|Platforms|Platform)\\s*:",
+          "match": "^\\s*(Description|Tags|Platforms|Platform|Timeout|App|Perform)\\s*:",
           "name": "keyword.other.section.impresario"
         },
         {
@@ -39,7 +39,7 @@
     "steps": {
       "patterns": [
         {
-          "match": "^\\s*(Action|Check)\\s*:",
+          "match": "^\\s*(Action|Check|Perform)\\s*:",
           "name": "keyword.control.step.impresario"
         }
       ]
@@ -73,7 +73,7 @@
       "name": "constant.other.key.impresario"
     },
     "action-verbs": {
-      "match": "\\b(click|longpress|focus|type|append|clear|select|scrollto|scroll|swipe|key|wait|screenshot|app|launch|terminate|restart|background|pressed|direction)\\b",
+      "match": "\\b(click|longpress|focus|type|append|clear|select|scrollto|scroll|swipe|key|back|wait|screenshot|app|launch|terminate|restart|background|pressed|direction)\\b",
       "name": "support.function.action.impresario"
     },
     "strings": {

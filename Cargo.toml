@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/impresario-proto",
     "crates/impresario-core",
+    "crates/impresario-language",
+    "crates/impresario-language-wasm",
     "crates/impresario-clients",
     "crates/impresario-connector",
     "crates/impresario-master",

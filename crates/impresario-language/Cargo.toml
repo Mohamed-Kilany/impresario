@@ -1,0 +1,15 @@
+[package]
+name = "impresario-language"
+description = "Editor language service for the Impresario DSL, shared by the LSP and the standalone extension."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+impresario-core = { path = "../impresario-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

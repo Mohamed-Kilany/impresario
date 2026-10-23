@@ -8,9 +8,7 @@
 
 mod analyze;
 mod backend;
-mod complete;
-mod index;
-mod nav;
+mod convert;
 mod position;
 mod watch;
 

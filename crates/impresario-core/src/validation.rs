@@ -235,7 +235,21 @@ fn validate_perform(
         )
         .with_span(perform.stage_span.clone())
         .with_help("declare it in a .theatre file");
-        if let Some(hint) = suggest(&perform.stage_name, &workspace.stage_names()) {
+        // A qualified reference (`Theatre.Stage`) must be compared against
+        // qualified candidates, otherwise every near miss looks unrelated.
+        let mut candidates = workspace.stage_names();
+        let qualified = workspace
+            .theatres
+            .iter()
+            .flat_map(|theatre| {
+                theatre
+                    .stages
+                    .iter()
+                    .map(move |stage| format!("{}.{}", theatre.name, stage.name))
+            })
+            .collect::<Vec<_>>();
+        candidates.extend(qualified.iter().map(String::as_str));
+        if let Some(hint) = suggest(&perform.stage_name, &candidates) {
             diag = diag.with_help(hint);
         }
         diagnostics.push(diag);
@@ -826,8 +840,20 @@ fn lint_workspace(
         }
     }
 
+    // `Perform:` may use a theatre-qualified name (`Theatre.Stage`), while
+    // reachability and the unused lints use the declaration name. Normalize
+    // through the workspace resolver (which also honours exact dotted stage
+    // names) before walking the call graph.
+    let canonical_stage = |name: &str| {
+        workspace
+            .stage(name)
+            .map_or_else(|| name.to_string(), |stage| stage.name.clone())
+    };
     let mut reachable: HashSet<String> = HashSet::new();
-    let mut stack: Vec<String> = called_stages.iter().cloned().collect();
+    let mut stack: Vec<String> = called_stages
+        .iter()
+        .map(|name| canonical_stage(name))
+        .collect();
     while let Some(name) = stack.pop() {
         if !reachable.insert(name.clone()) {
             continue;
@@ -837,7 +863,7 @@ fn lint_workspace(
         };
         for item in &stage.items {
             if let StageItem::Perform(perform) = item {
-                stack.push(perform.stage_name.clone());
+                stack.push(canonical_stage(&perform.stage_name));
             }
         }
     }

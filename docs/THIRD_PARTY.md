@@ -53,6 +53,25 @@ facts only).
 | `russh-sftp` | 3.0.1 | Apache-2.0 | webOS SFTP upload (exec `cat` fallback) | chosen — I-99 |
 | `ssh2` | 0.9.6 | MIT OR Apache-2.0 | libssh2 binding; would drag OpenSSL/Perl into the Windows build | rejected — I-99 |
 
+## VS Code extension dependencies (npm)
+
+These are direct dependencies from `editors/vscode/package-lock.json`; the
+transitive tree is pinned by that lock. Only `vscode-languageclient` is
+bundled into the runtime extension; the rest are build/test tooling.
+
+| Package | Version | License | Used for | Status |
+|---|---|---|---|---|
+| `vscode-languageclient` | 9.0.1 | MIT | LSP client bundled by esbuild | chosen, shipped - I-136 |
+| `esbuild` | 0.25.12 | MIT | bundle `src/extension.ts` into `out/` | chosen, build-only - I-136 |
+| `typescript` | 5.9.3 | Apache-2.0 | strict type-checking (`tsc --noEmit`) | chosen, build-only - I-136 |
+| `eslint` | 9.39.5 | MIT | lint `src/`, tests and build scripts | chosen, build-only - I-136 |
+| `typescript-eslint` | 8.72.0 | MIT | TypeScript ESLint parser/config | chosen, build-only - I-136 |
+| `@vscode/vsce` | 3.9.2 | MIT | VSIX packaging | chosen, build-only - I-136 |
+| `@vscode/test-electron` | 2.5.2 | MIT | real extension-host tests | chosen, test-only - I-136; downloads a VS Code test build, never shipped |
+| `mocha` | 10.8.2 | MIT | extension-host test runner | chosen, test-only - I-136 |
+| `@types/vscode` | 1.85.0 | MIT | VS Code API types (pinned to `engines.vscode`) | chosen, build-only - I-136 |
+| `@types/node` | 20.19.43 | MIT | Node API types | chosen, build-only - I-136 |
+
 ## Managed payloads (ladder rung 2/3, TASK-2 §6.0)
 
 | Payload | Version | License | Used for | Status |

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 
 /// The debounce of the file watcher (spec section 13).
@@ -21,21 +21,22 @@ pub struct WatchSpec {
     pub recursive: bool,
 }
 
-/// The desired watch set: the scenes and plays directories (their nearest
-/// existing parent until they appear) plus both config files.
+/// The desired watch set: the scene, theatre and play directories (their
+/// nearest existing parent until they appear) plus both config files.
 ///
 /// When a directory does not exist yet, its parent is watched until it shows
 /// up; the next analysis registers the directory itself.
 #[must_use]
 pub fn specs_for(
     scenes_dir: &Path,
+    theatres_dir: &Path,
     plays_dir: &Path,
     config: &Path,
     devices: &Path,
     apps: &Path,
 ) -> Vec<WatchSpec> {
     let mut specs = Vec::new();
-    for dir in [scenes_dir, plays_dir] {
+    for dir in [scenes_dir, theatres_dir, plays_dir] {
         if dir.is_dir() {
             specs.push(WatchSpec {
                 path: dir.to_path_buf(),
@@ -114,11 +115,19 @@ impl Watches {
         let debouncer = new_debouncer(WATCH_DEBOUNCE, None, move |result: DebounceEventResult| {
             let interesting = match result {
                 Ok(events) => events.iter().any(|event| {
-                    event
-                        .event
-                        .paths
-                        .iter()
-                        .any(|path| !is_noise(path.as_path()))
+                    let created = matches!(event.event.kind, EventKind::Create(_));
+                    event.event.paths.iter().any(|path| {
+                        let path = path.as_path();
+                        if is_noise(path) {
+                            return false;
+                        }
+                        // A placeholder watch on the workspace root reports
+                        // directory metadata changes when files inside an
+                        // existing watched directory change. Only a genuinely
+                        // created directory (a late `theatres/`, for example)
+                        // is interesting.
+                        !path.is_dir() || created
+                    })
                 }),
                 Err(_) => true,
             };
@@ -186,7 +195,14 @@ mod tests {
         let devices = base.join("impresario.devices.config");
 
         let apps = base.join("impresario.apps.config");
-        let specs = specs_for(&scenes, &plays, &config, &devices, &apps);
+        let specs = specs_for(
+            &scenes,
+            &base.join("theatres"),
+            &plays,
+            &config,
+            &devices,
+            &apps,
+        );
         assert!(
             specs
                 .iter()
@@ -197,7 +213,14 @@ mod tests {
         std::fs::create_dir_all(&scenes).expect("scenes");
         std::fs::write(&config, "project: x\n").expect("config");
         let apps = base.join("impresario.apps.config");
-        let specs = specs_for(&scenes, &plays, &config, &devices, &apps);
+        let specs = specs_for(
+            &scenes,
+            &base.join("theatres"),
+            &plays,
+            &config,
+            &devices,
+            &apps,
+        );
         assert!(specs.contains(&WatchSpec {
             path: scenes.clone(),
             recursive: true

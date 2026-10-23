@@ -1,0 +1,13 @@
+# Sources and development-only files are not part of the extension package.
+src/**
+test/**
+scripts/**
+.vscode/**
+.vscode-test/**
+node_modules/**
+out/**/*.map
+esbuild.js
+eslint.config.js
+tsconfig.json
+package-lock.json
+*.vsix

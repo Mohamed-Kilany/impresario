@@ -230,6 +230,11 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(target_arch = "wasm32")]
+fn well_known_binaries() -> &'static [&'static str] {
+    &[]
+}
+
 #[cfg(windows)]
 fn well_known_binaries() -> &'static [&'static str] {
     &[

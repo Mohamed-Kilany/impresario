@@ -1,0 +1,7 @@
+Theatre: Auth
+
+Stage: Fill(user, password = 'secret')
+    Description: Fill the login form.
+    Scene: LoginScreen
+        Action: type '${param.user}' => UsernameInput
+        Action: type '${param.password}' => PasswordInput

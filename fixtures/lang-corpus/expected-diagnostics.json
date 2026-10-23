@@ -1,0 +1,255 @@
+{
+  "plays/broken.play": [
+    {
+      "code": "IMP-DSL-046",
+      "severity": "warning",
+      "line": 4,
+      "col": 6,
+      "message": "variable 'MODE' is never referenced",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-031",
+      "severity": "error",
+      "line": 7,
+      "col": 14,
+      "message": "unknown stage 'Auth.Fil'",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-037",
+      "severity": "error",
+      "line": 8,
+      "col": 14,
+      "message": "stage 'Fill' needs argument 'user'",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-032",
+      "severity": "error",
+      "line": 8,
+      "col": 24,
+      "message": "stage 'Fill' has no parameter 'pasword'",
+      "related": []
+    }
+  ],
+  "plays/examples.play": [],
+  "plays/login.play": [],
+  "plays/unknownApp.play": [
+    {
+      "code": "IMP-APP-001",
+      "severity": "error",
+      "line": 2,
+      "col": 6,
+      "message": "unknown app 'nowhere'",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-037",
+      "severity": "error",
+      "line": 5,
+      "col": 14,
+      "message": "stage 'Fill' needs argument 'user'",
+      "related": []
+    }
+  ],
+  "scenes/Ghost.scene": [
+    {
+      "code": "IMP-DSL-006",
+      "severity": "error",
+      "line": 1,
+      "col": 8,
+      "message": "duplicate workspace scenes 'Ghost' (2 occurrences)",
+      "related": [
+        {
+          "line": 1,
+          "col": 8,
+          "message": "'Ghost' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-007",
+      "severity": "error",
+      "line": 5,
+      "col": 5,
+      "message": "duplicate scene:Ghost pieces 'LoginButton' (2 occurrences)",
+      "related": [
+        {
+          "line": 5,
+          "col": 5,
+          "message": "'LoginButton' also declared here"
+        }
+      ]
+    }
+  ],
+  "scenes/GhostCopy.scene": [
+    {
+      "code": "IMP-DSL-006",
+      "severity": "error",
+      "line": 1,
+      "col": 8,
+      "message": "duplicate workspace scenes 'Ghost' (2 occurrences)",
+      "related": [
+        {
+          "line": 1,
+          "col": 8,
+          "message": "'Ghost' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-021",
+      "severity": "warning",
+      "line": 1,
+      "col": 8,
+      "message": "scene 'Ghost' does not match its file name 'scenes/GhostCopy.scene'",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-007",
+      "severity": "error",
+      "line": 5,
+      "col": 5,
+      "message": "duplicate scene:Ghost pieces 'LoginButton' (2 occurrences)",
+      "related": [
+        {
+          "line": 5,
+          "col": 5,
+          "message": "'LoginButton' also declared here"
+        }
+      ]
+    }
+  ],
+  "scenes/LoginScreen.scene": [
+    {
+      "code": "IMP-DSL-043",
+      "severity": "warning",
+      "line": 6,
+      "col": 2,
+      "message": "piece 'LoginButton' in scene 'LoginScreen' is never used by a step",
+      "related": []
+    }
+  ],
+  "theatres/auth.theatre": [],
+  "theatres/ghost-copy.theatre": [
+    {
+      "code": "IMP-DSL-033",
+      "severity": "error",
+      "line": 1,
+      "col": 10,
+      "message": "duplicate workspace theatres 'Ghost Theatre' (2 occurrences)",
+      "related": [
+        {
+          "line": 1,
+          "col": 10,
+          "message": "'Ghost Theatre' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-045",
+      "severity": "warning",
+      "line": 1,
+      "col": 10,
+      "message": "theatre 'Ghost Theatre' has no stage performed by an Act",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-030",
+      "severity": "error",
+      "line": 3,
+      "col": 8,
+      "message": "duplicate workspace stages 'Ghost Stage' (2 occurrences)",
+      "related": [
+        {
+          "line": 3,
+          "col": 8,
+          "message": "'Ghost Stage' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-044",
+      "severity": "warning",
+      "line": 3,
+      "col": 8,
+      "message": "stage 'Ghost Stage' is never performed",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-035",
+      "severity": "error",
+      "line": 3,
+      "col": 20,
+      "message": "duplicate stage:Ghost Stage parameters 'user' (2 occurrences)",
+      "related": [
+        {
+          "line": 3,
+          "col": 20,
+          "message": "'user' also declared here"
+        }
+      ]
+    }
+  ],
+  "theatres/ghost.theatre": [
+    {
+      "code": "IMP-DSL-033",
+      "severity": "error",
+      "line": 1,
+      "col": 10,
+      "message": "duplicate workspace theatres 'Ghost Theatre' (2 occurrences)",
+      "related": [
+        {
+          "line": 1,
+          "col": 10,
+          "message": "'Ghost Theatre' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-045",
+      "severity": "warning",
+      "line": 1,
+      "col": 10,
+      "message": "theatre 'Ghost Theatre' has no stage performed by an Act",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-030",
+      "severity": "error",
+      "line": 3,
+      "col": 8,
+      "message": "duplicate workspace stages 'Ghost Stage' (2 occurrences)",
+      "related": [
+        {
+          "line": 3,
+          "col": 8,
+          "message": "'Ghost Stage' also declared here"
+        }
+      ]
+    },
+    {
+      "code": "IMP-DSL-044",
+      "severity": "warning",
+      "line": 3,
+      "col": 8,
+      "message": "stage 'Ghost Stage' is never performed",
+      "related": []
+    },
+    {
+      "code": "IMP-DSL-035",
+      "severity": "error",
+      "line": 3,
+      "col": 20,
+      "message": "duplicate stage:Ghost Stage parameters 'user' (2 occurrences)",
+      "related": [
+        {
+          "line": 3,
+          "col": 20,
+          "message": "'user' also declared here"
+        }
+      ]
+    }
+  ]
+}

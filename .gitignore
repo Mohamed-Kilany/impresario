@@ -22,6 +22,7 @@ agents/apple/.swiftpm/
 editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/*.vsix
+editors/vscode/.vscode-test/
 
 # Reports and run artefacts
 /reports/

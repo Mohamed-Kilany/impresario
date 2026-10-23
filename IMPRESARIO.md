@@ -29,7 +29,7 @@ next to it) instead of driving taps from the host.
 | web executor | `crates/impresario-connector` | web/webOS/Tizen over CDP (raw + chromiumoxide backends, `launch:headless`) |
 | Android agent | `agents/android` | Kotlin gRPC agent + UiAutomator driver, plus a stub app under test |
 | Apple agent | `agents/apple` | Swift `AgentCore`/`ImpresarioWire`/`AgentService` + an XCUITest runner that hosts the same agent in a UI-test bundle (iOS/tvOS) |
-| editor | `editors/vscode` | VS Code client + grammar for the DSL |
+| editor | `editors/vscode`, `crates/impresario-language` | VS Code client (LSP or standalone WASM), grammar, and the shared editor service |
 | docs | `docs/` | DSL, PROTOCOL, DEVICES, PARITY, ERRORS, LSP, MCP, DECISIONS, STATUS |
 
 ## How it fits together
