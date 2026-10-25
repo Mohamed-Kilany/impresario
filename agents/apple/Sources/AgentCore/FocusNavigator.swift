@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// What the navigator may ask of the device (spec 6.3, `FocusProbe`).
 public protocol FocusProbe {

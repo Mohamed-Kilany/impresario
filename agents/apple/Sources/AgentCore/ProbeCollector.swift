@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// Collects TASK-3 probe evidence on iOS/tvOS.
 ///
