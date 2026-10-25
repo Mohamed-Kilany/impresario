@@ -105,6 +105,7 @@ fn path_list_contains(value: &OsStr, wanted: &Path) -> bool {
     env::split_paths(value).any(|entry| same_path(&entry, wanted))
 }
 
+#[cfg(any(windows, test))]
 fn append_path_entry(existing: &str, entry: &str) -> String {
     if existing.trim().is_empty() {
         entry.to_string()

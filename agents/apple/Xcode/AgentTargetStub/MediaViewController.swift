@@ -18,6 +18,7 @@ final class MediaViewController: UIViewController {
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
     private var hookTimer: Timer?
+    private var audioSource: URL?
 
     private static var bodyPointSize: CGFloat {
         UIFont.preferredFont(forTextStyle: .body).pointSize
@@ -220,6 +221,7 @@ final class MediaViewController: UIViewController {
             videoPlayer?.pause()
             let audio = try AVAudioPlayer(contentsOf: url)
             audioPlayer = audio
+            audioSource = url
             if audio.play() {
                 statusLabel.text = "state: Playing (audio)"
             } else {
@@ -244,7 +246,7 @@ final class MediaViewController: UIViewController {
         // Audio-only playback is a fixture too: report the audio player while
         // it owns playback, so the same probe path covers audio and video.
         if let audio = audioPlayer {
-            let source = audio.url.absoluteString
+            let source = audio.url?.absoluteString ?? audioSource?.absoluteString
             ImpresarioHook.shared.report(
                 media: ImpresarioHook.Media(
                     state: audio.isPlaying ? "Playing" : "Paused",

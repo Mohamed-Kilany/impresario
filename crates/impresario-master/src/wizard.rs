@@ -1464,28 +1464,28 @@ fn discover() -> Discovery {
                 found += 1;
                 match device.kind.as_str() {
                     "pairing" => discovery.pairing.push((device.host, device.port)),
-                    "wireless" | "classic" => {
-                        if seen.insert(format!("{}:{}", device.host, device.port)) {
-                            discovery.routes.push(RouteOption {
-                                label: format!(
-                                    "{} {}:{} ({})",
-                                    if device.kind == "wireless" {
-                                        "wireless"
-                                    } else {
-                                        "classic TCP"
-                                    },
-                                    device.host,
-                                    device.port,
-                                    short_mdns_name(&device.name)
-                                ),
-                                connection: DeviceConnection {
-                                    transport: TransportKind::Tcp,
-                                    host: Some(device.host),
-                                    port: Some(device.port),
-                                    ..DeviceConnection::default()
+                    "wireless" | "classic"
+                        if seen.insert(format!("{}:{}", device.host, device.port)) =>
+                    {
+                        discovery.routes.push(RouteOption {
+                            label: format!(
+                                "{} {}:{} ({})",
+                                if device.kind == "wireless" {
+                                    "wireless"
+                                } else {
+                                    "classic TCP"
                                 },
-                            });
-                        }
+                                device.host,
+                                device.port,
+                                short_mdns_name(&device.name)
+                            ),
+                            connection: DeviceConnection {
+                                transport: TransportKind::Tcp,
+                                host: Some(device.host),
+                                port: Some(device.port),
+                                ..DeviceConnection::default()
+                            },
+                        });
                     }
                     _ => {}
                 }
