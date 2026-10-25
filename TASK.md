@@ -2325,14 +2325,23 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
 
 ### 13.1 Environment facts for acceptance
 
-- The Android phone is attached at `10.102.93.196:35579`; device work uses the
-  project's native `libadb` transport, never a host `adb` process (D-19).
-- No webOS TV, Tizen TV, iPhone/iPad or Apple TV hardware is available here.
-  Install/launch/signing/playback acceptance for those platforms is deferred
-  in the HD ledger (`HD-1`...`HD-8`, `I-133`) and must not be reported as
-  hardware-verified.
-- Apple runner/Xcode builds and Apple hardware playback cannot be verified on
-  this host. WSL Swift builds cover only `AgentCore`/`AgentService`.
+- The Android phone/TV evidence remains the 2026-10-18/21 runs; this window
+  adds no Android hardware. Device work always uses the project's native
+  `libadb` transport, never a host `adb` process (D-19).
+- On 2026-10-25 a Samsung Tizen TV (`192.168.93.37`), an LG webOS TV
+  (`192.168.93.116`) and an Apple TV (`192.168.93.19`) are reachable. Tizen
+  completed `device check` over native SDB (handshake without an AUTH
+  challenge, capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0); the LG
+  key server was fetched but SSH
+  authentication lacks the Developer Mode passphrase; Apple identity is
+  readable over AirPlay (`AppleTV5,3`, build `23J582`). No install, launch,
+  playback or probe acceptance has run on these TVs. The HD ledger
+  (`HD-1`...`HD-8`, `I-133`) stays deferred until it does, and reachability
+  alone is never reported as hardware verification.
+- No local macOS/Xcode host is attached. The GitHub `macos-15` job builds the
+  Xcode targets unsigned but cannot reach the LAN Apple TV; device install and
+  XCUITest execution remain open. WSL Swift builds cover only
+  `AgentCore`/`AgentService`.
 
 ---
 

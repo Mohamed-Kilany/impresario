@@ -9,14 +9,26 @@ acceptance explicitly deferred. TASK-3 playback probes were implemented on
 2026-10-25 on fixture/replay evidence (web connector, Android and Apple agent
 packages, SDKs); no probe claim is hardware-verified.
 
+Hardware access changed on 2026-10-25: a Samsung Tizen TV, an LG webOS TV and
+an Apple TV are reachable on the LAN. Tizen completed `device check` (SDB
+handshake without an AUTH challenge, capabilities, DUID and app list); the LG
+TV serves its Developer Mode key
+but not the passphrase, and Apple TV identity is readable over AirPlay. No
+install, launch, playback or probe acceptance has run on these TVs yet: the LG
+passphrase, a Tizen signing profile and a macOS/Xcode host are still missing.
+Reachability alone closes no HD item.
+
 ## Environment constraints
 
-- Host: Windows. No Xcode, so the Apple **runner** (XCUITest/UIKit targets) cannot
-  be compiled here. The Apple **agent package** is built and unit-tested on this
-  host through WSL (Ubuntu 22.04, Swift 6.4.1): `swift build` and `swift test`
-  cover `AgentCore`/`AgentService`, including the full wire protocol over
-  loopback gRPC. Both halves are documented in `docs/DEVICES.md` §3; the
+- Host: Windows. No local Xcode, so the Apple **runner** (XCUITest/UIKit targets)
+  is compiled only by the `Apple Xcode` GitHub Actions job on `macos-15`
+  (unsigned tvOS + iOS stub/runner builds; green run 40170681884 at `3f16dcd`).
+  The Apple **agent package** is built and unit-tested on this host through WSL
+  (Ubuntu 22.04, Swift 6.4.1): `swift build` and `swift test` cover
+  `AgentCore`/`AgentService`, including the full wire protocol over loopback
+  gRPC. Both halves are documented in `docs/DEVICES.md` §3; the
   human-verification checklist for a macOS host is in `agents/apple/README.md`.
+  Device execution still needs a local Mac paired with the target Apple TV.
 - Phase 0 spike "gRPC (NIO) server inside an XCUITest runner" therefore cannot
   be executed here. What *is* verified here is that the same `AgentService`
   serves the protocol (loopback tests pass); what remains open is the runner
@@ -69,8 +81,8 @@ packages, SDKs); no probe claim is hardware-verified.
 | Reporters (console/junit/json/html) | done | `tests/reporters.rs` insta snapshots (console plain + color, junit.xml, report.json schema v2, report.html with base64 embed and missing-file fallback); Act example display names, stage source spans and secret-key masking are covered |
 | `impresario fmt` / DSL migration | done | `impresario_core::fmt` (idempotence property test, comments/blanks, Unicode-width table alignment, absent cells) and `impresario_core::migrate` (table scenes, generated theatres, duplicate suffixes, idempotence, fail-closed on invalid generated text) have unit tests; `tests/golden_dsl.rs` covers the formatter golden files and a complete legacy migration snapshot; `tests/definitions_cli.rs` drives `migrate --dry-run`, `.bak`, idempotence and generated theatre output; committed `examples/` are migrated and `fmt --check`-clean |
 | `impresario run --arg` / theatrical runtime | done | planner tests cover `--arg` precedence (CLI > Examples > default), unknown/malformed arguments (IMP-DSL-032), nested stage expansion, cycles/depth and report display data; MCP `args` maps to the same code path |
-| Docs (`docs/*.md`, examples, fixtures) + `README.md` | done (DSL, PROBES, PROTOCOL, DECISIONS, DEVICES, STATUS, ERRORS, LSP, MCP, CLI, PARITY, CONFIG, SIGNING, SPIKES, THIRD_PARTY, README) | DSL.md covers syntax, semantics, selectors and the `Showing`/`Player` probe grammar; PROBES.md covers the evidence model, verdict policy, per-platform reachability, fallback rungs, fixtures and the in-app SDK contract; PROTOCOL.md documents the wire contract as implemented (sequences, 7.2 rules, error-code table, endpoint resolution, I-74 lazy log stream); PARITY.md is generated from the planner's support tables and guarded by `tests/parity_doc.rs` (`IMPRESARIO_PARITY_BLESS=1` rewrites); CONFIG.md is generated from `settings::docs_table()` and guarded by `tests/config_doc.rs`; DECISIONS.md holds I-01..I-145 (I-91..I-98: the phase-0 spikes; I-99: webOS; I-100: `--workspace` placement; I-101: the yaml-edit list workaround; I-102: `init` replaced by `workspace new`, superseding I-11; I-103..I-108: the device/app split, migration, app binding, diagnostics and deferred wizard; I-109: the TV stub gap; I-110..I-119: theatrical DSL compatibility, formatter, Examples/`--arg`, report v2, migration, workspace scans, LSP, qualified references/interpolation scope, lints 049/050 and reporter/migration fail-closed behavior; I-120: Phase 2 live acceptance and spacing verification; I-121..I-124: native Android/libadb and live pairing, the Windows key-store workaround, managed Chromium, wizard/discovery/pair and doctor; I-125..I-130: the TUI-as-CLI-client architecture, jobs/daemon/leases, profiles, the ConPTY harness, test-explorer semantics and Phase 4 acceptance; I-131: the landing-first wizard navigation and PATH self-install; I-132: doctor's broken-config/device resilience; I-133: Phase 4 close-out and the deferred device-verification debt); SPIKES.md carries the S-1..S-8 evidence and verdicts, updated with the Phase 3 S-1 and Phase 4 S-5 outcomes; THIRD_PARTY.md records every dependency/reference/managed-payload license, including the Phase 4 TUI/job crates; DEVICES.md records per-platform setup and hardware evidence, including the Phase 3 native ADB, pairing, wizard and managed-browser sections (§3 covers the Apple package and the Xcode commands); LSP.md documents the language server; MCP.md documents the stdio MCP server (tools, resources, per-client wiring, I-80); CLI.md documents the TUI, jobs/daemon, profiles, test explorer and the manual three-Windows-shell checklist; README.md's quick start is executed by `tests/mock_cli.rs` (workspace create/validate/run against `mock-agent`) |
-| CI workflows | committed, not yet executed | `.github/workflows/ci.yml`: `rust` job on `ubuntu-latest` (`fmt --check`, `clippy --workspace --all-targets -- -D warnings`, `test --workspace`; the runner ships google-chrome, so the connector fixture suite runs for real), `android` job (`setup-java` 17 + `setup-android`, `gradlew --no-daemon test`; `gradlew` is committed non-executable → `chmod +x`), and `apple` job (`setup-swift` 6.4.1 + `zlib1g-dev`, then `swift package resolve`/`swift build`/`swift test` in `agents/apple` — the Linux-buildable half of the Apple agent; the Xcode runner targets cannot build there). This host has **no GitHub remote**, so Actions has not executed the workflow yet (recorded gap); the underlying commands are green locally and the document itself is parse-checked by `tests/ci_workflow.rs` (valid YAML + the exact gate commands) |
+| Docs (`docs/*.md`, examples, fixtures) + `README.md` | done (DSL, PROBES, PROTOCOL, DECISIONS, DEVICES, STATUS, ERRORS, LSP, MCP, CLI, PARITY, CONFIG, SIGNING, SPIKES, THIRD_PARTY, README) | DSL.md covers syntax, semantics, selectors and the `Showing`/`Player` probe grammar; PROBES.md covers the evidence model, verdict policy, per-platform reachability, fallback rungs, fixtures and the in-app SDK contract; PROTOCOL.md documents the wire contract as implemented (sequences, 7.2 rules, error-code table, endpoint resolution, I-74 lazy log stream); PARITY.md is generated from the planner's support tables and guarded by `tests/parity_doc.rs` (`IMPRESARIO_PARITY_BLESS=1` rewrites); CONFIG.md is generated from `settings::docs_table()` and guarded by `tests/config_doc.rs`; DECISIONS.md holds I-01..I-146 (I-91..I-98: the phase-0 spikes; I-99: webOS; I-100: `--workspace` placement; I-101: the yaml-edit list workaround; I-102: `init` replaced by `workspace new`, superseding I-11; I-103..I-108: the device/app split, migration, app binding, diagnostics and deferred wizard; I-109: the TV stub gap; I-110..I-119: theatrical DSL compatibility, formatter, Examples/`--arg`, report v2, migration, workspace scans, LSP, qualified references/interpolation scope, lints 049/050 and reporter/migration fail-closed behavior; I-120: Phase 2 live acceptance and spacing verification; I-121..I-124: native Android/libadb and live pairing, the Windows key-store workaround, managed Chromium, wizard/discovery/pair and doctor; I-125..I-130: the TUI-as-CLI-client architecture, jobs/daemon/leases, profiles, the ConPTY harness, test-explorer semantics and Phase 4 acceptance; I-131: the landing-first wizard navigation and PATH self-install; I-132: doctor's broken-config/device resilience; I-133: Phase 4 close-out and the deferred device-verification debt; I-146: remote CI and the 2026-10-25 hardware window); SPIKES.md carries the S-1..S-8 evidence and verdicts, updated with the Phase 3 S-1 and Phase 4 S-5 outcomes; THIRD_PARTY.md records every dependency/reference/managed-payload license, including the Phase 4 TUI/job crates; DEVICES.md records per-platform setup and hardware evidence, including the Phase 3 native ADB, pairing, wizard and managed-browser sections (§3 covers the Apple package and the Xcode commands); LSP.md documents the language server; MCP.md documents the stdio MCP server (tools, resources, per-client wiring, I-80); CLI.md documents the TUI, jobs/daemon, profiles, test explorer and the manual three-Windows-shell checklist; README.md's quick start is executed by `tests/mock_cli.rs` (workspace create/validate/run against `mock-agent`) |
+| CI workflows | green on GitHub Actions | The public repository `https://github.com/Mohamed-Kilany/impresario` runs two workflows. `CI` run 40170681936 at `3f16dcd` passed all four jobs: Rust (`fmt --check`, `clippy --workspace --all-targets -- -D warnings`, `test --workspace`; the runner ships Chrome, so the connector fixture suite runs), Android (`gradlew --no-daemon test` with IPv4 preference and a retry for runner network flakes), editor (TypeScript, WASM corpus and VS Code host) and the Apple Swift package (`setup-swift` 6.4.1 + `zlib1g-dev`, `swift package resolve`/`build`/`test`). `Apple Xcode` run 40170681884 at `3f16dcd` generated the Xcode project and built the unsigned tvOS and iOS stub/runner targets with `xcodebuild build-for-testing`; its 65 MB `impresario-apple-unsigned` artifact contains the `.app` bundles and `.xctestrun` files. The macOS runner cannot reach the `192.168.93.x` LAN Apple TV, so this proves compilation only; installation and XCUITest execution still need a local Mac (`docs/DEVICES.md` §3.2). Workflow YAMLs are also parse-checked by `tests/ci_workflow.rs` |
 
 ## TASK-2 phase status
 
@@ -83,7 +95,7 @@ packages, SDKs); no probe claim is hardware-verified.
 | 3 | done (live Android/web verified 2026-10-20) | Native Android transport on `libadb` 0.6.0 with USB/TCP/mDNS discovery, wireless pairing, shell v2/exec streams, sync APK install, instrumentation output, forwarding fallback, logcat, screencap, `pm clear`/force-stop, `getprop` and `ip route` - no `adb` process (I-121). Managed Chromium download/verification with consent and Windows sandbox ACLs (I-123), `doctor` human/JSON output, and the full device wizard/discover/pair surface (I-124). Live acceptance: web/phone/TV E2E and a fresh-key wizard pairing with `adb` absent from `PATH`; `doctor --json` exit 0 with Android, Android TV and web `ready` (`target/phase3-doctor.json`). `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` are green. The native `tcp:` forwarding fallback was exercised live on the phone by setting an unreachable `connection.endpoint`; after the 30 s network wait, `device check` used the forward and passed. USB data and non-Windows Chromium archives remain unverified (gaps 10, 15, 16). |
 | 4 | done (live acceptance 2026-10-21; landing/PATH/doctor pass 2026-10-22) | TUI, job store/supervisor, device leases, `--on-busy`, profiles, test explorer and file operations shipped as described in the component row and `docs/CLI.md`; decisions I-125…I-133. The Rust gates are green (`fmt --check`, `clippy --workspace --all-targets -- -D warnings`, `test --workspace`). W-CLI §3.6 evidence: 3 real-binary ConPTY tests (first-run, slash completion + help, run-view detach → close → reattach → report), 11 `TestBackend` frame snapshots, plus the live detached web run `20261021-073144-2763` and the final four-device detached run `20261021-080459-ec51` (4 devices / 4 plays / 6 acts / 189 steps). Live acceptance is complete: the four-device detached run was followed to completion and reported, the LG-only diagnosis run plus connector suite passed, and the Windows Terminal/PowerShell 7, PowerShell 5.1/conhost and cmd.exe rows were executed (see `docs/CLI.md`). The TUI editor/home scope remains a recorded partial (gap 19). Hardware re-verification is deferred as technical debt HD-1…HD-8 (I-133) and is not a Phase 4 blocker. |
 | 5 | done (2026-10-23) | W-EDITOR parity gate: the pure `impresario-language` service is shared by `impresario lsp` and the standalone WASM/VS Code front end. `.play`, `.scene` and `.theatre` are covered by diagnostics, completion, hover, definition/references/rename, symbols, folding, semantic tokens, signature help, code actions, document/range/on-type formatting, inlay hints and code lenses. The three-front-end corpus (`impresario-language`, `lsp_corpus`, Node/WASM) is green; the extension host suite passes; strict TypeScript, ESLint, esbuild, `vsce` packaging and the 1,000+ file benchmark pass. `docs/LSP.md` and the extension README are updated. Decisions I-134…I-137 record the architecture and packaging. |
-| 6 | done on fixture/replay evidence (2026-10-23); TV hardware deferred | S-3/S-4 rung 1 shipped: pure-Rust `WebOsTransport` and `TizenTransport`, deterministic `.ipk`/`.wgt` packaging, Tizen profile import and RSA/ECDSA re-signing, native `device check`/`doctor` probes, planner package resolution, and `impresario package`/`sign tizen`. Replay coverage uses an in-process russh SSH server and SDB fake device; signing has deterministic, round-trip, tamper and ECDSA tests. No webOS/Tizen TV was available, so install/launch/AUTH/signing acceptance is **not** claimed; HD-3/HD-4/HD-7 remain deferred with runbooks in `docs/DEVICES.md` §1.3/§1.4. Decisions I-138…I-145. |
+| 6 | done on fixture/replay evidence (2026-10-23); TV install/launch deferred (Tizen transport check passed 2026-10-25) | S-3/S-4 rung 1 shipped: pure-Rust `WebOsTransport` and `TizenTransport`, deterministic `.ipk`/`.wgt` packaging, Tizen profile import and RSA/ECDSA re-signing, native `device check`/`doctor` probes, planner package resolution, and `impresario package`/`sign tizen`. Replay coverage uses an in-process russh SSH server and SDB fake device; signing has deterministic, round-trip, tamper and ECDSA tests. On 2026-10-25 the Tizen TV completed native SDB `device check` (handshake without an AUTH challenge, capabilities, DUID, app list); package signing/install/launch and webOS SSH authentication remain blocked (no signing profile, missing passphrase), so no install/launch acceptance is claimed. HD-3/HD-4/HD-7 remain deferred with runbooks in `docs/DEVICES.md` §1.3/§1.4. Decisions I-138…I-146. |
 
 ## TASK-3 playback probe status
 
@@ -99,7 +111,7 @@ real outcome on every platform.
 | Master evaluation | done | `canonicalize_probe` validates evidence and recomputes verdict/confidence/reason with the core functions; executor verdicts cannot drift the result. Reports/JUnit/console/HTML render `unverifiable`. |
 | Web / webOS / Tizen collector | done on fixtures | DOM, `HTMLMediaElement`, EME hook, Tizen AVPlay, screenshot coverage and optional app hook. Local web fixture covers showing/player/DRM/image/missing-piece; a synthetic AVPlay page covers the Tizen parser and Tizen-only source health. No TV hardware or TV CDP (HD-7). |
 | Android collector | done on fixtures | A11y tree, screenshot coverage, `dumpsys media_session`, conservative `dumpsys media.drm`, `logcat` app hook. Stub APK builds with local H.264/AAC video and decoded PNG. USB and real playback acceptance deferred (HD-5/HD-8). |
-| Apple collector | package builds/tests; Xcode layer unbuilt | `ProbeCollectorTests` pass under WSL. XCUITest cannot read another app's AVPlayer/FairPlay; the `ImpresarioHook` Swift SDK + loopback receiver provide authoritative state when linked. Xcode runner and networking need macOS/hardware (HD-1). |
+| Apple collector | package builds/tests; Xcode layer compiled in CI | `ProbeCollectorTests` pass under WSL; the macOS Actions job compiles the Xcode runner, host/stub apps and loopback receiver unsigned. XCUITest cannot read another app's AVPlayer/FairPlay; the `ImpresarioHook` Swift SDK + loopback receiver provide authoritative state when linked. Device execution and networking need macOS/hardware (HD-1). |
 | In-app SDKs | web, Android and Swift implemented | Same optional JSON contract; debug-only, no playback effect. Web reads `window.__impresarioHook`, Android logs an `IMPRESARIO_HOOK` line read by the driver, Swift POSTs to `127.0.0.1:47831`. Missing hook only lowers achievable confidence. |
 | Fixtures and docs | done | `fixtures/web/media.html` (video + audio-only + image), `hook.html`, `tizen-avplay.html`, `sample.webm`, `sample.png`; Android `MediaActivity` + assets; Apple `MediaViewController` + local video/audio/image and public BipBop HLS. `docs/PROBES.md` is the reference; fixtures are local/offline except the explicitly public HLS sample. |
 
@@ -109,8 +121,8 @@ at runtime; packaging uses in-process crates and Android uses `libadb`.
 
 ## Deferred hardware verification (technical debt)
 
-Recorded 2026-10-22 with I-133 and extended for Phase 6 (I-145) and the
-TASK-3 probes. The items below are the remaining device/platform verification
+Recorded 2026-10-22 with I-133 and extended for Phase 6 (I-145), the TASK-3
+probes and the 2026-10-25 hardware window (I-146). The items below are the remaining device/platform verification
 work and are deliberately deferred, not code-gate blockers. "Evidence today"
 describes what actually ran on this host; this table does not promote any item
 to verified. The webOS, Tizen and device-matrix items are scheduled with the
@@ -121,17 +133,41 @@ not hardware.
 
 | ID | Technical debt | Evidence today | Planned |
 |---|---|---|---|
-| HD-1 | Apple iOS/tvOS Xcode runner and real-device path | The Swift package builds and unit-tests under WSL, including `ProbeCollectorTests`; the Xcode targets, `XCUIDriver`/`HookReceiver`, `testServe()` runner, local-network prompt, Swift `ImpresarioHook` loopback transport and tvOS focus engine have never run (gaps 1-2). Player/DRM probes on Apple remain unverified without the hook. | Phase 7, on macOS + hardware; macOS CI job |
+| HD-1 | Apple iOS/tvOS Xcode runner and real-device path | The Swift package builds and unit-tests under WSL, including `ProbeCollectorTests`; the macOS Actions job now compiles the Xcode host/stub/UI-test targets unsigned (run 40170681884). The `XCUIDriver`/`HookReceiver`, `testServe()` runner, local-network prompt, Swift `ImpresarioHook` loopback transport and tvOS focus engine have never run on a simulator or device (gaps 1-2). Player/DRM probes on Apple remain unverified without the hook. | Phase 7, on macOS + hardware; macOS CI job |
 | HD-2 | Apple D-19 and signing | `AppleTransport` still shells out to `xcodebuild`/`iproxy`; local `.p12`/Mach-O signing was a spike only; App Store Connect and free-Apple-ID flows are unexercised. | Phase 7 |
-| HD-3 | webOS TV transport and install | The full native SSH/SFTP/luna transport, deterministic IPK packaging and install/launch/forward path are implemented and replay-tested. No TV has accepted its key, uploaded an IPK or run install/launch (gap 4). | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.3 |
-| HD-4 | Tizen TV transport, install and signing | The native SDB transport, version-gated re-signing, verified app-list install and forwarding are implemented and replay-tested. No TV has exercised AUTH/capability/install, and Samsung-account certificate creation is an external step (gap 4). | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.4 |
+| HD-3 | webOS TV transport and install | The full native SSH/SFTP/luna transport, deterministic IPK packaging and install/launch/forward path are implemented and replay-tested. The LG TV at `192.168.93.116` exposes SSH 9922 and the key server 9991; its encrypted key was fetched to `keys/webos/192.168.93.116.pem`, but SSH authentication is blocked on the Developer Mode passphrase, so no IPK was uploaded and no install/launch ran (gap 4). The earlier 2026-10-21 four-device run used the connector/web path, not this native transport. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.3 |
+| HD-4 | Tizen TV transport, install and signing | The native SDB transport, version-gated re-signing, verified app-list install and forwarding are implemented and replay-tested. On 2026-10-25 the Samsung TV completed `device check` over SDB: the handshake finished without an AUTH challenge, then capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0, staging `/home/owner/share/tmp/sdk_tools`, and the signing-required warning. No signing profile is imported, so no package was signed, uploaded or installed; Samsung-account certificate creation remains external (gap 4). | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.4 |
 | HD-5 | Android USB data and playback probes | The native `libadb`/nusb path is implemented, but this host exposed no ADB USB interface; all live phone/TV runs used TCP. Windows WinUSB setup and the USB session limits need a hardware pass (gap 15). The Android media stub and `logcat` hook path compile but have not run on hardware; exact decoder/DRM facts remain vendor-dependent. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §4.1 |
 | HD-6 | Managed Chromium outside Windows x64 | Five archives are pinned with size and SHA-256. Only Windows x64 download, extraction, AppContainer ACLs and headless launch actually ran here (gap 16). The web media/probe fixtures have only run on this host's Chrome; repeat them on each managed archive. | Phase 6/7 release-matrix window; runbook `docs/DEVICES.md` §4.2 |
-| HD-7 | Real-TV CDP and web launch | The connector is verified against headless Chrome. Tizen/webOS CDP quirks and the `launch` path on a real TV are untested (gap 3); the native transports now produce the forwarded inspector endpoint, but no TV has served CDP through it. | Phase 6/7 hardware window; runbooks §1.3/§1.4 |
-| HD-8 | Fresh re-run of the Phase 4 device matrix | The four-device run `20261021-080459-ec51` and LG-only run `20261021-080418-843e` passed on 2026-10-21 and remain the acceptance evidence. LG/TV hardware is not attached now, so no new run was attempted. Include the media stub/probe checks in the rerun; no probe result has been hardware-verified. | Phase 6/7 regression window after Phase 7; runbook `docs/DEVICES.md` §4.3 |
+| HD-7 | Real-TV CDP and web launch | The connector is verified against headless Chrome. Tizen/webOS CDP quirks and the `launch` path on a real TV are untested (gap 3); the native transports produce the forwarded inspector endpoint, but no TV has served CDP through it. Tizen reachability and the app list do not exercise `0 debug` or a forwarded WebSocket; LG SSH never authenticated. | Phase 6/7 hardware window; runbooks §1.3/§1.4 |
+| HD-8 | Fresh re-run of the Phase 4 device matrix | The four-device run `20261021-080459-ec51` and LG-only run `20261021-080418-843e` passed on 2026-10-21 and remain the acceptance evidence. LG and Tizen TVs are attached again as of 2026-10-25, but neither can install/launch the fixture (passphrase and signing profile missing) and the Apple TV has no local Mac, so no new matrix run was attempted. Include the media stub/probe checks in the rerun; no probe result has been hardware-verified. | Phase 6/7 regression window after Phase 7; runbook `docs/DEVICES.md` §4.3 |
 
 These are scheduling items, not silent stubs: the corresponding docs and code
 still state the limits, and no command reports success for an unverified path.
+
+### Hardware access log (2026-10-25)
+
+- **Samsung Tizen TV** at `192.168.93.37:26101`. `impresario device check
+  --device samsung_tizen` completed with the native SDB transport:
+  `Tizen TV · Tizen 9.0 · 0x0 @1x · SDB (native)`; the SDB banner was
+  `device::UA55CU8500UXSA::0` (55" CU8500). The handshake completed **without
+  an AUTH challenge**, so the RSA AUTH path is still unexercised. The
+  read-only probe read staging `/home/owner/share/tmp/sdk_tools`, DUID
+  `P7CIFS3MU3C26` and 864 apps, and reported the expected Tizen 7.0+
+  `signing required` warning. Blocked before install by the missing
+  author/distributor profile.
+- **LG webOS TV** at `192.168.93.116`. TCP 9922 (SSH) and 9991 (key server) are
+  reachable; `http://192.168.93.116:9991/webos_rsa` was fetched and stored as
+  `~/.impresario/keys/webos/192.168.93.116.pem`. `device check` stops at
+  `webOS key passphrase: no passphrase in the OS keychain`; no SSH session,
+  upload or launch has run.
+- **Apple TV** at `192.168.93.19`. AirPlay `/info` identifies `AppleTV5,3`
+  (Apple TV HD), name `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build
+  `23J582`. TCP 7000, 62078 and 49152 are reachable. This is network identity,
+  not Developer Mode, pairing or UI-automation readiness; no Mac/Xcode host is
+  attached.
+- No result above is a hardware/playback/probe acceptance. HD-1...HD-8 and
+  I-133 remain deferred.
 
 ## Known gaps and risks
 
@@ -139,12 +175,12 @@ Items 8, 9 and 11 were closed on 2026-10-20; they stay in place, clearly
 marked, so the numbers used elsewhere remain stable.
 
 1. Apple agent: the Swift **package** (`AgentCore`/`ImpresarioWire`/`AgentService`)
-   is built and unit-tested on this host through WSL (see above). What has
-   *never* run here is everything that needs macOS/Xcode: `xcodegen generate`,
-   the host/stub/UI-test targets, the `testServe()` runner on a simulator or
-   device, the tvOS focus engine and the local-network permission. Those are
-   the manual checklists of spec 15 (`agents/apple/README.md`,
-   `docs/DEVICES.md` §3.2).
+   is built and unit-tested on this host through WSL (see above); the macOS
+   Actions job now generates the Xcode project and compiles the host/stub/UI-test
+   targets unsigned (run 40170681884). What has *never* run is the
+   `testServe()` runner on a simulator or device, the tvOS focus engine and the
+   local-network permission; those remain the manual checklists of spec 15
+   (`agents/apple/README.md`, `docs/DEVICES.md` §3.2).
 2. Phase 0 spike 2 (NIO gRPC in XCUITest): unverified on this host (see
    above); D-18 fallback design stays available if the spike fails on a Mac.
 3. `impresario-connector` is verified against headless Chrome (installed on
@@ -152,14 +188,19 @@ marked, so the numbers used elsewhere remain stable.
    page to leave `loading` and for the actual scroll event (fixing the
    under-load `fixture_suite_raw_backend` race); Tizen/webOS-specific CDP
    quirks and the `launch` path on a real TV remain untested on hardware.
-4. Tizen and webOS hardware is not available. Phase 6 ships the native
-   `TizenTransport`/`WebOsTransport`, deterministic packaging and Tizen signing,
-   all covered by in-process fake SDB/SSH servers and generated certificates
-   (I-138...I-142). No TV has accepted the SDB/SSH key, a package upload or a
-   luna install, so the hardware checks remain HD-3/HD-4/HD-7; the connector's
-   CDP layer itself is tested against Chrome. The LG webOS TV in the Phase 4
-   four-device run used the connector/web path, not this native transport, and
-   is not evidence for it.
+4. Tizen and webOS hardware became reachable again on 2026-10-25. Phase 6
+   ships the native `TizenTransport`/`WebOsTransport`, deterministic packaging
+   and Tizen signing, all covered by in-process fake SDB/SSH servers and
+   generated certificates (I-138...I-142). On the Tizen TV, `device check`
+   completed the SDB handshake without an AUTH challenge, then capability
+   parsing, DUID and app-list reads (Tizen 9.0, DUID `P7CIFS3MU3C26`, 864
+   apps), but no package was uploaded or installed because no signing profile
+   is imported. On the LG TV the key server and
+   encrypted key were fetched, but SSH authentication stops at the missing
+   Developer Mode passphrase. The connector CDP layer itself is still tested
+   against Chrome only; HD-3/HD-4/HD-7 remain open. The LG webOS TV in the
+   Phase 4 four-device run used the connector/web path, not this native
+   transport, and is not evidence for it.
 5. The `cargo-fuzz` target (`fuzz/fuzz_targets/parse.rs`) needs a nightly
    toolchain and `cargo-fuzz`, which are not installed here; it is shipped
    unverified. The stable-toolchain proptest suite
@@ -170,12 +211,13 @@ marked, so the numbers used elsewhere remain stable.
    acceptance runner gives each test class its own process and the master
    E2E play is kept short (verified: the 89-step smoke play ran 1m46 s, ≈ 100 s of agent lifetime); a frozen agent needs a force-stop (the runner's
    stalls/retries exist exactly for this).
-7. CI has not run anywhere yet: this checkout has no GitHub remote, so
-   `.github/workflows/ci.yml` is committed but unexecuted on Actions
-   (see the CI row above). The local gates it encodes are green: the Rust
-   commands here, `gradlew test` on this host, and the Apple job's
-   `swift package resolve`/`build`/`test` through WSL (its `zlib1g-dev`
-   step mirrors the dependency the WSL build needed, `docs/DEVICES.md` §3.1).
+7. **CI remote execution - closed 2026-10-25.** The public GitHub repository
+   runs `CI` and `Apple Xcode`; run 40170681936 (`CI`) and 40170681884
+   (`Apple Xcode`) are green at `3f16dcd` (see the CI row above). The macOS
+   runner builds unsigned Xcode products but cannot reach the LAN Apple TV;
+   device execution remains HD-1. The local gates are unchanged: Rust commands
+   here, `gradlew test` on this host, and the Apple package
+   `swift package resolve`/`build`/`test` through WSL (`docs/DEVICES.md` §3.1).
 8. **Stub spacing on TV — closed 2026-10-20 (I-120).** The phone keeps the
    I-81-verified 10 dp rhythm and Android TV selects 6 dp (I-109), as shown by
    the phone `stub_home.png` from run `20261020-134217-2dfe` and a fresh TV home

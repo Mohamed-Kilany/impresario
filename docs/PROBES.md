@@ -171,7 +171,8 @@ The Apple agent therefore does not invent player or DRM state:
   slot and Apple's public BipBop HLS stream. It reports through the Swift hook when the
   runner is listening.
 - Host-assisted DVT/syslog/pcapd collectors described in TASK.md are not implemented and
-  remain unverified. No iOS/tvOS hardware is available in this environment.
+  remain unverified. An Apple TV HD (`AppleTV5,3`, build `23J582`) is reachable on the LAN,
+  but no local macOS/Xcode host is paired with it, so no runner has executed there.
 
 ### Own apps: in-app hook
 
@@ -292,8 +293,10 @@ CDP is `HD-7`.
 
 ## Unverified work
 
-- No webOS TV, Tizen TV, iOS or tvOS hardware is available. Transport/probe paths are
-  verified with fakes, fixtures and replay only.
+- webOS, Tizen and Apple TVs became reachable on 2026-10-25, but none has installed,
+  launched or played the fixtures: the LG passphrase, Tizen signing profile and local
+  macOS/Xcode pairing are missing. Transport/probe paths remain verified with fakes,
+  fixtures and replay only.
 - Apple host-side DVT/syslog/pcapd evidence and the in-app hook over loopback are not
   hardware-tested.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are

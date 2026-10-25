@@ -3,8 +3,9 @@
 How to prepare each platform, and how to run the automated checks against it.
 "Verified" means the commands ran successfully on the development host of this
 repository (Windows 11, Android SDK 36, JDK 24, Rust stable 1.94.x). Sections
-that need hardware this host does not have say so explicitly (see
-`docs/STATUS.md` for the verification matrix).
+that need hardware or host credentials not available here say so explicitly
+(see `docs/STATUS.md` for the verification matrix and the 2026-10-25 access
+log).
 
 ## The model (D-01, D-02)
 
@@ -175,7 +176,7 @@ Notes:
 - `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
   backend needs the browser websocket from `/json/version` (I-39).
 
-### 1.3 webOS (TV) — native SSH transport (fixture-verified, hardware pending)
+### 1.3 webOS (TV) — native SSH transport (fixture-verified; LG host reachable 2026-10-25, auth blocked)
 
 The executor is still `impresario-connector` (D-03), but the host-side device
 work is Impresario's own SSH/SFTP/luna client. No `ares-*`, `ssh`, `scp`,
@@ -250,7 +251,7 @@ impresario run --play plays/smoke.play --device living_room_tv --app shop
 tears down; it does not install or launch. It reports a warning if luna cannot
 answer rather than inventing device details.
 
-**Hardware runbook (HD-3, HD-7 — not executed here)**
+**Hardware runbook (HD-3, HD-7 — install/launch not executed here)**
 
 1. Record TV model/firmware, Developer Mode version, `device check` output and
    the host-key fingerprint.
@@ -261,7 +262,7 @@ answer rather than inventing device details.
    verification; then test an invalid package and confirm the run fails.
 5. Only after these pass should `HD-3`/`HD-7` be marked hardware-verified.
 
-### 1.4 Tizen (TV) — native SDB transport (fixture-verified, hardware pending)
+### 1.4 Tizen (TV) — native SDB transport (fixture-verified; Samsung check passed 2026-10-25, install blocked)
 
 The executor is still `impresario-connector`; the host-side SDB protocol,
 package signing and forwarding are native Rust. No `sdb` or `tizen` process
@@ -340,7 +341,7 @@ impresario run --play plays/smoke.play --device living_room_tv --app shop
 `device check` reads capabilities/DUID/app list and profile status only; it
 does not install, launch or sign.
 
-**Hardware runbook (HD-4, HD-7 — not executed here)**
+**Hardware runbook (HD-4, HD-7 — install/launch not executed here)**
 
 1. Record TV model/firmware, `device check` output, DUID and profile coverage.
 2. On Tizen 7+, sign a fixture `.wgt`, record its SHA-256, install through a
@@ -351,6 +352,32 @@ does not install, launch or sign.
    `.wgt`; each must fail with the documented `IMP-SIGN-*`/transport error.
 5. Record the exact `0 vd_appinstall` output and whether AUTH was requested.
 6. Only after these pass should `HD-4`/`HD-7` be marked hardware-verified.
+
+**Hardware access log (2026-10-25)**
+
+- **Tizen** — `192.168.93.37:26101`, `device check --device samsung_tizen`
+  passed with the native SDB transport:
+  `Tizen TV · Tizen 9.0 · 0x0 @1x · SDB (native)`; the banner is
+  `device::UA55CU8500UXSA::0` (55" CU8500). The handshake completed **without
+  an AUTH challenge**, so capability parsing, DUID and the app-list read are
+  hardware-verified, but the RSA AUTH path is not. It also reports
+  `signing required (Tizen 7.0+)`, and no profile is imported. Package signing,
+  upload, `0 vd_appinstall`, `0 debug`, forwarding and playback are not
+  verified. `0 vd_appinstall` success semantics remain unverified.
+- **webOS** — `192.168.93.116`. TCP 9922 and 9991 are reachable. The key server
+  served `/webos_rsa`; the encrypted key is
+  `~/.impresario/keys/webos/192.168.93.116.pem`. `device check` fails before
+  SSH authentication with `webOS key passphrase: no passphrase in the OS
+  keychain`; set `IMPRESARIO_WEBOS_PASSPHRASE` from the TV's Developer Mode app
+  (or store it with the key setup command) and rerun. No install/launch/CDP is
+  verified on this TV. The 2026-10-21 four-device run used the web connector
+  path, not `WebOsTransport`.
+- **Apple TV** — `192.168.93.19`. AirPlay `/info` reports `AppleTV5,3`
+  (Apple TV HD), `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build `23J582`;
+  TCP 7000, 62078 and 49152 are open. This proves only network identity. A Mac
+  on the same LAN must pair it with Xcode, enable UI automation and provide the
+  UDID before `AppleTransport` can launch the runner; the GitHub macOS runner
+  cannot route to `192.168.93.x`.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; `options.key_dispatch` picks the
@@ -914,8 +941,9 @@ Two halves with different reachability:
 * the **SwiftPM package** (`agents/apple`) builds and unit-tests on any Swift
   host, including Linux — verified here (WSL Ubuntu 22.04, Swift 6.4.1, §3.1);
 * the **Xcode targets** (the XCUITest runner + host/stub apps) need macOS with
-  Xcode — not available here, so §3.2 is written from the sources and the
-  command reference, not from a run (recorded gap in `docs/STATUS.md`).
+  Xcode. They are compiled unsigned by the `Apple Xcode` GitHub Actions job
+  (`macos-15`, run 40170681884); §3.2 still has never run on a device, and
+  there is no local Mac or pairing (`docs/STATUS.md` HD-1).
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -940,7 +968,7 @@ involved. `SWIFTNIO_STRICT=1 swift test` (the same run with SwiftNIO's strict
 mode) turns every task scheduled on an already-stopped event loop into a crash
 with a stack trace — the shutdown ordering of I-90 is verified that way.
 
-### 3.2 Not verified here: the Xcode targets (macOS host)
+### 3.2 Compiled in CI, never run on a device (macOS host)
 
 ```bash
 brew install xcodegen
@@ -964,6 +992,17 @@ Device runs need a development team (set it in Xcode or a local xcconfig; the
 repo pins none) and the device must trust the host. `xcrun devicectl list
 devices` / `xcrun xctrace list devices` prints the udids (`xcodebuild
 -destination 'platform=iOS,id=<udid>'` takes the same value).
+
+The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
+device ID `B6:FD:1D:0C:99:3C`, build `23J582` at `192.168.93.19`. Network
+identity is not pairing. Before a run: put the Mac and TV on the same LAN with
+IPv6 enabled, enable `Settings > Remotes and Devices > Remote App and Devices`,
+pair from Xcode's Devices window and accept the prompt on the TV, then enable
+Developer/UI Automation if the tvOS build exposes it. The first runner start
+asks for local-network access; tvOS has no XCTest `tap`, so grant that one
+prompt with the remote (`SystemAlerts` logs it rather than guessing focus). Put
+the Xcode-reported address in `connection.endpoint` and the UDID in
+`connection.udid`.
 
 Runner environment (the `.xctestrun`'s `TestingEnvironmentVariables`; the
 master drains the `xcodebuild` output, where the runner logs its port and
@@ -1035,10 +1074,12 @@ labels while a play runs.
 
 ### Playback probes and the Apple hook
 
-The Xcode layer is **not compiled on this host** (no Xcode) and has never run
-on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver` and the Swift
-`ImpresarioHook` product build/test only to the extent of `swift test` under
-WSL; `XCUIDriver`/`HookReceiver` depend on XCTest and need macOS.
+The Xcode layer is **not compiled on this host** (no Xcode); the macOS GitHub
+Actions job compiles both the tvOS and iOS targets unsigned (run 40170681884),
+but it has never run on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver`
+and the Swift `ImpresarioHook` product build/test only to the extent of
+`swift test` under WSL here; `XCUIDriver`/`HookReceiver` depend on XCTest and
+need macOS + a paired device to execute.
 
 XCUITest cannot read another app's `AVPlayer`, decoder or FairPlay session.
 The stub `MediaViewController` therefore opens a local H.264/AAC video, a

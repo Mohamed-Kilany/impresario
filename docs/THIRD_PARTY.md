@@ -133,6 +133,14 @@ presence; it never downloads.
 |---|---|---|---|
 | Apple Mobile Device Service (usbmuxd, `127.0.0.1:27015`) | Windows | iOS/tvOS over USB; network pairing after setup | `impresario doctor` + docs (S-2) |
 
+## CI-only build tools (not shipped, not runtime dependencies)
+
+| Tool | License | Used for |
+|---|---|---|
+| XcodeGen | MIT | generate the Apple Xcode project from `agents/apple/project.yml` in the `Apple Xcode` workflow; the `.xcodeproj` is not committed |
+| GitHub-hosted `macos-15` runner + Xcode 16.4 | GitHub service terms / Apple SDK license | unsigned tvOS/iOS compile and artifact upload only; no LAN device access |
+| Swift 6.4.1 on Ubuntu | Apache-2.0 with Runtime Library Exception | build and unit-test the Swift package in the `apple` CI job |
+
 ## Reference implementations studied for protocol facts (never copied)
 
 | Project | License | Studied for | Spike |

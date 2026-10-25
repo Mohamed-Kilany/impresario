@@ -106,8 +106,10 @@ Windows is unverified here** and is the top Apple risk.
 ## S-4 · Tizen without `sdb`/`tizen`
 
 **Verdict: go** for a pure-Rust sdb client and `.wgt` re-signer, tested against
-byte fixtures and an in-process mock device; real-TV validation is hardware-gated
-(no Tizen TV on this host).
+byte fixtures and an in-process mock device. On 2026-10-25 a Tizen 9.0 TV
+completed the CNXN handshake, capability/DUID reads and `0 vd_applist`; it did
+not issue an AUTH challenge, so AUTH signing, install/re-sign and launch remain
+hardware-gated.
 
 **Transport (all verified first-hand from source):**
 
@@ -150,10 +152,11 @@ byte fixtures and an in-process mock device; real-TV validation is hardware-gate
   The Samsung repo layout differs from the research paths; our citations use the
   verified prefix `tizen-action-skills/`.
 
-**Open (hardware-gated):** whether the TV ever issues AUTH; whether a locally
-self-signed distributor certificate is accepted (Samsung's own tooling says real
-devices need a Samsung-issued, DUID-bound profile); exact `vd_appinstall`
-exit/progress semantics; the `capability` prefix across firmware generations.
+**Open (hardware-gated):** the AUTH branch (the 2026-10-25 TV connected without
+requesting it); whether a locally self-signed distributor certificate is
+accepted (Samsung's own tooling says real devices need a Samsung-issued,
+DUID-bound profile); exact `vd_appinstall` exit/progress semantics; the
+`capability` prefix across firmware generations.
 
 **Phase 6 outcome (2026-10-23, fixture-verified only).** The native
 `TizenTransport` implements the SDB handshake (CNXN plus RSA-SHA1 AUTH token,
@@ -165,8 +168,10 @@ the original package; a missing capability falls back to `9.0`. Install pushes
 instead of trusting `vd_appinstall` output; the unverified `0 rmfile` cleanup
 is not used. The fake-SDB replay covers AUTH, capabilities, DUID, list, sync
 push, install command dispatch and failure, debug launch, `was_kill` and
-forwarding. No TV has exercised any of these commands, and the exact
-`vd_appinstall` success text remains unknown (`HD-4`/`HD-7`).
+forwarding. The 2026-10-25 TV exercised the CNXN handshake, capability parsing,
+DUID and `0 vd_applist`; it did not issue AUTH and was not signed, installed,
+debug-launched or forwarded. The exact `vd_appinstall` success text remains
+unknown (`HD-4`/`HD-7`).
 
 ---
 

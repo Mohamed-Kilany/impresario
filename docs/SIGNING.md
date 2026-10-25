@@ -11,10 +11,11 @@ Verification vocabulary is deliberate:
   against generated keys, byte fixtures or a fake server;
 - **hardware-verified** means a real TV accepted the package and the app ran.
 
-The Tizen and webOS paths are fixture-verified. No Tizen or webOS TV was
-available for this phase, so none of the hardware steps below is claimed as
-hardware-verified. The pending checks are `HD-3`, `HD-4` and `HD-7` in
-`docs/STATUS.md`.
+The Tizen and webOS paths are fixture-verified. Tizen and webOS TVs became
+reachable on 2026-10-25, but the Tizen TV has no imported signing profile and
+the webOS TV's Developer Mode passphrase is missing, so none of the hardware
+steps below is claimed as hardware-verified. The pending checks are `HD-3`,
+`HD-4` and `HD-7` in `docs/STATUS.md`.
 
 ## Tizen
 
@@ -68,6 +69,11 @@ impresario sign tizen profile remove living-room
 
 `remove` deletes the profile directory and its keychain entries. The profile
 name is referenced from a device as `auth.profile: living-room`.
+
+The attached Tizen 9.0 TV reports DUID `P7CIFS3MU3C26` and requires signing.
+Its distributor certificate must carry that DUID in a
+`URN:tizen:deviceid=<DUID>` SAN; without such a profile, `device check` passes
+at the transport level but install is refused before upload (I-146).
 
 ### `.wgt` package and signatures
 

@@ -303,9 +303,11 @@ impl SdbConnection {
                         self.max_data = self.max_data.min(frame.arg1);
                     }
                     self.banner = String::from_utf8_lossy(&frame.payload).into_owned();
+                    tracing::debug!(banner = %self.banner, "SDB handshake complete");
                     return Ok(());
                 }
                 CMD_AUTH if frame.arg0 == AUTH_TOKEN => {
+                    tracing::debug!("SDB AUTH token requested");
                     let signature = sign_token(key, &frame.payload)?;
                     self.write_frame(&SdbFrame {
                         command: CMD_AUTH,
@@ -316,6 +318,7 @@ impl SdbConnection {
                     .await?;
                 }
                 CMD_AUTH if frame.arg0 == AUTH_PUBLICKEY => {
+                    tracing::debug!("SDB AUTH public-key requested");
                     if sent_public_key {
                         return Err(TizenError::Auth(
                             "the TV keeps requesting the public key; accept the prompt on the TV"
