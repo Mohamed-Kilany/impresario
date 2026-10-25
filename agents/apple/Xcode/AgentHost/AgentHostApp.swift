@@ -33,7 +33,11 @@ final class AgentHostViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        #if os(tvOS)
+        view.backgroundColor = .black
+        #else
         view.backgroundColor = .systemBackground
+        #endif
         view.accessibilityIdentifier = "agent_host_root"
 
         label.accessibilityIdentifier = "agent_host_status"
