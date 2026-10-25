@@ -88,7 +88,17 @@ enum SystemAlerts {
     /// Taps the affirmative button of `alert`: a known allow label, else the
     /// second button of a two-button alert whose first button is a known deny
     /// label (iOS puts [Don't Allow, Allow]). Returns the tapped label.
+    ///
+    /// tvOS has no touch input: `XCUIElement.tap()` is unavailable, and
+    /// guessing focus with `XCUIRemote` could select "Don't Allow" by mistake
+    /// (which is sticky). The one-time local-network prompt is therefore
+    /// granted by a human with the remote; the caller logs the buttons it saw.
     private static func tapAllow(in alert: XCUIElement) -> String? {
+        #if os(tvOS)
+        _ = alert
+        print("impresario agent: tvOS system alert needs one remote-key grant")
+        return nil
+        #else
         for label in allowLabels {
             let button = alert.buttons[label]
             if button.exists && button.isHittable {
@@ -105,5 +115,6 @@ enum SystemAlerts {
         }
         buttons[1].tap()
         return buttons[1].label
+        #endif
     }
 }
