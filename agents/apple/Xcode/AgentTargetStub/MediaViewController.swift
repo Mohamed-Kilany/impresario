@@ -19,9 +19,17 @@ final class MediaViewController: UIViewController {
     private var statusObservation: NSKeyValueObservation?
     private var hookTimer: Timer?
 
+    private static var bodyPointSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        #if os(tvOS)
+        view.backgroundColor = .black
+        #else
         view.backgroundColor = .systemBackground
+        #endif
         view.accessibilityIdentifier = "stub_media_root"
 
         let content = UIStackView()
@@ -32,7 +40,11 @@ final class MediaViewController: UIViewController {
 
         let title = UILabel()
         title.text = "Playback"
+        #if os(tvOS)
+        title.font = .preferredFont(forTextStyle: .title1)
+        #else
         title.font = .preferredFont(forTextStyle: .largeTitle)
+        #endif
         title.accessibilityIdentifier = "stub_media_title"
         content.addArrangedSubview(title)
 
@@ -46,11 +58,11 @@ final class MediaViewController: UIViewController {
 
         statusLabel.text = "state: Idle"
         statusLabel.accessibilityIdentifier = "stub_media_status"
-        statusLabel.font = .monospacedSystemFont(ofSize: UIFont.systemFontSize, weight: .regular)
+        statusLabel.font = .monospacedSystemFont(ofSize: Self.bodyPointSize, weight: .regular)
         content.addArrangedSubview(statusLabel)
         durationLabel.text = "time: 0 / 0"
         durationLabel.accessibilityIdentifier = "stub_media_time"
-        durationLabel.font = .monospacedSystemFont(ofSize: UIFont.systemFontSize, weight: .regular)
+        durationLabel.font = .monospacedSystemFont(ofSize: Self.bodyPointSize, weight: .regular)
         content.addArrangedSubview(durationLabel)
 
         content.addArrangedSubview(row([
@@ -70,7 +82,11 @@ final class MediaViewController: UIViewController {
         // A deliberately empty image slot: probes must not report a painted
         // image where there is none.
         let broken = UIImageView()
+        #if os(tvOS)
+        broken.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        #else
         broken.backgroundColor = .secondarySystemBackground
+        #endif
         broken.accessibilityIdentifier = "stub_media_broken"
         broken.accessibilityLabel = "missing image"
         broken.translatesAutoresizingMaskIntoConstraints = false

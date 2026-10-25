@@ -958,10 +958,7 @@ pub fn check_report_output(output: &Path) -> Option<Diagnostic> {
                     ),
                 ));
             }
-            Err(_) => match probe.parent() {
-                Some(parent) => probe = parent,
-                None => return None,
-            },
+            Err(_) => probe = probe.parent()?,
         }
     }
 }

@@ -21,7 +21,11 @@ final class StubViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        #if os(tvOS)
+        view.backgroundColor = .black
+        #else
         view.backgroundColor = .systemBackground
+        #endif
         view.accessibilityIdentifier = "stub_root"
 
         let content = UIStackView()
@@ -90,7 +94,11 @@ final class StubViewController: UIViewController {
 
     private func title(_ text: String, _ id: String) -> UILabel {
         let label = label(text, id)
+        #if os(tvOS)
+        label.font = .preferredFont(forTextStyle: .title1)
+        #else
         label.font = .preferredFont(forTextStyle: .largeTitle)
+        #endif
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
         return label
@@ -116,15 +124,19 @@ final class StubViewController: UIViewController {
         return label
     }
 
+    private static var bodyPointSize: CGFloat {
+        UIFont.preferredFont(forTextStyle: .body).pointSize
+    }
+
     private func counter() -> UILabel {
         let label = label("taps: 0", "stub_counter")
-        label.font = .monospacedDigitSystemFont(ofSize: UIFont.systemFontSize, weight: .regular)
+        label.font = .monospacedDigitSystemFont(ofSize: Self.bodyPointSize, weight: .regular)
         return label
     }
 
     private func echo() -> UILabel {
         let label = label("echo: ", "stub_echo")
-        label.font = .monospacedSystemFont(ofSize: UIFont.systemFontSize, weight: .regular)
+        label.font = .monospacedSystemFont(ofSize: Self.bodyPointSize, weight: .regular)
         return label
     }
 
@@ -197,7 +209,7 @@ final class StubViewController: UIViewController {
     private func keyLog() -> UILabel {
         keyLogLabel.text = "keys: "
         keyLogLabel.accessibilityIdentifier = "stub_key_log"
-        keyLogLabel.font = .monospacedSystemFont(ofSize: UIFont.systemFontSize, weight: .regular)
+        keyLogLabel.font = .monospacedSystemFont(ofSize: Self.bodyPointSize, weight: .regular)
         return keyLogLabel
     }
 

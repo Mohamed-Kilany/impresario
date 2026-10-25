@@ -2350,10 +2350,7 @@ fn parse_stage(
     let mut timeout_span: Option<Span> = None;
     let mut scenes: Vec<SceneBlock> = Vec::new();
 
-    loop {
-        let Some(line) = lines.get(start + consumed) else {
-            break;
-        };
+    while let Some(line) = lines.get(start + consumed) {
         if line.depth == 0 {
             break;
         }
@@ -2501,10 +2498,7 @@ fn parse_scene_block(
 
     let mut steps: Vec<Step> = Vec::new();
     let mut saw_step_line = false;
-    loop {
-        let Some(line) = lines.get(start + consumed) else {
-            break;
-        };
+    while let Some(line) = lines.get(start + consumed) {
         if line.depth <= 1 {
             break;
         }

@@ -76,6 +76,11 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          # Recent SDK releases no longer publish the legacy `tools` package;
+          # the action's default `tools platform-tools` then fails. Install
+          # only what Gradle needs for compileSdk 36.
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses > /dev/null || true
       - name: Unit tests
@@ -91,7 +96,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: swift-actions/setup-swift@v2
         with:
-          swift-version: "6.4.1"
+          # Pin the major/minor line; the package is tools-version 5.10 and
+          # builds on any supported Swift 6.x. (The exact 6.4.1 toolchain used
+          # in WSL is not published by this action.)
+          swift-version: "6.2"
       # SwiftPM on Linux links the corelibs against zlib (the same dependency
       # the WSL build needed, docs/DEVICES.md §3.1).
       - name: Toolchain dependencies
