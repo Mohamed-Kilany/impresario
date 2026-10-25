@@ -1668,19 +1668,23 @@ fn validate_connection(
                     );
                 }
             }
+            // A tvOS *simulator* shares the host network stack and is reached
+            // on loopback by AppleTransport, exactly like an iOS simulator.
+            // Only a physical Apple TV needs the runner's LAN address.
             if platform == Platform::Tvos
                 && transport.unwrap_or(TransportKind::Auto) != TransportKind::Network
                 && endpoint.is_none()
+                && !udid.is_some_and(simulator_udid)
             {
                 diagnostics.push(
                     Diagnostic::error(
                         Code::CfgMissingField,
-                        "tvOS over USB needs connection.endpoint (agent host:port)",
+                        "a physical tvOS device needs connection.endpoint (agent host:port)",
                     )
                     .with_span(key_span("endpoint"))
                     .with_help(
                         "Bonjour discovery is not implemented (docs/STATUS.md); use transport \
-                         'network' with discovery or set connection.endpoint",
+                         'network' with discovery, set connection.endpoint, or use a simulator UUID",
                     ),
                 );
             }
@@ -2095,16 +2099,30 @@ pub fn valid_udid(text: &str) -> bool {
     match segments.as_slice() {
         [a, b] => a.len() == 8 && b.len() == 16 && all_hex(a) && all_hex(b),
         [only] => only.len() == 40 && all_hex(only),
-        [a, b, c, d, e] => {
-            a.len() == 8
+        _ => simulator_udid(text),
+    }
+}
+
+/// An RFC 4122 UUID, which is how CoreSimulator names simulators.
+///
+/// Physical iOS/tvOS UDIDs use the 8-16 or 40-hex forms above, so this
+/// distinction is how config and transport decide whether loopback applies.
+#[must_use]
+pub fn simulator_udid(text: &str) -> bool {
+    fn all_hex(s: &str) -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())
+    }
+    let segments: Vec<&str> = text.split('-').collect();
+    matches!(
+        segments.as_slice(),
+        [a, b, c, d, e]
+            if a.len() == 8
                 && b.len() == 4
                 && c.len() == 4
                 && d.len() == 4
                 && e.len() == 12
                 && [a, b, c, d, e].iter().all(|s| all_hex(s))
-        }
-        _ => false,
-    }
+    )
 }
 
 #[cfg(test)]
@@ -2423,6 +2441,7 @@ devices:
         let errors: Vec<_> = outcome.diagnostics.errors().collect();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("connection.endpoint"));
+        assert!(errors[0].message.contains("physical tvOS"));
         assert!(errors[0].help.as_deref().unwrap_or("").contains("Bonjour"));
 
         let network = "\
@@ -2437,6 +2456,20 @@ devices:
         assert!(
             !outcome.diagnostics.has_errors(),
             "{:?}",
+            outcome.diagnostics
+        );
+
+        let simulator = "\
+devices:
+  - name: apple_tv_sim
+    platform: tvos
+    connection:
+      udid: 9E3C7A6D-0B4B-4F1A-9C7E-2A6D5B8F4E1C
+";
+        let outcome = parse_devices(simulator, devices_path());
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "a tvOS simulator UUID must use loopback: {:?}",
             outcome.diagnostics
         );
     }

@@ -12,10 +12,12 @@ Verification vocabulary is deliberate:
 - **hardware-verified** means a real TV accepted the package and the app ran.
 
 The Tizen and webOS paths are fixture-verified. Tizen and webOS TVs became
-reachable on 2026-10-25, but the Tizen TV has no imported signing profile and
-the webOS TV's Developer Mode passphrase is missing, so none of the hardware
-steps below is claimed as hardware-verified. The pending checks are `HD-3`,
-`HD-4` and `HD-7` in `docs/STATUS.md`.
+reachable on 2026-10-25. The Tizen TV accepted the SDB upload and install
+command but rejected a temporary self-signed certificate chain at install; a
+Samsung-issued profile is still missing. The webOS TV's Developer Mode
+passphrase is missing. None of the hardware steps below is claimed as
+hardware-verified; the pending checks are `HD-3`, `HD-4` and `HD-7` in
+`docs/STATUS.md`.
 
 ## Tizen
 
@@ -72,8 +74,11 @@ name is referenced from a device as `auth.profile: living-room`.
 
 The attached Tizen 9.0 TV reports DUID `P7CIFS3MU3C26` and requires signing.
 Its distributor certificate must carry that DUID in a
-`URN:tizen:deviceid=<DUID>` SAN; without such a profile, `device check` passes
-at the transport level but install is refused before upload (I-146).
+`URN:tizen:deviceid=<DUID>` SAN. A self-signed profile with the right DUID
+passes `device check` and reaches the TV's installer, but the TV rejects the
+chain with `[118, -12] Invalid certificate chain with certificate in
+signature`; only a Samsung-issued author/distributor profile can install
+(I-146, I-147).
 
 ### `.wgt` package and signatures
 

@@ -2331,13 +2331,17 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
 - On 2026-10-25 a Samsung Tizen TV (`192.168.93.37`), an LG webOS TV
   (`192.168.93.116`) and an Apple TV (`192.168.93.19`) are reachable. Tizen
   completed `device check` over native SDB (handshake without an AUTH
-  challenge, capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0); the LG
-  key server was fetched but SSH
-  authentication lacks the Developer Mode passphrase; Apple identity is
-  readable over AirPlay (`AppleTV5,3`, build `23J582`). No install, launch,
-  playback or probe acceptance has run on these TVs. The HD ledger
-  (`HD-1`...`HD-8`, `I-133`) stays deferred until it does, and reachability
-  alone is never reported as hardware verification.
+  challenge, capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0). A
+  temporary self-signed profile then exercised the real install path: the TV
+  accepted the per-WRTE-acknowledged upload and `0 vd_appinstall` for package
+  `Impresario`, reached certificate validation, and rejected the chain
+  (`[118, -12] Invalid certificate chain`), so a Samsung-issued profile is
+  still required. The LG key server was fetched but SSH authentication lacks
+  the Developer Mode passphrase; Apple identity is readable over AirPlay
+  (`AppleTV5,3`, build `23J582`). No app has been installed, launched or
+  played, and no probe has run on these TVs. The HD ledger (`HD-1`...`HD-8`,
+  `I-133`) stays deferred until it does, and reachability alone is never
+  reported as hardware verification.
 - No local macOS/Xcode host is attached. The GitHub `macos-15` job builds the
   Xcode targets unsigned but cannot reach the LAN Apple TV; device install and
   XCUITest execution remain open. WSL Swift builds cover only

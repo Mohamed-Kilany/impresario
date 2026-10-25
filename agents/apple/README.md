@@ -40,6 +40,48 @@ Both run on Linux and macOS. `swift test` starts a real grpc-swift server on a
 loopback port and speaks the full protocol (handshake, commands, logs,
 screenshots, shutdown), so the wire layer is verified without any Apple device.
 
+### 1.1 The Xcode tests from Windows or Linux (no local Mac)
+
+Apple only ships the iOS/iPadOS/tvOS simulator and XCUITest runtime for macOS,
+so the test host is a **GitHub-hosted macOS runner**, not the developer's
+machine. Trigger it with `gh`; nothing is built or run locally except the
+download of the report:
+
+```powershell
+# Windows PowerShell
+pwsh scripts/apple-tests.ps1                 # iPhone + iPad + Apple TV
+pwsh scripts/apple-tests.ps1 -Platform tvos
+```
+
+```bash
+# Linux / macOS
+scripts/apple-tests.sh                       # iPhone + iPad + Apple TV
+scripts/apple-tests.sh ipados
+```
+
+The workflow is `.github/workflows/apple-simulator.yml` (manual dispatch input
+`platforms=all|ios|ipados|tvos`). For each family it:
+
+1. boots the newest available simulator (`scripts/apple-simulator.py`);
+2. builds `AgentTargetStub-*` and `AgentUITests-*` for that simulator;
+3. installs the fixture and runs `SimulatorSmokeTests` with the real
+   `XCUIDriver` (launch, accessibility, screenshot, touch on iOS/iPadOS and the
+   in-app hook media proof);
+4. builds the Rust master and runs `agents/apple/ci/plays/apple-smoke.play`
+   through `AgentRunnerTests/testServe` on the simulator, using the same
+   `AppleTransport` path a physical device uses;
+5. uploads `*-smoke.log`, `*-e2e.log`, `ci/reports/**` and the `.xcresult`.
+
+`scripts/apple-tests.ps1`/`.sh` watch the run, download the artifacts into
+`target/apple-simulator/` and print the end-to-end log. They need only GitHub
+CLI authentication; no Apple hardware, developer account or signing team.
+
+**Physical Apple TV is different.** Installing and running XCUITest on a real
+tvOS device still requires a Mac with Xcode on the same LAN (section 6); a
+GitHub-hosted runner cannot route to a home LAN and Apple provides no
+Windows/Linux device transport. Simulator coverage closes the code/test gap,
+not the HD-1 hardware item.
+
 Dependencies are pinned (`Package.resolved` is committed):
 
 | Package | Pin |
@@ -238,8 +280,10 @@ connect to `agent_address`.
 
 ## 9. Verification status
 
-`swift build`/`swift test` are green on Linux (this repository's CI-less
-environment). The Xcode targets cannot be compiled on Windows: they are written
-against the documented XCTest API and must be built once on a macOS host
-(`docs/STATUS.md` lists this as an open gap, together with the Phase-0 device
-spike).
+`swift build`/`swift test` run on Linux (the `CI` workflow). The Xcode targets
+are compiled **and executed** on iOS, iPadOS and tvOS simulators by
+`Apple Simulator Tests`; see section 1.1. The workflow is triggerable from
+Windows/Linux and uploads the XCUITest and Impresario-play evidence. None of
+this is a real-device claim: physical Apple TV installation, local-network
+permission and the remote pairing path remain on the macOS/LAN checklist
+(`docs/STATUS.md` HD-1 and `docs/DEVICES.md` section 3.2).

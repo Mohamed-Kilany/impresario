@@ -16,7 +16,12 @@ agents/apple/.build/
 agents/apple/**/xcuserdata/
 agents/apple/**/DerivedData/
 agents/apple/.swiftpm/
+agents/apple/ImpresarioApple.xcodeproj/
+agents/apple/build-*/
 *.xcuserstate
+*.xcresult
+agents/apple/ci/impresario.devices.config
+agents/apple/ci/reports/
 
 # Node / editors
 editors/vscode/node_modules/
@@ -27,6 +32,10 @@ editors/vscode/.vscode-test/
 # Reports and run artefacts
 /reports/
 docs/status-logs/
+
+# Python helper caches
+__pycache__/
+*.pyc
 
 # OS noise
 .DS_Store

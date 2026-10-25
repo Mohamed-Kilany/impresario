@@ -102,6 +102,8 @@ pub struct ProfileRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WgtInfo {
     pub id: String,
+    /// The `<tizen:application package=...>` id used by `0 vd_appinstall`.
+    pub package: String,
     pub version: String,
     pub entry_count: usize,
 }
@@ -333,15 +335,16 @@ fn inspect_wgt_bytes(bytes: &[u8]) -> Result<WgtInfo, SignError> {
         }
     }
     let config = config.ok_or_else(|| SignError::Package("config.xml is missing".to_string()))?;
-    let (id, version) = parse_widget_id(&config)?;
+    let (id, package, version) = parse_widget_id(&config)?;
     Ok(WgtInfo {
         id,
+        package,
         version,
         entry_count,
     })
 }
 
-fn parse_widget_id(config: &str) -> Result<(String, String), SignError> {
+fn parse_widget_id(config: &str) -> Result<(String, String, String), SignError> {
     let doc = roxmltree::Document::parse(config)
         .map_err(|error| SignError::Config(format!("config.xml: {error}")))?;
     let root = doc.root_element();
@@ -354,8 +357,26 @@ fn parse_widget_id(config: &str) -> Result<(String, String), SignError> {
         .attribute("id")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| SignError::Config("config.xml has no widget id".to_string()))?;
+    // Tizen installs by package id, which is the `package` attribute on
+    // `<tizen:application>`. Older widgets may put it on the root element; if
+    // neither is present, the package id is the app id before the first dot.
+    let package = root
+        .attribute("package")
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            doc.descendants()
+                .find(|node| node.has_tag_name(("http://tizen.org/ns/widgets", "application")))
+                .and_then(|node| node.attribute("package"))
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| id.rsplit_once('.').map(|(package, _)| package.to_string()))
+        .ok_or_else(|| {
+            SignError::Config("config.xml has no Tizen package id (app id has no dot)".to_string())
+        })?;
     let version = root.attribute("version").unwrap_or("0.0.0");
-    Ok((id.to_string(), version.to_string()))
+    Ok((id.to_string(), package, version.to_string()))
 }
 
 /// Build a deterministic unsigned `.wgt` from a packaged web-app directory.
@@ -365,7 +386,7 @@ pub fn build_wgt(source: &Path, output: &Path) -> Result<WgtInfo, SignError> {
     let config_path = source.join("config.xml");
     let config = std::fs::read_to_string(&config_path)
         .map_err(|error| SignError::Package(format!("read {}: {error}", config_path.display())))?;
-    let (id, version) = parse_widget_id(&config)?;
+    let (id, package, version) = parse_widget_id(&config)?;
     let mut files = Vec::new();
     collect_files(source, source, &mut files)?;
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -386,6 +407,7 @@ pub fn build_wgt(source: &Path, output: &Path) -> Result<WgtInfo, SignError> {
     write_atomic(output, &bytes)?;
     Ok(WgtInfo {
         id,
+        package,
         version,
         entry_count: entries.len(),
     })
@@ -1231,13 +1253,25 @@ mod tests {
     }
 
     #[test]
-    fn widget_id_and_version_are_required() {
-        let (id, version) = parse_widget_id(
+    fn widget_id_package_and_version_are_parsed() {
+        let (id, package, version) = parse_widget_id(
             r#"<widget xmlns="http://www.w3.org/ns/widgets" id="abc.App" version="1.2.3"/>"#,
         )
         .expect("valid widget");
         assert_eq!(id, "abc.App");
+        assert_eq!(package, "abc");
         assert_eq!(version, "1.2.3");
+
+        let (_, package, _) = parse_widget_id(
+            r#"<widget xmlns="http://www.w3.org/ns/widgets"
+                       xmlns:tizen="http://tizen.org/ns/widgets"
+                       id="abc.App" version="1.2.3">
+                 <tizen:application id="abc.App" package="abcPackage"/>
+               </widget>"#,
+        )
+        .expect("valid Tizen widget");
+        assert_eq!(package, "abcPackage");
+
         assert!(parse_widget_id("<widget version=\"1\"/>").is_err());
     }
 

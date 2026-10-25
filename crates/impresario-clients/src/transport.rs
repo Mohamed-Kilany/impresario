@@ -1118,8 +1118,8 @@ fn write_cache(path: &Path, map: &BTreeMap<String, String>) {
 // ---------------------------------------------------------------------------
 
 /// Apple-family transport: macOS hosts only. iOS devices go through
-/// `iproxy`; iOS simulators are reached directly on loopback; tvOS uses the
-/// configured `agent_address` (network).
+/// `iproxy`; iOS and tvOS simulators are reached directly on loopback; a real
+/// tvOS uses the configured `agent_address` (network).
 pub struct AppleTransport {
     runner: Option<ManagedChild>,
     iproxy: Option<ManagedChild>,
@@ -1302,11 +1302,21 @@ impl DeviceTransport for AppleTransport {
         let udid = device.target_endpoint();
         let agent_port = device.effective_agent_port().unwrap_or(APPLE_AGENT_PORT);
         match device.platform {
+            Platform::Tvos if is_simulator_udid(&udid) => {
+                // Xcode runs tvOS UI tests in the simulator exactly like iOS:
+                // the simulator shares the host network stack, so the runner
+                // is reachable on loopback and needs no `agent_address`.
+                self.start_xctestrun(&udid, device.platform)?;
+                let address = format!("127.0.0.1:{agent_port}");
+                wait_for_port(&address, start_timeout()).await?;
+                self.endpoint = Some(address.clone());
+                Ok(Endpoint::new(address))
+            }
             Platform::Tvos => {
                 let address = device.connection.endpoint.as_deref().ok_or_else(|| {
                     TransportError::DeviceUnavailable(format!(
                         "tvOS device '{}' requires connection.endpoint (Bonjour discovery is not \
-                         implemented, I-09)",
+                         implemented, I-09); a tvOS simulator UUID uses loopback instead",
                         device.name
                     ))
                 })?;
@@ -1396,11 +1406,7 @@ impl DeviceTransport for AppleTransport {
 /// `XXXXXXXX-XXXXXXXXXXXXXXXX`.
 #[must_use]
 pub fn is_simulator_udid(udid: &str) -> bool {
-    let format = udid.split('-').map(str::len).collect::<Vec<_>>();
-    if format == [8, 4, 4, 4, 12] {
-        return udid.chars().all(|c| c == '-' || c.is_ascii_hexdigit());
-    }
-    false
+    impresario_core::config::simulator_udid(udid)
 }
 
 #[cfg(test)]

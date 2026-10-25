@@ -177,6 +177,10 @@ targets:
         CFBundleDisplayName: Impresario Stub
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
+        # The opt-in hook posts JSON to 127.0.0.1 (D-41); keep ATS enabled
+        # for everything else and allow only local traffic.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
 
   AgentTargetStub-tvOS:
     type: application
@@ -191,6 +195,8 @@ targets:
       path: Xcode/AgentTargetStub/Info-tvOS.plist
       properties:
         CFBundleDisplayName: Impresario Stub
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
 
 schemes:
   AgentUITests-iOS:

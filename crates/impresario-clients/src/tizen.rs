@@ -440,6 +440,11 @@ impl SdbConnection {
     }
 
     /// Push one local file through the sync service.
+    ///
+    /// Every WRTE is acknowledged by the TV, and each frame must fit the
+    /// negotiated `max_data`. Sending unacknowledged or oversized sync frames
+    /// makes sdbd drop the connection (observed on a Tizen 9.0 TV), so the
+    /// SEND/DATA/DONE stream goes through `send_wrte`.
     pub async fn push(self, local: &Path, remote: &str) -> Result<(), TizenError> {
         let bytes = std::fs::read(local)?;
         let mut channel = self.open("sync:").await?;
@@ -447,21 +452,13 @@ impl SdbConnection {
         header.extend_from_slice(b"SEND");
         header.extend_from_slice(&(remote.len() as u32).to_le_bytes());
         header.extend_from_slice(remote.as_bytes());
-        channel
-            .connection
-            .write_frame(&SdbFrame {
-                command: CMD_WRTE,
-                arg0: channel.local,
-                arg1: channel.remote,
-                payload: header,
-            })
-            .await?;
+        channel.send_wrte(&header).await?;
         for chunk in bytes.chunks(64 * 1024) {
             let mut payload = Vec::with_capacity(8 + chunk.len());
             payload.extend_from_slice(b"DATA");
             payload.extend_from_slice(&(chunk.len() as u32).to_le_bytes());
             payload.extend_from_slice(chunk);
-            channel.stream_write(&payload).await?;
+            channel.send_wrte(&payload).await?;
         }
         let modified = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -470,7 +467,7 @@ impl SdbConnection {
         let mut done = Vec::with_capacity(8);
         done.extend_from_slice(b"DONE");
         done.extend_from_slice(&modified.to_le_bytes());
-        channel.stream_write(&done).await?;
+        channel.send_wrte(&done).await?;
         let response = channel.read_sync_response().await?;
         match response.0.as_str() {
             "OKAY" => Ok(()),
@@ -533,19 +530,6 @@ impl SdbChannel {
             }
         }
         Ok(())
-    }
-
-    async fn stream_write(&mut self, payload: &[u8]) -> Result<(), TizenError> {
-        // Sync frames are streamed; the device acknowledges the SEND header,
-        // DATA frames carry their own 8-byte headers and need no per-frame
-        // OKAY. OFF requires an OKAY for every WRTE, so use the raw path.
-        let frame = SdbFrame {
-            command: CMD_WRTE,
-            arg0: self.local,
-            arg1: self.remote,
-            payload: payload.to_vec(),
-        };
-        self.connection.write_frame(&frame).await
     }
 
     async fn read_frame(&mut self) -> Result<SdbFrame, TizenError> {
@@ -872,31 +856,45 @@ impl TizenTransport {
         self.shell("0 vd_applist").await
     }
 
-    async fn install(&self, app_id: &str, package: &Path, staging: &str) -> Result<(), TizenError> {
+    async fn install(
+        &self,
+        package_id: &str,
+        app_id: &str,
+        package: &Path,
+        staging: &str,
+    ) -> Result<(), TizenError> {
         let bytes = std::fs::read(package)?;
-        // The reference installer always stages `app.wgt`; using a fixed,
-        // sanitized name keeps the TV shell command free of local file names.
-        let remote = format!("{}/app.wgt", staging.trim_end_matches('/'));
+        // `0 vd_appinstall` refuses to overwrite a staged file and reports
+        // `download failed[16]`; a fresh, shell-safe name per attempt avoids
+        // that. The reference client does not delete its staged package, and
+        // `0 rmfile` is not a verified verb here.
+        let remote = format!(
+            "{}/impresario-{}-{}.wgt",
+            staging.trim_end_matches('/'),
+            std::process::id(),
+            unix_ms_now()
+        );
         let host = self.host.as_deref().ok_or(TizenError::NoHost)?;
         let home = self
             .home
             .as_ref()
             .ok_or_else(|| TizenError::Protocol("home not initialised".into()))?;
         let connection = SdbConnection::connect(host, self.port, home).await?;
+        tracing::debug!(remote = %remote, bytes = bytes.len(), "Tizen install: pushing");
         connection.push(package, &remote).await?;
+        tracing::debug!("Tizen install: push acknowledged");
         self.push_log(
             LogLevel::Info,
             format!("pushed {} bytes to {remote}", bytes.len()),
         );
+        // `vd_appinstall` takes the package id, not the dotted app id.
         let reply = self
-            .shell(&format!("0 vd_appinstall {app_id} {remote}"))
+            .shell(&format!("0 vd_appinstall {package_id} {remote}"))
             .await?;
         self.push_log(LogLevel::Info, format!("vd_appinstall: {}", reply.trim()));
         // The TV has no reliable exit status. Treat explicit failure text as a
-        // failure and, otherwise, require the package id to appear in the app
-        // list before reporting success. The reference does not delete its
-        // remote package, and `0 rmfile` is not a verified verb; leave it in
-        // the SDK staging directory so the next run can reuse it.
+        // failure and, otherwise, require the app to appear in the app list
+        // before reporting success.
         if reply_reports_failure(&reply) {
             return Err(TizenError::Command {
                 command: "0 vd_appinstall".to_string(),
@@ -906,10 +904,7 @@ impl TizenTransport {
         let deadline = tokio::time::Instant::now() + INSTALL_TIMEOUT;
         loop {
             let list = self.app_list().await.unwrap_or_default();
-            if list.lines().any(|line| {
-                line.split_whitespace()
-                    .any(|token| token.trim_matches(['"', '\'']) == app_id)
-            }) {
+            if app_list_contains(&list, app_id, package_id) {
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1159,8 +1154,10 @@ impl DeviceTransport for TizenTransport {
                 }
             ),
         );
+        tracing::debug!("Tizen prepare: capabilities read");
 
         let endpoint = self.connector.prepare(device, Some(app)).await?;
+        tracing::debug!("Tizen prepare: connector ready");
 
         if let Some(package) = entry.package.as_deref().filter(|value| !value.is_empty()) {
             let package = Path::new(package);
@@ -1170,6 +1167,10 @@ impl DeviceTransport for TizenTransport {
                     package.display()
                 )));
             }
+            let package_id = crate::tizen_sign::inspect_wgt(package)
+                .map_err(|error| TransportError::Transport(error.to_string()))?
+                .package;
+            self.push_log(LogLevel::Info, format!("package id {package_id}"));
             if requires_signing {
                 let profile = device
                     .auth
@@ -1202,7 +1203,8 @@ impl DeviceTransport for TizenTransport {
                     LogLevel::Info,
                     format!("signed package cached at {}", signed.display()),
                 );
-                self.install(&app_id, &signed, &staging)
+                tracing::debug!(package = %signed.display(), "Tizen prepare: installing signed package");
+                self.install(&package_id, &app_id, &signed, &staging)
                     .await
                     .map_err(|error| {
                         self.push_log(LogLevel::Error, error.to_string());
@@ -1216,7 +1218,7 @@ impl DeviceTransport for TizenTransport {
                         package.display()
                     ),
                 );
-                self.install(&app_id, package, &staging)
+                self.install(&package_id, &app_id, package, &staging)
                     .await
                     .map_err(|error| {
                         self.push_log(LogLevel::Error, error.to_string());
@@ -1224,6 +1226,7 @@ impl DeviceTransport for TizenTransport {
                     })?;
             }
             self.push_log(LogLevel::Info, format!("installed {app_id}"));
+            tracing::debug!("Tizen prepare: install verified");
         }
 
         // A normal launch is enough for CDP on TVs where the inspector port is
@@ -1349,6 +1352,45 @@ fn reply_reports_failure(reply: &str) -> bool {
     lowered.contains("fail") || lowered.contains("error") || lowered.contains("not exist")
 }
 
+/// Match an installed app in the TV's `0 vd_applist` output.
+///
+/// A Tizen 9.0 TV prints labelled fields such as
+/// `--------------app_tizen_id =Impresario.TV-------------`; fake/replay
+/// devices return one id per line. Match either shape exactly.
+fn app_list_contains(list: &str, app_id: &str, package_id: &str) -> bool {
+    let field = |line: &str, key: &str| -> Option<String> {
+        let (name, value) = line.split_once('=')?;
+        (name.trim_matches('-').trim() == key).then(|| {
+            value
+                .trim_matches(|character: char| {
+                    character == '-'
+                        || character == '"'
+                        || character == '\''
+                        || character.is_whitespace()
+                })
+                .to_string()
+        })
+    };
+    let mut structured = false;
+    for line in list.lines() {
+        for (key, wanted) in [("app_tizen_id", app_id), ("app_package_name", package_id)] {
+            if let Some(value) = field(line, key) {
+                structured = true;
+                if value == wanted {
+                    return true;
+                }
+            }
+        }
+    }
+    if structured {
+        return false;
+    }
+    list.lines().any(|line| {
+        line.split_whitespace()
+            .any(|token| token.trim_matches(['"', '\'']) == app_id)
+    })
+}
+
 pub fn parse_debug_port(reply: &str) -> Option<u16> {
     let lowered = reply.to_ascii_lowercase();
     let index = lowered.find("port")? + 4;
@@ -1414,6 +1456,26 @@ mod tests {
         );
         assert_eq!(parse_debug_port("port=39819"), Some(39819));
         assert_eq!(parse_debug_port("nothing"), None);
+    }
+
+    #[test]
+    fn app_list_matches_both_tv_and_replay_shapes() {
+        let real = "--------------app_tizen_id                      =Impresario.TV-------------\n\
+                    --------------app_package_name                  =Impresario-------------";
+        assert!(app_list_contains(real, "Impresario.TV", "Impresario"));
+        assert!(app_list_contains(real, "Other.TV", "Impresario"));
+        assert!(!app_list_contains(real, "Other.TV", "Other"));
+
+        assert!(app_list_contains(
+            "com.example.test\ncom.example.other\n",
+            "com.example.test",
+            "com.example"
+        ));
+        assert!(!app_list_contains(
+            "com.example.test\n",
+            "com.example.tes",
+            "com.example"
+        ));
     }
 
     #[test]
@@ -1637,6 +1699,8 @@ mod tests {
                 }
                 CMD_WRTE => {
                     let payload = &frame.payload;
+                    let local = frame.arg0;
+                    let remote = frame.arg1;
                     if payload.starts_with(b"SEND") && payload.len() >= 8 {
                         let mut length = [0u8; 4];
                         length.copy_from_slice(&payload[4..8]);
@@ -1651,7 +1715,20 @@ mod tests {
                         if let Some(data) = payload.get(8..8 + length) {
                             sync_data.extend_from_slice(data);
                         }
-                    } else if payload.starts_with(b"DONE") {
+                    }
+                    // Every WRTE is acknowledged, including SEND, DATA and
+                    // DONE; a real TV drops the connection otherwise.
+                    write_test_frame(
+                        &mut stream,
+                        &SdbFrame {
+                            command: CMD_OKAY,
+                            arg0: remote,
+                            arg1: local,
+                            payload: Vec::new(),
+                        },
+                    )
+                    .await?;
+                    if payload.starts_with(b"DONE") {
                         if let Some(path) = sync_path.take() {
                             state
                                 .uploads
@@ -1659,8 +1736,6 @@ mod tests {
                                 .await
                                 .insert(path, std::mem::take(&mut sync_data));
                         }
-                        let local = frame.arg0;
-                        let remote = frame.arg1;
                         let mut response = b"OKAY".to_vec();
                         response.extend_from_slice(&0u32.to_le_bytes());
                         send_test_channel(&mut stream, local, remote, response).await?;
@@ -1726,7 +1801,12 @@ mod tests {
             "the fixture starts without the app"
         );
         transport
-            .install("com.example.test", &package, capabilities.sdk_toolpath())
+            .install(
+                "com.example.test",
+                "com.example.test",
+                &package,
+                capabilities.sdk_toolpath(),
+            )
             .await?;
         assert!(transport
             .shell("0 vd_applist")
@@ -1737,16 +1817,20 @@ mod tests {
             transport.shell("0 was_kill com.example.test").await?.trim(),
             "killed"
         );
-        assert_eq!(
-            server
-                .state
-                .uploads
-                .lock()
-                .await
-                .get("/home/owner/share/tmp/sdk_tools/tmp/app.wgt")
-                .map(Vec::as_slice),
-            Some(b"fake-wgt".as_slice())
+        let uploads = server.state.uploads.lock().await;
+        assert_eq!(uploads.len(), 1);
+        let (remote, uploaded) = uploads.iter().next().expect("one upload");
+        assert!(
+            remote.starts_with("/home/owner/share/tmp/sdk_tools/tmp/impresario-"),
+            "unexpected staging path {remote}"
         );
+        assert!(remote.ends_with(".wgt"));
+        assert!(
+            !remote.contains(' '),
+            "Tizen rejects staging names with spaces"
+        );
+        assert_eq!(uploaded.as_slice(), b"fake-wgt");
+        drop(uploads);
 
         let (local_port, forward) = transport.create_forward(48105).await?;
         let mut stream = TcpStream::connect(("127.0.0.1", local_port)).await?;
@@ -1758,14 +1842,21 @@ mod tests {
         let services = server.state.services.lock().await.clone();
         assert!(services.iter().any(|service| service == "shell:0 getduid"));
         assert!(services.iter().any(|service| {
-            service == "shell:0 vd_appinstall com.example.test /home/owner/share/tmp/sdk_tools/tmp/app.wgt"
+            service.starts_with(
+                "shell:0 vd_appinstall com.example.test /home/owner/share/tmp/sdk_tools/tmp/impresario-",
+            ) && service.ends_with(".wgt")
         }));
         assert!(services.iter().any(|service| service == "tcp:48105"));
         assert!(server.state.auths.load(Ordering::SeqCst) >= 4);
 
         server.state.fail_install.store(true, Ordering::SeqCst);
         let error = transport
-            .install("com.example.fail", &package, capabilities.sdk_toolpath())
+            .install(
+                "com.example.fail",
+                "com.example.fail",
+                &package,
+                capabilities.sdk_toolpath(),
+            )
             .await
             .expect_err("a failed install reply must not be reported as success");
         assert!(matches!(error, TizenError::Command { .. }));

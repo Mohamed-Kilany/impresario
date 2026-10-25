@@ -108,8 +108,10 @@ Windows is unverified here** and is the top Apple risk.
 **Verdict: go** for a pure-Rust sdb client and `.wgt` re-signer, tested against
 byte fixtures and an in-process mock device. On 2026-10-25 a Tizen 9.0 TV
 completed the CNXN handshake, capability/DUID reads and `0 vd_applist`; it did
-not issue an AUTH challenge, so AUTH signing, install/re-sign and launch remain
-hardware-gated.
+not issue an AUTH challenge. The TV also accepted the sync upload and
+`0 vd_appinstall` command, but rejected a self-signed package at certificate
+validation (`[118, -12]`), so AUTH signing, a successful install and launch
+remain hardware-gated on a Samsung-issued profile.
 
 **Transport (all verified first-hand from source):**
 
@@ -137,11 +139,12 @@ hardware-gated.
 
 **Device operations (verified from `TizenAppInstallerCli/TizenInstaller.cs`):**
 
-- Install = push to `{sdk_toolpath}/app.wgt` (default
+- Install = push to `{sdk_toolpath}/<name>.wgt` (default
   `/home/owner/share/tmp/sdk_tools/tmp`) then
   `shell "0 vd_appinstall <packageId> <remotePath>"`; progress lines contain
-  `[NN]`. Uninstall `0 vd_appuninstall <id>`, list `0 vd_applist`,
-  DUID `shell "0 getduid"`.
+  `[NN]`. The TV refuses to overwrite a staged file (`download failed[16]`), so
+  a fresh space-free name is required per attempt. Uninstall
+  `0 vd_appuninstall <id>`, list `0 vd_applist`, DUID `shell "0 getduid"`.
 - The reference installer re-signs **only when `platform_version >= 7.0`** and
   installs older packages as-is. This matches community reports
   (TizenBrew/Samsung tooling) and is the reason our build step must be
@@ -153,10 +156,10 @@ hardware-gated.
   verified prefix `tizen-action-skills/`.
 
 **Open (hardware-gated):** the AUTH branch (the 2026-10-25 TV connected without
-requesting it); whether a locally self-signed distributor certificate is
-accepted (Samsung's own tooling says real devices need a Samsung-issued,
-DUID-bound profile); exact `vd_appinstall` exit/progress semantics; the
-`capability` prefix across firmware generations.
+requesting it); successful installation with a Samsung-issued, DUID-bound
+profile (the self-signed chain was rejected at certificate validation); exact
+success text for `vd_appinstall`; launch and CDP forwarding; the `capability`
+prefix across firmware generations.
 
 **Phase 6 outcome (2026-10-23, fixture-verified only).** The native
 `TizenTransport` implements the SDB handshake (CNXN plus RSA-SHA1 AUTH token,
@@ -164,14 +167,18 @@ Android public-key blob), capability parsing with the 2-byte length prefix,
 DUID/app-list/shell/sync-push services, debug launch and `tcp:` forwarding.
 `platform_version >= 7.0` selects the signing path and older versions install
 the original package; a missing capability falls back to `9.0`. Install pushes
-`app.wgt` to `sdk_toolpath` and then **verifies through `0 vd_applist`**
+to a unique, space-free `impresario-<pid>-<ms>.wgt` under `sdk_toolpath`, with
+an OKAY for every WRTE and frames bounded by the negotiated `max_data`. It
+calls `0 vd_appinstall <package-id>` using `<tizen:application package=...>`
+and **verifies through `0 vd_applist`** (`app_tizen_id`/`app_package_name`)
 instead of trusting `vd_appinstall` output; the unverified `0 rmfile` cleanup
 is not used. The fake-SDB replay covers AUTH, capabilities, DUID, list, sync
 push, install command dispatch and failure, debug launch, `was_kill` and
 forwarding. The 2026-10-25 TV exercised the CNXN handshake, capability parsing,
-DUID and `0 vd_applist`; it did not issue AUTH and was not signed, installed,
-debug-launched or forwarded. The exact `vd_appinstall` success text remains
-unknown (`HD-4`/`HD-7`).
+DUID, `0 vd_applist`, sync upload and `0 vd_appinstall`; it did not issue AUTH
+and rejected the self-signed package at certificate validation, so no app was
+installed and no debug launch or forward ran. The exact successful install text
+remains unknown (`HD-4`/`HD-7`).
 
 ---
 

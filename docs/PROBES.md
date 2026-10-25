@@ -294,9 +294,10 @@ CDP is `HD-7`.
 ## Unverified work
 
 - webOS, Tizen and Apple TVs became reachable on 2026-10-25, but none has installed,
-  launched or played the fixtures: the LG passphrase, Tizen signing profile and local
-  macOS/Xcode pairing are missing. Transport/probe paths remain verified with fakes,
-  fixtures and replay only.
+  launched or played the fixtures: the LG passphrase, a Samsung-issued Tizen profile
+  and local macOS/Xcode pairing are missing. The Tizen TV accepted the upload and
+  install command but rejected a self-signed chain at certificate validation.
+  Transport/probe paths remain verified with fakes, fixtures and replay only.
 - Apple host-side DVT/syslog/pcapd evidence and the in-app hook over loopback are not
   hardware-tested.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are
