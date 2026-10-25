@@ -1,0 +1,85 @@
+name: Apple Xcode
+
+# Compile the Xcode-only Apple targets on a macOS runner. This verifies the
+# XCUITest runner, fixture app and project.yml; it does not run on a device and
+# cannot reach a LAN Apple TV. Device installation still needs a local Mac
+# paired with the Apple TV (docs/DEVICES.md section 3.2).
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "agents/apple/**"
+      - ".github/workflows/apple-xcode.yml"
+  pull_request:
+    paths:
+      - "agents/apple/**"
+      - ".github/workflows/apple-xcode.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "macOS: generate + build tvOS/iOS (unsigned)"
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: agents/apple
+        run: xcodegen generate
+
+      - name: Build tvOS stub and runner (unsigned)
+        working-directory: agents/apple
+        run: |
+          set -o pipefail
+          xcodebuild -project ImpresarioApple.xcodeproj \
+            -scheme AgentTargetStub-tvOS -configuration Debug \
+            -destination 'generic/platform=tvOS' \
+            -derivedDataPath build-tvos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
+          xcodebuild -project ImpresarioApple.xcodeproj \
+            -scheme AgentUITests-tvOS -configuration Debug \
+            -destination 'generic/platform=tvOS' \
+            -derivedDataPath build-tvos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build-for-testing
+
+      - name: Build iOS stub and runner (unsigned)
+        working-directory: agents/apple
+        run: |
+          set -o pipefail
+          xcodebuild -project ImpresarioApple.xcodeproj \
+            -scheme AgentTargetStub-iOS -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
+          xcodebuild -project ImpresarioApple.xcodeproj \
+            -scheme AgentUITests-iOS -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-ios \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build-for-testing
+
+      - name: Upload unsigned products
+        uses: actions/upload-artifact@v4
+        with:
+          name: impresario-apple-unsigned
+          if-no-files-found: error
+          path: |
+            agents/apple/build-tvos/Build/Products/Debug-appletvos/*.app
+            agents/apple/build-tvos/Build/Products/*.xctestrun
+            agents/apple/build-ios/Build/Products/Debug-iphoneos/*.app
+            agents/apple/build-ios/Build/Products/*.xctestrun
