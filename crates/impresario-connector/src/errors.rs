@@ -117,6 +117,7 @@ pub fn error_code_to_proto(code: WireErrorCode) -> pb::ErrorCode {
         WireErrorCode::AlreadyInUse => pb::ErrorCode::AlreadyInUse,
         WireErrorCode::DeviceUnavailable => pb::ErrorCode::DeviceUnavailable,
         WireErrorCode::Unauthenticated => pb::ErrorCode::Unauthenticated,
+        WireErrorCode::Unverifiable => pb::ErrorCode::Unverifiable,
     }
 }
 

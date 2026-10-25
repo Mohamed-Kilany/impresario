@@ -30,4 +30,10 @@
     <item name="stub_scenario_flags" type="id" />
     <item name="stub_scenario_keys" type="id" />
     <item name="stub_scenario_info" type="id" />
+    <item name="stub_scenario_media" type="id" />
+    <item name="stub_media_title" type="id" />
+    <item name="stub_media_video" type="id" />
+    <item name="stub_media_image" type="id" />
+    <item name="stub_media_broken" type="id" />
+    <item name="stub_media_status" type="id" />
 </resources>

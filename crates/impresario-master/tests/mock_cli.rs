@@ -88,12 +88,11 @@ fn readme_mock_quick_start_runs_green() {
     let (code, stdout, stderr) = run_in(temp.path(), &["validate"], &[]);
     assert_eq!(code, Some(0), "validate failed\n{stdout}\n{stderr}");
 
-    // README step 3: append the mock device (the play's act targets webos;
-    // webos falls back to the web selectors).
+    // README step 3: append the mock device (the example play runs on web).
     let devices_path = temp.path().join("impresario.devices.config");
     let mut devices = std::fs::read_to_string(&devices_path).expect("read devices");
     devices.push_str(&format!(
-        "  - name: mock_device\n    platform: webos\n    connection:\n      host: 127.0.0.1\n      endpoint: ws://127.0.0.1:9999\n    options:\n      connector_address: {address}\n"
+        "  - name: mock_device\n    platform: web\n    connection:\n      transport: launch\n    options:\n      connector_address: {address}\n"
     ));
     std::fs::write(&devices_path, devices).expect("write devices");
 

@@ -13,6 +13,7 @@ import impresario.v1.Impresario.LogEntry
 import impresario.v1.Impresario.LogLevel
 import impresario.v1.Impresario.LogRequest
 import impresario.v1.Impresario.Platform
+import impresario.v1.Impresario.ProbeSourceInfo
 import impresario.v1.Impresario.ScreenshotRequest
 import impresario.v1.Impresario.ScreenshotResponse
 import impresario.v1.Impresario.ShutdownRequest
@@ -141,6 +142,7 @@ class AgentState(
                 .setAgentVersion(agentVersion)
                 .setProtocolVersion(PROTOCOL_VERSION)
                 .addAllCapabilities(capabilities(request.platform))
+                .addAllProbeSources(probeSources())
                 .setDevice(
                     DeviceInfo.newBuilder()
                         .setModel(device.model)
@@ -166,6 +168,9 @@ class AgentState(
                     Capability.DPAD_FOCUS,
                     Capability.KEY_EVENTS,
                     Capability.APP_CONTROL,
+                    Capability.PROBE_SHOWING,
+                    Capability.PROBE_PLAYER,
+                    Capability.PROBE_DRM,
                 )
             } else {
                 listOf(
@@ -174,8 +179,41 @@ class AgentState(
                     Capability.TOUCH_GESTURES,
                     Capability.KEY_EVENTS,
                     Capability.APP_CONTROL,
+                    Capability.PROBE_SHOWING,
+                    Capability.PROBE_PLAYER,
+                    Capability.PROBE_DRM,
                 )
             }
+
+        /**
+         * Per-source health advertised in the handshake (TASK-3 section 7.1).
+         * `app_hook` is reachable when the app links `:impresario-hook`; a
+         * missing report at runtime only makes that claim unverifiable.
+         */
+        fun probeSources(): List<ProbeSourceInfo> = listOf(
+            source("a11y_tree", true, "system", "UiAutomator accessibility tree"),
+            source("screenshot_region", true, "authoritative", "UiAutomation screenshot region analysis"),
+            source("media_session", true, "authoritative", "dumpsys media_session for the target package"),
+            source("audio_playback", false, "system", "AudioManager is system-wide, not app-scoped"),
+            source("media_drm", true, "system", "dumpsys media.drm plus a target-package match"),
+            source("app_hook", true, "authoritative", "debug-only ImpresarioHook logcat marker"),
+            source("media_codec", false, "system", "codec counters are not exposed for arbitrary apps"),
+            source("surfaceflinger", false, "system", "SurfaceFlinger layer parser not implemented"),
+            source("net_flow", false, "system", "network metadata collector not implemented"),
+        )
+
+        private fun source(
+            name: String,
+            available: Boolean,
+            evidenceClass: String,
+            reason: String,
+        ): ProbeSourceInfo = ProbeSourceInfo.newBuilder()
+            .setSource(name)
+            .setAvailable(available)
+            .setClass_(evidenceClass)
+            .setReason(reason)
+            .setExternalAccess(false)
+            .build()
     }
 }
 

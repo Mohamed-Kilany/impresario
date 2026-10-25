@@ -23,6 +23,7 @@ use tokio::process::Command;
 use tokio::time::Instant;
 
 use crate::adb::{AdbClient, AdbError, AdbTarget};
+use crate::agent_client::DeviceInfo;
 use crate::log::{unix_ms_now, LogBuffer, LogLevel, LogRecord};
 
 /// How long the executor may take to start listening after `prepare` spawned
@@ -245,6 +246,17 @@ pub fn apple_reset_commands(
     }
 }
 
+/// Health information gathered without installing or launching an app.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeProbe {
+    /// What `devices check` prints in its normal one-line form.
+    pub info: DeviceInfo,
+    /// Extra facts shown below the line (DUID, SDK path, certificate state).
+    pub details: Vec<String>,
+    /// Non-fatal problems that `doctor` reports as degradation.
+    pub warnings: Vec<String>,
+}
+
 /// One device transport per family (spec section 9).
 #[async_trait]
 pub trait DeviceTransport: Send {
@@ -270,8 +282,27 @@ pub trait DeviceTransport: Send {
         Ok(ResetOutcome::NotRequested)
     }
 
+    /// Inspect the device without preparing the executor or installing an app.
+    ///
+    /// `None` means this transport has no native probe; callers fall back to
+    /// `prepare` plus the executor handshake. WebOS and Tizen implement it so
+    /// `devices check` and `doctor` never install during a connectivity test.
+    async fn probe(
+        &mut self,
+        _device: &DeviceConfig,
+    ) -> Result<Option<NativeProbe>, TransportError> {
+        Ok(None)
+    }
+
     /// Release everything `prepare` acquired (spec 7.3 step 6).
     async fn teardown(&mut self) -> Result<(), TransportError>;
+
+    /// The device-side endpoint handed to the connector in the agent
+    /// handshake. WebOS/Tizen override this after installing and forwarding
+    /// their inspector port; other transports use the configured endpoint.
+    fn target_endpoint(&self, device: &DeviceConfig) -> String {
+        device.target_endpoint()
+    }
 
     /// Host-side log sources this transport manages.
     fn log_sources(&self) -> Vec<LogSource>;
@@ -285,10 +316,14 @@ pub trait DeviceTransport: Send {
 /// The transport for a platform family (spec section 9).
 #[must_use]
 pub fn transport_for(platform: Platform) -> Box<dyn DeviceTransport> {
-    match platform.family() {
-        TransportFamily::Connector => Box::new(ConnectorTransport::new()),
-        TransportFamily::Adb => Box::new(AdbTransport::new()),
-        TransportFamily::Apple => Box::new(AppleTransport::new()),
+    match platform {
+        Platform::WebOs => Box::new(crate::webos::WebOsTransport::new()),
+        Platform::Tizen => Box::new(crate::tizen::TizenTransport::new()),
+        _ => match platform.family() {
+            TransportFamily::Connector => Box::new(ConnectorTransport::new()),
+            TransportFamily::Adb => Box::new(AdbTransport::new()),
+            TransportFamily::Apple => Box::new(AppleTransport::new()),
+        },
     }
 }
 

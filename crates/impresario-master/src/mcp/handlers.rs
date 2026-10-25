@@ -10,7 +10,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use base64::Engine as _;
-use impresario_clients::agent_client::DeviceInfo;
 use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::Diagnostics;
@@ -475,7 +474,7 @@ pub(crate) fn devices_check(server: &Server, arguments: &Value) -> ToolOutput {
     let master_version = env!("CARGO_PKG_VERSION").to_string();
     let timeout_ms = loaded.config.agent_start_timeout_ms;
     let guard = lock_devices();
-    let results: Vec<Result<DeviceInfo, String>> = runtime.block_on(async {
+    let results: Vec<Result<cli::DeviceCheck, String>> = runtime.block_on(async {
         let mut results = Vec::new();
         for device in &selected {
             results.push(
@@ -492,20 +491,25 @@ pub(crate) fn devices_check(server: &Server, arguments: &Value) -> ToolOutput {
         .iter()
         .zip(results)
         .map(|(device, result)| match result {
-            Ok(info) => json!({
-                "name": device.name,
-                "platform": device.platform.as_str(),
-                "ok": true,
-                "device_info": {
-                    "model": info.model,
-                    "os_name": info.os_name,
-                    "os_version": info.os_version,
-                    "runtime": info.runtime,
-                    "screen_width_px": info.screen_width_px,
-                    "screen_height_px": info.screen_height_px,
-                    "pixel_ratio": info.pixel_ratio,
-                },
-            }),
+            Ok(check) => {
+                let info = &check.info;
+                json!({
+                    "name": device.name,
+                    "platform": device.platform.as_str(),
+                    "ok": true,
+                    "device_info": {
+                        "model": info.model,
+                        "os_name": info.os_name,
+                        "os_version": info.os_version,
+                        "runtime": info.runtime,
+                        "screen_width_px": info.screen_width_px,
+                        "screen_height_px": info.screen_height_px,
+                        "pixel_ratio": info.pixel_ratio,
+                    },
+                    "details": check.details,
+                    "warnings": check.warnings,
+                })
+            }
             Err(message) => {
                 failed += 1;
                 json!({
@@ -653,6 +657,7 @@ use json, junit or html — every reporter still lands in the run directory",
         arg: act_args,
         timeout,
         retries,
+        unverifiable: None,
         reporter: Some(reporter_spec),
         fail_fast,
         dry_run: false,

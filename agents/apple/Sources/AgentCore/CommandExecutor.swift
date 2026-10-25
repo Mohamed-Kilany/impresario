@@ -74,6 +74,14 @@ public final class CommandExecutor: @unchecked Sendable {
             return try screenshot()
         case .appControl(let control):
             return try await appControl(control)
+        case .probe(let probe):
+            let result = try await ProbeCollector(
+                driver: driver,
+                extras: extras,
+                now: now,
+                sleep: sleep
+            ).collect(probe, timeoutMs: timeout)
+            return .ok(probe: result)
         case .cancel:
             throw AgentError.protocolError("cancel commands are handled by the session runner")
         case .unspecified:
@@ -657,14 +665,15 @@ public final class CommandExecutor: @unchecked Sendable {
 
     private func toResult(_ id: String, _ outcome: Outcome, _ durationMs: Int) -> CommandResultData {
         switch outcome {
-        case .ok(let observedText, let observedCount, let png):
+        case .ok(let observedText, let observedCount, let png, let probe):
             return CommandResultData(
                 commandId: id,
                 ok: true,
                 durationMs: durationMs,
                 observedText: observedText.isEmpty ? nil : observedText,
                 observedCount: observedCount > 0 ? observedCount : nil,
-                screenshotPng: png
+                screenshotPng: png,
+                probe: probe
             )
         case .failed(let error):
             return CommandResultData(commandId: id, ok: false, durationMs: durationMs, error: error.report)
@@ -672,7 +681,7 @@ public final class CommandExecutor: @unchecked Sendable {
     }
 
     private enum Outcome {
-        case ok(observedText: String = "", observedCount: Int = 0, png: Data? = nil)
+        case ok(observedText: String = "", observedCount: Int = 0, png: Data? = nil, probe: ProbeResultSpec? = nil)
         case failed(AgentError)
     }
 }

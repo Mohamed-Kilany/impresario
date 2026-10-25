@@ -1,5 +1,7 @@
 import AgentCore
+import CoreGraphics
 import Foundation
+import ImageIO
 import XCTest
 // Xcode 26 splits the UI-automation classes into their own framework; XCTest
 // re-exports them on older SDKs (docs/DECISIONS.md I-89).
@@ -433,6 +435,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
     // ------------------------------------------------------------------
 
     func prepare(appId: String, animationsDisabled: Bool) {
+        HookReceiver.shared.start()
         onQueue {
             if self.appId != appId {
                 self.appId = appId
@@ -505,6 +508,93 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 )
             }
             return true
+        }
+    }
+
+    // Player/DRM snapshots are supplied only by the optional in-app hook
+    // (D-41). XCUITest has no public API that reads another app's AVPlayer or
+    // FairPlay session, so returning nil is the honest answer here; the probe
+    // then reports UNVERIFIABLE instead of faking Playing.
+    func mediaSnapshot() -> MediaSnapshot? {
+        HookReceiver.shared.snapshot()?.media
+    }
+
+    func drmSnapshot() -> DrmSnapshot? {
+        HookReceiver.shared.snapshot()?.drm
+    }
+
+    func showingDecoded(_ e: ElementRef) -> Bool? {
+        HookReceiver.shared.snapshot()?.showing?.decoded
+    }
+
+    func showingSource(_ e: ElementRef) -> String? {
+        HookReceiver.shared.snapshot()?.showing?.source
+    }
+
+    /// Fraction of sampled pixels inside `rect` whose luminance differs from
+    /// the region mean by more than a small threshold. This is the same
+    /// system-class signal the Android driver uses; it is not an authoritative
+    /// decoder counter. A uniformly painted frame therefore reports low
+    /// coverage, and the probe stays honest rather than guessing.
+    func regionCoverage(png: Data, rect: CGRect) -> Double? {
+        onQueue {
+            guard !png.isEmpty, rect.width > 1, rect.height > 1 else { return nil }
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            else { return nil }
+            let width = image.width
+            let height = image.height
+            guard width > 0, height > 0 else { return nil }
+            let screen = XCUIScreen.main.screenshot().image
+            let pointWidth = max(1, screen.size.width)
+            let scaleX = CGFloat(width) / pointWidth
+            let pointHeight = max(1, screen.size.height)
+            let scaleY = CGFloat(height) / pointHeight
+            let left = max(0, min(width - 1, Int(rect.minX * scaleX)))
+            let right = max(left + 1, min(width, Int(rect.maxX * scaleX)))
+            // CoreGraphics bitmap rows start at the image's top row, while the
+            // screenshot coordinate origin is top-left too; no y flip here.
+            let top = max(0, min(height - 1, Int(rect.minY * scaleY)))
+            let bottom = max(top + 1, min(height, Int(rect.maxY * scaleY)))
+
+            let bytesPerRow = width * 4
+            var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+            let space = CGColorSpaceCreateDeviceRGB()
+            let info = CGBitmapInfo.byteOrder32Big.rawValue
+                | CGImageAlphaInfo.premultipliedLast.rawValue
+            guard let context = CGContext(
+                data: &pixels,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: space,
+                bitmapInfo: info
+            ) else { return nil }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+            let step = max(1, min(right - left, bottom - top) / 200)
+            var luminance: [Double] = []
+            var y = top
+            while y < bottom {
+                var x = left
+                while x < right {
+                    let offset = y * bytesPerRow + x * 4
+                    let alpha = Double(pixels[offset + 3]) / 255.0
+                    if alpha >= 0.03 {
+                        let red = Double(pixels[offset])
+                        let green = Double(pixels[offset + 1])
+                        let blue = Double(pixels[offset + 2])
+                        luminance.append(0.2126 * red + 0.7152 * green + 0.0722 * blue)
+                    }
+                    x += step
+                }
+                y += step
+            }
+            guard !luminance.isEmpty else { return 0 }
+            let mean = luminance.reduce(0, +) / Double(luminance.count)
+            let painted = luminance.filter { abs($0 - mean) > 6.0 }.count
+            return Double(painted) * 100.0 / Double(luminance.count)
         }
     }
 

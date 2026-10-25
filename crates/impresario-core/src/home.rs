@@ -141,6 +141,12 @@ impl Home {
         self.root.join("cache")
     }
 
+    /// `signing/` - imported signing profiles (encrypted PKCS#12 files).
+    #[must_use]
+    pub fn signing_dir(&self) -> PathBuf {
+        self.root.join("signing")
+    }
+
     /// `history` - interactive prompt history.
     #[must_use]
     pub fn history_path(&self) -> PathBuf {
@@ -171,6 +177,7 @@ impl Home {
             self.tools_dir(),
             self.jobs_dir(),
             self.cache_dir(),
+            self.signing_dir(),
             self.logs_dir(),
         ] {
             std::fs::create_dir_all(&path).map_err(|source| HomeError::Create {

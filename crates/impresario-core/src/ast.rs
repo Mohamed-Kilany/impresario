@@ -459,6 +459,71 @@ pub enum CheckCondition {
     TextEquals { text: ParsedString },
     TextContains { text: ParsedString },
     Count { count: u32 },
+    Showing(ShowingCheck),
+    Player(PlayerCheck),
+}
+
+/// `Check: [not] Showing => Piece [with …]` (TASK-3 section 4.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShowingCheck {
+    #[serde(default)]
+    pub negated: bool,
+    #[serde(default)]
+    pub options: Vec<ShowingOption>,
+}
+
+/// The minimal Showing option set (TASK-3 section 13.4: coverage, decoded,
+/// source).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "option", rename_all = "snake_case")]
+pub enum ShowingOption {
+    /// `coverage>=N%` (0..=100).
+    Coverage { percent: u8 },
+    /// `decoded`.
+    Decoded,
+    /// `source~"substring"` (web only).
+    Source { contains: String },
+}
+
+/// `Check: Player => Piece [not] Status [DRM-…] [with …]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerCheck {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<StatusTerm>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drm: Option<DrmTerm>,
+    #[serde(default)]
+    pub assertions: Vec<PlayerAssertion>,
+}
+
+/// A status term; `not Playing` is `negated: true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusTerm {
+    pub status: crate::probe::PlayerStatus,
+    #[serde(default)]
+    pub negated: bool,
+}
+
+/// `DRM-enabled` / `DRM-disabled` with an optional provider term.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrmTerm {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::probe::DrmProvider>,
+    #[serde(default)]
+    pub provider_negated: bool,
+}
+
+/// One `with` assertion (`position>30s`, `not muted`, `resolution>=1080p`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerAssertion {
+    pub property: crate::probe::ProbeProperty,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<crate::probe::Operator>,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub negated: bool,
 }
 
 impl CheckCondition {
@@ -474,6 +539,8 @@ impl CheckCondition {
             CheckCondition::TextEquals { .. } => "text",
             CheckCondition::TextContains { .. } => "textContains",
             CheckCondition::Count { .. } => "count",
+            CheckCondition::Showing(_) => "Showing",
+            CheckCondition::Player(_) => "Player",
         }
     }
 }

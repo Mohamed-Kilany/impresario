@@ -25,6 +25,7 @@ pub mod keys;
 pub mod migrate;
 pub mod parser;
 pub mod platforms;
+pub mod probe;
 pub mod scanner;
 pub mod selectors;
 pub mod settings;

@@ -1,10 +1,10 @@
 //! The static planner (spec 8.2): compile the selected Plays into an
 //! [`ExecutionPlan`] per device, before any device is touched.
 //!
-//! Compilation order per act: filter (platform, tags, names) → scene
-//! applicability → piece resolution through the D-07 fallback chain →
-//! selector grammar → interpolation (CLI vars > play vars; env read now) →
-//! support check against 6.1/6.2 → effective timeout (5.6). Any error aborts
+//! Compilation order per act: filter (platform, tags, names) â†’ scene
+//! applicability â†’ piece resolution through the D-07 fallback chain â†’
+//! selector grammar â†’ interpolation (CLI vars > play vars; env read now) â†’
+//! support check against 6.1/6.2 â†’ effective timeout (5.6). Any error aborts
 //! the run; **all** errors are collected and returned together.
 
 use std::collections::{BTreeMap, HashSet};
@@ -12,15 +12,16 @@ use std::path::{Path, PathBuf};
 
 use impresario_core::apps::AppConfig;
 use impresario_core::ast::{
-    ActDecl, ActionVerb, AppOp, CheckCondition, PerformDecl, PlayFile, SceneFile, StageDecl,
-    StageItem, Step, StepKind,
+    ActDecl, ActionVerb, AppOp, CheckCondition, PerformDecl, PlayFile, PlayerCheck, SceneFile,
+    ShowingCheck, StageDecl, StageItem, Step, StepKind,
 };
 use impresario_core::command::{
-    ActionType, CheckKind, Command, KeyPress, RunAction, ValidateCheck,
+    ActionType, CheckKind, Command, KeyPress, ProbeCommand, RunAction, ValidateCheck,
 };
 use impresario_core::config::{DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::{suggest, Code, Diagnostic, Diagnostics};
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{self, Claim, ProbeAssertion, ProbeKind};
 use impresario_core::selectors::{self, Selector};
 use impresario_core::span::Span;
 use impresario_core::strings::{ParsedString, Part};
@@ -173,6 +174,12 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
         if let Some(app) = &app {
             check_app_for_device(input.base, app, device, &mut diagnostics);
         }
+        // Each device gets its own resolved artifact path. The same app can be
+        // planned for devices started from different working directories; the
+        // transport must never interpret a relative package path itself.
+        let device_app = app
+            .as_ref()
+            .map(|app| resolve_app_packages(input.base, app, device));
         let mut plays = Vec::new();
         for (play, vars) in input.plays.iter().zip(&play_vars) {
             let mut acts = Vec::new();
@@ -243,7 +250,7 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
         }
         devices.push(DevicePlan {
             device: device.clone(),
-            app: app.clone(),
+            app: device_app,
             plays,
         });
     }
@@ -361,6 +368,23 @@ fn check_app_for_device(
             );
         }
     }
+}
+
+/// Return the app with its package for `device.platform` made absolute.
+/// Other platforms are left untouched because another plan may use them.
+fn resolve_app_packages(base: &Path, app: &AppConfig, device: &DeviceConfig) -> AppConfig {
+    let mut resolved = app.clone();
+    let Some(entry) = resolved.platforms.get_mut(&device.platform) else {
+        return resolved;
+    };
+    let Some(package) = entry.package.as_mut() else {
+        return resolved;
+    };
+    let path = PathBuf::from(&*package);
+    if !path.is_absolute() {
+        *package = base.join(path).to_string_lossy().into_owned();
+    }
+    resolved
 }
 
 fn act_applies_to(act: &ActDecl, platform: Platform) -> bool {
@@ -1282,54 +1306,101 @@ fn compile_step(
                 ctx,
                 &mut diagnostics,
             );
-            let condition = match &check.condition {
-                CheckCondition::IsVisible => Some((CheckKind::Visible, String::new(), 0)),
-                CheckCondition::IsHidden => Some((CheckKind::Hidden, String::new(), 0)),
-                CheckCondition::IsEnabled => Some((CheckKind::Enabled, String::new(), 0)),
-                CheckCondition::IsDisabled => Some((CheckKind::Disabled, String::new(), 0)),
-                CheckCondition::IsFocused => Some((CheckKind::Focused, String::new(), 0)),
-                CheckCondition::TextEquals { text } => resolve_string(text, ctx, &mut diagnostics)
-                    .map(|text| (CheckKind::TextEquals, text, 0)),
-                CheckCondition::TextContains { text } => {
-                    resolve_string(text, ctx, &mut diagnostics)
-                        .map(|text| (CheckKind::TextContains, text, 0))
-                }
-                CheckCondition::Count { count } => Some((CheckKind::Count, String::new(), *count)),
-            };
-            if !support::check_support(ctx.platform, support::verb_of_check(&check.condition))
-                .is_supported()
-            {
-                ctx.diagnostics.push(
-                    Diagnostic::error(
-                        Code::DslUnsupportedActionOnPlatform,
-                        format!(
-                            "check '{}' is not supported on platform '{}' (device '{}')",
-                            check.condition.as_str(),
-                            ctx.platform,
-                            ctx.device.name
-                        ),
+            match &check.condition {
+                CheckCondition::Showing(showing) => match selector {
+                    Some(Some(selector)) => {
+                        let command =
+                            build_showing_probe(&selector, showing, ctx, &mut diagnostics);
+                        match command {
+                            Some(probe) => Ok(PlannedStep {
+                                span: step.span.clone(),
+                                source_text: step.source_text.clone(),
+                                label: format!("check {}", check.condition.as_str()),
+                                timeout_ms,
+                                command: Some(Command::Probe(probe)),
+                                work: PlannedWork::Wire,
+                            }),
+                            None => Err(()),
+                        }
+                    }
+                    _ => Err(()),
+                },
+                CheckCondition::Player(player) => match selector {
+                    Some(Some(selector)) => {
+                        let command = build_player_probe(&selector, player, ctx, &mut diagnostics);
+                        match command {
+                            Some(probe) => Ok(PlannedStep {
+                                span: step.span.clone(),
+                                source_text: step.source_text.clone(),
+                                label: format!("check {}", check.condition.as_str()),
+                                timeout_ms,
+                                command: Some(Command::Probe(probe)),
+                                work: PlannedWork::Wire,
+                            }),
+                            None => Err(()),
+                        }
+                    }
+                    _ => Err(()),
+                },
+                _ => {
+                    let condition = match &check.condition {
+                        CheckCondition::IsVisible => Some((CheckKind::Visible, String::new(), 0)),
+                        CheckCondition::IsHidden => Some((CheckKind::Hidden, String::new(), 0)),
+                        CheckCondition::IsEnabled => Some((CheckKind::Enabled, String::new(), 0)),
+                        CheckCondition::IsDisabled => Some((CheckKind::Disabled, String::new(), 0)),
+                        CheckCondition::IsFocused => Some((CheckKind::Focused, String::new(), 0)),
+                        CheckCondition::TextEquals { text } => {
+                            resolve_string(text, ctx, &mut diagnostics)
+                                .map(|text| (CheckKind::TextEquals, text, 0))
+                        }
+                        CheckCondition::TextContains { text } => {
+                            resolve_string(text, ctx, &mut diagnostics)
+                                .map(|text| (CheckKind::TextContains, text, 0))
+                        }
+                        CheckCondition::Count { count } => {
+                            Some((CheckKind::Count, String::new(), *count))
+                        }
+                        CheckCondition::Showing(_) | CheckCondition::Player(_) => None,
+                    };
+                    if !support::check_support(
+                        ctx.platform,
+                        support::verb_of_check(&check.condition),
                     )
-                    .with_span(check.span.clone())
-                    .with_help("see docs/PARITY.md for the support matrix"),
-                );
-            }
-            match (selector, condition) {
-                (Some(Some(selector)), Some((kind, expected_text, expected_count))) => {
-                    Ok(PlannedStep {
-                        span: step.span.clone(),
-                        source_text: step.source_text.clone(),
-                        label: format!("check {}", check.condition.as_str()),
-                        timeout_ms,
-                        command: Some(Command::ValidateCheck(ValidateCheck {
-                            selector,
-                            kind,
-                            expected_text,
-                            expected_count,
-                        })),
-                        work: PlannedWork::Wire,
-                    })
+                    .is_supported()
+                    {
+                        ctx.diagnostics.push(
+                            Diagnostic::error(
+                                Code::DslUnsupportedActionOnPlatform,
+                                format!(
+                                    "check '{}' is not supported on platform '{}' (device '{}')",
+                                    check.condition.as_str(),
+                                    ctx.platform,
+                                    ctx.device.name
+                                ),
+                            )
+                            .with_span(check.span.clone())
+                            .with_help("see docs/PARITY.md for the support matrix"),
+                        );
+                    }
+                    match (selector, condition) {
+                        (Some(Some(selector)), Some((kind, expected_text, expected_count))) => {
+                            Ok(PlannedStep {
+                                span: step.span.clone(),
+                                source_text: step.source_text.clone(),
+                                label: format!("check {}", check.condition.as_str()),
+                                timeout_ms,
+                                command: Some(Command::ValidateCheck(ValidateCheck {
+                                    selector,
+                                    kind,
+                                    expected_text,
+                                    expected_count,
+                                })),
+                                work: PlannedWork::Wire,
+                            })
+                        }
+                        _ => Err(()),
+                    }
                 }
-                _ => Err(()),
             }
         }
     };
@@ -1356,6 +1427,189 @@ fn effective_timeout(step: &Step, ctx: &CompileContext<'_, '_>) -> u32 {
         .or(ctx.input.cli_timeout)
         .unwrap_or(ctx.input.config.timeout_default_ms);
     u32::try_from(millis.min(u64::from(u32::MAX))).unwrap_or(u32::MAX)
+}
+
+fn build_showing_probe(
+    selector: &Selector,
+    showing: &ShowingCheck,
+    ctx: &CompileContext<'_, '_>,
+    diagnostics: &mut Diagnostics,
+) -> Option<ProbeCommand> {
+    let row = probe::support(ctx.platform);
+    let mut ok = row.showing;
+    if !row.showing {
+        unsupported_probe(
+            ctx,
+            &format!("Showing is not supported on platform '{}'", ctx.platform),
+            None,
+            diagnostics,
+        );
+    }
+    let mut claims = vec![Claim {
+        id: "showing=present".to_string(),
+        negated: showing.negated,
+    }];
+    let mut command = ProbeCommand::new(ProbeKind::Showing, selector.clone(), Vec::new());
+    for option in &showing.options {
+        match option {
+            impresario_core::ast::ShowingOption::Coverage { percent } => {
+                command.min_coverage_pct = *percent;
+                claims.push(Claim::new(format!("showing.coverage>={percent}%")));
+            }
+            impresario_core::ast::ShowingOption::Decoded => {
+                command.require_decoded = true;
+                claims.push(Claim::new("showing.decoded=true"));
+            }
+            impresario_core::ast::ShowingOption::Source { contains } => {
+                if !matches!(
+                    ctx.platform,
+                    Platform::Web | Platform::WebOs | Platform::Tizen
+                ) {
+                    ok = false;
+                    unsupported_probe(
+                        ctx,
+                        "Showing source is a web-only option",
+                        Some("supported platforms: web, webOS, Tizen"),
+                        diagnostics,
+                    );
+                }
+                command.require_source = true;
+                claims.push(Claim::new(format!("showing.source~{contains}")));
+            }
+        }
+    }
+    if !ok {
+        return None;
+    }
+    command.claims = claims;
+    Some(command)
+}
+
+fn build_player_probe(
+    selector: &Selector,
+    player: &PlayerCheck,
+    ctx: &CompileContext<'_, '_>,
+    diagnostics: &mut Diagnostics,
+) -> Option<ProbeCommand> {
+    let row = probe::support(ctx.platform);
+    let drm_check = player.drm.is_some();
+    let mut ok = if drm_check { row.drm } else { row.player };
+    if !row.player {
+        unsupported_probe(
+            ctx,
+            &format!("Player is not supported on platform '{}'", ctx.platform),
+            None,
+            diagnostics,
+        );
+    }
+    if drm_check && !row.drm {
+        unsupported_probe(
+            ctx,
+            &format!(
+                "DRM probes are not supported on platform '{}'",
+                ctx.platform
+            ),
+            None,
+            diagnostics,
+        );
+    }
+    let mut claims = Vec::new();
+    if let Some(status) = &player.status {
+        claims.push(Claim {
+            id: format!("state={}", status.status.as_str()),
+            negated: status.negated,
+        });
+    }
+    if let Some(drm) = &player.drm {
+        claims.push(Claim {
+            id: format!("drm.enabled={}", drm.enabled),
+            negated: false,
+        });
+        if let Some(provider) = drm.provider {
+            if !row.supports_provider(provider) {
+                ok = false;
+                let supported = row
+                    .providers
+                    .iter()
+                    .map(|provider| provider.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                unsupported_probe(
+                    ctx,
+                    &format!(
+                        "DRM provider {} is not supported on platform '{}'",
+                        provider.as_str(),
+                        ctx.platform
+                    ),
+                    Some(&format!("supported providers: {supported}")),
+                    diagnostics,
+                );
+            }
+            claims.push(Claim {
+                id: format!("drm.provider={}", provider.as_str()),
+                negated: drm.provider_negated,
+            });
+        }
+    }
+    let mut assertions = Vec::new();
+    for assertion in &player.assertions {
+        if !row.supports_property(assertion.property) {
+            ok = false;
+            let supported = row
+                .properties
+                .iter()
+                .map(|property| property.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            unsupported_probe(
+                ctx,
+                &format!(
+                    "player property '{}' is not supported on platform '{}'",
+                    assertion.property.as_str(),
+                    ctx.platform
+                ),
+                Some(&format!("supported properties: {supported}")),
+                diagnostics,
+            );
+        }
+        assertions.push(ProbeAssertion {
+            property: assertion.property.as_str().to_string(),
+            operator: assertion.operator,
+            value: assertion.value.clone(),
+            negated: assertion.negated,
+        });
+    }
+    if !ok {
+        return None;
+    }
+    let kind = if drm_check {
+        ProbeKind::Drm
+    } else {
+        ProbeKind::Player
+    };
+    Some(
+        ProbeCommand::new(kind, selector.clone(), claims)
+            .with_assertions(assertions)
+            .with_window_ms(3000),
+    )
+}
+
+fn unsupported_probe(
+    ctx: &CompileContext<'_, '_>,
+    message: &str,
+    help: Option<&str>,
+    diagnostics: &mut Diagnostics,
+) {
+    let mut diagnostic = Diagnostic::error(
+        Code::DslUnsupportedActionOnPlatform,
+        format!("{message} (device '{}')", ctx.device.name),
+    );
+    if let Some(help) = help {
+        diagnostic = diagnostic.with_help(help.to_string());
+    } else {
+        diagnostic = diagnostic.with_help("see docs/PARITY.md for the probe matrix");
+    }
+    diagnostics.push(diagnostic);
 }
 
 fn check_action_support(
@@ -2510,5 +2764,138 @@ Stage: S1
         })
         .expect_err("conflict");
         assert_eq!(codes(&diagnostics), vec!["IMP-APP-004"]);
+    }
+
+    #[test]
+    fn relative_packages_are_resolved_per_device_before_transport_prepare() {
+        let apps = app_defs(
+            "apps:\n- name: shop\n  platforms:\n    webos:\n      id: com.example.shop\n      package: build/shop.ipk\n    android:\n      id: com.example.shop\n      package: build/shop.apk\n",
+        );
+        let app = apps.iter().find(|app| app.name == "shop").expect("app");
+        let base = if cfg!(windows) {
+            Path::new("C:/workspace")
+        } else {
+            Path::new("/workspace")
+        };
+        let webos = resolve_app_packages(base, app, &device(Platform::WebOs));
+        assert_eq!(
+            webos
+                .platform(Platform::WebOs)
+                .and_then(|entry| entry.package.as_deref()),
+            Some(base.join("build/shop.ipk").to_string_lossy().as_ref())
+        );
+        let android = resolve_app_packages(base, app, &device(Platform::Android));
+        assert_eq!(
+            android
+                .platform(Platform::Android)
+                .and_then(|entry| entry.package.as_deref()),
+            Some(base.join("build/shop.apk").to_string_lossy().as_ref())
+        );
+
+        let absolute = if cfg!(windows) {
+            "C:/artifacts/absolute.ipk"
+        } else {
+            "/artifacts/absolute.ipk"
+        };
+        let mut app = app.clone();
+        app.platforms
+            .get_mut(&Platform::WebOs)
+            .expect("webos entry")
+            .package = Some(absolute.to_string());
+        let unchanged = resolve_app_packages(base, &app, &device(Platform::WebOs));
+        assert_eq!(
+            unchanged
+                .platform(Platform::WebOs)
+                .and_then(|entry| entry.package.as_deref()),
+            Some(absolute)
+        );
+    }
+    #[test]
+    fn compiles_showing_and_player_probes() {
+        let play = r#"Play: P
+
+Act: A
+
+Stage: S1
+    Scene: S
+        Check: Showing => Button with coverage>=50%, decoded
+        Check: Player => Button Playing DRM-enabled Widevine with position>30s, resolution>=1080p, not muted timeout 20s
+        Check: not Showing => Field
+        Check: Player => Field not Buffering
+"#;
+        let plan = compile(SCENE, play, Platform::Web, &BTreeMap::new()).expect("plans");
+        let act = plan.devices[0].plays[0].acts[0].clone();
+        let steps: Vec<&PlannedStep> = act
+            .stages
+            .iter()
+            .flat_map(|stage| stage.steps.iter())
+            .collect();
+        assert_eq!(steps.len(), 4);
+        match &steps[0].command {
+            Some(Command::Probe(probe)) => {
+                assert_eq!(probe.kind, ProbeKind::Showing);
+                assert_eq!(probe.min_coverage_pct, 50);
+                assert!(probe.require_decoded);
+                assert!(probe
+                    .claims
+                    .iter()
+                    .any(|claim| claim.id == "showing=present"));
+            }
+            other => panic!("expected Showing probe, got {other:?}"),
+        }
+        match &steps[1].command {
+            Some(Command::Probe(probe)) => {
+                assert_eq!(probe.kind, ProbeKind::Drm);
+                assert!(probe.claims.iter().any(|claim| claim.id == "state=Playing"));
+                assert!(probe
+                    .claims
+                    .iter()
+                    .any(|claim| claim.id == "drm.provider=Widevine"));
+                assert_eq!(probe.assertions[0].value, "30");
+                assert_eq!(probe.assertions[1].value, "1080");
+                assert_eq!(steps[1].timeout_ms, 20_000);
+            }
+            other => panic!("expected Player probe, got {other:?}"),
+        }
+        match &steps[2].command {
+            Some(Command::Probe(probe)) => {
+                assert!(probe.claims[0].negated);
+            }
+            other => panic!("expected Showing probe, got {other:?}"),
+        }
+        match &steps[3].command {
+            Some(Command::Probe(probe)) => {
+                assert_eq!(probe.kind, ProbeKind::Player);
+                assert!(probe.claims[0].negated);
+            }
+            other => panic!("expected Player probe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn showing_source_is_web_only() {
+        let play = r#"Play: P
+
+Act: A
+
+Stage: S1
+    Scene: S
+        Check: Showing => Button with source~"https://cdn.example"
+"#;
+        let plan = compile(SCENE, play, Platform::Web, &BTreeMap::new()).expect("plans");
+        let command = plan.devices[0].plays[0].acts[0].stages[0].steps[0]
+            .command
+            .clone()
+            .expect("command");
+        match command {
+            Command::Probe(probe) => assert!(probe.require_source),
+            other => panic!("expected probe, got {other:?}"),
+        }
+
+        let diagnostics = compile(SCENE, play, Platform::Android, &BTreeMap::new())
+            .expect_err("source is web-only");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("web-only")));
     }
 }

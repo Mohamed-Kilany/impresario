@@ -165,6 +165,29 @@ Apple (`ios`, `tvos`) specifics:
   start plus one WARN line (I-84). On `android`/`androidtv` the agent wipes
   in place.
 
+## Playback probes
+
+`Check: Showing` and `Check: Player` are planned from the same support matrix
+(`impresario-core::probe::support`), not by executor-specific guessing. The
+table below is a human summary; `docs/PROBES.md` lists the exact sources,
+confidence rules and SDK transport.
+
+| Platform | Showing | Player | DRM | Authoritative player source | Known limits |
+|---|---|---|---|---|---|
+| `web` | ✅ DOM + screenshot coverage + hook | ✅ | ✅ | `HTMLMediaElement`, EME hook, `app_hook` | protected pixels may be black; source is web-only |
+| `webos` | ✅ DOM + screenshot coverage + hook | ✅ | ✅ | `HTMLMediaElement`, `media.mediaKeys`, `app_hook` | native pipeline via Luna is not read yet |
+| `tizen` | ✅ DOM + screenshot coverage + hook | ✅ | ✅ | `HTMLMediaElement`/AVPlay hook, `mediaKeys`, `app_hook` | AVPlay fields limited to state/time/duration/rate |
+| `android` | ✅ a11y + screenshot + hook | ✅ | ✅ | MediaSession, `dumpsys media.drm`, `app_hook` | no decoded/codec/framerate without hook |
+| `androidtv` | ✅ a11y + screenshot + hook | ✅ | ✅ | MediaSession, `dumpsys media.drm`, `app_hook` | same as Android |
+| `ios` | ✅ a11y + screenshot + hook | ◐ | ◐ | `app_hook` only for player/DRM facts | XCUITest cannot read another app's AVPlayer/FairPlay |
+| `tvos` | ✅ a11y + screenshot + hook | ◐ | ◐ | `app_hook` only for player/DRM facts | same as iOS |
+
+◐ means the command is planned and reachable, but a third-party app without
+the debug hook yields `unverifiable` rather than a guessed verdict. A missing
+piece remains authoritative evidence that no media exists there. There is no
+`▶` fallback: unsupported combinations are rejected at plan time
+(`IMP-DSL-013`).
+
 ## Verification status (what was actually exercised)
 
 | Platform | Matrix verification | Real hardware |

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use impresario_clients::adb::{self, AdbClient, AdbTarget};
+use impresario_clients::tizen_sign;
+use impresario_clients::transport::transport_for;
 use impresario_core::config::{self, DeviceConfig};
 use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
@@ -178,8 +180,8 @@ async fn collect(home: &Home, base: &Path, devices: &[DeviceConfig]) -> Report {
     platforms.push(android);
     platforms.push(android_tv);
     platforms.push(web);
-    platforms.push(collect_planned(Platform::WebOs, devices));
-    platforms.push(collect_planned(Platform::Tizen, devices));
+    platforms.push(collect_webos(home, devices).await);
+    platforms.push(collect_tizen(home, devices).await);
     platforms.push(collect_planned(Platform::Ios, devices));
     platforms.push(collect_planned(Platform::Tvos, devices));
 
@@ -390,6 +392,242 @@ fn collect_web(home: &Home, devices: &[DeviceConfig]) -> PlatformReport {
                 device.target_endpoint()
             ),
         });
+    }
+    report
+}
+
+async fn collect_webos(home: &Home, devices: &[DeviceConfig]) -> PlatformReport {
+    let mut report = PlatformReport::new(Platform::WebOs);
+    report.rung =
+        "rung 1: pure-Rust SSH/SFTP/luna transport with a native connector executor".to_string();
+    report.needed = vec![
+        "impresario-connector executable".to_string(),
+        "webOS Developer Mode with SSH (port 9922) and the accepted developer key".to_string(),
+        "pinned host key in auth.identity, or TOFU in keys/webos_known_hosts".to_string(),
+    ];
+    if impresario_clients::connector_binary().is_some() {
+        report
+            .found
+            .push("connector: compiled-in sidecar found".to_string());
+    } else {
+        report.fail();
+        report.fixes.push(
+            "install the release archive (it ships impresario-connector), or build with \
+             `cargo build -p impresario-master -p impresario-connector`"
+                .to_string(),
+        );
+    }
+    let known_hosts = home.keys_dir().join("webos_known_hosts");
+    report.found.push(if known_hosts.is_file() {
+        format!("pinned host keys: {}", known_hosts.display())
+    } else {
+        "pinned host keys: none yet; first connection trusts and records the TV key".to_string()
+    });
+    let configured: Vec<_> = devices
+        .iter()
+        .filter(|device| device.platform == Platform::WebOs)
+        .collect();
+    for device in &configured {
+        let mut transport = transport_for(Platform::WebOs);
+        let result = transport.probe(device).await;
+        let _ = transport.teardown().await;
+        match result {
+            Ok(Some(probe)) => {
+                let info = probe.info;
+                let mut detail = format!(
+                    "{} · {} {} · {} · {}",
+                    info.model,
+                    info.os_name,
+                    info.os_version,
+                    info.runtime,
+                    probe.details.join(" · ")
+                );
+                if !probe.warnings.is_empty() {
+                    detail.push_str(" — ");
+                    detail.push_str(&probe.warnings.join("; "));
+                }
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: if probe.warnings.is_empty() {
+                        Status::Ready
+                    } else {
+                        Status::Degraded
+                    },
+                    detail,
+                });
+                if !probe.warnings.is_empty() {
+                    report.degrade();
+                    for warning in probe.warnings {
+                        report
+                            .fixes
+                            .push(format!("device '{}': {warning}", device.name));
+                    }
+                }
+            }
+            Ok(None) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: "the webOS transport did not provide a native probe".to_string(),
+                });
+                report.fail();
+            }
+            Err(error) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: error.to_string(),
+                });
+                report.fail();
+                report.fixes.push(format!(
+                    "device '{}': enable Developer Mode, accept the key on the TV, then run \
+                     `impresario device check {}`",
+                    device.name, device.name
+                ));
+            }
+        }
+    }
+    if configured.is_empty() {
+        report.found.push(
+            "no webOS device configured; the native SSH/luna transport is compiled in".to_string(),
+        );
+    }
+    report
+}
+
+async fn collect_tizen(home: &Home, devices: &[DeviceConfig]) -> PlatformReport {
+    let mut report = PlatformReport::new(Platform::Tizen);
+    report.rung = "rung 1: pure-Rust SDB transport and WGT re-signing".to_string();
+    report.needed = vec![
+        "impresario-connector executable".to_string(),
+        "Tizen Developer Mode with SDB on port 26101 and an authorized key".to_string(),
+        "signed author/distributor profile for Tizen 7.0 and newer".to_string(),
+    ];
+    if impresario_clients::connector_binary().is_some() {
+        report
+            .found
+            .push("connector: compiled-in sidecar found".to_string());
+    } else {
+        report.fail();
+        report.fixes.push(
+            "install the release archive (it ships impresario-connector), or build with \
+             `cargo build -p impresario-master -p impresario-connector`"
+                .to_string(),
+        );
+    }
+    let key = home.keys_dir().join("tizen_adbkey");
+    report.found.push(if key.is_file() {
+        format!("SDB host key: {}", key.display())
+    } else {
+        "SDB host key: absent; generated on first connection".to_string()
+    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    match tizen_sign::list_profiles(home) {
+        Ok(profiles) if profiles.is_empty() => {
+            report.found.push(
+                "signing profiles: none imported (only needed for Tizen 7.0+ packages)".to_string(),
+            );
+        }
+        Ok(profiles) => {
+            let names = profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            report
+                .found
+                .push(format!("signing profiles: {} ({names})", profiles.len()));
+            for profile in &profiles {
+                if profile.author_not_after_unix <= now || profile.distributor_not_after_unix <= now
+                {
+                    report.degrade();
+                    report.fixes.push(format!(
+                        "signing profile '{}' has an expired certificate; import a renewed \
+                         PKCS#12 profile with `impresario sign tizen profile add`",
+                        profile.name
+                    ));
+                }
+            }
+        }
+        Err(error) => {
+            report.degrade();
+            report.fixes.push(format!(
+                "signing profiles could not be read: {error}; re-import the profile"
+            ));
+        }
+    }
+    let configured: Vec<_> = devices
+        .iter()
+        .filter(|device| device.platform == Platform::Tizen)
+        .collect();
+    for device in &configured {
+        let mut transport = transport_for(Platform::Tizen);
+        let result = transport.probe(device).await;
+        let _ = transport.teardown().await;
+        match result {
+            Ok(Some(probe)) => {
+                let info = probe.info;
+                let mut detail = format!(
+                    "{} · {} {} · {} · {}",
+                    info.model,
+                    info.os_name,
+                    info.os_version,
+                    info.runtime,
+                    probe.details.join(" · ")
+                );
+                if !probe.warnings.is_empty() {
+                    detail.push_str(" — ");
+                    detail.push_str(&probe.warnings.join("; "));
+                }
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: if probe.warnings.is_empty() {
+                        Status::Ready
+                    } else {
+                        Status::Degraded
+                    },
+                    detail,
+                });
+                if !probe.warnings.is_empty() {
+                    report.degrade();
+                    for warning in probe.warnings {
+                        report
+                            .fixes
+                            .push(format!("device '{}': {warning}", device.name));
+                    }
+                }
+            }
+            Ok(None) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: "the Tizen transport did not provide a native probe".to_string(),
+                });
+                report.fail();
+            }
+            Err(error) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: error.to_string(),
+                });
+                report.fail();
+                report.fixes.push(format!(
+                    "device '{}': enable Developer Mode, accept the SDB key on the TV, then run \
+                     `impresario device check {}`",
+                    device.name, device.name
+                ));
+            }
+        }
+    }
+    if configured.is_empty() {
+        report.found.push(
+            "no Tizen device configured; the native SDB/signing transport is compiled in"
+                .to_string(),
+        );
     }
     report
 }

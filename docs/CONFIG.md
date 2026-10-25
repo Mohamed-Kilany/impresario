@@ -64,6 +64,7 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 | `agent_start_timeout_ms` | global + workspace | integer 1000..=600000 | `60000` | How long to wait for an executor to start, in milliseconds. |
 | `command_grace_ms` | global + workspace | integer 0..=30000 | `2000` | Extra grace period after a command completes, in milliseconds. |
 | `reporters` | global + workspace | list of: console, junit, json, html | `console,junit,json` | Reporters attached to a run. |
+| `unverifiable_policy` | global + workspace | one of: fail, warn | `fail` | Fail or warn when a probe cannot reach the required confidence. |
 | `workspace` | global | path | (unset) | Workspace the CLI uses when no flag, environment variable or marker applies. |
 | `workspaces` | global | list of paths | (unset) | Workspaces remembered by `impresario workspace add`. |
 | `ui.theme` | global + workspace | string | `auto` | TUI color theme (`auto`, `dark`, `light` or a theme name). |

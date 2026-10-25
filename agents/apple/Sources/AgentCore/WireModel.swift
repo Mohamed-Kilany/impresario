@@ -242,6 +242,7 @@ public enum CommandBody: Sendable, Equatable {
     case keyPress(KeyPressSpec)
     case screenshot
     case appControl(AppControlSpec)
+    case probe(ProbeCommandSpec)
     case cancel(target: String)
     case unspecified
 }
@@ -281,6 +282,7 @@ public enum AgentErrorCode: String, Sendable, Equatable {
     case alreadyInUse
     case deviceUnavailable
     case unauthenticated
+    case unverifiable
 }
 
 /// An executor-side failure that maps onto the wire `ErrorInfo`.
@@ -305,6 +307,7 @@ public struct CommandResultData: Sendable, Equatable {
     public let observedText: String?
     public let observedCount: Int?
     public let screenshotPng: Data?
+    public let probe: ProbeResultSpec?
 
     public init(
         commandId: String,
@@ -313,7 +316,8 @@ public struct CommandResultData: Sendable, Equatable {
         error: AgentErrorReport? = nil,
         observedText: String? = nil,
         observedCount: Int? = nil,
-        screenshotPng: Data? = nil
+        screenshotPng: Data? = nil,
+        probe: ProbeResultSpec? = nil
     ) {
         self.commandId = commandId
         self.ok = ok
@@ -322,6 +326,7 @@ public struct CommandResultData: Sendable, Equatable {
         self.observedText = observedText
         self.observedCount = observedCount
         self.screenshotPng = screenshotPng
+        self.probe = probe
     }
 }
 
@@ -376,15 +381,21 @@ public enum AgentCapability: String, Sendable, Equatable {
     case dpadFocus
     case keyEvents
     case appControl
+    case probeShowing
+    case probePlayer
+    case probeDrm
 
     /// iOS advertises the touch gesture set; tvOS the D-pad set. Both speak
-    /// `KEY_EVENTS` (iOS only for `home`, spec 6.2).
+    /// `KEY_EVENTS` (iOS only for `home`, spec 6.2) and both implement the
+    /// probe kinds, with the evidence limits recorded in docs/PROBES.md.
     public static func forPlatform(_ platform: PlatformKind) -> [AgentCapability] {
         switch platform {
         case .ios:
-            return [.logs, .screenshot, .touchGestures, .keyEvents, .appControl]
+            return [.logs, .screenshot, .touchGestures, .keyEvents, .appControl,
+                    .probeShowing, .probePlayer, .probeDrm]
         case .tvos:
-            return [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl]
+            return [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl,
+                    .probeShowing, .probePlayer, .probeDrm]
         }
     }
 }

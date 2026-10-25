@@ -5,6 +5,6 @@ Var: USER = 'test_user_impresario'
 
 Act: Successful Login Flow
 Tags: smoke, auth
-Platforms: android, ios, webos
+Platforms: android, ios, web, webos
     Perform: Navigate and Login
     Perform: Verify Outcome

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Impresario in-app hook fixture</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    #stage { display: flex; gap: 16px; padding: 12px; }
+    #video { width: 320px; height: 240px; background: #000; }
+    #poster { width: 96px; height: 96px; border: 2px solid #4caf50; }
+    #start-video { margin: 12px; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <video id="video" src="sample.webm" muted playsinline preload="auto"></video>
+    <img id="poster" src="sample.png" alt="gradient">
+  </div>
+  <button id="start-video" type="button">Play video</button>
+  <!-- Reference SDK; this fixture is loaded from disk, so the relative path
+       reaches the repository's single copy instead of duplicating it. -->
+  <script src="../../sdk/web/impresario-hook.js"></script>
+  <script>
+    (function () {
+      var video = document.getElementById('video');
+      function report() {
+        ImpresarioHook.player({
+          state: video.paused ? 'Paused' : (video.readyState >= 2 ? 'Playing' : 'Loading'),
+          positionSeconds: video.currentTime,
+          durationSeconds: isFinite(video.duration) ? video.duration : null,
+          rate: video.playbackRate,
+          volume: video.volume,
+          muted: video.muted,
+          widthPx: video.videoWidth,
+          heightPx: video.videoHeight,
+          decoded: video.readyState >= 2 && !video.error,
+          source: video.currentSrc || video.src,
+          error: video.error ? String(video.error.code) : ''
+        });
+        ImpresarioHook.showing({
+          decoded: video.readyState >= 2 && !video.error,
+          source: video.currentSrc || video.src,
+          piece: 'video'
+        });
+      }
+      video.addEventListener('loadeddata', report);
+      video.addEventListener('playing', report);
+      video.addEventListener('timeupdate', report);
+      setInterval(report, 250);
+      document.getElementById('start-video').addEventListener('click', function () {
+        var started = video.play();
+        if (started && started.catch) {
+          started.catch(function () { report(); });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

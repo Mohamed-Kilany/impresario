@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Impresario Tizen AVPlay parser fixture</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    #player { width: 640px; height: 360px; margin: 24px; background: #246; }
+  </style>
+</head>
+<body>
+  <!-- Synthetic AVPlay surface: this exercises the connector's Tizen API
+       parser on desktop Chromium. It is not a hardware playback result. -->
+  <div id="player">Tizen AVPlay parser fixture</div>
+  <script>
+    (function () {
+      var state = 'PLAYING';
+      window.webapis = {
+        avplay: {
+          getState: function () { return state; },
+          getCurrentTime: function () { return 12.5; },
+          getDuration: function () { return 120.0; },
+          getPlaybackRate: function () { return 1.0; },
+          setState: function (value) { state = value; }
+        }
+      };
+    })();
+  </script>
+</body>
+</html>

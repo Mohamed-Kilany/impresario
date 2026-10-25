@@ -13,10 +13,11 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
-    ActDecl, Action, ActionVerb, AppOp, Argument, Check, CheckCondition, Direction, ExampleColumn,
-    ExampleRow, ExampleTable, Ident, KeyName, Named, ParamDecl, PerformDecl, PieceDecl,
-    PieceSelector, PlayFile, SceneBlock, SceneColumn, SceneFile, StageDecl, StageItem, Step,
-    StepKind, TheatreFile, VarDecl,
+    ActDecl, Action, ActionVerb, AppOp, Argument, Check, CheckCondition, Direction, DrmTerm,
+    ExampleColumn, ExampleRow, ExampleTable, Ident, KeyName, Named, ParamDecl, PerformDecl,
+    PieceDecl, PieceSelector, PlayFile, PlayerAssertion, PlayerCheck, SceneBlock, SceneColumn,
+    SceneFile, ShowingCheck, ShowingOption, StageDecl, StageItem, StatusTerm, Step, StepKind,
+    TheatreFile, VarDecl,
 };
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
 use crate::duration::DslDuration;
@@ -33,7 +34,7 @@ pub struct ParseOutcome<T> {
     pub diagnostics: Diagnostics,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Cursor<'a> {
     start: &'a str,
     rest: &'a str,
@@ -824,7 +825,7 @@ fn parse_piece_line(
 
     loop {
         cursor.skip_ws();
-        let mut probe = cursor.clone();
+        let mut probe = cursor;
         if probe.try_lit("index") && probe.try_lit("=") {
             let col = probe.col();
             let value = probe.uint().map_err(|_| {
@@ -2939,14 +2940,427 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
     let body = body_start.trim();
     let mut cursor = Cursor::new(body, path, line.line, body_col + leading);
 
-    let piece = cursor.ident().map_err(|reason| {
+    cursor.skip_ws();
+    let (piece, condition) = if starts_keyword(cursor.rest, "Showing") {
+        cursor.try_lit("Showing");
+        parse_showing_check(&mut cursor, false)?
+    } else if starts_keyword(cursor.rest, "not") {
+        let mut after_not = cursor.rest.trim_start();
+        after_not = after_not.get("not".len()..).unwrap_or("");
+        after_not = after_not.trim_start();
+        if starts_keyword(after_not, "Showing") {
+            cursor.try_lit("not");
+            cursor.try_lit("Showing");
+            parse_showing_check(&mut cursor, true)?
+        } else {
+            (
+                cursor.ident().map_err(|reason| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        format!("Check: needs a piece name ({reason})"),
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?,
+                parse_legacy_condition(&mut cursor)?,
+            )
+        }
+    } else if starts_keyword(cursor.rest, "Player") {
+        cursor.try_lit("Player");
+        parse_player_check(&mut cursor)?
+    } else {
+        let piece = cursor.ident().map_err(|reason| {
+            diag_at(
+                Code::DslUnknownAction,
+                format!("Check: needs a piece name ({reason})"),
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        (piece, parse_legacy_condition(&mut cursor)?)
+    };
+
+    let mut timeout = None;
+    if cursor.try_lit("timeout") {
+        let duration = cursor.duration().map_err(|reason| {
+            diag_at(
+                Code::DslInvalidDuration,
+                reason,
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        timeout = Some(duration);
+    }
+    if !cursor.at_end() {
+        return Err(diag_at(
+            Code::DslUnknownAction,
+            format!("unexpected trailing input '{}'", cursor.rest.trim()),
+            cursor.span(cursor.col(), cursor.rest.trim().chars().count().max(1)),
+        ));
+    }
+
+    Ok(Step {
+        source_text: line.content.clone(),
+        span: line.span(path),
+        timeout,
+        kind: StepKind::Check(Check {
+            piece,
+            condition,
+            span: Span::new(path, line.line, body_col + 1, body.chars().count()),
+        }),
+    })
+}
+
+fn starts_keyword(input: &str, keyword: &str) -> bool {
+    match input.strip_prefix(keyword) {
+        Some(rest) => rest.is_empty() || rest.starts_with([' ', '\t']),
+        None => false,
+    }
+}
+
+fn parse_showing_check(
+    cursor: &mut Cursor<'_>,
+    negated: bool,
+) -> Result<(Ident, CheckCondition), Diagnostic> {
+    cursor.expect_lit("=>").map_err(|_| {
         diag_at(
             Code::DslUnknownAction,
-            format!("Check: needs a piece name ({reason})"),
+            "`Showing` needs `=>` and a piece name",
             cursor.span(cursor.col(), 1),
         )
     })?;
+    let piece = cursor.ident().map_err(|reason| {
+        diag_at(
+            Code::DslUnknownAction,
+            format!("`Showing =>` needs a piece name ({reason})"),
+            cursor.span(cursor.col(), 1),
+        )
+    })?;
+    let mut options = Vec::new();
+    if cursor.try_lit("with") {
+        loop {
+            let option = if cursor.try_lit("coverage") {
+                cursor.expect_lit(">=").map_err(|_| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        "`coverage` needs `>=N%`",
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                let percent = cursor.uint().map_err(|_| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        "`coverage` needs an integer percentage",
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                cursor.expect_lit("%").map_err(|_| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        "`coverage` percentage needs a trailing `%`",
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                let percent = u8::try_from(percent).map_err(|_| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        "`coverage` must be between 0% and 100%",
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                if percent > 100 {
+                    return Err(diag_at(
+                        Code::DslUnknownAction,
+                        "`coverage` must be between 0% and 100%",
+                        cursor.span(cursor.col(), 1),
+                    ));
+                }
+                ShowingOption::Coverage { percent }
+            } else if cursor.try_lit("decoded") {
+                ShowingOption::Decoded
+            } else if cursor.try_lit("source") {
+                cursor.expect_lit("~").map_err(|_| {
+                    diag_at(
+                        Code::DslUnknownAction,
+                        "`source` needs `~\"substring\"`",
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                let text = cursor.quoted().map_err(|reason| {
+                    diag_at(
+                        Code::DslUnterminatedString,
+                        format!("`source~` needs a quoted substring ({reason})"),
+                        cursor.span(cursor.col(), 1),
+                    )
+                })?;
+                ShowingOption::Source { contains: text.raw }
+            } else {
+                return Err(diag_at(
+                    Code::DslUnknownAction,
+                    format!(
+                        "unknown Showing option '{}' (coverage>=N%, decoded, source~\"…\")",
+                        cursor.peek_word()
+                    ),
+                    cursor.span(cursor.col(), cursor.peek_word().chars().count().max(1)),
+                ));
+            };
+            options.push(option);
+            if !cursor.try_lit(",") {
+                break;
+            }
+        }
+    }
+    Ok((
+        piece,
+        CheckCondition::Showing(ShowingCheck { negated, options }),
+    ))
+}
 
+fn parse_player_check(cursor: &mut Cursor<'_>) -> Result<(Ident, CheckCondition), Diagnostic> {
+    cursor.expect_lit("=>").map_err(|_| {
+        diag_at(
+            Code::DslUnknownAction,
+            "`Player` needs `=>` and a piece name",
+            cursor.span(cursor.col(), 1),
+        )
+    })?;
+    let piece = cursor.ident().map_err(|reason| {
+        diag_at(
+            Code::DslUnknownAction,
+            format!("`Player =>` needs a piece name ({reason})"),
+            cursor.span(cursor.col(), 1),
+        )
+    })?;
+    let mut status = None;
+    let mut drm = None;
+    let mut assertions = Vec::new();
+    loop {
+        cursor.skip_ws();
+        if cursor.at_end() || starts_keyword(cursor.rest, "timeout") {
+            break;
+        }
+        if cursor.try_lit("with") {
+            assertions = parse_player_assertions(cursor)?;
+            break;
+        }
+        if cursor.try_lit("DRM-enabled") {
+            let (provider, provider_negated) = parse_optional_provider(cursor)?;
+            drm = Some(DrmTerm {
+                enabled: true,
+                provider,
+                provider_negated,
+            });
+            continue;
+        }
+        if cursor.try_lit("DRM-disabled") {
+            let (provider, provider_negated) = parse_optional_provider(cursor)?;
+            drm = Some(DrmTerm {
+                enabled: false,
+                provider,
+                provider_negated,
+            });
+            continue;
+        }
+        let negated = cursor.try_lit("not");
+        let (word, span) = cursor.word().map_err(|_| {
+            diag_at(
+                Code::DslUnknownAction,
+                "`Player` needs a status, `DRM-…`, or `with`",
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        if let Some(parsed) = crate::probe::PlayerStatus::parse(word) {
+            if status.is_some() {
+                return Err(diag_at(
+                    Code::DslUnknownAction,
+                    "only one player status may be asserted",
+                    span,
+                ));
+            }
+            status = Some(StatusTerm {
+                status: parsed,
+                negated,
+            });
+        } else {
+            let hint = suggest(word, &player_status_names())
+                .map(|hint| format!("; {hint}"))
+                .unwrap_or_default();
+            return Err(diag_at(
+                Code::DslUnknownAction,
+                format!("unknown player status '{word}'{hint}"),
+                span,
+            ));
+        }
+    }
+    if status.is_none() && drm.is_none() && assertions.is_empty() {
+        return Err(diag_at(
+            Code::DslUnknownAction,
+            "`Player` needs a status, `DRM-…`, or `with`",
+            cursor.span(cursor.col(), 1),
+        ));
+    }
+    Ok((
+        piece,
+        CheckCondition::Player(PlayerCheck {
+            status,
+            drm,
+            assertions,
+        }),
+    ))
+}
+
+fn player_status_names() -> Vec<&'static str> {
+    crate::probe::PlayerStatus::ALL
+        .iter()
+        .map(|status| status.as_str())
+        .collect()
+}
+
+fn parse_optional_provider(
+    cursor: &mut Cursor<'_>,
+) -> Result<(Option<crate::probe::DrmProvider>, bool), Diagnostic> {
+    cursor.skip_ws();
+    let mut probe = *cursor;
+    let negated = probe.try_lit("not");
+    let provider = if let Ok((word, _)) = probe.word() {
+        crate::probe::DrmProvider::parse(word)
+    } else {
+        None
+    };
+    if let Some(provider) = provider {
+        *cursor = probe;
+        Ok((Some(provider), negated))
+    } else {
+        Ok((None, false))
+    }
+}
+
+fn parse_player_assertions(cursor: &mut Cursor<'_>) -> Result<Vec<PlayerAssertion>, Diagnostic> {
+    let mut out = Vec::new();
+    loop {
+        let negated = cursor.try_lit("not");
+        let (word, span) = cursor.word().map_err(|_| {
+            diag_at(
+                Code::DslUnknownAction,
+                "`with` needs a property name",
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        let Some(property) = crate::probe::ProbeProperty::parse(word) else {
+            let hint = suggest(word, &probe_property_names())
+                .map(|hint| format!("; {hint}"))
+                .unwrap_or_default();
+            return Err(diag_at(
+                Code::DslUnknownAction,
+                format!("unknown player property '{word}'{hint}"),
+                span,
+            ));
+        };
+        let operator = parse_operator(cursor);
+        let value = if operator.is_some() {
+            parse_assertion_value(cursor, property)?
+        } else {
+            String::new()
+        };
+        out.push(PlayerAssertion {
+            property,
+            operator,
+            value,
+            negated,
+        });
+        if !cursor.try_lit(",") {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn probe_property_names() -> Vec<&'static str> {
+    crate::probe::ProbeProperty::ALL
+        .iter()
+        .map(|property| property.as_str())
+        .collect()
+}
+
+fn parse_operator(cursor: &mut Cursor<'_>) -> Option<crate::probe::Operator> {
+    for (text, operator) in [
+        (">=", crate::probe::Operator::Ge),
+        ("<=", crate::probe::Operator::Le),
+        ("!=", crate::probe::Operator::Ne),
+        ("=", crate::probe::Operator::Eq),
+        (">", crate::probe::Operator::Gt),
+        ("<", crate::probe::Operator::Lt),
+        ("~", crate::probe::Operator::Contains),
+    ] {
+        if cursor.try_lit(text) {
+            return Some(operator);
+        }
+    }
+    None
+}
+
+fn parse_assertion_value(
+    cursor: &mut Cursor<'_>,
+    property: crate::probe::ProbeProperty,
+) -> Result<String, Diagnostic> {
+    cursor.skip_ws();
+    if cursor.rest.starts_with('"') {
+        let text = cursor.quoted().map_err(|reason| {
+            diag_at(
+                Code::DslUnterminatedString,
+                format!("assertion value needs a quoted string ({reason})"),
+                cursor.span(cursor.col(), 1),
+            )
+        })?;
+        return Ok(text.raw);
+    }
+    let end = cursor
+        .rest
+        .find([',', ' ', '\t'])
+        .unwrap_or(cursor.rest.len());
+    let raw = cursor.rest.get(..end).unwrap_or("");
+    if raw.is_empty() {
+        return Err(diag_at(
+            Code::DslUnknownAction,
+            "the assertion operator needs a value",
+            cursor.span(cursor.col(), 1),
+        ));
+    }
+    cursor.rest = cursor.rest.get(end..).unwrap_or("");
+    Ok(canonical_probe_value(raw, property))
+}
+
+/// Convert human units to the canonical wire value: durations become
+/// seconds, percentages become fractions, resolutions become their vertical
+/// pixel count, everything else stays literal.
+fn canonical_probe_value(raw: &str, property: crate::probe::ProbeProperty) -> String {
+    if property == crate::probe::ProbeProperty::Resolution {
+        if let Some(height) = raw.strip_suffix('p').or_else(|| raw.strip_suffix('P')) {
+            if height.chars().all(|c| c.is_ascii_digit()) {
+                return height.to_string();
+            }
+        }
+        if raw.eq_ignore_ascii_case("4k") {
+            return "2160".to_string();
+        }
+        if raw.eq_ignore_ascii_case("8k") {
+            return "4320".to_string();
+        }
+    }
+    if let Some(percent) = raw.strip_suffix('%') {
+        if let Ok(value) = percent.parse::<f64>() {
+            return format!("{}", value / 100.0);
+        }
+    }
+    if raw.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && raw.chars().last().is_some_and(|c| c == 's' || c == 'm')
+    {
+        if let Ok(duration) = crate::duration::parse(raw, None) {
+            return format!("{}", duration.millis() as f64 / 1000.0);
+        }
+    }
+    raw.to_string()
+}
+
+fn parse_legacy_condition(cursor: &mut Cursor<'_>) -> Result<CheckCondition, Diagnostic> {
     let condition = if cursor.try_lit("is") {
         let (word, span) = cursor.word().map_err(|_| {
             diag_at(
@@ -3005,36 +3419,7 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
     } else {
         CheckCondition::IsVisible
     };
-
-    let mut timeout = None;
-    if cursor.try_lit("timeout") {
-        let duration = cursor.duration().map_err(|reason| {
-            diag_at(
-                Code::DslInvalidDuration,
-                reason,
-                cursor.span(cursor.col(), 1),
-            )
-        })?;
-        timeout = Some(duration);
-    }
-    if !cursor.at_end() {
-        return Err(diag_at(
-            Code::DslUnknownAction,
-            format!("unexpected trailing input '{}'", cursor.rest.trim()),
-            cursor.span(cursor.col(), cursor.rest.trim().chars().count().max(1)),
-        ));
-    }
-
-    Ok(Step {
-        source_text: line.content.clone(),
-        span: line.span(path),
-        timeout,
-        kind: StepKind::Check(Check {
-            piece,
-            condition,
-            span: Span::new(path, line.line, body_col + 1, body.chars().count()),
-        }),
-    })
+    Ok(condition)
 }
 
 /// Parse the `AppOp` from an action body (helper so `app` above stays flat).

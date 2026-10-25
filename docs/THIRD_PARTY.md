@@ -24,7 +24,7 @@ facts only).
 | `portable-pty` | 0.9.0 | MIT | ConPTY/PTY-based acceptance tests (dev-dependency only) | chosen, shipped — I-92/I-128 |
 | `getrandom` | 0.4.3 | MIT OR Apache-2.0 | daemon socket token (OS CSPRNG) | chosen — I-126 |
 | `libc` | 0.2.190 | MIT OR Apache-2.0 | Unix pid liveness and daemon `setsid` (Unix-only dependency) | chosen — I-126 |
-| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets (Windows Credential Manager etc.) | candidate — probed in S-5, no Phase 4 code path uses it yet |
+| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets: webOS Developer Mode passphrase, Tizen PKCS#12 passwords (Windows Credential Manager/Secret Service) | chosen, shipped — I-99/I-141 |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | display-width math (tables, reports) | chosen |
 | `inquire` | 0.9.4 | MIT | interactive wizards | candidate — not adopted; Phase 4 wizard/prompt is line-based |
 | `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate — not adopted |
@@ -39,19 +39,64 @@ facts only).
 | `adb_client` | 3.2.3 | MIT | Android direct ADB (S-1 candidate) | **not used** - superseded by I-121 before shipping |
 | `rusb` | 0.9.4 | MIT | Android USB transport (S-1 candidate) | **not used** - `libadb` uses `nusb` (I-121) |
 | `curve25519-dalek` | 5.0.0 | BSD-3-Clause | pairing: Edwards point/scalar arithmetic (S-1 plan) | **not used** - own pairing superseded by `libadb` (I-121) |
-| `sha2` | 0.10.9 | MIT OR Apache-2.0 | managed Chromium archive SHA-256; `libadb` uses its own pairing hashes | chosen - I-123 |
+| `sha2` | 0.10.9 | MIT OR Apache-2.0 | managed Chromium archive SHA-256, webOS package cache, Tizen WGT digests and signing-cache keys | chosen - I-123/I-139/I-142 |
 | `hkdf` | 0.13.0 | MIT OR Apache-2.0 | pairing: AES key derivation (S-1 plan) | **not used** - own pairing superseded (I-121) |
 | `aes-gcm` | 0.11.1 | Apache-2.0 OR MIT | pairing: peer-info encryption (S-1 plan) | **not used** - own pairing superseded (I-121) |
 | `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | pairing TLS 1.3 channel (S-1 plan; transitive via `libadb` only) | **not a direct dependency** - I-121 |
 | `tokio-rustls` | 0.26.6 | MIT OR Apache-2.0 | async TLS glue (S-1 plan) | **not used** - I-121 |
-| `rcgen` | 0.14.10 | MIT OR Apache-2.0 | pairing self-signed certificate (S-1 plan) | **not used** - I-121 |
+| `rcgen` | =0.14.10 | MIT OR Apache-2.0 | generated test certificates for Tizen RSA/ECDSA signing tests (dev-dependency only) | chosen, test-only — I-141 |
 | `mdns-sd` | 0.21.6 | Apache-2.0 OR MIT | discovery of `_adb-tls-pairing` / `_adb-tls-connect` | chosen - I-121 |
 | `ureq` | 2.12.1 | MIT OR Apache-2.0 | managed Chromium HTTPS download (consented, pinned) | chosen - I-123 |
-| `zip` | 7.3.0 | MIT | managed Chromium archive extraction | chosen - I-123 |
+| `zip` | =7.3.0 | MIT | managed Chromium archive extraction; deterministic Tizen `.wgt` read/write | chosen - I-123/I-141 |
+| `png` | =0.18.1 | MIT OR Apache-2.0 | connector screenshot-region coverage for `Showing` probes | chosen - TASK-3 probe |
 | `windows-sys` | 0.61.2 | MIT OR Apache-2.0 | Windows AppContainer ACL grant for the managed browser; daemon `CreateProcess`/standard-handle inheritance and console features (Windows-only) | chosen - I-123/I-126 |
 | `russh` | 0.63.3 | Apache-2.0 | webOS SSH transport (`ring` backend, no NASM/OpenSSL) | chosen — I-99 |
 | `russh-sftp` | 3.0.1 | Apache-2.0 | webOS SFTP upload (exec `cat` fallback) | chosen — I-99 |
+| `rsa` | =0.9.10 | MIT OR Apache-2.0 | Tizen RSA PKCS#1 v1.5/SHA-512 signing and SDB AUTH/SHA-1 tokens | chosen — I-140/I-141 |
+| `rsa` (alias `rsa-russh`) | =0.10.0-rc.18 | MIT OR Apache-2.0 | webOS legacy PEM to russh `RsaKeypair` (same graph as `ssh-key`) | chosen — I-138 |
+| `pkcs1` (alias `pkcs1-russh`) | =0.8.0-rc.4 | MIT OR Apache-2.0 | RSA PKCS#1 encoding/decoding for the webOS key fallback | chosen — I-138 |
+| `p256` | =0.13.2 | MIT OR Apache-2.0 | Tizen ECDSA P-256 SHA-512 signing/verification | chosen — I-141 |
+| `p384` | =0.13.1 | MIT OR Apache-2.0 | Tizen ECDSA P-384 SHA-512 signing/verification | chosen — I-141 |
+| `aes` / `cbc` / `md-5` / `sha1` | 0.8.4 / 0.1.2 / 0.10.6 / 0.10.6 | MIT OR Apache-2.0 | legacy webOS PKCS#5 PEM decipher; SDB AUTH token | chosen — I-138/I-140 |
+| `flate2` | =1.1.4 | MIT OR Apache-2.0 | deterministic gzip for webOS `.ipk` | chosen — I-139 |
+| `tar` | =0.4.46 | MIT OR Apache-2.0 | deterministic ustar for webOS `.ipk` | chosen — I-139 |
+| `ar` | =0.9.0 | MIT | deterministic `ar` archive for webOS `.ipk` | chosen — I-139 |
+| `p12-keystore` | =0.4.1 | MIT OR Apache-2.0 | import Tizen author/distributor PKCS#12 profiles | chosen — I-141 |
+| `ua-cryptography-xml-c14n` | =0.1.6 | MIT | exclusive XML C14N for Tizen XML-DSig | chosen — I-141 |
+| `x509-parser` | =0.18.0 | MIT OR Apache-2.0 | Tizen certificate subject, validity and DUID SAN inspection | chosen — I-141 |
+| `roxmltree` | =0.21.1 | MIT OR Apache-2.0 | Tizen `config.xml` and signature XML parsing | chosen — I-141 |
+| `base64` | 0.23.1 | MIT OR Apache-2.0 | XML-DSig digests/signatures and SDB AUTH public-key blob | chosen — existing/I-141 |
+| `rand` | =0.10.3 | MIT OR Apache-2.0 | fake SSH server/client nonces in webOS replay tests (dev-dependency only) | chosen, test-only — I-138 |
 | `ssh2` | 0.9.6 | MIT OR Apache-2.0 | libssh2 binding; would drag OpenSSL/Perl into the Windows build | rejected — I-99 |
+
+## Apple Swift packages
+
+The Apple agent is a Swift package (`agents/apple/Package.swift`); versions are
+pinned by `Package.resolved`. The Xcode runner uses the same packages plus
+Apple's XCTest frameworks, which are part of the platform SDK.
+
+| Package | Version | License | Used for | Status |
+|---|---|---|---|---|
+| `swift-protobuf` | 1.39.0 (exact) | Apache-2.0 WITH Swift-exception | generated `ImpresarioWire` messages | chosen - I-83 |
+| `grpc-swift` | 1.27.6 (exact) | Apache-2.0 | gRPC `Agent` service on SwiftNIO | chosen - I-83 |
+| `swift-nio` | 2.65.0 or newer, lock-pinned | Apache-2.0 | event loops and future glue | chosen - I-83 |
+| `swift-nio-http2` | 1.46.0 or newer, lock-pinned | Apache-2.0 | gRPC metadata (`NIOHPACK`) | chosen - I-83 |
+
+`protoc` is used only at generation time (`scripts/gen-swift.sh`); its output is
+committed. The `protoc-gen-swift` plugin is built from the pinned
+`swift-protobuf` checkout. No Swift toolchain or Homebrew package is shipped or
+invoked at runtime by Impresario itself.
+
+## Media fixtures and reference streams
+
+The local MP4/WebM/M4A/PNG files under `fixtures/` and the Apple/Android stub
+assets were generated for this repository (ffmpeg for the encoded samples, a
+small generated PNG gradient). They contain no third-party content and are
+distributed under the repository's MIT OR Apache-2.0 terms. The Apple stub can
+also open Apple's public BipBop HLS sample URL for manual testing; it is
+referenced, not redistributed, and availability is outside this project's
+control. No Netflix/DRM-provider asset, FairPlay certificate or private license
+proxy is shipped or used by CI.
 
 ## VS Code extension dependencies (npm)
 

@@ -139,6 +139,11 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var scrollHandler: ((FakeElement?, Direction, Int) -> Void)?
     var selectValueHandler: ((FakeElement, String) -> Bool)?
     var focusedFrameProvider: (() -> CGRect?)?
+    var mediaSnapshotValue: MediaSnapshot?
+    var drmSnapshotValue: DrmSnapshot?
+    var regionCoverageValue: Double?
+    var showingDecodedValue: Bool?
+    var showingSourceValue: String?
 
     private let lock = NSLock()
     private var _findCalls = 0
@@ -319,6 +324,16 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
         locked { _selectValues.append((element.id, value)) }
         return selectValueHandler?(element, value) ?? false
     }
+
+    func mediaSnapshot() -> MediaSnapshot? { mediaSnapshotValue }
+
+    func drmSnapshot() -> DrmSnapshot? { drmSnapshotValue }
+
+    func regionCoverage(png: Data, rect: CGRect) -> Double? { regionCoverageValue }
+
+    func showingDecoded(_ e: ElementRef) -> Bool? { showingDecodedValue }
+
+    func showingSource(_ e: ElementRef) -> String? { showingSourceValue }
 
     // MARK: helpers
 

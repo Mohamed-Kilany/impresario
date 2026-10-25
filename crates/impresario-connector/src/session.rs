@@ -448,6 +448,9 @@ impl Session {
             pb::command::Body::Cancel(_) => Err(ConnectorError::protocol(
                 "a cancel command is handled by the session loop",
             )),
+            pb::command::Body::Probe(probe) => {
+                self.executor.run_probe(probe, timeout_ms, cancel).await
+            }
         }
     }
 
@@ -472,6 +475,7 @@ impl Session {
                 screenshot_png: output.screenshot_png,
                 observed_text: output.observed_text,
                 observed_count: output.observed_count,
+                probe: output.probe,
             },
             Err(error) => pb::CommandResult {
                 command_id: command.command_id.clone(),
@@ -481,6 +485,7 @@ impl Session {
                 screenshot_png: Vec::new(),
                 observed_text: String::new(),
                 observed_count: 0,
+                probe: None,
             },
         }
     }
@@ -673,6 +678,7 @@ async fn session_loop(
                     screenshot_png: Vec::new(),
                     observed_text: String::new(),
                     observed_count: 0,
+                    probe: None,
                 }
             };
             if send_event(&events, pb::event::Body::Result(result))
@@ -755,6 +761,7 @@ fn ok_result(command_id: &str) -> pb::CommandResult {
         screenshot_png: Vec::new(),
         observed_text: String::new(),
         observed_count: 0,
+        probe: None,
     }
 }
 

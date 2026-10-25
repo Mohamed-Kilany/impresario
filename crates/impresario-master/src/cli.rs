@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use impresario_clients::agent_client::{AgentClient, DeviceInfo, HandshakeParams};
 use impresario_clients::transport::{transport_for, DeviceTransport};
 use impresario_core::apps::{self, AppConfig};
@@ -124,6 +124,10 @@ pub enum Command {
         #[command(subcommand)]
         command: AppCommand,
     },
+    /// Build deterministic webOS `.ipk` or Tizen `.wgt` packages.
+    Package(crate::artifact_cmd::PackageArgs),
+    /// Sign and inspect Tizen packages, and manage signing profiles.
+    Sign(crate::artifact_cmd::SignArgs),
     /// Convert a legacy flat devices file into devices + apps (TASK-2 8.9).
     Migrate(MigrateArgs),
     /// Plan and execute plays on devices (spec section 8.2/8.3).
@@ -275,6 +279,12 @@ pub enum WorkspaceCommand {
     },
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum UnverifiableArg {
+    Fail,
+    Warn,
+}
+
 #[derive(Debug, Args, Clone)]
 pub struct RunArgs {
     /// Play file, directory or glob (repeatable; default: plays_dir).
@@ -316,6 +326,9 @@ pub struct RunArgs {
     /// Retry failed acts up to n times (beats config retries).
     #[arg(long, value_name = "N")]
     pub retries: Option<u32>,
+    /// What to do when a probe cannot establish truth (beats config).
+    #[arg(long, value_enum, value_name = "POLICY")]
+    pub unverifiable: Option<UnverifiableArg>,
     /// Reporters: comma list of console, junit, json, html.
     #[arg(long, value_name = "LIST")]
     pub reporter: Option<String>,
@@ -418,6 +431,8 @@ pub fn run_with(argv: &[String]) -> i32 {
             crate::doctor::run(&home, &base, &config_path, &devices_path, *json)
         }
         Command::Tools { command } => crate::tools_cmd::run(command, &home),
+        Command::Package(args) => crate::artifact_cmd::run_package(args),
+        Command::Sign(args) => crate::artifact_cmd::run_sign(&home, args),
         Command::Migrate(args) => crate::definitions::migrate(&base, &config_path, args.dry_run),
         Command::Run(args) => cmd_run(
             &home,
@@ -607,7 +622,7 @@ Var: USER = 'test_user_impresario'
 
 Act: Successful Login Flow
 Tags: smoke, auth
-Platforms: android, ios, webos
+Platforms: android, ios, web, webos
 
 Stage: Navigate and Login
     Timeout: 15s
@@ -1848,7 +1863,7 @@ fn cmd_devices_check(
             return EXIT_INFRA;
         }
     };
-    let results: Vec<Result<DeviceInfo, String>> = runtime.block_on(async {
+    let results: Vec<Result<DeviceCheck, String>> = runtime.block_on(async {
         let mut results = Vec::new();
         for device in &selected {
             results.push(
@@ -1861,18 +1876,27 @@ fn cmd_devices_check(
     let mut failures = 0usize;
     for (device, result) in selected.iter().zip(results) {
         match result {
-            Ok(info) => println!(
-                "{} ({}): {} · {} {} · {}x{} @{}x · {}",
-                device.name,
-                device.platform.as_str(),
-                info.model,
-                info.os_name,
-                info.os_version,
-                info.screen_width_px,
-                info.screen_height_px,
-                info.pixel_ratio,
-                info.runtime
-            ),
+            Ok(check) => {
+                let info = &check.info;
+                println!(
+                    "{} ({}): {} · {} {} · {}x{} @{}x · {}",
+                    device.name,
+                    device.platform.as_str(),
+                    info.model,
+                    info.os_name,
+                    info.os_version,
+                    info.screen_width_px,
+                    info.screen_height_px,
+                    info.pixel_ratio,
+                    info.runtime
+                );
+                for detail in check.details {
+                    println!("  {detail}");
+                }
+                for warning in check.warnings {
+                    eprintln!("  warning: {warning}");
+                }
+            }
             Err(message) => {
                 failures += 1;
                 eprintln!(
@@ -1894,15 +1918,24 @@ fn cmd_devices_check(
     EXIT_OK
 }
 
-/// Transport prepare → connect → handshake → `DeviceInfo` → session shutdown,
-/// then teardown (spec 8.1); every failure is a message, never a panic.
+/// Result of one `devices check` probe. Native transports report extra facts
+/// (DUID, staging path, certificate state) that the executor does not know.
+pub(crate) struct DeviceCheck {
+    pub info: DeviceInfo,
+    pub details: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Native probe, or transport prepare → connect → handshake → `DeviceInfo` →
+/// session shutdown, then teardown (spec 8.1); every failure is a message,
+/// never a panic.
 pub(crate) async fn check_device(
     device: &DeviceConfig,
     app: Option<&AppConfig>,
     timeout_ms: u64,
     token: Option<&str>,
     master_version: &str,
-) -> Result<DeviceInfo, String> {
+) -> Result<DeviceCheck, String> {
     let mut transport = transport_for(device.platform);
     let outcome = check_transport(
         &mut *transport,
@@ -1918,7 +1951,7 @@ pub(crate) async fn check_device(
         .await
         .map_err(|error| error.to_string());
     match outcome {
-        Ok(info) => teardown.map(|()| info),
+        Ok(check) => teardown.map(|()| check),
         Err(message) => {
             let _ = teardown;
             Err(message)
@@ -1933,7 +1966,20 @@ async fn check_transport(
     timeout_ms: u64,
     token: Option<&str>,
     master_version: &str,
-) -> Result<DeviceInfo, String> {
+) -> Result<DeviceCheck, String> {
+    if app.is_none() {
+        if let Some(probe) = transport
+            .probe(device)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(DeviceCheck {
+                info: probe.info,
+                details: probe.details,
+                warnings: probe.warnings,
+            });
+        }
+    }
     let endpoint = transport
         .prepare(device, app)
         .await
@@ -1945,7 +1991,7 @@ async fn check_transport(
     let mut params = HandshakeParams::new(
         device.name.clone(),
         device.platform,
-        device.target_endpoint(),
+        transport.target_endpoint(device),
         master_version,
     );
     let entry = app.and_then(|app| app.platform(device.platform));
@@ -1963,9 +2009,14 @@ async fn check_transport(
             .unwrap_or_else(|| "the executor rejected the handshake".to_string()));
     }
     let _ = client.shutdown_session(&handshake.session_id, false).await;
-    handshake
+    let info = handshake
         .device
-        .ok_or_else(|| "the executor did not report DeviceInfo".to_string())
+        .ok_or_else(|| "the executor did not report DeviceInfo".to_string())?;
+    Ok(DeviceCheck {
+        info,
+        details: Vec::new(),
+        warnings: Vec::new(),
+    })
 }
 
 /// The devices an invocation selected: `all` (or nothing) means everything,
@@ -2198,6 +2249,13 @@ pub(crate) fn run_workspace(
             diagnostics_detail(&config_outcome.diagnostics),
         );
     };
+    let mut config = config;
+    if let Some(policy) = args.unverifiable {
+        config.unverifiable_policy = match policy {
+            UnverifiableArg::Fail => impresario_core::probe::UnverifiablePolicy::Fail,
+            UnverifiableArg::Warn => impresario_core::probe::UnverifiablePolicy::Warn,
+        };
+    }
     let devices_outcome = config::load_devices_merged(devices_path);
     render::eprint_all(&devices_outcome.diagnostics);
     let Some(device_list) = devices_outcome.config else {
@@ -3052,6 +3110,29 @@ mod tests {
         let code = run_with(&argv(&dir, &["validate"]));
         assert_eq!(code, EXIT_OK);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unverifiable_flag_accepts_fail_and_warn() {
+        let fail =
+            Cli::try_parse_from(["impresario", "run", "--unverifiable", "fail", "--dry-run"])
+                .expect("parse fail");
+        match fail.command {
+            Some(Command::Run(args)) => {
+                assert!(matches!(args.unverifiable, Some(UnverifiableArg::Fail)))
+            }
+            _ => panic!("expected run"),
+        }
+        let warn =
+            Cli::try_parse_from(["impresario", "run", "--unverifiable", "warn", "--dry-run"])
+                .expect("parse warn");
+        match warn.command {
+            Some(Command::Run(args)) => {
+                assert!(matches!(args.unverifiable, Some(UnverifiableArg::Warn)))
+            }
+            _ => panic!("expected run"),
+        }
+        assert!(Cli::try_parse_from(["impresario", "run", "--unverifiable", "sometimes"]).is_err());
     }
 
     #[test]

@@ -143,6 +143,46 @@ interface UiDriver {
     fun deviceInfo(): DeviceInfoData
 }
 
+/** One media observation, normalized across MediaSession/audio state. */
+data class MediaSnapshot(
+    /** Idle|Loading|Buffering|Ready|Playing|Paused|Seeking|Ended|Error */
+    val state: String? = null,
+    val positionSeconds: Double? = null,
+    val durationSeconds: Double? = null,
+    val rate: Double? = null,
+    val volume: Double? = null,
+    val muted: Boolean? = null,
+    val widthPx: Int? = null,
+    val heightPx: Int? = null,
+    val audioTrack: String? = null,
+    val subtitleTrack: String? = null,
+    val source: String? = null,
+    val error: String? = null,
+    val decoded: Boolean? = null,
+    val activeAudio: Boolean? = null,
+    /** Evidence source: `app_hook` or `media_session`; null means the latter. */
+    val origin: String? = null,
+)
+
+/** Decode/source facts from the optional in-app hook's `showing` object. */
+data class ShowingSnapshot(
+    val decoded: Boolean? = null,
+    val source: String? = null,
+    val piece: String? = null,
+)
+
+/** DRM state from MediaDrm / platform DRM diagnostics. */
+data class DrmSnapshot(
+    val enabled: Boolean? = null,
+    val provider: String? = null,
+    val license: String? = null,
+    val keyStatus: String? = null,
+    val securityLevel: String? = null,
+    val hdcp: String? = null,
+    /** Evidence source: `app_hook` or `media_drm`; null means the latter. */
+    val origin: String? = null,
+)
+
 /**
  * Optional driver capabilities that only the real UiAutomator driver can
  * provide (they need `UiDevice.executeShellCommand` or the accessibility
@@ -161,6 +201,22 @@ interface DriverExtras {
 
     /** `app background`: sends the app under test to the background. */
     fun putInBackground(appId: String): Boolean = false
+
+    /** MediaSession/audio state for a player probe (TASK-3 section 6.2). */
+    fun mediaSnapshot(): MediaSnapshot? = null
+
+    /** Optional in-app hook's decode/source facts for a showing probe. */
+    fun showingSnapshot(): ShowingSnapshot? = null
+
+    /** Active MediaDrm sessions, when the platform exposes them. */
+    fun drmSnapshot(): DrmSnapshot? = null
+
+    /**
+     * Share of non-uniform pixels in [rect] (0..100), decoded from the same
+     * PNG the probe captured. Host-side screenshot analysis is not available
+     * in a native agent, so the platform does the decode once here.
+     */
+    fun regionCoverage(png: ByteArray, rect: Rect): Double? = null
 }
 
 /** Handshake options and knobs handed to the dispatcher. */

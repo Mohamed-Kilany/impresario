@@ -39,6 +39,12 @@ class FakeDriver(
     var longPressKeySucceeds = true
     var screenshot = byteArrayOf(1, 2, 3, 4)
 
+    /** Probe extras, when a test needs platform observations. */
+    var media: MediaSnapshot? = null
+    var showing: ShowingSnapshot? = null
+    var drm: DrmSnapshot? = null
+    var coverage: Double? = null
+
     /** Real-time block inside `find`, for cancellation tests. */
     var blockFindMs: Long = 0
 
@@ -175,6 +181,14 @@ class FakeDriver(
     }
 
     override fun targetCrashed(appId: String): Boolean = crash
+
+    override fun mediaSnapshot(): MediaSnapshot? = media
+
+    override fun showingSnapshot(): ShowingSnapshot? = showing
+
+    override fun drmSnapshot(): DrmSnapshot? = drm
+
+    override fun regionCoverage(png: ByteArray, rect: Rect): Double? = coverage
 
     private fun nodeOf(e: ElementHandle): Node {
         val key = (e as Handle).key

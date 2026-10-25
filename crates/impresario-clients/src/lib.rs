@@ -20,7 +20,11 @@ pub mod agent_client;
 pub mod convert;
 pub mod log;
 pub mod testing;
+pub mod tizen;
+pub mod tizen_sign;
 pub mod transport;
+pub mod webos;
+pub mod webos_package;
 
 pub use adb::{
     discover_mdns, discover_usb, pair_wireless, AdbClient, AdbError, AdbTarget, AndroidProbe,
@@ -33,5 +37,5 @@ pub use agent_client::{
 pub use log::{LogBuffer, LogLevel, LogRecord, LogStream};
 pub use transport::{
     connector_binary, transport_for, AdbTransport, AppleTransport, ConnectorTransport,
-    DeviceTransport, Endpoint, LogSource, LogSourceKind, TransportError,
+    DeviceTransport, Endpoint, LogSource, LogSourceKind, NativeProbe, TransportError,
 };

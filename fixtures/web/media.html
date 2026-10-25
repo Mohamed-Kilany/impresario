@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Impresario media fixture</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    h1 { margin: 8px 12px; font-size: 18px; }
+    #stage { display: flex; gap: 16px; align-items: flex-start; padding: 12px; }
+    #video { width: 320px; height: 240px; background: #000; }
+    #poster { width: 96px; height: 96px; border: 2px solid #4caf50; }
+    #start-audio { margin: 12px; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h1 id="fixture-title">Impresario media fixture</h1>
+  <div id="stage">
+    <video id="video" src="sample.webm" muted playsinline preload="auto"></video>
+    <img id="poster" src="sample.png" alt="gradient">
+    <!-- Audio-only playback with the same Opus track. Muted satisfies
+         Chromium's autoplay policy; the probe clicks the button first, so the
+         play() call carries user activation. -->
+    <audio id="audio" src="sample.webm" muted loop preload="auto"></audio>
+  </div>
+  <button id="start-audio" type="button">Play audio</button>
+  <script>
+    (function () {
+      var video = document.getElementById('video');
+      var audio = document.getElementById('audio');
+      window.__mediaState = 'loading';
+      video.addEventListener('playing', function () { window.__mediaState = 'playing'; });
+      video.addEventListener('error', function () { window.__mediaState = 'error'; });
+      var started = video.play();
+      if (started && started.catch) {
+        started.catch(function () { window.__mediaState = 'blocked'; });
+      }
+      document.getElementById('start-audio').addEventListener('click', function () {
+        var audioStarted = audio.play();
+        if (audioStarted && audioStarted.catch) {
+          audioStarted.catch(function () { window.__mediaState = 'audio-blocked'; });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -144,6 +144,27 @@ warnings, and run green — `run 20261020-133846-23c0: passed (1.87 s, exit 0)`,
 9 steps, 0 failed, including click/type/select/scrollto. The run used the
 `launch:headless` device and the local `fixtures/web/index.html`.
 
+### Media probe fixture
+
+`fixtures/web/media.html` (with locally generated `sample.webm` VP8/Opus and
+`sample.png`) contains a playing video, an audio-only element using the Opus
+track, a decoded image, an image-like slot and an intentionally missing piece.
+It is exercised by
+`cargo test -p impresario-connector --test fixtures_suite
+media_probes_collect_showing_player_and_drm_evidence`, which covers
+
+- `Showing` coverage/decoded/source and the missing-piece FAIL;
+- `Player` playing/position/duration/resolution/muted/error for video and
+  audio-only playback;
+- `DRM-disabled` (no EME), plus image decode/source.
+
+`fixtures/web/hook.html` loads `sdk/web/impresario-hook.js` and reports the real
+`HTMLMediaElement` state through `window.__impresarioHook`; use it to check the
+optional hook path. The fixture suite skips when no Chromium is available, so
+CI on a Chrome-less host is not evidence. For a real TV, the browser must be
+started with a reachable CDP endpoint (`connection.endpoint: ws://…`) and the
+same probes apply; that path is HD-7.
+
 Notes:
 
 - This host's port `50051` is held by an unrelated service (`multipassd`); a
@@ -154,35 +175,190 @@ Notes:
 - `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
   backend needs the browser websocket from `/json/version` (I-39).
 
-### webOS (TV) — not verified here (no TV hardware)
+### 1.3 webOS (TV) — native SSH transport (fixture-verified, hardware pending)
 
-1. On the TV: install/enable the **Developer Mode** app, turn on Dev Mode
-   Status and the Key Server, note the passphrase.
-2. Host: point `connection.host` at the TV and keep the default SSH port
-   (`9922`). Impresario's own Rust client fetches
-   `http://<tv>:9991/webos_rsa` and authenticates as `prisoner` (I-99); the
-   built-in key/install flow is Phase 2+ work, so today the CDP endpoint must
-   already be reachable.
-3. Point `connection.endpoint` at the inspector's CDP endpoint
-   (`ws://<tv-or-forwarded-host>:<port>` — page resolution picks the page) and
-   set the app's `platforms.webos.id` (and `package` when it should be
-   installed). Keep `options.cdp_backend: raw`: old TV Chromium builds break
-   strict typed bindings (D-03).
+The executor is still `impresario-connector` (D-03), but the host-side device
+work is Impresario's own SSH/SFTP/luna client. No `ares-*`, `ssh`, `scp`,
+`openssl` or `luna-send` process runs on the host (D-19/I-138).
 
-### Tizen (TV) — not verified here (no TV hardware)
+**TV setup**
 
-1. On the TV: **Developer mode** (Apps panel; enter the host PC's IP), then
-   reboot the TV so the developer mode daemon accepts connections.
-2. Host: connect the SDB bridge with impresario's own Rust client (I-93;
-   `connection.transport: sdb`, default port `26101`). The built-in install and
-   forward commands are Phase 2+ work, so today the CDP endpoint must already
-   be reachable.
-3. Same CDP shape as webOS: `connection.endpoint: ws://<tv>:<inspector-port>`,
-   `options.cdp_backend: raw`, and the app's `platforms.tizen.id`/`package`.
+1. Install/enable the **Developer Mode** app, turn on Dev Mode Status and the
+   Key Server, and note the six-character passphrase.
 
-In both cases the D-pad verbs (`key`, `focus`, `scroll`) are supported through
-the connector's JS key dispatch; `options.key_dispatch` picks the mechanism
-(I-46).
+**Device definition**
+
+```yaml
+devices:
+  - name: living_room_tv
+    platform: webos
+    connection:
+      transport: ssh          # auto also resolves to ssh for webos
+      host: 192.168.1.50
+      port: 9922              # default
+    auth:
+      identity: SHA256:...    # optional host-key pin (recommended)
+      # key: C:\keys\living-room.pem   # optional private-key override
+```
+
+- The first connection fetches `http://<tv>:9991/webos_rsa` and stores the
+  encrypted key at `~/.impresario/keys/webos/<host>.pem`; the TV passphrase is
+  read from `IMPRESARIO_WEBOS_PASSPHRASE` or from keychain service
+  `impresario.webos` (account = host). The environment variable is the
+  headless override; do not put the passphrase in YAML.
+- `auth.identity` pins the SSH host key using a `SHA256:` fingerprint, an
+  OpenSSH public-key string, or a path under `keys/`. Without it the first key
+  is remembered in `keys/webos_known_hosts`; a later change is rejected.
+- `auth.key` may name a private-key file or `keychain:<entry>` whose stored
+  value is the key itself. Usually it is omitted.
+
+**App definition**
+
+```yaml
+apps:
+  - name: shop
+    platforms:
+      webos:
+        id: com.example.shop
+        package: ./build/web      # directory or an existing .ipk
+```
+
+A directory containing `appinfo.json` is packaged deterministically into the
+cache. A `.ipk` is inspected before use. `impresario package webos ./build/web`
+produces the same package explicitly.
+
+**What a run does**
+
+1. Connects SSH as `prisoner`, verifying the pinned/TOFU host key.
+2. Prepares the local connector listener.
+3. Uploads the `.ipk` to `/media/developer/temp` (SFTP, exec `cat` fallback).
+4. Streams `com.webos.appInstallService/dev/install` until a terminal state and
+   verifies the app through `dev/listApps`; presence of a pre-existing app is
+   not accepted as proof of an update.
+5. Launches through `com.webos.applicationManager/launch`, waits for the
+   inspector port (default 9998; `IMPRESARIO_WEBOS_INSPECTOR_TIMEOUT_MS`,
+   default 20 s), and forwards it over SSH.
+6. Hands `ws://127.0.0.1:<local-port>` to the connector handshake. With no
+   `package`, the transport attaches to an already-installed app.
+
+```powershell
+impresario device check --device living_room_tv
+impresario run --play plays/smoke.play --device living_room_tv --app shop
+```
+
+`device check` is read-only: it connects, queries `deviceInfo`/`listApps`, and
+tears down; it does not install or launch. It reports a warning if luna cannot
+answer rather than inventing device details.
+
+**Hardware runbook (HD-3, HD-7 — not executed here)**
+
+1. Record TV model/firmware, Developer Mode version, `device check` output and
+   the host-key fingerprint.
+2. Package a fixture app with `impresario package webos`; record its SHA-256.
+3. Run `device check`, then a real run. Record the install terminal line, the
+   app-list verification, the forwarded inspector port and the play report.
+4. Repeat with an app already installed and a changed package to prove update
+   verification; then test an invalid package and confirm the run fails.
+5. Only after these pass should `HD-3`/`HD-7` be marked hardware-verified.
+
+### 1.4 Tizen (TV) — native SDB transport (fixture-verified, hardware pending)
+
+The executor is still `impresario-connector`; the host-side SDB protocol,
+package signing and forwarding are native Rust. No `sdb` or `tizen` process
+runs on the host (D-19/I-140...I-142).
+
+**TV setup**
+
+1. On the TV enable **Developer mode** (Apps panel) and enter the host PC's IP.
+2. Reboot the TV so the developer-mode daemon accepts connections on TCP
+   `26101`.
+
+**Device definition**
+
+```yaml
+devices:
+  - name: living_room_tv
+    platform: tizen
+    connection:
+      transport: sdb         # auto also resolves to sdb for tizen
+      host: 192.168.1.51
+      port: 26101            # default
+    auth:
+      profile: living-room   # required on Tizen 7.0+; see docs/SIGNING.md
+```
+
+SDB authenticates with a locally generated RSA key at
+`~/.impresario/keys/tizen_adbkey`; the TV may show a confirmation prompt on the
+first connection. `auth.profile` names an imported signing profile; older Tizen
+does not require one.
+
+**Signing profile (Tizen 7.0+)**
+
+```powershell
+$env:IMPRESARIO_TIZEN_AUTHOR_PASSWORD = '...'
+$env:IMPRESARIO_TIZEN_DISTRIBUTOR_PASSWORD = '...'
+impresario sign tizen profile add living-room `
+  --author .\keys\author.p12 --distributor .\keys\distributor.p12
+impresario sign tizen profile show living-room
+```
+
+The distributor certificate must contain the TV's DUID
+(`URN:tizen:deviceid=<DUID>`). `device check` prints the DUID and warns when
+the profile does not cover it or is expired.
+
+**App definition**
+
+```yaml
+apps:
+  - name: shop
+    platforms:
+      tizen:
+        id: org.example.shop
+        package: ./build/shop.wgt   # .wgt; an app directory must be packaged first
+```
+
+**What a run does**
+
+1. Connects over SDB, authenticating with the local RSA key.
+2. Reads capabilities, `platform_version`, staging (`sdk_toolpath`) and DUID.
+3. On Tizen 7.0+: requires `auth.profile`, signs the package for the DUID,
+   validates it, and caches it by package hash/profile/DUID. On older versions:
+   installs the original package.
+4. Pushes `app.wgt` to the staging directory and runs
+   `0 vd_appinstall <app-id> <staging>/app.wgt`; success is confirmed through
+   `0 vd_applist`, not by trusting the install output.
+5. Runs `0 debug <app-id>` for the inspector port and forwards it with a native
+   SDB `tcp:` channel.
+6. Hands `ws://127.0.0.1:<local-port>` to the connector handshake. Teardown
+   uses `0 was_kill`.
+
+```powershell
+impresario device check --device living_room_tv
+impresario run --play plays/smoke.play --device living_room_tv --app shop
+```
+
+`device check` reads capabilities/DUID/app list and profile status only; it
+does not install, launch or sign.
+
+**Hardware runbook (HD-4, HD-7 — not executed here)**
+
+1. Record TV model/firmware, `device check` output, DUID and profile coverage.
+2. On Tizen 7+, sign a fixture `.wgt`, record its SHA-256, install through a
+   run, and confirm `0 vd_applist` shows the app and the play connects.
+3. Repeat on Tizen < 7 with an unsigned fixture to verify the original-package
+   branch (if such hardware is available).
+4. Test a profile without the TV DUID, an expired certificate and a corrupted
+   `.wgt`; each must fail with the documented `IMP-SIGN-*`/transport error.
+5. Record the exact `0 vd_appinstall` output and whether AUTH was requested.
+6. Only after these pass should `HD-4`/`HD-7` be marked hardware-verified.
+
+In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
+through the connector's JS key dispatch; `options.key_dispatch` picks the
+mechanism (I-46). Keep `options.cdp_backend: raw`: old TV Chromium builds break
+strict typed bindings (D-03). On webOS, `connection.endpoint` may override the
+inspector port; a native run always hands the connector its SSH-forwarded
+target endpoint. On Tizen, an explicit inspector port is only a fallback when
+`0 debug` does not return one.
 
 ---
 
@@ -691,6 +867,44 @@ apps:
   Pair device with pairing code; it expires quickly. Do not store the phone
   PIN or the pairing code in configuration.
 
+### 2.10 Playback probe harness (fixture-verified)
+
+The media stub is `agent-target-stub`'s `MediaActivity`: a looping local
+H.264/AAC MP4, a decoded PNG, an empty image slot and a real `MediaSession`
+with play/pause/seek and D-pad focus. Build and install all three APKs as in
+§2.2/§2.5; no extra permission is needed. The agent advertises
+`PROBE_SHOWING`, `PROBE_PLAYER`, `PROBE_DRM` and its handshake lists
+`a11y_tree`, `screenshot_region`, `media_session`, `media_drm` and `app_hook`;
+`audio_playback` is explicitly unavailable because `AudioManager` is
+system-wide, not app-scoped.
+
+Enable the debug-only SDK by depending on `:impresario-hook`, calling
+`ImpresarioHook.start(context)` once (the stub does it in `MediaActivity`) and
+then `ImpresarioHook.player/drm/showing`; the stub reports every 250 ms. The
+agent reads the latest `IMPRESARIO_HOOK <json>` line with shell identity and
+ignores snapshots from another package or older than a minute. It does not
+parse app private files and does not require root. Without the SDK,
+decoded/source, license/key status and security level usually stay
+UNVERIFIABLE; MediaSession can still establish `Playing`/`Paused`.
+
+Expected probe behaviour on this hardware class (verify on the device, do not
+assume):
+
+- `Showing => stub_media_video with coverage>=50%` passes only when the video
+  below the controls paints a non-uniform region; a black/uniform region is
+  not proof of decoding.
+- `Player => stub_media_video Playing` uses the MediaSession state; pausing
+  through the buttons must flip it to Paused.
+- `DRM-disabled` needs the hook or a web `mediaKeys` observation; an empty
+  `dumpsys media.drm` is not proof (another app's session is never
+  attributed). `DRM-enabled` on a third-party app needs an active session
+  naming the target package or the hook; otherwise UNVERIFIABLE.
+- A `Check: Showing => NoSuchPiece` is a FAIL (authoritative absence), while a
+  present surface with missing media facts is UNVERIFIABLE, not FAIL.
+
+No playback probe has run on hardware in this repository; HD-5/HD-8 cover the
+acceptance pass. Android USB remains unverified.
+
 ---
 
 ## 3. Apple — platforms `ios`, `tvos`
@@ -818,3 +1032,79 @@ address into `connection.endpoint`); the runner presses remote buttons through
 `XCUIRemote` (D-pad/Select/Menu/PlayPause; `home` = `XCUIDevice.press(.home)`),
 and the stub app's focused row is visible in its `stub_key_log`/`stub_status`
 labels while a play runs.
+
+### Playback probes and the Apple hook
+
+The Xcode layer is **not compiled on this host** (no Xcode) and has never run
+on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver` and the Swift
+`ImpresarioHook` product build/test only to the extent of `swift test` under
+WSL; `XCUIDriver`/`HookReceiver` depend on XCTest and need macOS.
+
+XCUITest cannot read another app's `AVPlayer`, decoder or FairPlay session.
+The stub `MediaViewController` therefore opens a local H.264/AAC video, a
+decoded PNG, an empty image slot and Apple's public BipBop HLS stream; the app
+links `ImpresarioHook` and reports player/showing state every 250 ms to
+`http://127.0.0.1:47831/hook`, where `HookReceiver` keeps the newest JSON
+snapshot. Without that listener `start()` is a no-op and the probe correctly
+stays UNVERIFIABLE. Run the media scenario from the stub home screen and
+exercise `Showing`, `Player` (playing/paused/position/resolution) and
+DRM-disabled; record whether the local-network permission allowed loopback.
+This is part of HD-1, not claimed as verified here.
+
+---
+
+## 4. Hardware acceptance backlog scheduled with the Phase 6/7 window
+
+Phase 6 closes on fixture/replay evidence. The TV runbooks are §1.3/§1.4
+above; the remaining device/release checks below stay in the same deferred
+window (and are tracked as HD-5, HD-6 and HD-8 in `docs/STATUS.md`). None of
+them is a prerequisite for the Phase 6 code gates.
+
+### 4.1 Android USB data (HD-5)
+
+The native USB implementation exists but this host only had TCP reachability.
+
+1. On Windows, bind the phone/TV ADB interface to WinUSB (the device must
+   expose an ADB USB interface; a charge-only cable is not enough).
+2. Define the device with `connection.transport: usb` and `serial: <usb
+   serial>` (no host/port).
+3. Run `impresario device check`, then the full phone/TV smoke play with the
+   USB device and record `doctor --json`.
+4. Launch the stub media scenario and run playback probes:
+   `Check: Showing => stub_media_video with coverage>=50%, decoded`,
+   `Check: Player => stub_media_video Playing`,
+   `Check: Player => stub_media_video DRM-disabled`, plus the paused/position
+   assertions. With the `:impresario-hook` SDK linked, verify the
+   `IMPRESARIO_HOOK` logcat line is visible to the agent and that removing the
+   hook produces `unverifiable`, never a guessed PASS. Record whether
+   `dumpsys media.drm` exists on this vendor image.
+5. Verify the USB-specific behaviours: no host logcat while the single USB
+   session is owned by the agent, and an explicit refusal of the forwarding
+   fallback while instrumentation is running.
+6. Record the USB serial, driver, run id, probe report and any
+   `DEVICE_UNAVAILABLE` output.
+
+### 4.2 Managed Chromium outside Windows x64 (HD-6)
+
+1. On each of Linux x64, Linux arm64, macOS arm64 and macOS x64, install from
+   the pinned archive (consent/`--yes`) and verify its SHA-256.
+2. Run `doctor --json` and a headless web smoke play without system Chrome on
+   `PATH`; record whether sandbox/AppContainer setup is needed per OS.
+3. Run the media fixture play against `fixtures/web/media.html` and the hook
+   fixture in `fixtures/web/hook.html`: `Showing` with coverage/decoded/source,
+   `Player` playing/position/resolution/muted, DRM-disabled and the intentional
+   missing piece. Record the report evidence and confirm a missing piece is a
+   FAIL, not UNVERIFIABLE.
+4. Confirm `tools remove chromium` leaves no managed payload and that a run
+   never downloads without consent.
+
+### 4.3 Post-Phase-7 device matrix regression (HD-8)
+
+After the Apple/Phase 7 hardware work, repeat the detached four-device matrix
+(web, Android phone, Android TV, TV connector) with the then-current binaries;
+attach after detach, read `report.json`, and record the run id, duration and
+step counts. Include one media act per platform (stub video/image or the web
+fixture) covering `Showing`, `Player`, DRM-disabled and `--unverifiable warn`;
+record the evidence sources and confirm no third-party player claims PASS
+without an in-app hook. This is a regression check, not a replacement for the
+recorded Phase 4 acceptance run `20261021-080459-ec51`.

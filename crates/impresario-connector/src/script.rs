@@ -332,6 +332,278 @@ pub fn inject_expression() -> String {
     format!("if (!window.__impresario) {{ {HELPER_SCRIPT} }} true")
 }
 
+/// The idempotent EME/AVPlay hook (TASK-3 section 6): captures key-system
+/// requests and key-session lifecycle without changing application behavior.
+/// ES5 only: it must run on the oldest supported TV Chromium.
+pub const PROBE_HOOK_SCRIPT: &str = r##"(function () {
+  if (window.__impresarioProbeHook && window.__impresarioProbeHook.version >= 1) { return true; }
+  var state = {
+    version: 1,
+    requests: [],
+    systems: [],
+    sessions: []
+  };
+  window.__impresarioProbeHook = state;
+
+  function providerOf(keySystem) {
+    var value = String(keySystem || '');
+    if (value.indexOf('widevine') !== -1) { return 'Widevine'; }
+    if (value.indexOf('playready') !== -1) { return 'PlayReady'; }
+    if (value.indexOf('fps') !== -1 || value.indexOf('fairplay') !== -1) { return 'FairPlay'; }
+    if (value.indexOf('clearkey') !== -1) { return 'ClearKey'; }
+    return value;
+  }
+  function robustnessOf(configs) {
+    var found = '';
+    try {
+      for (var i = 0; i < configs.length; i++) {
+        var video = configs[i].videoCapabilities || [];
+        for (var j = 0; j < video.length; j++) {
+          if (video[j].robustness) { found = String(video[j].robustness); }
+        }
+      }
+    } catch (error) { }
+    return found;
+  }
+
+  if (navigator.requestMediaKeySystemAccess) {
+    var origRequest = navigator.requestMediaKeySystemAccess;
+    navigator.requestMediaKeySystemAccess = function (keySystem, configs) {
+      var robustness = robustnessOf(configs || []);
+      var request = { keySystem: String(keySystem || ''), provider: providerOf(keySystem), robustness: robustness };
+      state.requests.push(request);
+      return origRequest.call(navigator, keySystem, configs).then(function (access) {
+        request.granted = true;
+        var origCreate = access.createMediaKeys;
+        access.createMediaKeys = function () {
+          return origCreate.call(access).then(function (keys) {
+            var system = { keySystem: String(keySystem || ''), provider: providerOf(keySystem), robustness: robustness };
+            state.systems.push(system);
+            keys.__impresarioSystem = system;
+            var origCreateSession = keys.createSession;
+            keys.createSession = function (sessionType) {
+              var session = origCreateSession.call(keys, sessionType);
+              var record = {
+                keySystem: system.keySystem,
+                provider: system.provider,
+                robustness: robustness,
+                sessionType: String(sessionType || ''),
+                license: 'none',
+                keyStatus: ''
+              };
+              state.sessions.push(record);
+              function readStatuses() {
+                var values = [];
+                try {
+                  if (session.keyStatuses && session.keyStatuses.forEach) {
+                    session.keyStatuses.forEach(function (status) { values.push(String(status)); });
+                  }
+                } catch (error) { }
+                record.keyStatus = values.join(',');
+                if (values.length) {
+                  if (values.indexOf('expired') !== -1) { record.license = 'expired'; }
+                  else if (values.indexOf('usable') !== -1) { record.license = 'active'; }
+                }
+              }
+              function wrap(name, before, after) {
+                var original = session[name];
+                if (typeof original !== 'function') { return; }
+                session[name] = function () {
+                  if (before) { before(); }
+                  var result = original.apply(session, arguments);
+                  if (after && result && result.then) { result.then(after, function () { }); }
+                  return result;
+                };
+              }
+              wrap('generateRequest', function () { record.license = 'requesting'; }, function () { record.license = 'pending'; });
+              wrap('update', function () { }, function () { record.license = 'active'; });
+              try {
+                session.addEventListener('keystatuseschange', readStatuses);
+                session.addEventListener('message', function (event) {
+                  if (record.license === 'none') { record.license = 'requesting'; }
+                  record.messageType = String(event.messageType || '');
+                });
+                session.addEventListener('closed', function () { record.license = 'released'; });
+              } catch (error) { }
+              readStatuses();
+              return session;
+            };
+            return keys;
+          });
+        };
+        return access;
+      });
+    };
+  }
+  return true;
+})()"##;
+
+/// The probe sample expression: locates the piece once, then reports DOM,
+/// media, image, EME and AVPlay state. Values are JSON-safe (infinities become
+/// null and the companion booleans carry the semantics).
+#[must_use]
+pub fn probe_body(sel: &str) -> String {
+    format!(
+        r#"
+var r = {find};
+if (r.error) {{ return {{ok:false, invalid_selector:true, error:r.error}}; }}
+var el = r.el;
+if (!el) {{ return {{ok:true, found:false}}; }}
+window.__impresario.scrollIntoView(el);
+var tag = String(el.tagName || '').toLowerCase();
+var media = null;
+if (tag === 'video' || tag === 'audio') {{ media = el; }}
+else if (el.querySelector) {{ media = el.querySelector('video,audio'); }}
+if (!media && el.closest) {{ media = el.closest('video,audio'); }}
+var image = null;
+if (tag === 'img') {{ image = el; }}
+else if (el.querySelector) {{ image = el.querySelector('img'); }}
+var rect = window.__impresario.rectOf(el);
+var hit = window.__impresario.hitTest(el);
+var background = '';
+try {{ background = String(window.getComputedStyle(el).backgroundImage || ''); }} catch (error) {{ }}
+var mediaOut = null;
+if (media) {{
+  var bufferedEnd = 0;
+  try {{
+    if (media.buffered && media.buffered.length) {{
+      bufferedEnd = media.buffered.end(media.buffered.length - 1);
+    }}
+  }} catch (error) {{ }}
+  var quality = null;
+  try {{ if (media.getVideoPlaybackQuality) {{ quality = media.getVideoPlaybackQuality(); }} }} catch (error) {{ }}
+  var selectedAudio = '';
+  try {{
+    if (media.audioTracks) {{
+      for (var a = 0; a < media.audioTracks.length; a++) {{
+        if (media.audioTracks[a].enabled) {{ selectedAudio = String(media.audioTracks[a].label || media.audioTracks[a].language || ''); }}
+      }}
+    }}
+  }} catch (error) {{ }}
+  var subtitle = '';
+  try {{
+    if (media.textTracks) {{
+      for (var t = 0; t < media.textTracks.length; t++) {{
+        if (media.textTracks[t].mode === 'showing') {{ subtitle = String(media.textTracks[t].label || media.textTracks[t].language || ''); }}
+      }}
+    }}
+  }} catch (error) {{ }}
+  mediaOut = {{
+    paused: media.paused === true,
+    ended: media.ended === true,
+    readyState: Number(media.readyState || 0),
+    networkState: Number(media.networkState || 0),
+    currentTime: Number(media.currentTime || 0),
+    duration: (isFinite(media.duration) ? Number(media.duration) : null),
+    live: !isFinite(media.duration),
+    bufferedEnd: Number(bufferedEnd || 0),
+    seeking: media.seeking === true,
+    rate: Number(media.playbackRate || 0),
+    volume: Number(media.volume == null ? 1 : media.volume),
+    muted: media.muted === true,
+    width: Number(media.videoWidth || 0),
+    height: Number(media.videoHeight || 0),
+    droppedFrames: Number(quality ? quality.droppedVideoFrames : 0),
+    totalFrames: Number(quality ? quality.totalVideoFrames : 0),
+    audioTracks: Number(media.audioTracks ? media.audioTracks.length : 0),
+    textTracks: Number(media.textTracks ? media.textTracks.length : 0),
+    audioTrack: selectedAudio,
+    subtitleTrack: subtitle,
+    src: String(media.currentSrc || media.src || ''),
+    error: (media.error ? String(media.error.code || '') + ':' + String(media.error.message || '') : ''),
+    mediaKeys: media.mediaKeys != null,
+    looping: media.loop === true,
+    fullscreen: !!(document.fullscreenElement && (document.fullscreenElement === media || (document.fullscreenElement.contains && document.fullscreenElement.contains(media)))),
+    objectFit: String(media.style && media.style.objectFit || '')
+  }};
+}}
+var imageOut = null;
+if (image) {{
+  imageOut = {{
+    complete: image.complete === true,
+    naturalWidth: Number(image.naturalWidth || 0),
+    naturalHeight: Number(image.naturalHeight || 0),
+    src: String(image.currentSrc || image.src || '')
+  }};
+}}
+var avplayOut = null;
+try {{
+  if (window.webapis && window.webapis.avplay) {{
+    var av = window.webapis.avplay;
+    avplayOut = {{
+      present: true,
+      state: String(av.getState ? av.getState() : ''),
+      currentTime: Number(av.getCurrentTime ? av.getCurrentTime() : 0),
+      duration: Number(av.getDuration ? av.getDuration() : 0),
+      rate: Number(av.getPlaybackRate ? av.getPlaybackRate() : 0)
+    }};
+  }}
+}} catch (error) {{ avplayOut = null; }}
+var hook = window.__impresarioProbeHook || null;
+var appHookOut = null;
+try {{
+  var appHook = window.__impresarioHook;
+  if (appHook && appHook.snapshot && typeof appHook.snapshot === 'object') {{
+    appHookOut = appHook.snapshot;
+  }}
+}} catch (error) {{ appHookOut = null; }}
+var eme = {{
+  available: hook !== null,
+  requests: hook ? hook.requests.length : 0,
+  systems: hook ? hook.systems.length : 0,
+  sessions: hook ? hook.sessions.length : 0,
+  keySystem: '',
+  provider: '',
+  robustness: '',
+  keyStatus: '',
+  license: 'none',
+  enabled: !!(media && media.mediaKeys != null)
+}};
+if (hook && hook.systems.length) {{
+  eme.keySystem = hook.systems[hook.systems.length - 1].keySystem;
+  eme.provider = hook.systems[hook.systems.length - 1].provider;
+  eme.robustness = hook.systems[hook.systems.length - 1].robustness;
+  eme.enabled = true;
+}} else if (hook && hook.requests.length) {{
+  eme.keySystem = hook.requests[hook.requests.length - 1].keySystem;
+  eme.provider = hook.requests[hook.requests.length - 1].provider;
+  eme.robustness = hook.requests[hook.requests.length - 1].robustness;
+  eme.enabled = true;
+}}
+if (hook) {{
+  for (var i = 0; i < hook.sessions.length; i++) {{
+    var session = hook.sessions[i];
+    if (session.keyStatus) {{ eme.keyStatus = session.keyStatus; }}
+    if (session.license && session.license !== 'none') {{ eme.license = session.license; }}
+  }}
+}}
+if (media && media.mediaKeys) {{ eme.enabled = true; }}
+if (eme.robustness) {{
+  if (/HW_SECURE_ALL|HW_SECURE_DECODE|HW_SECURE_CRYPTO/.test(eme.robustness)) {{ eme.securityLevel = 'L1'; }}
+  else if (/SW_SECURE_CRYPTO|SW_SECURE_DECODE/.test(eme.robustness)) {{ eme.securityLevel = 'L3'; }}
+  else {{ eme.securityLevel = eme.robustness; }}
+}} else {{ eme.securityLevel = ''; }}
+return {{
+  ok:true,
+  found:true,
+  visible:window.__impresario.isVisible(el),
+  hit:hit.ok,
+  obscured_by:String(hit.obscured_by || ''),
+  tag:tag,
+  rect:rect,
+  viewport:{{ width:Number(window.innerWidth || 0), height:Number(window.innerHeight || 0), dpr:Number(window.devicePixelRatio || 1) }},
+  background:background,
+  media:mediaOut,
+  image:imageOut,
+  avplay:avplayOut,
+  eme:eme,
+  app_hook:appHookOut
+}};
+"#,
+        find = sel
+    )
+}
+
 /// Wrap a JS body in an IIFE with a top-level `try`/`catch` so no helper
 /// failure ever escapes as a CDP exception:
 /// `(function(){try{ <body> }catch(e){return {ok:false,error:String(e)}}})()`.
@@ -395,6 +667,14 @@ mod tests {
         let expression = inject_expression();
         assert!(expression.contains("if (!window.__impresario)"));
         assert!(expression.ends_with("true"));
+    }
+
+    #[test]
+    fn probe_body_reads_the_optional_app_hook() {
+        let body = probe_body("window.__impresario.find('css', '#video', 0, false)");
+        assert!(body.contains("window.__impresarioHook"));
+        assert!(body.contains("app_hook:appHookOut"));
+        assert!(body.contains("window.__impresarioProbeHook"));
     }
 
     #[test]

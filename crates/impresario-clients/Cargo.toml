@@ -24,6 +24,32 @@ serde_json.workspace = true
 libadb.workspace = true
 nusb.workspace = true
 mdns-sd.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+rsa.workspace = true
+p256.workspace = true
+p384.workspace = true
+rsa-russh.workspace = true
+pkcs1-russh.workspace = true
+aes.workspace = true
+cbc.workspace = true
+md-5.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+tar.workspace = true
+ar.workspace = true
+zip.workspace = true
+p12-keystore.workspace = true
+ua-cryptography-xml-c14n.workspace = true
+x509-parser.workspace = true
+roxmltree.workspace = true
+keyring.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rcgen = "=0.14.10"
+# Loopback fake SSH server tests use the same rand release as russh's own
+# server examples.
+rand = "=0.10.3"

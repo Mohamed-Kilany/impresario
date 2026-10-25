@@ -22,6 +22,7 @@ use impresario_core::apps::AppConfig;
 use impresario_core::ast::AppOp;
 use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
+use impresario_core::probe::{ProbeKind, UnverifiablePolicy, Verdict};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::{Id, JoinHandle, JoinSet};
@@ -525,7 +526,7 @@ async fn establish(
     let mut params = HandshakeParams::new(
         device.name.clone(),
         device.platform,
-        device.target_endpoint(),
+        transport.target_endpoint(device),
         shared.options.master_version.clone(),
     );
     let app_entry = app.and_then(|app| app.platform(device.platform));
@@ -772,6 +773,9 @@ struct ActOutcome {
     infra_zero_failure: bool,
 }
 
+// The outcome carries the full command result (including probe evidence); the
+// enum is local to one send and boxing would only add indirection.
+#[allow(clippy::large_enum_variant)]
 enum SendOutcome {
     /// The command produced a result (or a client-side error) normally.
     Done(Result<CommandOutcome, ClientError>),
@@ -785,6 +789,11 @@ enum StepOutcome {
         wire: bool,
     },
     Failed {
+        error: WireError,
+        duration_ms: u64,
+        wire: bool,
+    },
+    Unverifiable {
         error: WireError,
         duration_ms: u64,
         wire: bool,
@@ -1088,6 +1097,33 @@ impl DeviceRun<'_> {
                         wire_results += usize::from(wire);
                         failure = Some((step_index, error));
                     }
+                    StepOutcome::Unverifiable {
+                        error,
+                        duration_ms,
+                        wire,
+                    } => {
+                        emit(
+                            self.shared.options.events.as_ref(),
+                            ExecEvent::StepFinished {
+                                device: self.device.name.clone(),
+                                play: play_name.to_string(),
+                                act: act_name.to_string(),
+                                stage: stage.name.clone(),
+                                index: step_index,
+                                status: "unverifiable".to_string(),
+                                duration_ms,
+                                error: Some(self.shared.redactor.redact(&error.message)),
+                            },
+                        );
+                        stage_report.steps.push(step_report(
+                            self.shared,
+                            step,
+                            Status::Unverifiable,
+                            duration_ms,
+                            Some(&error),
+                        ));
+                        wire_results += usize::from(wire);
+                    }
                     StepOutcome::Aborted { duration_ms, wire } => {
                         emit(
                             self.shared.options.events.as_ref(),
@@ -1127,6 +1163,11 @@ impl DeviceRun<'_> {
             Status::Aborted
         } else if failure.is_some() {
             Status::Failed
+        } else if stages
+            .iter()
+            .any(|stage| stage.status == Status::Unverifiable)
+        {
+            Status::Unverifiable
         } else {
             Status::Passed
         };
@@ -1195,6 +1236,23 @@ impl DeviceRun<'_> {
                     false,
                 );
             }
+            if let Command::Probe(probe) = command {
+                let capability = match probe.kind {
+                    ProbeKind::Showing => Capability::ProbeShowing,
+                    ProbeKind::Player => Capability::ProbePlayer,
+                    ProbeKind::Drm => Capability::ProbeDrm,
+                };
+                if !connection.handshake.has_capability(capability) {
+                    return failed_step(
+                        WireError::new(
+                            WireErrorCode::UnsupportedAction,
+                            format!("the executor does not advertise {}", capability.as_str()),
+                        ),
+                        started,
+                        false,
+                    );
+                }
+            }
             send_wire(self.shared, &connection.session, command, step.timeout_ms).await
         };
         match result {
@@ -1202,10 +1260,68 @@ impl DeviceRun<'_> {
                 duration_ms: elapsed_ms(started),
                 wire: false,
             },
-            SendOutcome::Done(Ok(outcome)) if outcome.ok => StepOutcome::Passed {
-                duration_ms: elapsed_ms(started),
-                wire: true,
-            },
+            SendOutcome::Done(Ok(outcome)) if outcome.ok => {
+                if let Some(result) = &outcome.probe {
+                    // Agents produce evidence only. Recompute every verdict
+                    // here with the core rules so a Kotlin/Swift/JS executor
+                    // cannot drift from the reference implementation.
+                    let canonical = step
+                        .command
+                        .as_ref()
+                        .and_then(|command| match command {
+                            Command::Probe(probe) => Some(canonicalize_probe(probe, result)),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| result.clone());
+                    let result = &canonical;
+                    match result.overall() {
+                        Verdict::Pass => {}
+                        Verdict::Fail => {
+                            let summary = result.summary();
+                            let mut error = WireError::new(
+                                WireErrorCode::CheckFailed,
+                                format!("probe failed: {summary}"),
+                            );
+                            error.details.insert("probe".to_string(), summary);
+                            return failed_step(error, started, true);
+                        }
+                        Verdict::Unverifiable => {
+                            let reason = impresario_core::probe::unverifiable_reason(result)
+                                .unwrap_or("the required evidence was not available");
+                            let summary = result.summary();
+                            let mut error = WireError::new(
+                                WireErrorCode::Unverifiable,
+                                format!("probe unverifiable: {reason}"),
+                            );
+                            error.details.insert("probe".to_string(), summary);
+                            error
+                                .details
+                                .insert("reason".to_string(), reason.to_string());
+                            for (key, value) in &result.observed {
+                                error
+                                    .details
+                                    .insert(format!("observed.{key}"), value.clone());
+                            }
+                            return match self.shared.options.config.unverifiable_policy {
+                                UnverifiablePolicy::Fail => StepOutcome::Failed {
+                                    error,
+                                    duration_ms: elapsed_ms(started),
+                                    wire: true,
+                                },
+                                UnverifiablePolicy::Warn => StepOutcome::Unverifiable {
+                                    error,
+                                    duration_ms: elapsed_ms(started),
+                                    wire: true,
+                                },
+                            };
+                        }
+                    }
+                }
+                StepOutcome::Passed {
+                    duration_ms: elapsed_ms(started),
+                    wire: true,
+                }
+            }
             SendOutcome::Done(Ok(outcome)) => failed_step(
                 outcome.error.unwrap_or_else(|| {
                     WireError::new(WireErrorCode::Internal, "command failed without ErrorInfo")
@@ -1479,6 +1595,12 @@ fn stage_status(stage: &StageReport) -> Status {
         .any(|step| step.status == Status::Skipped)
     {
         Status::Skipped
+    } else if stage
+        .steps
+        .iter()
+        .any(|step| step.status == Status::Unverifiable)
+    {
+        Status::Unverifiable
     } else {
         Status::Passed
     }
@@ -1508,6 +1630,42 @@ fn step_report(
         duration_ms,
         error: error.map(|error| error_json(shared, error)),
     }
+}
+
+/// Re-evaluate agent evidence with the core claim/assertion rules (D-27).
+fn canonicalize_probe(
+    command: &impresario_core::command::ProbeCommand,
+    result: &impresario_core::probe::ProbeResult,
+) -> impresario_core::probe::ProbeResult {
+    use impresario_core::probe::{
+        evaluate_assertions, evaluate_claim, unverifiable_reason, Confidence, Verdict,
+    };
+
+    let mut verdicts: Vec<_> = command
+        .claims
+        .iter()
+        .map(|claim| evaluate_claim(claim, &result.evidence, command.min_confidence))
+        .collect();
+    verdicts.extend(evaluate_assertions(
+        &command.assertions,
+        &result.evidence,
+        command.min_confidence,
+    ));
+    let confidence = verdicts
+        .iter()
+        .map(|verdict| verdict.confidence)
+        .max()
+        .unwrap_or(Confidence::None);
+    let mut canonical = result.clone();
+    canonical.verdicts = verdicts;
+    canonical.confidence = confidence;
+    canonical.unverifiable_reason = canonical
+        .verdicts
+        .iter()
+        .find(|verdict| verdict.verdict == Verdict::Unverifiable)
+        .and_then(|verdict| verdict.reason.clone())
+        .or_else(|| unverifiable_reason(result).map(str::to_string));
+    canonical
 }
 
 fn failed_step(error: WireError, started: Instant, wire: bool) -> StepOutcome {

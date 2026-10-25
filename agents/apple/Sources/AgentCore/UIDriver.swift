@@ -76,6 +76,27 @@ public protocol DriverExtras: AnyObject {
     /// Adjusts a picker/menu element to `value` (iOS `select`). Returns
     /// `false` when the element is not an adjustable picker.
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool
+
+    /// Current media/player evidence. The XCTest runner cannot see another
+    /// app's AVPlayer, so its implementation returns `nil` unless an in-app
+    /// hook (D-41) or a supported system channel supplies the snapshot.
+    func mediaSnapshot() -> MediaSnapshot?
+
+    /// Current DRM evidence, again only where a legitimate channel exists.
+    func drmSnapshot() -> DrmSnapshot?
+
+    /// Fraction (0...1) of non-background pixels inside `rect` of `png`.
+    /// Implemented with CoreGraphics in the XCUITest runner; fakes used by
+    /// `swift test` provide deterministic values.
+    func regionCoverage(png: Data, rect: CGRect) -> Double?
+
+    /// Whether the selected element's media is decoded and presenting frames,
+    /// when the platform hook can prove it.
+    func showingDecoded(_ e: ElementRef) -> Bool?
+
+    /// The media source URL/name of the selected element, when the platform
+    /// hook can prove it.
+    func showingSource(_ e: ElementRef) -> String?
 }
 
 public extension DriverExtras {
@@ -84,4 +105,9 @@ public extension DriverExtras {
     func longPressSelect(duration: TimeInterval) throws -> Bool { false }
     func pressBack() throws -> Bool { false }
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool { false }
+    func mediaSnapshot() -> MediaSnapshot? { nil }
+    func drmSnapshot() -> DrmSnapshot? { nil }
+    func regionCoverage(png: Data, rect: CGRect) -> Double? { nil }
+    func showingDecoded(_ e: ElementRef) -> Bool? { nil }
+    func showingSource(_ e: ElementRef) -> String? { nil }
 }

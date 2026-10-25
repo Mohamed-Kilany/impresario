@@ -107,6 +107,36 @@ fn check_body(
     })
 }
 
+fn probe_body(kind: pb::ProbeKind, selector: pb::Selector) -> pb::command::Body {
+    pb::command::Body::Probe(pb::ProbeCommand {
+        kind: kind as i32,
+        selector: Some(selector),
+        claims: Vec::new(),
+        assertions: Vec::new(),
+        min_confidence: pb::ProbeConfidence::Corroborated as i32,
+        window_ms: 3_000,
+        require_decoded: false,
+        require_source: false,
+        min_coverage: 0.0,
+    })
+}
+
+fn claim(id: &str) -> pb::ProbeClaim {
+    pb::ProbeClaim {
+        claim: id.to_string(),
+        negated: false,
+    }
+}
+
+fn assertion(property: &str, operator: &str, value: &str) -> pb::ProbeAssertion {
+    pb::ProbeAssertion {
+        property: property.to_string(),
+        operator: operator.to_string(),
+        value: value.to_string(),
+        negated: false,
+    }
+}
+
 fn command(id: &str, body: pb::command::Body, timeout_ms: u32) -> pb::Command {
     pb::Command {
         command_id: id.to_string(),
@@ -463,6 +493,9 @@ async fn run_fixture_suite(backend: &str) {
         pb::Capability::ProgrammaticFocus,
         pb::Capability::KeyEvents,
         pb::Capability::AppControl,
+        pb::Capability::ProbeShowing,
+        pb::Capability::ProbePlayer,
+        pb::Capability::ProbeDrm,
     ] {
         assert!(
             capabilities.contains(&(expected as i32)),
@@ -968,6 +1001,374 @@ async fn run_fixture_suite(backend: &str) {
     assert_eq!(closed.reason, "shutdown");
     assert_eq!(harness.manager.session_count(), 0);
 
+    chrome.kill().await;
+}
+
+fn verdict_state(result: &pb::CommandResult, claim_id: &str) -> pb::VerdictState {
+    let probe = result.probe.as_ref().expect("probe result");
+    let verdict = probe
+        .verdicts
+        .iter()
+        .find(|verdict| verdict.claim == claim_id)
+        .unwrap_or_else(|| panic!("missing verdict for {claim_id}: {:?}", probe.verdicts));
+    pb::VerdictState::try_from(verdict.verdict).expect("verdict enum")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn media_probes_collect_showing_player_and_drm_evidence() {
+    let Some(mut chrome) = start_chrome("media.html").await else {
+        eprintln!("skipping media probe fixture: no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let response = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Web as i32,
+            endpoint,
+            app_url: String::new(),
+            options: suite_options("raw", "media.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("handshake rpc");
+    assert!(
+        response.accepted,
+        "handshake rejected: {:?}",
+        response.error
+    );
+    for expected in [
+        pb::Capability::ProbeShowing,
+        pb::Capability::ProbePlayer,
+        pb::Capability::ProbeDrm,
+    ] {
+        assert!(
+            response.capabilities.contains(&(expected as i32)),
+            "missing probe capability {expected:?}"
+        );
+    }
+    let session_id = response.session_id.clone();
+    let mut driver = Driver::open(&mut harness.client, &session_id).await;
+
+    // Showing: DOM visibility plus non-uniform pixels in the region.
+    let mut showing = probe_body(pb::ProbeKind::Showing, css("#video"));
+    if let pb::command::Body::Probe(probe) = &mut showing {
+        probe.claims = vec![
+            claim("showing=present"),
+            claim("showing.coverage>=5%"),
+            claim("showing.decoded=true"),
+        ];
+        probe.require_decoded = true;
+        probe.min_coverage = 0.05;
+    }
+    let result = driver.run_ok(showing, 5_000).await;
+    let probe = result.probe.as_ref().expect("probe result");
+    assert!(
+        probe
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "html_media"),
+        "media sample missing: {:?}",
+        probe.evidence
+    );
+    assert!(
+        probe
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "screenshot_region"),
+        "screenshot coverage missing: {:?}",
+        probe.evidence
+    );
+    assert_eq!(
+        verdict_state(&result, "showing=present"),
+        pb::VerdictState::Pass
+    );
+    assert_eq!(
+        verdict_state(&result, "showing.decoded=true"),
+        pb::VerdictState::Pass
+    );
+    assert_eq!(
+        verdict_state(&result, "showing.coverage>=5%"),
+        pb::VerdictState::Pass
+    );
+
+    // Player: actually advances while the sample window is open.
+    let mut player = probe_body(pb::ProbeKind::Player, css("#video"));
+    if let pb::command::Body::Probe(probe) = &mut player {
+        probe.claims = vec![claim("state=Playing"), claim("drm.enabled=false")];
+        probe.assertions = vec![
+            assertion("position", ">", "0"),
+            assertion("duration", ">", "1"),
+            assertion("resolution", "=", "240"),
+            assertion("muted", "=", "true"),
+            assertion("error", "=", ""),
+        ];
+    }
+    let result = driver.run_ok(player, 8_000).await;
+    assert_eq!(
+        verdict_state(&result, "state=Playing"),
+        pb::VerdictState::Pass,
+        "probe: {:?}",
+        result.probe
+    );
+    assert_eq!(
+        verdict_state(&result, "drm.enabled=false"),
+        pb::VerdictState::Pass,
+        "probe: {:?}",
+        result.probe
+    );
+    let probe = result.probe.as_ref().expect("probe result");
+    for property in ["position", "duration", "resolution", "muted", "error"] {
+        let claim_id = format!("property.{property}");
+        assert_eq!(
+            verdict_state(&result, &claim_id),
+            pb::VerdictState::Pass,
+            "property {property} did not pass: {:?}",
+            probe.verdicts
+        );
+    }
+
+    // Audio-only element: the same Opus track must decode and report state.
+    // A trusted click supplies user activation for the unmuted/autoplay policy.
+    driver
+        .run_ok(
+            body(action(pb::ActionType::Click, Some(css("#start-audio")))),
+            5_000,
+        )
+        .await;
+    let mut audio = probe_body(pb::ProbeKind::Player, css("#audio"));
+    if let pb::command::Body::Probe(probe) = &mut audio {
+        probe.claims = vec![claim("state=Playing")];
+        probe.assertions = vec![
+            assertion("duration", ">", "1"),
+            assertion("muted", "=", "true"),
+        ];
+    }
+    let result = driver.run_ok(audio, 8_000).await;
+    assert_eq!(
+        verdict_state(&result, "state=Playing"),
+        pb::VerdictState::Pass,
+        "audio probe: {:?}",
+        result.probe
+    );
+    assert!(
+        result
+            .probe
+            .as_ref()
+            .expect("probe result")
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "html_media"),
+        "audio evidence missing"
+    );
+
+    // Image decode + source are separate evidence, not implied by visibility.
+    let mut image = probe_body(pb::ProbeKind::Showing, css("#poster"));
+    if let pb::command::Body::Probe(probe) = &mut image {
+        probe.claims = vec![
+            claim("showing=present"),
+            claim("showing.decoded=true"),
+            claim("showing.source~sample.png"),
+        ];
+        probe.require_decoded = true;
+        probe.require_source = true;
+    }
+    let result = driver.run_ok(image, 5_000).await;
+    assert_eq!(
+        verdict_state(&result, "showing.decoded=true"),
+        pb::VerdictState::Pass
+    );
+    assert_eq!(
+        verdict_state(&result, "showing.source~sample.png"),
+        pb::VerdictState::Pass
+    );
+
+    // A missing piece is a completed probe with a FAIL verdict, not a
+    // transport error; the master applies the report status.
+    let mut missing = probe_body(pb::ProbeKind::Player, css("#missing-video"));
+    if let pb::command::Body::Probe(probe) = &mut missing {
+        probe.claims = vec![claim("state=Playing")];
+    }
+    let result = driver.run_ok(missing, 3_000).await;
+    assert_eq!(
+        verdict_state(&result, "state=Playing"),
+        pb::VerdictState::Fail
+    );
+
+    harness.shutdown(&session_id).await;
+    chrome.kill().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_app_hook_supplies_authoritative_player_evidence() {
+    let Some(mut chrome) = start_chrome("hook.html").await else {
+        eprintln!("skipping web hook fixture: no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let response = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Web as i32,
+            endpoint,
+            app_url: String::new(),
+            options: suite_options("raw", "hook.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("handshake rpc");
+    assert!(
+        response.accepted,
+        "handshake rejected: {:?}",
+        response.error
+    );
+    assert!(
+        response
+            .probe_sources
+            .iter()
+            .any(|source| source.source == "app_hook" && source.available),
+        "app_hook not advertised: {:?}",
+        response.probe_sources
+    );
+    let session_id = response.session_id.clone();
+    let mut driver = Driver::open(&mut harness.client, &session_id).await;
+
+    // Supply user activation so headless Chromium allows the muted video to
+    // leave readyState=HAVE_CURRENT_DATA; the hook reports Playing only after
+    // playback actually starts.
+    driver
+        .run_ok(
+            body(action(pb::ActionType::Click, Some(css("#start-video")))),
+            5_000,
+        )
+        .await;
+
+    let mut player = probe_body(pb::ProbeKind::Player, css("#video"));
+    if let pb::command::Body::Probe(probe) = &mut player {
+        probe.claims = vec![claim("state=Playing"), claim("drm.enabled=false")];
+        probe.assertions = vec![
+            assertion("position", ">=", "0"),
+            assertion("resolution", "=", "240"),
+            assertion("muted", "=", "true"),
+        ];
+        probe.window_ms = 5_000;
+    }
+    let result = driver.run_ok(player, 8_000).await;
+    let probe = result.probe.as_ref().expect("probe result");
+    assert!(
+        probe
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "app_hook"),
+        "app_hook evidence missing: {:?}",
+        probe.evidence
+    );
+    assert_eq!(
+        verdict_state(&result, "state=Playing"),
+        pb::VerdictState::Pass,
+        "probe: {probe:?}"
+    );
+    for property in ["position", "resolution", "muted"] {
+        assert_eq!(
+            verdict_state(&result, &format!("property.{property}")),
+            pb::VerdictState::Pass,
+            "hook property {property} did not pass: {:?}",
+            probe.verdicts
+        );
+    }
+
+    harness.shutdown(&session_id).await;
+    chrome.kill().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tizen_avplay_parser_and_source_health() {
+    let Some(mut chrome) = start_chrome("tizen-avplay.html").await else {
+        eprintln!("skipping Tizen AVPlay fixture: no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let tizen = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Tizen as i32,
+            endpoint: endpoint.clone(),
+            app_url: String::new(),
+            options: suite_options("raw", "tizen-avplay.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("tizen handshake");
+    assert!(tizen.accepted, "tizen handshake: {:?}", tizen.error);
+    assert!(
+        tizen
+            .probe_sources
+            .iter()
+            .any(|source| source.source == "avplay_hook" && source.available),
+        "Tizen must advertise AVPlay: {:?}",
+        tizen.probe_sources
+    );
+    let mut driver = Driver::open(&mut harness.client, &tizen.session_id).await;
+    let mut player = probe_body(pb::ProbeKind::Player, css("#player"));
+    if let pb::command::Body::Probe(probe) = &mut player {
+        probe.claims = vec![claim("state=Playing")];
+        probe.assertions = vec![
+            assertion("position", ">=", "12"),
+            assertion("duration", ">", "100"),
+            assertion("rate", "=", "1"),
+        ];
+    }
+    let result = driver.run_ok(player, 5_000).await;
+    assert_eq!(
+        verdict_state(&result, "state=Playing"),
+        pb::VerdictState::Pass,
+        "probe: {:?}",
+        result.probe
+    );
+    let probe = result.probe.as_ref().expect("probe result");
+    assert!(
+        probe
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "avplay_hook"),
+        "AVPlay evidence missing: {:?}",
+        probe.evidence
+    );
+    for property in ["position", "duration", "rate"] {
+        assert_eq!(
+            verdict_state(&result, &format!("property.{property}")),
+            pb::VerdictState::Pass,
+            "AVPlay property {property}: {:?}",
+            probe.verdicts
+        );
+    }
+    harness.shutdown(&tizen.session_id).await;
+
+    // The Tizen-only AVPlay source must not be advertised to webOS.
+    let webos = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Webos as i32,
+            endpoint,
+            app_url: String::new(),
+            options: suite_options("raw", "tizen-avplay.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("webos handshake");
+    assert!(webos.accepted, "webos handshake: {:?}", webos.error);
+    assert!(
+        !webos
+            .probe_sources
+            .iter()
+            .any(|source| source.source == "avplay_hook" && source.available),
+        "webOS must not claim AVPlay: {:?}",
+        webos.probe_sources
+    );
+    harness.shutdown(&webos.session_id).await;
     chrome.kill().await;
 }
 

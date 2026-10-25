@@ -133,6 +133,9 @@ pub struct ImpresarioConfig {
     pub command_grace_ms: u64,
     #[serde(default = "default_reporters")]
     pub reporters: Vec<Reporter>,
+    /// Tri-state probe policy (TASK-3 D-26): `fail` (default) or `warn`.
+    #[serde(default)]
+    pub unverifiable_policy: crate::probe::UnverifiablePolicy,
 }
 
 fn parallel_default() -> u32 {
@@ -523,6 +526,7 @@ const CONFIG_KEYS: &[&str] = &[
     "agent_start_timeout_ms",
     "command_grace_ms",
     "reporters",
+    "unverifiable_policy",
 ];
 
 const DEVICE_KEYS: &[&str] = &[
@@ -821,6 +825,25 @@ pub fn parse_config(source: &str, path: &Path) -> ConfigOutcome<ImpresarioConfig
             );
             if let Some(text) = reset.as_str() {
                 if let Some(hint) = suggest(text, &["per_act", "per_play", "never"]) {
+                    diag = diag.with_help(hint);
+                }
+            }
+            diagnostics.push(diag);
+        }
+    }
+    if let Some(policy) = map.get("unverifiable_policy") {
+        let valid = policy
+            .as_str()
+            .is_some_and(|s| matches!(s, "fail" | "warn"));
+        if !valid {
+            let mut diag = invalid_value(
+                &lines,
+                path,
+                "unverifiable_policy",
+                "expected one of: fail, warn",
+            );
+            if let Some(text) = policy.as_str() {
+                if let Some(hint) = suggest(text, &["fail", "warn"]) {
                     diag = diag.with_help(hint);
                 }
             }

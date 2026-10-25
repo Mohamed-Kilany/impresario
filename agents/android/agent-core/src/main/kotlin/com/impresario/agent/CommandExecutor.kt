@@ -8,6 +8,8 @@ import impresario.v1.Impresario.CommandResult
 import impresario.v1.Impresario.Direction as PbDirection
 import impresario.v1.Impresario.ErrorCode
 import impresario.v1.Impresario.LogLevel
+import impresario.v1.Impresario.ProbeCommand
+import impresario.v1.Impresario.ProbeResult
 import impresario.v1.Impresario.SelectorStrategy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -67,6 +69,7 @@ class CommandExecutor(
             Command.BodyCase.VALIDATE_CHECK -> validateCheck(command.validateCheck, timeout)
             Command.BodyCase.KEY_PRESS -> keyPress(command.keyPress)
             Command.BodyCase.SCREENSHOT -> screenshot()
+            Command.BodyCase.PROBE -> probe(command.probe, timeout)
             Command.BodyCase.APP_CONTROL -> appControl(command.appControl)
             Command.BodyCase.CANCEL ->
                 throw AgentException.protocol("cancel commands are handled by the session runner")
@@ -485,6 +488,11 @@ class CommandExecutor(
         return Outcome.Ok()
     }
 
+    private suspend fun probe(command: ProbeCommand, timeout: Long): Outcome {
+        val result = ProbeCollector(driver, extras, now).collect(command, timeout)
+        return Outcome.Ok(probe = result)
+    }
+
     private fun screenshot(): Outcome {
         val png = driver.screenshotPng()
         if (png.isEmpty()) {
@@ -663,6 +671,7 @@ class CommandExecutor(
                 if (outcome.observedText.isNotEmpty()) builder.setObservedText(outcome.observedText)
                 if (outcome.observedCount > 0) builder.setObservedCount(outcome.observedCount)
                 outcome.png?.let { builder.setScreenshotPng(com.google.protobuf.ByteString.copyFrom(it)) }
+                outcome.probe?.let { builder.setProbe(it) }
                 builder.build()
             }
             is Outcome.Failed -> builder.setOk(false).setError(outcome.error.toProto()).build()
@@ -674,6 +683,7 @@ class CommandExecutor(
             val observedText: String = "",
             val observedCount: Int = 0,
             val png: ByteArray? = null,
+            val probe: ProbeResult? = null,
         ) : Outcome() {
             override fun equals(other: Any?): Boolean = this === other
             override fun hashCode(): Int = System.identityHashCode(this)

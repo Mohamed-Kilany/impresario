@@ -24,6 +24,24 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 | `IMP-APP-003` | the app's `package` artifact does not exist at the resolved path | planner, `app check` |
 | `IMP-APP-004` | selected plays bind different apps without `--app` | planner |
 
+## Signing and packaging (`IMP-SIGN-*`)
+
+| Code | Meaning | Emitted by |
+|---|---|---|
+| `IMP-SIGN-001` | package/ZIP layout error | `impresario package`, `sign tizen` |
+| `IMP-SIGN-002` | signing profile not found | `sign tizen profile show/remove`, transport prepare |
+| `IMP-SIGN-003` | PKCS#12 import failed | `sign tizen profile add` |
+| `IMP-SIGN-004` | certificate expired or not yet valid | profile import and run-time prepare |
+| `IMP-SIGN-005` | unsupported signing key or key/certificate mismatch | profile import and package signing |
+| `IMP-SIGN-006` | TV DUID is not covered by the distributor certificate | transport prepare, `sign tizen package` |
+| `IMP-SIGN-007` | XML-DSig validation failed | `sign tizen check`, cached-package validation |
+| `IMP-SIGN-008` | profile password unavailable | profile import/signing (keychain or documented environment override) |
+| `IMP-SIGN-009` | invalid profile/config metadata | profile handling and `.wgt` inspection |
+| `IMP-SIGN-010` | signing I/O error | signing and packaging paths |
+
+See `docs/SIGNING.md` for the full pipeline and the headless password
+overrides.
+
 ## DSL (`IMP-DSL-*`)
 
 | Code | Meaning | Example |

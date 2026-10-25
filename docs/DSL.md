@@ -275,6 +275,38 @@ Platforms: android, ios, webos
   is left as text and rejected by their normal grammar (I-117).
 - `impresario fmt` is the canonical writer for all three file kinds (I-111).
 
+### 3.2 Playback probes (`Showing`, `Player`)
+
+A `Check:` may inspect media truth instead of an element property. Probes are
+tri-state (`pass`, `fail`, `unverifiable`), not simple booleans:
+
+```text
+Check: Showing => PlayerRegion
+Check: not Showing => Poster
+Check: Showing => PlayerRegion with coverage>=50%, decoded, source~".m3u8" timeout 12s
+
+Check: Player => VideoContainer Playing
+Check: Player => VideoContainer not Paused DRM-enabled Widevine
+Check: Player => VideoContainer DRM-disabled
+Check: Player => VideoContainer Playing with position>30s, resolution>=1080p, muted
+Check: Player => VideoContainer DRM-enabled with license=active, not keyStatus=expired
+```
+
+`Showing` means the selected piece's pixels/frames are really being presented
+(not merely present in the DOM/tree). Its `with` options are
+`coverage>=N%` (measured painted region), `decoded` and
+`source~"substring"`; `source` is web-only (`IMP-DSL-013` elsewhere).
+`Player` accepts one status, `DRM-enabled`/`DRM-disabled` with an optional
+provider, and `with` assertions on probe properties. A bare property means
+truthy; `not` negates one term. Values are canonicalized: durations to
+seconds, percentages to fractions, `1080p`/`4k`/`8k` to numeric height.
+
+The default required confidence is `corroborated`. Missing evidence is
+`unverifiable`; it never becomes a pass. `--unverifiable warn` makes those
+steps non-fatal for one run. Evidence sources, per-platform reachability and
+the optional in-app SDK are documented in `docs/PROBES.md`; the generated
+property/provider matrix is in `docs/PARITY.md`.
+
 ---
 
 ## 4. Grammar (EBNF)
@@ -314,7 +346,12 @@ action       = string , "=>" , piece , [ tmo ]                        (* shortha
              | "wait"      , duration
              | "screenshot", string
              | "app"       , ( "launch" | "terminate" | "restart" | "background" ) ;
-check-line   = "Check:" , piece , [ cond ] , [ tmo ] , EOL ;
+check-line   = "Check:" , ( probe-check | piece , [ cond ] ) , [ tmo ] , EOL ;
+probe-check  = [ "not" ] , "Showing" , "=>" , piece , [ "with" , show-opt , { "," , show-opt } ]
+             | "Player" , "=>" , piece , { player-term } , [ "with" , assertion , { "," , assertion } ] ;
+show-opt     = "coverage" , ">=" , integer , "%" | "decoded" | "source" , "~" , dq-string ;
+player-term  = [ "not" ] , status | ( "DRM-enabled" | "DRM-disabled" ) , [ [ "not" ] , provider ] ;
+assertion    = [ "not" ] , property , [ ( "=" | "!=" | ">=" | "<=" | ">" | "<" | "~" ) , value ] ;
 cond         = "is" , ( "visible" | "hidden" | "enabled" | "disabled" | "focused" )
              | "text" , string | "textContains" , string | "count" , integer ;
 tmo          = "timeout" , duration ;

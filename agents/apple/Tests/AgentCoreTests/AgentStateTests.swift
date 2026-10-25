@@ -40,7 +40,7 @@ final class AgentStateTests: XCTestCase {
         XCTAssertEqual(result.sessionId, "session-1")
         XCTAssertEqual(result.protocolVersion, "1.0.0")
         XCTAssertEqual(result.agentVersion, "0.1.0")
-        XCTAssertEqual(result.capabilities, [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl])
+        XCTAssertEqual(result.capabilities, [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl, .probeShowing, .probePlayer, .probeDrm])
         XCTAssertEqual(result.deviceInfo?.runtime, "XCUITest")
         XCTAssertNil(result.error)
         XCTAssertEqual(state.activeSessionId, "session-1")
@@ -51,7 +51,7 @@ final class AgentStateTests: XCTestCase {
     func testIosCapabilities() {
         let iosState = AgentState(driver: driver, platform: .ios)
         let result = iosState.handshake(request(platform: .ios, appId: "com.example.app"))
-        XCTAssertEqual(result.capabilities, [.logs, .screenshot, .touchGestures, .keyEvents, .appControl])
+        XCTAssertEqual(result.capabilities, [.logs, .screenshot, .touchGestures, .keyEvents, .appControl, .probeShowing, .probePlayer, .probeDrm])
     }
 
     func testRejectsAMajorVersionMismatch() {

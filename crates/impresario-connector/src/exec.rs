@@ -15,6 +15,10 @@ use impresario_core::ast::Direction;
 use impresario_core::command::WireErrorCode;
 use impresario_core::keys::RemoteKey;
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{
+    evaluate_assertions, evaluate_claim, Claim, ClaimVerdict, Confidence, Evidence, EvidenceClass,
+    EvidenceSource, Observation, Operator, ProbeAssertion, ProbeResult, Verdict,
+};
 use impresario_core::selectors::Strategy;
 use impresario_proto::v1 as pb;
 
@@ -60,6 +64,7 @@ pub struct CommandOutput {
     pub observed_text: String,
     pub observed_count: u32,
     pub screenshot_png: Vec<u8>,
+    pub probe: Option<pb::ProbeResult>,
 }
 
 /// Text-entry verbs (spec 5.6: the three verbs are distinct and exact).
@@ -421,6 +426,221 @@ struct FindProbe {
     found: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ProbeSample {
+    #[serde(default)]
+    ok: bool,
+    #[serde(default)]
+    invalid_selector: bool,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    found: bool,
+    #[serde(default)]
+    visible: bool,
+    #[serde(default)]
+    hit: bool,
+    #[serde(default)]
+    background: String,
+    #[serde(default)]
+    rect: Option<ProbeRect>,
+    #[serde(default)]
+    viewport: Option<ProbeViewport>,
+    #[serde(default)]
+    media: Option<MediaSample>,
+    #[serde(default)]
+    image: Option<ImageSample>,
+    #[serde(default)]
+    avplay: Option<AvPlaySample>,
+    #[serde(default)]
+    eme: Option<EmeSample>,
+    /// Optional in-app hook snapshot (D-41), if the app installed the SDK.
+    #[serde(default)]
+    app_hook: Option<AppHookSample>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppHookSample {
+    #[serde(default)]
+    media: Option<HookMedia>,
+    #[serde(default)]
+    drm: Option<HookDrm>,
+    #[serde(default)]
+    showing: Option<HookShowing>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct HookMedia {
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    position_seconds: Option<f64>,
+    #[serde(default)]
+    duration_seconds: Option<f64>,
+    #[serde(default)]
+    rate: Option<f64>,
+    #[serde(default)]
+    volume: Option<f64>,
+    #[serde(default)]
+    muted: Option<bool>,
+    #[serde(default)]
+    width_px: Option<f64>,
+    #[serde(default)]
+    height_px: Option<f64>,
+    #[serde(default)]
+    audio_track: String,
+    #[serde(default)]
+    subtitle_track: String,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    decoded: Option<bool>,
+    #[serde(default)]
+    source: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct HookDrm {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    license: String,
+    #[serde(default)]
+    key_status: String,
+    #[serde(default)]
+    security_level: String,
+    #[serde(default)]
+    hdcp: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct HookShowing {
+    #[serde(default)]
+    decoded: Option<bool>,
+    #[serde(default)]
+    source: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+struct ProbeRect {
+    #[serde(default)]
+    x: f64,
+    #[serde(default)]
+    y: f64,
+    #[serde(default)]
+    w: f64,
+    #[serde(default)]
+    h: f64,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+struct ProbeViewport {
+    #[serde(default)]
+    width: f64,
+    #[serde(default)]
+    height: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct MediaSample {
+    #[serde(default)]
+    paused: bool,
+    #[serde(default)]
+    ended: bool,
+    #[serde(default)]
+    ready_state: u32,
+    #[serde(default)]
+    current_time: f64,
+    #[serde(default)]
+    duration: Option<f64>,
+    #[serde(default)]
+    live: bool,
+    #[serde(default)]
+    buffered_end: f64,
+    #[serde(default)]
+    seeking: bool,
+    #[serde(default)]
+    rate: f64,
+    #[serde(default)]
+    volume: f64,
+    #[serde(default)]
+    muted: bool,
+    #[serde(default)]
+    width: f64,
+    #[serde(default)]
+    height: f64,
+    #[serde(default)]
+    dropped_frames: f64,
+    #[serde(default)]
+    total_frames: f64,
+    #[serde(default)]
+    audio_track: String,
+    #[serde(default)]
+    subtitle_track: String,
+    #[serde(default)]
+    src: String,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    media_keys: bool,
+    #[serde(default)]
+    looping: bool,
+    #[serde(default)]
+    fullscreen: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ImageSample {
+    #[serde(default)]
+    complete: bool,
+    #[serde(default)]
+    natural_width: f64,
+    #[serde(default)]
+    src: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AvPlaySample {
+    #[serde(default)]
+    present: bool,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    current_time: f64,
+    #[serde(default)]
+    duration: f64,
+    #[serde(default)]
+    rate: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct EmeSample {
+    #[serde(default)]
+    available: bool,
+    #[serde(default)]
+    key_system: String,
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    key_status: String,
+    #[serde(default)]
+    license: String,
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    security_level: String,
+}
+
 probe_envelope!(
     NavProbe,
     ReadyProbe,
@@ -435,6 +655,7 @@ probe_envelope!(
     FocusedProbe,
     ActiveProbe,
     FindProbe,
+    ProbeSample,
 );
 
 /// The outcome of one polling wait: satisfied, or elapsed with the last
@@ -1319,6 +1540,188 @@ return {ok:true, complete:(info.max - info.top) <= 1};
         })
     }
 
+    /// Execute one `Probe` command (TASK-3 sections 4-6). The connector
+    /// collects evidence; core types decide each verdict. A completed probe is
+    /// an execution success even when a claim fails: the master applies the
+    /// `unverifiable_policy` and turns verdicts into step status.
+    pub async fn run_probe(
+        &self,
+        probe: &pb::ProbeCommand,
+        timeout_ms: u32,
+        cancel: &CancellationToken,
+    ) -> Result<CommandOutput, ConnectorError> {
+        cancel_slot(cancel)?;
+        let kind = pb::ProbeKind::try_from(probe.kind)
+            .map_err(|_| ConnectorError::protocol(format!("unknown probe kind {}", probe.kind)))?;
+        if kind == pb::ProbeKind::Unspecified {
+            return Err(ConnectorError::protocol("probe kind is unspecified"));
+        }
+        let selector = probe
+            .selector
+            .as_ref()
+            .ok_or_else(|| ConnectorError::protocol("probe requires a selector"))?;
+        let sel = Sel::parse(selector)?;
+        let min_confidence = confidence_from_proto(probe.min_confidence)?;
+        let window_ms = if probe.window_ms == 0 {
+            3000
+        } else {
+            probe.window_ms
+        };
+        let sample_window = window_ms.min(timeout_ms.max(250)).clamp(250, 1500);
+
+        // The hook is idempotent and must be present before the sample. It can
+        // only observe EME calls made after installation; an already-created
+        // `media.mediaKeys` is still authoritative for "DRM is in use".
+        // Re-inject the DOM helper as well: a navigation between the session
+        // bootstrap and this command drops it, and a probe has no action path
+        // that would otherwise repair it.
+        self.evaluate_value(&script::inject_expression(), cancel)
+            .await?;
+        self.evaluate_value(script::PROBE_HOOK_SCRIPT, cancel)
+            .await?;
+
+        let body = script::guarded(&script::probe_body(&sel.find_call()));
+        let mut first = self.probe_sample(&body, cancel).await?;
+        // A probe may arrive immediately after navigation; locate the piece
+        // with the same bounded patience as a check instead of treating a
+        // transient miss as a failed claim.
+        if !first.found {
+            let find_ms = timeout_ms.clamp(250, 2_000);
+            let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(find_ms));
+            while !first.found && std::time::Instant::now() < deadline {
+                self.pause(Duration::from_millis(50), cancel).await?;
+                first = self.probe_sample(&body, cancel).await?;
+            }
+        }
+        if kind == pb::ProbeKind::Showing && first.found {
+            // Showing is a property of the rendered frame: give the piece the
+            // same bounded settle window that a visible check uses, and wait
+            // for decode when the DSL asked for it. Otherwise a screenshot of
+            // a just-navigated page would report the previous frame.
+            let settle_ms = sample_window.min(timeout_ms.max(250));
+            let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(settle_ms));
+            loop {
+                let decoded = !probe.require_decoded || showing_decoded(&first) == Some(true);
+                if decoded && first.visible && first.hit {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                self.pause(Duration::from_millis(50), cancel).await?;
+                first = self.probe_sample(&body, cancel).await?;
+            }
+            // One paint turn after decode, so the captured frame includes it.
+            self.pause(Duration::from_millis(100), cancel).await?;
+            first = self.probe_sample(&body, cancel).await?;
+        }
+        let second = if kind == pb::ProbeKind::Showing || !first.found {
+            None
+        } else {
+            self.pause(Duration::from_millis(u64::from(sample_window / 2)), cancel)
+                .await?;
+            let sample = self.probe_sample(&body, cancel).await?;
+            Some(sample)
+        };
+
+        let claims: Vec<Claim> = probe
+            .claims
+            .iter()
+            .map(|claim| Claim {
+                id: claim.claim.clone(),
+                negated: claim.negated,
+            })
+            .collect();
+        let assertions: Vec<ProbeAssertion> = probe
+            .assertions
+            .iter()
+            .map(|assertion| ProbeAssertion {
+                property: assertion.property.clone(),
+                operator: if assertion.operator.is_empty() {
+                    None
+                } else {
+                    Operator::parse(&assertion.operator)
+                },
+                value: assertion.value.clone(),
+                negated: assertion.negated,
+            })
+            .collect();
+
+        let now = unix_ms_now();
+        let mut evidence = Vec::new();
+        let mut coverage = None;
+        match kind {
+            pb::ProbeKind::Showing => {
+                if first.found {
+                    if let Ok(png) = self.backend.screenshot().await {
+                        coverage = first
+                            .rect
+                            .zip(first.viewport)
+                            .and_then(|(rect, viewport)| analyze_png_region(&png, rect, viewport));
+                    }
+                }
+                collect_showing_evidence(
+                    &first,
+                    coverage,
+                    &claims,
+                    now,
+                    sample_window,
+                    &mut evidence,
+                );
+            }
+            pb::ProbeKind::Player | pb::ProbeKind::Drm => {
+                let second = second.as_ref().unwrap_or(&first);
+                collect_player_evidence(
+                    &first,
+                    second,
+                    min_confidence,
+                    &claims,
+                    &assertions,
+                    now,
+                    sample_window,
+                    &mut evidence,
+                );
+            }
+            pb::ProbeKind::Unspecified => {
+                return Err(ConnectorError::protocol("probe kind is unspecified"));
+            }
+        }
+
+        let mut verdicts: Vec<ClaimVerdict> = claims
+            .iter()
+            .map(|claim| evaluate_claim(claim, &evidence, min_confidence))
+            .collect();
+        verdicts.extend(evaluate_assertions(&assertions, &evidence, min_confidence));
+        let confidence = verdicts
+            .iter()
+            .map(|verdict| verdict.confidence)
+            .max()
+            .unwrap_or(Confidence::None);
+        let unverifiable_reason = verdicts
+            .iter()
+            .find(|verdict| verdict.verdict == Verdict::Unverifiable)
+            .and_then(|verdict| verdict.reason.clone());
+        let mut observed = std::collections::BTreeMap::new();
+        for item in &evidence {
+            if let Some(claim) = item.supports.first().or_else(|| item.contradicts.first()) {
+                observed.insert(claim.clone(), item.observation.render());
+            }
+        }
+        let result = ProbeResult {
+            verdicts,
+            evidence,
+            confidence,
+            unverifiable_reason,
+            observed,
+            window_ms,
+        };
+
+        Ok(CommandOutput {
+            probe: Some(probe_result_to_proto(&result)),
+            ..CommandOutput::default()
+        })
+    }
+
     /// `app launch|restart` (spec 10.3): navigate to `app_url`, else reload.
     /// `terminate` is `UNSUPPORTED_ACTION` (spec 6.1).
     pub async fn app_control(
@@ -1404,6 +1807,30 @@ return {ok:true, complete:(info.max - info.top) <= 1};
     // -----------------------------------------------------------------------
     // plumbing
     // -----------------------------------------------------------------------
+
+    /// Sample a probe, repairing both injected scripts once if navigation
+    /// replaced the document between injection and evaluation. The probe body
+    /// is already guarded (it returns `ok=false` rather than throwing).
+    async fn probe_sample(
+        &self,
+        expression: &str,
+        cancel: &CancellationToken,
+    ) -> Result<ProbeSample, ConnectorError> {
+        let first = self.probe_once::<ProbeSample>(expression, cancel).await?;
+        if first.ok {
+            return Ok(first);
+        }
+        self.evaluate_value(&script::inject_expression(), cancel)
+            .await?;
+        self.evaluate_value(script::PROBE_HOOK_SCRIPT, cancel)
+            .await?;
+        let retry = self.probe_once::<ProbeSample>(expression, cancel).await?;
+        if retry.ok {
+            Ok(retry)
+        } else {
+            Err(probe_error(&retry))
+        }
+    }
 
     async fn probe<T: DeserializeOwned + ProbeEnvelope>(
         &self,
@@ -1496,6 +1923,813 @@ fn cancel_slot(cancel: &CancellationToken) -> Result<(), ConnectorError> {
     } else {
         Ok(())
     }
+}
+
+fn collect_showing_evidence(
+    sample: &ProbeSample,
+    coverage: Option<f64>,
+    claims: &[Claim],
+    now: u64,
+    window_ms: u32,
+    out: &mut Vec<Evidence>,
+) {
+    let present_claim = claims.iter().find(|claim| claim.id == "showing=present");
+    let dom_present = sample.found && sample.visible && sample.hit;
+    if let Some(claim) = present_claim {
+        let source = EvidenceSource::Dom;
+        let class = if sample.found {
+            EvidenceClass::System
+        } else {
+            EvidenceClass::Authoritative
+        };
+        out.push(claim_evidence(
+            source,
+            "visibility",
+            Observation::Bool(dom_present),
+            class,
+            &claim.id,
+            dom_present,
+            now,
+            window_ms,
+        ));
+        if let Some(coverage) = coverage {
+            let painted = coverage >= 0.5;
+            out.push(claim_evidence(
+                EvidenceSource::ScreenshotRegion,
+                "painted_region",
+                Observation::Number(coverage),
+                EvidenceClass::System,
+                &claim.id,
+                painted,
+                now,
+                window_ms,
+            ));
+        }
+    }
+
+    for claim in claims {
+        if let Some(percent) = claim
+            .id
+            .strip_prefix("showing.coverage>=")
+            .and_then(|value| value.strip_suffix('%'))
+            .and_then(|value| value.parse::<f64>().ok())
+        {
+            if let Some(coverage) = coverage {
+                out.push(claim_evidence(
+                    EvidenceSource::ScreenshotRegion,
+                    "coverage",
+                    Observation::Number(coverage),
+                    // The percentage is measured directly from the captured
+                    // frame; there is no second independent source for pixels.
+                    EvidenceClass::Authoritative,
+                    &claim.id,
+                    coverage >= percent,
+                    now,
+                    window_ms,
+                ));
+            }
+        } else if claim.id == "showing.decoded=true" {
+            if let Some(decoded) = showing_decoded(sample) {
+                let source = if sample.app_hook.is_some() {
+                    EvidenceSource::AppHook
+                } else if sample.image.is_some() {
+                    EvidenceSource::Dom
+                } else {
+                    EvidenceSource::HtmlMedia
+                };
+                out.push(claim_evidence(
+                    source,
+                    "decoded",
+                    Observation::Bool(decoded),
+                    EvidenceClass::Authoritative,
+                    &claim.id,
+                    decoded,
+                    now,
+                    window_ms,
+                ));
+            }
+        } else if let Some(substring) = claim.id.strip_prefix("showing.source~") {
+            if let Some(source) = showing_source(sample) {
+                out.push(claim_evidence(
+                    if sample.app_hook.is_some() {
+                        EvidenceSource::AppHook
+                    } else {
+                        EvidenceSource::Dom
+                    },
+                    "source",
+                    Observation::Text(source.clone()),
+                    EvidenceClass::Authoritative,
+                    &claim.id,
+                    source.contains(substring),
+                    now,
+                    window_ms,
+                ));
+            }
+        }
+    }
+}
+
+fn hook_showing(sample: &ProbeSample) -> Option<&HookShowing> {
+    sample.app_hook.as_ref()?.showing.as_ref()
+}
+
+fn hook_media(sample: &ProbeSample) -> Option<&HookMedia> {
+    sample.app_hook.as_ref()?.media.as_ref()
+}
+
+fn showing_decoded(sample: &ProbeSample) -> Option<bool> {
+    if let Some(decoded) = hook_showing(sample)
+        .and_then(|showing| showing.decoded)
+        .or_else(|| hook_media(sample).and_then(|media| media.decoded))
+    {
+        return Some(decoded);
+    }
+    if let Some(image) = &sample.image {
+        return Some(image.complete && image.natural_width > 0.0);
+    }
+    sample
+        .media
+        .as_ref()
+        .map(|media| media.ready_state >= 2 && media.error.is_empty())
+}
+
+fn showing_source(sample: &ProbeSample) -> Option<String> {
+    if let Some(source) = hook_showing(sample)
+        .map(|showing| showing.source.trim())
+        .filter(|source| !source.is_empty())
+        .or_else(|| {
+            hook_media(sample)
+                .map(|media| media.source.trim())
+                .filter(|source| !source.is_empty())
+        })
+    {
+        return Some(source.to_string());
+    }
+    if let Some(image) = &sample.image {
+        if !image.src.is_empty() {
+            return Some(image.src.clone());
+        }
+    }
+    if let Some(media) = &sample.media {
+        if !media.src.is_empty() {
+            return Some(media.src.clone());
+        }
+    }
+    let background = sample.background.trim();
+    if let Some(start) = background.find("url(") {
+        let rest = &background[start + 4..];
+        let rest = rest.trim_start_matches(['"', '\'']);
+        let end = rest.find(['"', '\'']).unwrap_or(rest.len());
+        let value = &rest[..end];
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_player_evidence(
+    first: &ProbeSample,
+    second: &ProbeSample,
+    _min_confidence: Confidence,
+    claims: &[Claim],
+    assertions: &[ProbeAssertion],
+    now: u64,
+    window_ms: u32,
+    out: &mut Vec<Evidence>,
+) {
+    let statuses = player_statuses(first, second);
+    let status_claims: Vec<&Claim> = claims
+        .iter()
+        .filter(|claim| claim.id.starts_with("state="))
+        .collect();
+    if statuses.is_empty() && !status_claims.is_empty() {
+        // A missing piece is authoritative for "there is no media element
+        // here"; a present piece with no observable media stays merely
+        // system-level so native playback can still be reported elsewhere.
+        let (source, class) = if first.found {
+            (EvidenceSource::HtmlMedia, EvidenceClass::System)
+        } else {
+            (EvidenceSource::Dom, EvidenceClass::Authoritative)
+        };
+        for claim in status_claims {
+            out.push(claim_evidence(
+                source.clone(),
+                "media_state",
+                Observation::Bool(false),
+                class,
+                &claim.id,
+                false,
+                now,
+                window_ms,
+            ));
+        }
+    } else {
+        for claim in status_claims {
+            for (source, status) in &statuses {
+                out.push(claim_evidence(
+                    source.clone(),
+                    "media_state",
+                    Observation::Enum(status.clone()),
+                    EvidenceClass::Authoritative,
+                    &claim.id,
+                    claim.id == format!("state={status}"),
+                    now,
+                    window_ms,
+                ));
+            }
+        }
+    }
+
+    let eme = second.eme.as_ref().or(first.eme.as_ref());
+    let app_hook = second.app_hook.as_ref().or(first.app_hook.as_ref());
+    let media_keys = second
+        .media
+        .as_ref()
+        .or(first.media.as_ref())
+        .is_some_and(|media| media.media_keys);
+    for claim in claims {
+        if let Some(expected) = claim
+            .id
+            .strip_prefix("drm.enabled=")
+            .and_then(|value| value.parse::<bool>().ok())
+        {
+            if let Some(drm) = app_hook.and_then(|hook| hook.drm.as_ref()) {
+                if let Some(enabled) = drm.enabled {
+                    out.push(claim_evidence(
+                        EvidenceSource::AppHook,
+                        "drm_enabled",
+                        Observation::Bool(enabled),
+                        EvidenceClass::Authoritative,
+                        &claim.id,
+                        enabled == expected,
+                        now,
+                        window_ms,
+                    ));
+                }
+            }
+            if let Some(eme) = eme {
+                out.push(claim_evidence(
+                    EvidenceSource::EmeHook,
+                    "drm_enabled",
+                    Observation::Bool(eme.enabled),
+                    if eme.available {
+                        EvidenceClass::Authoritative
+                    } else {
+                        EvidenceClass::System
+                    },
+                    &claim.id,
+                    eme.enabled == expected,
+                    now,
+                    window_ms,
+                ));
+            }
+            if second.media.is_some() || first.media.is_some() {
+                out.push(claim_evidence(
+                    EvidenceSource::HtmlMedia,
+                    "media_keys",
+                    Observation::Bool(media_keys),
+                    EvidenceClass::System,
+                    &claim.id,
+                    media_keys == expected,
+                    now,
+                    window_ms,
+                ));
+            }
+        } else if let Some(expected) = claim.id.strip_prefix("drm.provider=") {
+            if let Some(provider) = app_hook
+                .and_then(|hook| hook.drm.as_ref())
+                .map(|drm| drm.provider.trim())
+                .filter(|provider| !provider.is_empty())
+            {
+                out.push(claim_evidence(
+                    EvidenceSource::AppHook,
+                    "drm_provider",
+                    Observation::Enum(provider.to_string()),
+                    EvidenceClass::Authoritative,
+                    &claim.id,
+                    provider.eq_ignore_ascii_case(expected),
+                    now,
+                    window_ms,
+                ));
+            }
+            if let Some(eme) = eme {
+                if !eme.provider.is_empty() {
+                    out.push(claim_evidence(
+                        EvidenceSource::EmeHook,
+                        "drm_provider",
+                        Observation::Enum(eme.provider.clone()),
+                        EvidenceClass::Authoritative,
+                        &claim.id,
+                        eme.provider.eq_ignore_ascii_case(expected),
+                        now,
+                        window_ms,
+                    ));
+                }
+            }
+        }
+    }
+
+    let dt = (second
+        .media
+        .as_ref()
+        .map(|media| media.current_time)
+        .unwrap_or(0.0)
+        - first
+            .media
+            .as_ref()
+            .map(|media| media.current_time)
+            .unwrap_or(0.0))
+    .max(0.0);
+    for assertion in assertions {
+        if let Some((observation, source, class)) =
+            observe_property(&assertion.property, first, second, dt, eme, media_keys)
+        {
+            out.push(claim_evidence(
+                source,
+                format!("property:{}", assertion.property),
+                observation,
+                class,
+                &assertion.claim_id(),
+                true,
+                now,
+                window_ms,
+            ));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn claim_evidence(
+    source: EvidenceSource,
+    kind: impl Into<String>,
+    observation: Observation,
+    class: EvidenceClass,
+    claim: &str,
+    truth: bool,
+    now: u64,
+    window_ms: u32,
+) -> Evidence {
+    let mut evidence = if truth {
+        Evidence::supporting(source, kind, observation, class, claim)
+    } else {
+        Evidence::contradicting(source, kind, observation, class, claim)
+    };
+    evidence.at_unix_ms = now;
+    evidence.window_ms = window_ms;
+    evidence
+}
+
+fn player_statuses(first: &ProbeSample, second: &ProbeSample) -> Vec<(EvidenceSource, String)> {
+    let mut statuses = Vec::new();
+    if let Some(status) = hook_media(second)
+        .or_else(|| hook_media(first))
+        .map(|media| media.state.trim())
+        .filter(|state| !state.is_empty())
+    {
+        statuses.push((EvidenceSource::AppHook, status.to_string()));
+    }
+    if let Some(status) = avplay_status(second).or_else(|| avplay_status(first)) {
+        statuses.push((EvidenceSource::AvPlayHook, status.to_string()));
+    }
+    if let Some(status) = media_status(first, second) {
+        statuses.push((EvidenceSource::HtmlMedia, status.to_string()));
+    }
+    statuses
+}
+
+fn media_status(first: &ProbeSample, second: &ProbeSample) -> Option<&'static str> {
+    let media = second.media.as_ref().or(first.media.as_ref())?;
+    if !media.error.is_empty() {
+        return Some("Error");
+    }
+    if media.seeking {
+        return Some("Seeking");
+    }
+    if media.ended {
+        return Some("Ended");
+    }
+    if media.paused {
+        return Some(if media.current_time <= 0.05 && media.ready_state < 3 {
+            if media.ready_state >= 2 {
+                "Ready"
+            } else {
+                "Loading"
+            }
+        } else {
+            "Paused"
+        });
+    }
+    if media.ready_state < 2 {
+        return Some("Loading");
+    }
+    let advanced =
+        second
+            .media
+            .as_ref()
+            .zip(first.media.as_ref())
+            .is_some_and(|(later, earlier)| {
+                later.current_time > earlier.current_time + 0.01
+                    || later.total_frames > earlier.total_frames
+            });
+    if advanced || (media.ready_state >= 3 && media.buffered_end > media.current_time + 0.05) {
+        Some("Playing")
+    } else {
+        Some("Buffering")
+    }
+}
+
+fn avplay_status(sample: &ProbeSample) -> Option<&'static str> {
+    let avplay = sample.avplay.as_ref()?;
+    if !avplay.present {
+        return None;
+    }
+    match avplay.state.as_str() {
+        "IDLE" | "NONE" => Some("Idle"),
+        "READY" => Some("Ready"),
+        "PLAYING" => Some("Playing"),
+        "PAUSED" => Some("Paused"),
+        "BUFFERING" => Some("Buffering"),
+        "SEEKING" => Some("Seeking"),
+        "COMPLETED" | "STOPPED" => Some("Ended"),
+        "ERROR" => Some("Error"),
+        _ => None,
+    }
+}
+
+/// Direct properties from the optional in-app hook. These are authoritative
+/// because the app itself reports them; missing fields fall through to the
+/// platform collectors instead of inventing a value.
+fn hook_property(
+    property: &str,
+    hook: &AppHookSample,
+) -> Option<(Observation, EvidenceSource, EvidenceClass)> {
+    let media = hook.media.as_ref();
+    let drm = hook.drm.as_ref();
+    let number = |value: Option<f64>| {
+        value.map(|value| {
+            (
+                Observation::Number(value),
+                EvidenceSource::AppHook,
+                EvidenceClass::Authoritative,
+            )
+        })
+    };
+    let text = |value: Option<&str>| {
+        value.filter(|value| !value.is_empty()).map(|value| {
+            (
+                Observation::Text(value.to_string()),
+                EvidenceSource::AppHook,
+                EvidenceClass::Authoritative,
+            )
+        })
+    };
+    match property {
+        "position" => number(media.and_then(|media| media.position_seconds)),
+        "duration" => number(media.and_then(|media| media.duration_seconds)),
+        "rate" => number(media.and_then(|media| media.rate)),
+        "volume" => number(media.and_then(|media| media.volume)),
+        "muted" => media.and_then(|media| media.muted).map(|value| {
+            (
+                Observation::Bool(value),
+                EvidenceSource::AppHook,
+                EvidenceClass::Authoritative,
+            )
+        }),
+        "width" => number(media.and_then(|media| media.width_px)),
+        "height" => number(media.and_then(|media| media.height_px)),
+        "resolution" => number(media.and_then(|media| media.height_px)),
+        "audioTrack" => text(media.map(|media| media.audio_track.as_str())),
+        "subtitleTrack" => text(media.map(|media| media.subtitle_track.as_str())),
+        "error" => text(media.map(|media| media.error.as_str())),
+        "secure" => drm.and_then(|drm| drm.enabled).map(|value| {
+            (
+                Observation::Bool(value),
+                EvidenceSource::AppHook,
+                EvidenceClass::Authoritative,
+            )
+        }),
+        "license" => text(drm.map(|drm| drm.license.as_str())),
+        "keyStatus" => text(drm.map(|drm| drm.key_status.as_str())),
+        "securityLevel" => text(drm.map(|drm| drm.security_level.as_str())),
+        "keySystem" => text(drm.map(|drm| drm.provider.as_str())),
+        "hdcp" => text(drm.map(|drm| drm.hdcp.as_str())),
+        _ => None,
+    }
+}
+
+fn observe_property(
+    property: &str,
+    first: &ProbeSample,
+    second: &ProbeSample,
+    dt: f64,
+    eme: Option<&EmeSample>,
+    media_keys: bool,
+) -> Option<(Observation, EvidenceSource, EvidenceClass)> {
+    if let Some(found) = second
+        .app_hook
+        .as_ref()
+        .or(first.app_hook.as_ref())
+        .and_then(|hook| hook_property(property, hook))
+    {
+        return Some(found);
+    }
+    let media = second.media.as_ref().or(first.media.as_ref());
+    let avplay = second
+        .avplay
+        .as_ref()
+        .or(first.avplay.as_ref())
+        .filter(|avplay| avplay.present);
+    let source = EvidenceSource::HtmlMedia;
+    let authoritative = EvidenceClass::Authoritative;
+    let value = match property {
+        "position" => match (media, avplay) {
+            (Some(media), _) => media.current_time,
+            (None, Some(avplay)) => avplay.current_time,
+            (None, None) => return None,
+        },
+        "duration" => match (media.and_then(|media| media.duration), avplay) {
+            (Some(duration), _) => duration,
+            (None, Some(avplay)) if avplay.duration > 0.0 => avplay.duration,
+            (None, _) => return None,
+        },
+        "buffered" => {
+            let media = media?;
+            (media.buffered_end - media.current_time).max(0.0)
+        }
+        "rate" => match (media, avplay) {
+            (Some(media), _) => media.rate,
+            (None, Some(avplay)) => avplay.rate,
+            (None, None) => return None,
+        },
+        "volume" => media.map(|media| media.volume)?,
+        "muted" => return Some((Observation::Bool(media?.muted), source, authoritative)),
+        "live" => return Some((Observation::Bool(media?.live), source, authoritative)),
+        "looping" => return Some((Observation::Bool(media?.looping), source, authoritative)),
+        "fullscreen" => return Some((Observation::Bool(media?.fullscreen), source, authoritative)),
+        "width" => media.map(|media| media.width)?,
+        "height" => media.map(|media| media.height)?,
+        "resolution" => {
+            let media = media?;
+            if media.height <= 0.0 {
+                return None;
+            }
+            return Some((Observation::Number(media.height), source, authoritative));
+        }
+        "framerate" => {
+            if dt <= 0.0 {
+                return None;
+            }
+            let later = second.media.as_ref()?;
+            let earlier = first.media.as_ref()?;
+            let frames = later.total_frames - earlier.total_frames;
+            if frames <= 0.0 {
+                return None;
+            }
+            return Some((
+                Observation::Number(frames / dt),
+                EvidenceSource::HtmlMedia,
+                EvidenceClass::Heuristic,
+            ));
+        }
+        "droppedFrames" => media.map(|media| media.dropped_frames)?,
+        "audioTrack" => {
+            return Some((
+                Observation::Text(media?.audio_track.clone()),
+                source,
+                authoritative,
+            ))
+        }
+        "subtitleTrack" => {
+            return Some((
+                Observation::Text(media?.subtitle_track.clone()),
+                source,
+                authoritative,
+            ))
+        }
+        "error" => {
+            return Some((
+                Observation::Text(media?.error.clone()),
+                source,
+                authoritative,
+            ))
+        }
+        "secure" => {
+            return Some((
+                Observation::Bool(media_keys || eme.is_some_and(|eme| eme.enabled)),
+                EvidenceSource::EmeHook,
+                EvidenceClass::Authoritative,
+            ))
+        }
+        "license" => {
+            let eme = eme?;
+            if eme.license.is_empty() || eme.license == "none" {
+                return None;
+            }
+            return Some((
+                Observation::Text(eme.license.clone()),
+                EvidenceSource::EmeHook,
+                EvidenceClass::Authoritative,
+            ));
+        }
+        "keyStatus" => {
+            let eme = eme?;
+            if eme.key_status.is_empty() {
+                return None;
+            }
+            return Some((
+                Observation::Text(eme.key_status.clone()),
+                EvidenceSource::EmeHook,
+                EvidenceClass::Authoritative,
+            ));
+        }
+        "securityLevel" => {
+            let eme = eme?;
+            if eme.security_level.is_empty() {
+                return None;
+            }
+            return Some((
+                Observation::Text(eme.security_level.clone()),
+                EvidenceSource::EmeHook,
+                EvidenceClass::Authoritative,
+            ));
+        }
+        "keySystem" => {
+            let eme = eme?;
+            if eme.key_system.is_empty() {
+                return None;
+            }
+            return Some((
+                Observation::Text(eme.key_system.clone()),
+                EvidenceSource::EmeHook,
+                EvidenceClass::Authoritative,
+            ));
+        }
+        _ => return None,
+    };
+    let source = if media.is_none() && avplay.is_some() {
+        EvidenceSource::AvPlayHook
+    } else {
+        source
+    };
+    Some((Observation::Number(value), source, authoritative))
+}
+
+fn confidence_from_proto(value: i32) -> Result<Confidence, ConnectorError> {
+    match pb::ProbeConfidence::try_from(value) {
+        Ok(pb::ProbeConfidence::None) => Ok(Confidence::Corroborated),
+        Ok(pb::ProbeConfidence::Inferred) => Ok(Confidence::Inferred),
+        Ok(pb::ProbeConfidence::Corroborated) => Ok(Confidence::Corroborated),
+        Ok(pb::ProbeConfidence::Authoritative) => Ok(Confidence::Authoritative),
+        Err(_) => Err(ConnectorError::protocol(format!(
+            "unknown probe confidence value {value}"
+        ))),
+    }
+}
+
+fn observation_to_proto(observation: &Observation) -> (String, String) {
+    match observation {
+        Observation::Bool(value) => ("bool".to_string(), value.to_string()),
+        Observation::Number(value) => ("number".to_string(), value.to_string()),
+        Observation::Text(value) => ("text".to_string(), value.clone()),
+        Observation::Enum(value) => ("enum".to_string(), value.clone()),
+        Observation::Range { min, max } => ("range".to_string(), format!("{min}..{max}")),
+    }
+}
+
+fn probe_result_to_proto(result: &ProbeResult) -> pb::ProbeResult {
+    pb::ProbeResult {
+        verdicts: result
+            .verdicts
+            .iter()
+            .map(|verdict| pb::ClaimVerdict {
+                claim: verdict.claim.clone(),
+                verdict: match verdict.verdict {
+                    Verdict::Pass => pb::VerdictState::Pass as i32,
+                    Verdict::Fail => pb::VerdictState::Fail as i32,
+                    Verdict::Unverifiable => pb::VerdictState::Unverifiable as i32,
+                },
+                confidence: confidence_to_proto(verdict.confidence) as i32,
+                reason: verdict.reason.clone().unwrap_or_default(),
+            })
+            .collect(),
+        evidence: result
+            .evidence
+            .iter()
+            .map(|evidence| {
+                let (observation_type, observation) = observation_to_proto(&evidence.observation);
+                pb::ProbeEvidence {
+                    source: evidence.source.as_str().to_string(),
+                    kind: evidence.kind.clone(),
+                    observation_type,
+                    observation,
+                    at_unix_ms: evidence.at_unix_ms,
+                    window_ms: evidence.window_ms,
+                    class: match evidence.class {
+                        EvidenceClass::Heuristic => pb::EvidenceClass::Heuristic as i32,
+                        EvidenceClass::System => pb::EvidenceClass::System as i32,
+                        EvidenceClass::Authoritative => pb::EvidenceClass::Authoritative as i32,
+                    },
+                    supports: evidence.supports.clone(),
+                    contradicts: evidence.contradicts.clone(),
+                }
+            })
+            .collect(),
+        confidence: confidence_to_proto(result.confidence) as i32,
+        unverifiable_reason: result.unverifiable_reason.clone().unwrap_or_default(),
+        observed: result.observed.clone().into_iter().collect(),
+        window_ms: result.window_ms,
+    }
+}
+
+fn confidence_to_proto(confidence: Confidence) -> pb::ProbeConfidence {
+    match confidence {
+        Confidence::None => pb::ProbeConfidence::None,
+        Confidence::Inferred => pb::ProbeConfidence::Inferred,
+        Confidence::Corroborated => pb::ProbeConfidence::Corroborated,
+        Confidence::Authoritative => pb::ProbeConfidence::Authoritative,
+    }
+}
+
+fn unix_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+/// Share of pixels in the selected region that differ from the region mean.
+/// A uniform (black/blank) region scores 0; normal video/UI scores well above
+/// the presence threshold without claiming semantic content.
+fn analyze_png_region(png: &[u8], rect: ProbeRect, viewport: ProbeViewport) -> Option<f64> {
+    if rect.w <= 0.0 || rect.h <= 0.0 || viewport.width <= 0.0 || viewport.height <= 0.0 {
+        return Some(0.0);
+    }
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    let width = info.width as f64;
+    let height = info.height as f64;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return None,
+    };
+    let scale_x = width / viewport.width;
+    let scale_y = height / viewport.height;
+    let left = (rect.x * scale_x).floor().max(0.0) as usize;
+    let top = (rect.y * scale_y).floor().max(0.0) as usize;
+    let right = ((rect.x + rect.w) * scale_x).ceil().min(width) as usize;
+    let bottom = ((rect.y + rect.h) * scale_y).ceil().min(height) as usize;
+    if right <= left || bottom <= top {
+        return Some(0.0);
+    }
+    let stride = info.width as usize * channels;
+    let mut luma = Vec::with_capacity((right - left) * (bottom - top));
+    for y in top..bottom {
+        let row = buffer.get(y * stride..)?;
+        for x in left..right {
+            let index = x * channels;
+            let pixel = row.get(index..index + channels)?;
+            let alpha = match info.color_type {
+                png::ColorType::Rgba => pixel.get(3).copied().unwrap_or(0),
+                png::ColorType::GrayscaleAlpha => pixel.get(1).copied().unwrap_or(0),
+                _ => 255,
+            };
+            if alpha < 8 {
+                continue;
+            }
+            let first_channel = pixel.first().copied().unwrap_or(0);
+            let value = match info.color_type {
+                png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => {
+                    f64::from(first_channel)
+                }
+                _ => {
+                    0.2126 * f64::from(first_channel)
+                        + 0.7152 * f64::from(pixel.get(1).copied().unwrap_or(0))
+                        + 0.0722 * f64::from(pixel.get(2).copied().unwrap_or(0))
+                }
+            };
+            luma.push(value);
+        }
+    }
+    if luma.is_empty() {
+        return Some(0.0);
+    }
+    let mean = luma.iter().sum::<f64>() / luma.len() as f64;
+    let painted = luma
+        .iter()
+        .filter(|value| (*value - mean).abs() > 6.0)
+        .count();
+    Some(painted as f64 * 100.0 / luma.len() as f64)
 }
 
 fn key_event(key: &keys::DispatchKey, kind: KeyEventType) -> KeyEvent {

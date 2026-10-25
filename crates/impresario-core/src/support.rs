@@ -94,6 +94,8 @@ pub enum CheckVerb {
     TextEquals,
     TextContains,
     Count,
+    Showing,
+    Player,
 }
 
 impl CheckVerb {
@@ -108,6 +110,8 @@ impl CheckVerb {
             CheckVerb::TextEquals => "text",
             CheckVerb::TextContains => "textContains",
             CheckVerb::Count => "count",
+            CheckVerb::Showing => "Showing",
+            CheckVerb::Player => "Player",
         }
     }
 
@@ -121,6 +125,8 @@ impl CheckVerb {
         CheckVerb::TextEquals,
         CheckVerb::TextContains,
         CheckVerb::Count,
+        CheckVerb::Showing,
+        CheckVerb::Player,
     ];
 }
 
@@ -307,6 +313,8 @@ pub fn verb_of_check(condition: &crate::ast::CheckCondition) -> CheckVerb {
         C::TextEquals { .. } => CheckVerb::TextEquals,
         C::TextContains { .. } => CheckVerb::TextContains,
         C::Count { .. } => CheckVerb::Count,
+        C::Showing(_) => CheckVerb::Showing,
+        C::Player(_) => CheckVerb::Player,
     }
 }
 

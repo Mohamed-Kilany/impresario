@@ -52,7 +52,41 @@ public enum ProtoConversion {
         if let error = raw.error {
             response.error = errorInfo(error)
         }
+        response.probeSources = probeSources()
         return response
+    }
+
+    /// Per-source availability advertised in the handshake (TASK-3 section
+    /// 7.1). The optional in-app hook is always reachable when the app links
+    /// the SDK; its absence at runtime leaves only the affected claim
+    /// unverifiable.
+    static func probeSources() -> [Impresario_V1_ProbeSourceInfo] {
+        func source(
+            _ name: String,
+            _ available: Bool,
+            _ evidenceClass: String,
+            _ reason: String
+        ) -> Impresario_V1_ProbeSourceInfo {
+            var info = Impresario_V1_ProbeSourceInfo()
+            info.source = name
+            info.available = available
+            info.`class` = evidenceClass
+            info.reason = reason
+            return info
+        }
+        return [
+            source("a11y_tree", true, "system", "XCUITest accessibility tree"),
+            source("screenshot_region", true, "authoritative", "XCUIScreen screenshot region analysis"),
+            source("app_hook", true, "authoritative", "ImpresarioHook debug SDK over loopback"),
+            source("audio_session", false, "system", "no public API for another app's audio session"),
+            source("now_playing_ui", false, "system", "not implemented on iOS/tvOS"),
+            source("syslog", false, "system", "host-assisted syslog collector not implemented"),
+            source("dvt_sysmon", false, "system", "host-assisted DVT collector not implemented"),
+            source("dvt_graphics", false, "system", "host-assisted DVT collector not implemented"),
+            source("dvt_network", false, "system", "host-assisted DVT collector not implemented"),
+            source("pcapd", false, "system", "host-assisted pcapd collector not implemented"),
+            source("net_flow", false, "system", "network metadata collector not implemented"),
+        ]
     }
 
     public static func capability(_ raw: AgentCapability) -> Impresario_V1_Capability {
@@ -63,6 +97,9 @@ public enum ProtoConversion {
         case .dpadFocus: return .dpadFocus
         case .keyEvents: return .keyEvents
         case .appControl: return .appControl
+        case .probeShowing: return .probeShowing
+        case .probePlayer: return .probePlayer
+        case .probeDrm: return .probeDrm
         }
     }
 
@@ -100,6 +137,7 @@ public enum ProtoConversion {
         case .alreadyInUse: return .alreadyInUse
         case .deviceUnavailable: return .deviceUnavailable
         case .unauthenticated: return .unauthenticated
+        case .unverifiable: return .unverifiable
         }
     }
 
@@ -121,6 +159,7 @@ public enum ProtoConversion {
         case .alreadyInUse: return .alreadyInUse
         case .deviceUnavailable: return .deviceUnavailable
         case .unauthenticated: return .unauthenticated
+        case .unverifiable: return .unverifiable
         case .unspecified, .UNRECOGNIZED: return .internalError
         }
     }
@@ -158,6 +197,8 @@ public enum ProtoConversion {
             body = .screenshot
         case .appControl(let control):
             body = .appControl(try appControl(control))
+        case .probe(let probe):
+            body = .probe(try probeCommand(probe))
         case .cancel(let cancel):
             body = .cancel(target: cancel.targetCommandID)
         case nil:
@@ -283,6 +324,107 @@ public enum ProtoConversion {
         return AppControlSpec(op: op, clearData: raw.clearData_p)
     }
 
+    // ------------------------------------------------------------------
+    // probes (TASK-3 section 5, D-26/D-28)
+    // ------------------------------------------------------------------
+
+    public static func probeCommand(_ raw: Impresario_V1_ProbeCommand) throws -> ProbeCommandSpec {
+        let kind: ProbeKindSpec
+        switch raw.kind {
+        case .showing: kind = .showing
+        case .player: kind = .player
+        case .drm: kind = .drm
+        case .unspecified, .UNRECOGNIZED:
+            throw AgentError.protocolError("the probe kind is unspecified or unknown")
+        }
+        return ProbeCommandSpec(
+            kind: kind,
+            selector: raw.hasSelector ? try selector(raw.selector) : nil,
+            claims: raw.claims.map { ProbeClaimSpec(claim: $0.claim, negated: $0.negated) },
+            assertions: raw.assertions.map {
+                ProbeAssertionSpec(
+                    property: $0.property,
+                    operator: $0.operator,
+                    value: $0.value,
+                    negated: $0.negated
+                )
+            },
+            minConfidence: confidenceName(raw.minConfidence, default: .corroborated),
+            windowMs: Int(raw.windowMs),
+            requireDecoded: raw.requireDecoded,
+            requireSource: raw.requireSource,
+            minCoverage: raw.minCoverage
+        )
+    }
+
+    public static func probeResult(_ raw: ProbeResultSpec) -> Impresario_V1_ProbeResult {
+        var result = Impresario_V1_ProbeResult()
+        result.verdicts = raw.verdicts.map { verdict in
+            var item = Impresario_V1_ClaimVerdict()
+            item.claim = verdict.claim
+            item.verdict = verdictState(verdict.verdict)
+            item.confidence = probeConfidence(verdict.confidence)
+            item.reason = verdict.reason ?? ""
+            return item
+        }
+        result.evidence = raw.evidence.map { item in
+            var evidence = Impresario_V1_ProbeEvidence()
+            evidence.source = item.source.rawValue
+            evidence.kind = item.kind
+            evidence.observationType = item.observationType
+            evidence.observation = item.observation
+            evidence.atUnixMs = UInt64(clamping: max(0, item.atUnixMs))
+            evidence.windowMs = UInt32(clamping: max(0, item.windowMs))
+            evidence.`class` = evidenceClass(item.evidenceClass)
+            evidence.supports = item.supports
+            evidence.contradicts = item.contradicts
+            return evidence
+        }
+        result.confidence = probeConfidence(raw.confidence)
+        result.unverifiableReason = raw.unverifiableReason ?? ""
+        result.observed = raw.observed
+        result.windowMs = UInt32(clamping: max(0, raw.windowMs))
+        return result
+    }
+
+    public static func probeConfidence(_ raw: String) -> Impresario_V1_ProbeConfidence {
+        switch raw {
+        case "authoritative": return .authoritative
+        case "corroborated": return .corroborated
+        case "inferred": return .inferred
+        default: return .none
+        }
+    }
+
+    private static func confidenceName(
+        _ raw: Impresario_V1_ProbeConfidence,
+        default fallback: Impresario_V1_ProbeConfidence
+    ) -> String {
+        let value = raw == .none ? fallback : raw
+        switch value {
+        case .authoritative: return "authoritative"
+        case .corroborated: return "corroborated"
+        case .inferred: return "inferred"
+        case .none, .UNRECOGNIZED: return confidenceName(fallback, default: .corroborated)
+        }
+    }
+
+    public static func evidenceClass(_ raw: ProbeEvidenceClassSpec) -> Impresario_V1_EvidenceClass {
+        switch raw {
+        case .authoritative: return .authoritative
+        case .system: return .system
+        case .heuristic: return .heuristic
+        }
+    }
+
+    public static func verdictState(_ raw: String) -> Impresario_V1_VerdictState {
+        switch raw {
+        case "pass": return .pass
+        case "fail": return .fail
+        default: return .unverifiable
+        }
+    }
+
     public static func direction(_ raw: Impresario_V1_Direction) -> Direction? {
         switch raw {
         case .up: return .up
@@ -313,6 +455,9 @@ public enum ProtoConversion {
         }
         if let count = raw.observedCount {
             result.observedCount = UInt32(clamping: max(0, count))
+        }
+        if let probe = raw.probe {
+            result.probe = probeResult(probe)
         }
         return result
     }

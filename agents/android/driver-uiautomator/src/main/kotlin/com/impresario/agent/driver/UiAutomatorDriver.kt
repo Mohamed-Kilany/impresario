@@ -3,6 +3,7 @@ package com.impresario.agent.driver
 import android.app.Instrumentation
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.SystemClock
 import android.view.KeyCharacterMap
@@ -15,13 +16,17 @@ import androidx.test.uiautomator.UiObject2
 import com.impresario.agent.AgentException
 import com.impresario.agent.DeviceInfoData
 import com.impresario.agent.Direction
+import com.impresario.agent.DrmSnapshot
 import com.impresario.agent.DriverExtras
 import com.impresario.agent.ElementHandle
+import com.impresario.agent.MediaSnapshot
 import com.impresario.agent.Rect
 import com.impresario.agent.SelectorSpec
+import com.impresario.agent.ShowingSnapshot
 import com.impresario.agent.UiDriver
 import impresario.v1.Impresario.SelectorStrategy
 import java.io.ByteArrayOutputStream
+import org.json.JSONObject
 
 /** An [ElementHandle] backed by a UiAutomator node snapshot. */
 class UiHandle(internal val object2: UiObject2) : ElementHandle
@@ -288,6 +293,219 @@ class UiAutomatorDriver(
         }
     }
 
+    /**
+     * Reads the platform MediaSession stack. This is the legitimate public
+     * state channel: `dumpsys media_session` is the same data the system media
+     * notification renders, and needs no privileged permission.
+     */
+    override fun mediaSnapshot(): MediaSnapshot? {
+        hookSnapshot()?.optJSONObject("media")?.let { hook ->
+            val state = hook.optString("state").takeIf { it.isNotEmpty() }
+            return MediaSnapshot(
+                state = state,
+                positionSeconds = hook.optDouble("positionSeconds").takeIf { !it.isNaN() },
+                durationSeconds = hook.optDouble("durationSeconds").takeIf { !it.isNaN() },
+                rate = hook.optDouble("rate").takeIf { !it.isNaN() },
+                volume = hook.optDouble("volume").takeIf { !it.isNaN() },
+                muted = hook.optBoolean("muted").takeIf { hook.has("muted") },
+                widthPx = hook.optInt("widthPx").takeIf { hook.has("widthPx") },
+                heightPx = hook.optInt("heightPx").takeIf { hook.has("heightPx") },
+                audioTrack = hook.optString("audioTrack").takeIf { it.isNotEmpty() },
+                subtitleTrack = hook.optString("subtitleTrack").takeIf { it.isNotEmpty() },
+                source = hook.optString("source").takeIf { it.isNotEmpty() },
+                error = hook.optString("error").takeIf { it.isNotEmpty() },
+                decoded = hook.optBoolean("decoded").takeIf { hook.has("decoded") },
+                origin = "app_hook",
+            )
+        }
+        val output = runCatching { device.executeShellCommand("dumpsys media_session") }
+            .getOrNull()
+            ?: return null
+        if (output.isBlank()) return null
+        val pkg = lastLaunchedPackage.ifEmpty { device.currentPackageName ?: "" }
+        if (pkg.isEmpty()) return null
+        val blocks = mediaSessionBlocks(output)
+        val block = blocks.firstOrNull { it.contains("package=$pkg") } ?: return null
+        val stateNumber = REGEX_PLAYBACK_STATE.find(block)?.groupValues?.get(1)?.toIntOrNull()
+        val state = when (stateNumber) {
+            0 -> "Idle"
+            1 -> "Ended"
+            2 -> "Paused"
+            3, 4, 5, 9, 10 -> "Playing"
+            6 -> "Buffering"
+            7 -> "Error"
+            8 -> "Loading"
+            else -> null
+        }
+        val speed = REGEX_SPEED.find(block)?.groupValues?.get(1)?.toDoubleOrNull()
+        val positionMs = REGEX_POSITION.find(block)?.groupValues?.get(1)?.toLongOrNull()
+        val updated = REGEX_UPDATED.find(block)?.groupValues?.get(1)?.toLongOrNull()
+        val position = positionMs?.let {
+            var seconds = it / 1000.0
+            if (updated != null && speed != null && speed > 0.0) {
+                val elapsed = (SystemClock.elapsedRealtime() - updated).coerceAtLeast(0)
+                seconds += elapsed * speed / 1000.0
+            }
+            seconds.coerceAtLeast(0.0)
+        }
+        val duration = REGEX_DURATION.find(block)?.groupValues?.get(1)?.toDoubleOrNull()
+            ?.let { if (it > 10_000) it / 1000.0 else it }
+        val source = REGEX_MEDIA_URI.find(block)?.groupValues?.get(1)
+        return MediaSnapshot(
+            state = state,
+            positionSeconds = position,
+            durationSeconds = duration,
+            rate = speed,
+            source = source,
+            error = if (state == "Error") "media session reported ERROR" else null,
+            origin = "media_session",
+        )
+    }
+
+    /**
+     * Reads the optional hook's dedicated `showing` object, preferring it over
+     * the legacy `media.decoded/source` fields that early SDK users reported.
+     */
+    override fun showingSnapshot(): ShowingSnapshot? {
+        val hook = hookSnapshot() ?: return null
+        val showing = hook.optJSONObject("showing")
+        val media = hook.optJSONObject("media")
+        val showingDecoded = showing?.takeIf { it.has("decoded") }?.optBoolean("decoded")
+        val mediaDecoded = media?.takeIf { it.has("decoded") }?.optBoolean("decoded")
+        val decoded = showingDecoded ?: mediaDecoded
+        val source = showing?.optString("source")?.takeIf { it.isNotEmpty() }
+            ?: media?.optString("source")?.takeIf { it.isNotEmpty() }
+        if (decoded == null && source == null) return null
+        return ShowingSnapshot(
+            decoded = decoded,
+            source = source,
+            piece = showing?.optString("piece")?.takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /**
+     * Only reports DRM when a DRM service shows an active session; a mere
+     * provider being installed is not evidence that this playback uses it.
+     */
+    override fun drmSnapshot(): DrmSnapshot? {
+        hookSnapshot()?.optJSONObject("drm")?.let { hook ->
+            return DrmSnapshot(
+                enabled = hook.optBoolean("enabled").takeIf { hook.has("enabled") },
+                provider = hook.optString("provider").takeIf { it.isNotEmpty() },
+                license = hook.optString("license").takeIf { it.isNotEmpty() },
+                keyStatus = hook.optString("keyStatus").takeIf { it.isNotEmpty() },
+                securityLevel = hook.optString("securityLevel").takeIf { it.isNotEmpty() },
+                hdcp = hook.optString("hdcp").takeIf { it.isNotEmpty() },
+                origin = "app_hook",
+            )
+        }
+        val output = runCatching { device.executeShellCommand("dumpsys media.drm") }
+            .getOrNull()
+            ?: return null
+        if (output.isBlank()) return null
+        // The dump is system-wide. Only attribute an active session when the
+        // target package is named in it; another app's DRM session must not
+        // make this piece look protected.
+        val target = lastLaunchedPackage.ifEmpty { device.currentPackageName ?: "" }
+        if (target.isEmpty() || !output.contains(target, ignoreCase = true)) return null
+        val provider = when {
+            output.contains("Widevine", ignoreCase = true) -> "Widevine"
+            output.contains("PlayReady", ignoreCase = true) -> "PlayReady"
+            output.contains("ClearKey", ignoreCase = true) -> "ClearKey"
+            else -> return null
+        }
+        val active = REGEX_DRM_SESSIONS.find(output)?.groupValues?.get(1)?.toIntOrNull()?.let { it > 0 }
+            ?: false
+        if (!active) return null
+        return DrmSnapshot(enabled = true, provider = provider)
+    }
+
+    /**
+     * Latest debug-only in-app hook snapshot. The SDK logs one JSON object per
+     * update under `ImpresarioHook`; shell identity can read logcat without
+     * touching the app's private files. A snapshot from another package or
+     * older than a minute is ignored.
+     */
+    private fun hookSnapshot(): JSONObject? {
+        val output = runCatching {
+            device.executeShellCommand("logcat -d -t 400 -s ImpresarioHook:I")
+        }.getOrNull() ?: return null
+        if (output.isBlank()) return null
+        val marker = "IMPRESARIO_HOOK "
+        val line = output.lineSequence().lastOrNull { it.contains(marker) } ?: return null
+        val json = runCatching {
+            JSONObject(line.substringAfter(marker).trim())
+        }.getOrNull() ?: return null
+        val reportedPackage = json.optString("package")
+        val target = lastLaunchedPackage.ifEmpty { device.currentPackageName ?: "" }
+        if (target.isEmpty() || reportedPackage != target) {
+            return null
+        }
+        val reportedAt = json.optLong("reportedAtUnixMs")
+        if (reportedAt > 0 && System.currentTimeMillis() - reportedAt > 60_000) {
+            return null
+        }
+        return json
+    }
+
+    override fun regionCoverage(png: ByteArray, rect: Rect): Double? {
+        if (png.isEmpty() || rect.isEmpty) return null
+        val bitmap = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return null
+        try {
+            val width = bitmap.width
+            val height = bitmap.height
+            if (width <= 0 || height <= 0) return null
+            val screenWidth = device.displayWidth.coerceAtLeast(1)
+            val screenHeight = device.displayHeight.coerceAtLeast(1)
+            val scaleX = width.toDouble() / screenWidth
+            val scaleY = height.toDouble() / screenHeight
+            val left = (rect.left * scaleX).toInt().coerceIn(0, width - 1)
+            val top = (rect.top * scaleY).toInt().coerceIn(0, height - 1)
+            val right = (rect.right * scaleX).toInt().coerceIn(left + 1, width)
+            val bottom = (rect.bottom * scaleY).toInt().coerceIn(top + 1, height)
+            val step = maxOf(1, minOf(right - left, bottom - top) / 200)
+            val samples = ArrayList<Double>(256)
+            var y = top
+            while (y < bottom) {
+                var x = left
+                while (x < right) {
+                    val pixel = bitmap.getPixel(x, y)
+                    val alpha = (pixel ushr 24) and 0xFF
+                    if (alpha >= 8) {
+                        val red = (pixel shr 16) and 0xFF
+                        val green = (pixel shr 8) and 0xFF
+                        val blue = pixel and 0xFF
+                        samples += 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                    }
+                    x += step
+                }
+                y += step
+            }
+            if (samples.isEmpty()) return 0.0
+            val mean = samples.average()
+            val painted = samples.count { kotlin.math.abs(it - mean) > 6.0 }
+            return painted * 100.0 / samples.size
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun mediaSessionBlocks(output: String): List<String> {
+        val blocks = mutableListOf<String>()
+        val current = StringBuilder()
+        for (line in output.lineSequence()) {
+            if (line.contains("package=") && current.isNotEmpty()) {
+                blocks += current.toString()
+                current.clear()
+            }
+            if (current.isNotEmpty() || line.contains("package=") || line.contains("PlaybackState")) {
+                current.appendLine(line)
+            }
+        }
+        if (current.isNotEmpty()) blocks += current.toString()
+        return blocks
+    }
+
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
@@ -402,6 +620,13 @@ class UiAutomatorDriver(
         const val SWIPE_PERCENT = 0.5f
         const val SWIPE_STEPS = 20
         val PACKAGE_NAME = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
+        val REGEX_PLAYBACK_STATE = Regex("PlaybackState \\{[^}]*state=(-?\\d+)")
+        val REGEX_SPEED = Regex("speed=(-?\\d+(?:\\.\\d+)?)")
+        val REGEX_POSITION = Regex("position=(-?\\d+)")
+        val REGEX_UPDATED = Regex("updated=(-?\\d+)")
+        val REGEX_DURATION = Regex("DURATION=(-?\\d+)", RegexOption.IGNORE_CASE)
+        val REGEX_MEDIA_URI = Regex("MEDIA_URI=([^,\\s}]+)")
+        val REGEX_DRM_SESSIONS = Regex("(?:open|active)?\\s*sessions?\\s*[:=]\\s*(\\d+)", RegexOption.IGNORE_CASE)
         val CRASH_TEXTS = listOf(
             "isn't responding",
             "keeps stopping",

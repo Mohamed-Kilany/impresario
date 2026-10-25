@@ -1,4 +1,5 @@
 import UIKit
+import ImpresarioHook
 
 /// The stub app under test (`AgentTargetStub-iOS` / `-tvOS`): a fixture with
 /// the same stable accessibility identifiers as the Android stub
@@ -20,6 +21,9 @@ final class StubAppDelegate: UIResponder, UIApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains(Self.animationsDisabledArgument) {
             UIView.setAnimationsEnabled(false)
         }
+        // Debug-only in-app hook (D-41): availability never changes a play;
+        // it only lets the agent raise confidence when the runner is listening.
+        ImpresarioHook.shared.start()
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = StubViewController()
         window.makeKeyAndVisible()

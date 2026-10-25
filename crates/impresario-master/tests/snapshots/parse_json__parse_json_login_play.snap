@@ -66,9 +66,18 @@ expression: value
           }
         },
         {
-          "name": "webos",
+          "name": "web",
           "span": {
             "col": 27,
+            "file": "examples/plays/login.play",
+            "len": 3,
+            "line": 8
+          }
+        },
+        {
+          "name": "webos",
+          "span": {
+            "col": 32,
             "file": "examples/plays/login.play",
             "len": 5,
             "line": 8

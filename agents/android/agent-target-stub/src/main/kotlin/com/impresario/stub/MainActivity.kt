@@ -74,6 +74,7 @@ class MainActivity : Activity() {
             Triple(R.id.stub_scenario_flags, "Flags", FlagsActivity::class.java),
             Triple(R.id.stub_scenario_keys, "Key log", KeysActivity::class.java),
             Triple(R.id.stub_scenario_info, "Device info", InfoActivity::class.java),
+            Triple(R.id.stub_scenario_media, "Playback", MediaActivity::class.java),
         )
     }
 }

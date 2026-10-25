@@ -23,11 +23,14 @@ service Agent {
   app's entry for that platform, or empty when the run is app-less),
   `options`, and `auth_token` when the executor is configured with a token. The answer
   carries `accepted`, `session_id`, `agent_version`, `protocol_version`,
-  `capabilities` and `DeviceInfo` (runtime, OS version, screen, `tv` flag).
+  `capabilities`, `DeviceInfo` (runtime, OS version, screen, `tv` flag), and
+  `probe_sources` (`ProbeSourceInfo { source, available, class, reason,
+  external_access }`). `probe_sources` lets the master know before running
+  whether a claim is reachable; it is not a verdict.
 - `Session` is one bidirectional stream: the master sends `Command`s
-  (`RunAction`, `ValidateCheck`, `KeyPress`, `Screenshot`, `AppControl`,
-  `Cancel`); the executor sends `Event`s (`CommandResult`, `Heartbeat`,
-  `SessionClosed`).
+  (`RunAction`, `ValidateCheck`, `Probe`, `KeyPress`, `Screenshot`,
+  `AppControl`, `Cancel`); the executor sends `Event`s (`CommandResult`,
+  `Heartbeat`, `SessionClosed`).
 - `CaptureScreenshot` exists for failure capture when the session is hung;
   it may overlap an in-flight command and must not disturb it.
 - `StreamLogs` streams executor-origin log lines (`source`: `agent`,
@@ -143,6 +146,18 @@ itself* (spec 7.2.5).
 12. **Text safety.** `text` fields are UTF-8. Executors never log
     `RunAction.text` at INFO or above; the master redacts configured
     secrets from every artifact.
+13. **Probes.** A probe is one `Probe` command with `kind = SHOWING |
+    PLAYER | DRM`, a selector, claims, `with` assertions, `window_ms`,
+    `min_confidence` and the step timeout. The executor answers
+    `CommandResult.probe = ProbeResult { verdicts, evidence,
+    confidence_reached, unverifiable_reason, observed, window_ms }`.
+    Reachable probes answer `ok = true` even when a claim is
+    `UNVERIFIABLE`; selector/protocol failures remain normal errors. The
+    master validates every evidence source/class/observation, recomputes
+    the verdict with `impresario-core::probe`, and ignores the executor's
+    provisional verdicts. `UNVERIFIABLE` is applied through
+    `unverifiable_policy` (`fail` default, `warn` opt-in) and maps to
+    `ErrorCode.UNVERIFIABLE` only when the policy fails the step.
 
 ## 6. Error codes
 
@@ -160,6 +175,7 @@ codes as noted.
 | `UNSUPPORTED_ACTION` | action/check/key not available on this platform | executor (planner normally rejects first with `IMP-DSL-013`) | infra error (exit 3) |
 | `INVALID_SELECTOR` | selector cannot be served at runtime | executor | step failed |
 | `CHECK_FAILED` | check evaluated false; `observed_text`/`observed_count` carry evidence | executor | step failed |
+| `UNVERIFIABLE` | probe evidence cannot establish either side at the required confidence | master after re-evaluation | `unverifiable` step; failed under `fail` policy, warning under `warn` |
 | `APP_CRASHED` | app under test died | executor | step failed, run aborts that device |
 | `CANCELLED` | the command was cancelled | executor (per `Cancel`) | folded into the timeout path |
 | `TRANSPORT` | connection lost, handshake timeout, missed heartbeats | either side | infra error (exit 3) |

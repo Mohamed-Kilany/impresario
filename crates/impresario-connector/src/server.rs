@@ -166,6 +166,7 @@ impl ConnectorService {
             capabilities: Vec::new(),
             device: None,
             error: Some(error.to_proto()),
+            probe_sources: Vec::new(),
         };
 
         if !protocol_major_compatible(&request.protocol_version) {
@@ -207,6 +208,7 @@ impl ConnectorService {
             capabilities: capabilities_for(platform),
             device: Some(device),
             error: None,
+            probe_sources: probe_sources_for(platform),
         }
     }
 }
@@ -353,6 +355,9 @@ pub fn capabilities_for(platform: Platform) -> Vec<i32> {
         pb::Capability::ProgrammaticFocus,
         pb::Capability::KeyEvents,
         pb::Capability::AppControl,
+        pb::Capability::ProbeShowing,
+        pb::Capability::ProbePlayer,
+        pb::Capability::ProbeDrm,
     ];
     if platform != Platform::Web {
         capabilities.push(pb::Capability::DpadFocus);
@@ -361,6 +366,68 @@ pub fn capabilities_for(platform: Platform) -> Vec<i32> {
         .into_iter()
         .map(|capability| capability as i32)
         .collect()
+}
+
+/// Probe evidence sources the web connector can reach (TASK-3 section 7.1).
+#[must_use]
+pub fn probe_sources_for(platform: Platform) -> Vec<pb::ProbeSourceInfo> {
+    let source = |source: &str, available: bool, class: &str, reason: &str| pb::ProbeSourceInfo {
+        source: source.to_string(),
+        available,
+        class: class.to_string(),
+        reason: reason.to_string(),
+        external_access: false,
+    };
+    vec![
+        source(
+            "dom",
+            true,
+            "system",
+            "CDP Runtime.evaluate geometry; authoritative when the piece is absent",
+        ),
+        source(
+            "html_media",
+            true,
+            "authoritative",
+            "HTMLMediaElement properties",
+        ),
+        source("eme_hook", true, "authoritative", "EME API hooks"),
+        source(
+            "app_hook",
+            true,
+            "authoritative",
+            "window.__impresarioHook SDK snapshot",
+        ),
+        source(
+            "screenshot_region",
+            true,
+            "authoritative",
+            "Page.captureScreenshot region analysis",
+        ),
+        source(
+            "avplay_hook",
+            platform == Platform::Tizen,
+            "authoritative",
+            if platform == Platform::Tizen {
+                "webapis.avplay hooks"
+            } else {
+                "AVPlay exists on Tizen only"
+            },
+        ),
+        source("net_flow", false, "system", "not implemented in this build"),
+        source(
+            "luna_media",
+            false,
+            "system",
+            "no luna media collector is shipped; the SSH transport only installs/launches",
+        ),
+        source(
+            "platform_log",
+            false,
+            "system",
+            "no platform-log collector is shipped",
+        ),
+    ]
 }
 
 /// Protocol compatibility: the connector serves major version 1 only
@@ -418,6 +485,35 @@ mod tests {
                 "{platform}"
             );
         }
+    }
+
+    #[test]
+    fn probe_sources_are_platform_specific_and_honest() {
+        let web = probe_sources_for(Platform::Web);
+        let available = |sources: &[pb::ProbeSourceInfo], name: &str| {
+            sources
+                .iter()
+                .find(|source| source.source == name)
+                .is_some_and(|source| source.available)
+        };
+        assert!(available(&web, "dom"));
+        assert!(available(&web, "html_media"));
+        assert!(available(&web, "screenshot_region"));
+        assert_eq!(
+            web.iter()
+                .find(|source| source.source == "screenshot_region")
+                .map(|source| source.class.as_str()),
+            Some("authoritative")
+        );
+        assert!(available(&web, "app_hook"));
+        assert!(!available(&web, "avplay_hook"));
+        assert!(!available(&web, "net_flow"));
+        assert!(!available(&web, "luna_media"));
+
+        let tizen = probe_sources_for(Platform::Tizen);
+        assert!(available(&tizen, "avplay_hook"));
+        let webos = probe_sources_for(Platform::WebOs);
+        assert!(!available(&webos, "avplay_hook"));
     }
 
     #[test]

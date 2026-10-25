@@ -36,10 +36,20 @@ message HandshakeResponse {
   repeated Capability capabilities = 5;
   DeviceInfo device = 6;
   ErrorInfo error = 7;                   // set iff !accepted
+  repeated ProbeSourceInfo probe_sources = 8;
 }
 enum Capability {
   CAPABILITY_UNSPECIFIED = 0; MULTI_SESSION = 1; LOGS = 2; SCREENSHOT = 3;
   TOUCH_GESTURES = 4; DPAD_FOCUS = 5; PROGRAMMATIC_FOCUS = 6; KEY_EVENTS = 7; APP_CONTROL = 8;
+  PROBE_SHOWING = 9; PROBE_PLAYER = 10; PROBE_DRM = 11; NET_METADATA = 12;
+}
+/// One evidence source advertised by an executor (TASK-3 section 3.3).
+message ProbeSourceInfo {
+  string source = 1;                     // stable id, e.g. "media_session"
+  bool available = 2;
+  string class = 3;                      // authoritative|system|heuristic|na
+  string reason = 4;                     // why unavailable, or the access method
+  bool external_access = 5;              // source needs a non-default port/pcapd/root
 }
 message DeviceInfo {
   string model = 1; string os_name = 2; string os_version = 3;
@@ -95,6 +105,76 @@ message Screenshot { string label = 1; }
 enum AppOp { APP_OP_UNSPECIFIED = 0; LAUNCH = 1; TERMINATE = 2; RESTART = 3; BACKGROUND = 4; }
 message AppControl { AppOp op = 1; bool clear_data = 2; }
 
+// ---- Probes (TASK-3 section 3) -------------------------------------------
+// Executors produce evidence; the master/core alone computes PASS/FAIL/
+// UNVERIFIABLE (D-27). These messages are additive to protocol v1.
+enum ProbeKind {
+  PROBE_KIND_UNSPECIFIED = 0;
+  PROBE_KIND_SHOWING = 1;
+  PROBE_KIND_PLAYER = 2;
+  PROBE_KIND_DRM = 3;
+}
+enum ProbeConfidence {
+  PROBE_CONFIDENCE_NONE = 0;
+  PROBE_CONFIDENCE_INFERRED = 1;
+  PROBE_CONFIDENCE_CORROBORATED = 2;
+  PROBE_CONFIDENCE_AUTHORITATIVE = 3;
+}
+enum EvidenceClass {
+  EVIDENCE_CLASS_HEURISTIC = 0;
+  EVIDENCE_CLASS_SYSTEM = 1;
+  EVIDENCE_CLASS_AUTHORITATIVE = 2;
+}
+enum VerdictState {
+  VERDICT_STATE_UNSPECIFIED = 0;
+  VERDICT_STATE_PASS = 1;
+  VERDICT_STATE_FAIL = 2;
+  VERDICT_STATE_UNVERIFIABLE = 3;
+}
+message ProbeClaim { string claim = 1; bool negated = 2; }
+message ProbeAssertion {
+  string property = 1;
+  string operator = 2;                   // "", "=", "!=", ">", ">=", "<", "<=", "~"
+  string value = 3;
+  bool negated = 4;
+}
+message ProbeCommand {
+  ProbeKind kind = 1;
+  Selector selector = 2;
+  repeated ProbeClaim claims = 3;
+  repeated ProbeAssertion assertions = 4;
+  ProbeConfidence min_confidence = 5;    // default CORROBORATED
+  uint32 window_ms = 6;                  // observation window, default 3000
+  bool require_decoded = 7;              // Showing with decoded
+  bool require_source = 8;               // Showing with source
+  double min_coverage = 9;               // Showing with coverage, 0..1; 0 = not required
+}
+message ProbeEvidence {
+  string source = 1;
+  string kind = 2;
+  string observation_type = 3;           // bool|number|text|enum|range
+  string observation = 4;
+  uint64 at_unix_ms = 5;
+  uint32 window_ms = 6;
+  EvidenceClass class = 7;
+  repeated string supports = 8;
+  repeated string contradicts = 9;
+}
+message ClaimVerdict {
+  string claim = 1;
+  VerdictState verdict = 2;
+  ProbeConfidence confidence = 3;
+  string reason = 4;
+}
+message ProbeResult {
+  repeated ClaimVerdict verdicts = 1;
+  repeated ProbeEvidence evidence = 2;
+  ProbeConfidence confidence = 3;
+  string unverifiable_reason = 4;
+  map<string, string> observed = 5;
+  uint32 window_ms = 6;
+}
+
 message Cancel { string target_command_id = 1; }
 
 message Command {
@@ -107,6 +187,7 @@ message Command {
     Screenshot screenshot = 13;
     AppControl app_control = 14;
     Cancel cancel = 15;
+    ProbeCommand probe = 16;
   }
 }
 
@@ -116,6 +197,7 @@ enum ErrorCode {
   FOCUS_UNREACHABLE = 5; UNSUPPORTED_ACTION = 6; INVALID_SELECTOR = 7; CHECK_FAILED = 8;
   APP_CRASHED = 9; CANCELLED = 10; TRANSPORT = 11; PROTOCOL = 12; INTERNAL = 13;
   ALREADY_IN_USE = 14; DEVICE_UNAVAILABLE = 15; UNAUTHENTICATED = 16;
+  UNVERIFIABLE = 17;
 }
 message ErrorInfo { ErrorCode code = 1; string message = 2; map<string, string> details = 3; }
 
@@ -127,6 +209,7 @@ message CommandResult {
   bytes screenshot_png = 5;              // set for Screenshot commands
   string observed_text = 6;
   uint32 observed_count = 7;
+  ProbeResult probe = 8;                 // set for Probe commands, even when ok=false
 }
 message Heartbeat { uint64 seq = 1; uint64 unix_ms = 2; string current_command_id = 3; }
 message SessionClosed { string reason = 1; ErrorInfo error = 2; }

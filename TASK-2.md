@@ -1,5 +1,8 @@
 # TASK-2.md — impresario, second generation
 
+> **Superseded.** Consolidated into [`TASK.md`](TASK.md), which is the single authoritative
+> specification. This file is retained for provenance only; do not implement from it.
+
 Status: normative delta spec. Read `IMPRESARIO.md`, `README.md`, `TASK.md`, `docs/DECISIONS.md`
 (all of D-01…D-18, I-01…I-90) and `docs/STATUS.md` **before touching anything**.
 

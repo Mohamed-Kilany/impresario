@@ -40,6 +40,7 @@ impl Style {
             Status::Failed => ("✖", RED),
             Status::Skipped => ("○", YELLOW),
             Status::Aborted => ("⊘", MAGENTA),
+            Status::Unverifiable => ("?", YELLOW),
         };
         self.paint(color, glyph)
     }

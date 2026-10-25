@@ -155,6 +155,19 @@ self-signed distributor certificate is accepted (Samsung's own tooling says real
 devices need a Samsung-issued, DUID-bound profile); exact `vd_appinstall`
 exit/progress semantics; the `capability` prefix across firmware generations.
 
+**Phase 6 outcome (2026-10-23, fixture-verified only).** The native
+`TizenTransport` implements the SDB handshake (CNXN plus RSA-SHA1 AUTH token,
+Android public-key blob), capability parsing with the 2-byte length prefix,
+DUID/app-list/shell/sync-push services, debug launch and `tcp:` forwarding.
+`platform_version >= 7.0` selects the signing path and older versions install
+the original package; a missing capability falls back to `9.0`. Install pushes
+`app.wgt` to `sdk_toolpath` and then **verifies through `0 vd_applist`**
+instead of trusting `vd_appinstall` output; the unverified `0 rmfile` cleanup
+is not used. The fake-SDB replay covers AUTH, capabilities, DUID, list, sync
+push, install command dispatch and failure, debug launch, `was_kill` and
+forwarding. No TV has exercised any of these commands, and the exact
+`vd_appinstall` success text remains unknown (`HD-4`/`HD-7`).
+
 ---
 
 ## S-5 · CLI / TUI / daemon / IPC / lossless config
@@ -217,7 +230,8 @@ choices carried into the product:
   validated text splice for the `profiles:` section; every other config edit
   still uses `yaml-edit` (I-127).
 - The workspace MSRV moved from 1.87 to **1.88** because `ratatui` 0.30.2
-  requires it.
+  required it; Phase 6 moved it again to **1.89** because `russh` 0.63.3 (the
+  in-process webOS SSH transport) requires 1.89.
 
 Live Phase 4 evidence is the detached four-device run
 `20261021-080459-ec51` (4 devices / 4 plays / 6 acts / 189 steps: web, phone,
@@ -227,10 +241,11 @@ detach run `20261021-073144-2763` (9/9) and the LG-only diagnosis run
 5.1 and cmd.exe checklist was executed; STATUS gaps 17–18 are closed.
 
 **Not probed or not adopted:** `inquire`/`cliclack` were compiled in the probe
-but the wizard/prompt is line-based, `indicatif` was not needed, and `keyring`
-is not used yet (no secret store path landed in Phase 4). Those crates stay
-candidates in `docs/THIRD_PARTY.md`; the daemon/IPC and job-control gaps the
-spike left open are now implemented (I-126).
+but the wizard/prompt is line-based, `indicatif` was not needed, and Phase 4
+had no secret-store path. `keyring` is now used by the Phase 6 webOS and Tizen
+flows (Developer Mode passphrase, Tizen PKCS#12 passwords); `inquire` and
+`indicatif` remain candidates in `docs/THIRD_PARTY.md`. The daemon/IPC and
+job-control gaps the spike left open are implemented (I-126).
 
 ---
 
@@ -296,6 +311,15 @@ services, external). Evidence:
   clearly-marked external step; never silently degrade to an unsigned package.
 - Hardware-gated unknowns: what the TV validates on install (self-signed
   distributor acceptance per firmware), and whether older firmware digests differ.
+
+**Phase 6 outcome (2026-10-23, fixture-verified only).** Profiles are
+import-only and store encrypted PKCS#12 files under
+`~/.impresario/signing/tizen/`; passwords are keychain entries (with the
+documented headless environment overrides). The signer supports RSA and
+P-256/P-384 ECDSA keys with SHA-512, emitting raw `r || s` ECDSA values and
+`ecdsa-sha512` in `SignedInfo`. RSA/ECDSA round trips, tamper rejection,
+fixed `#prop` digests, deterministic packages and percent-encoded references
+pass locally. No Samsung-issued profile or TV install was exercised.
 
 ---
 
@@ -456,6 +480,18 @@ the right service on current firmware (vs `appinstalld2/install`), whether
 `luna-send-pub` is present and `-i`/`-n` behave over exec, and whether an
 unsigned/unencrypted IPK is accepted.
 
+**Phase 6 outcome (2026-10-23, fixture-verified only).** The spike choices are
+now the shipped `WebOsTransport`: `russh`/`russh-sftp` with the `ring`
+features, host-key pinning through `auth.identity` or persisted TOFU in
+`keys/webos_known_hosts`, dev-key fetch/decrypt, deterministic `.ipk`
+packaging with the `ar`/`tar`/`flate2` crates, luna install/launch/close/list,
+and SSH `direct-tcpip` forwarding of the inspector port handed to the
+connector. An in-process fake SSH server replays the whole path (pin mismatch,
+capability/exec, SFTP upload, install subscription, app-list verification,
+launch/close, forwarding and cleanup). This proves the client state machine
+against the recorded protocol, **not** that a real TV accepts these SSH
+algorithms, SFTP, luna service names or IPK layout. `HD-3`/`HD-7` remain open.
+
 ## S-8 · Standalone editor (WASM)
 
 **Verdict: go** — rung 1. `cargo build -p impresario-core --target
@@ -466,4 +502,34 @@ shares the exact parser/validator/formatter with the CLI and LSP
 served by the local HTTP server; no LSP process is needed in that mode.
 The wasm boundary (a thin `wasm-bindgen` wrapper) and the HTTP asset serving
 are work-package items, not feasibility risks.
+
+---
+
+## Probe capabilities - fallback rung per TASK-3 section 6.0
+
+TASK-2 section 6.0 defines four rungs: (1) pure Rust or an in-process crate,
+(2) an embedded payload extracted with SHA-256 verification, (3) an explicit
+managed download, (4) host system-tool detection for optional convenience.
+D-19 forbids invoking external platform tools at runtime, so rung 4 is never a
+required path for a run. Each probe capability records its chosen rung here.
+
+| Capability | Rung | Chosen implementation and fallback | Evidence status |
+|---|---|---|---|
+| Web, webOS, Tizen DOM/media/EME collection | 1 | Connector CDP helpers plus the EME hook; AVPlay is used on Tizen only. Chromium is either the existing browser or the managed rung-3 browser, but the collector itself is in-process. | Fixture/replay verified on local Chromium; real-TV CDP is `HD-7`. |
+| Web in-app hook | 1 | `sdk/web/impresario-hook.js` sets a versioned `window.__impresarioHook.snapshot`; the connector reads it as AUTHORITATIVE. Nothing is downloaded and playback is not altered. | Fixture `fixtures/web/hook.html`; connector evidence path is unit/fixture-covered. |
+| Web screenshot-region coverage | 1 | Native PNG decode in the connector (no image tool, no shell). | Fixture verified with local PNG/WebM. |
+| Android showing / player / DRM collection | 1 | In-process Kotlin agent: accessibility tree, screenshot pixels, MediaSession state for the target package, and `dumpsys media.drm` only when it names that package. `dumpsys` text is read through the native ADB shell as a degraded structured-channel substitute, feature-detected and reported as such; no host `adb` process. AudioManager is not used because it is system-wide. | JVM probe tests cover collection and verdict mapping; the new probe path has not run on a phone/TV and is hardware-gated (`HD-5`). |
+| Android screenshot-region coverage | 1 | `BitmapFactory` decode inside the instrumentation process (rung 1, no helper binary). | JVM/fake tests cover the evidence plumbing; pixel path is device-gated. |
+| Android in-app hook | 2 | Debug-only `:impresario-hook` library is linked by the app owner, requires `start(context)`, and logs `IMPRESARIO_HOOK <json>` with its package; the driver reads it with shell identity and rejects a foreign package. No download or host tool. | Stub app compiles and reports every 250 ms; on-device logcat read is hardware-gated (`HD-5`). |
+| iOS/tvOS accessibility and screenshot collection | 1/2 | XCUITest accessibility tree, hit testing and `XCUIScreen` screenshots in the signed XCTest runner (embedded payload = rung 2). | `ProbeCollector` tests pass on WSL; Xcode runner/XCUITest layer is unbuilt and unverified (`HD-1`). |
+| iOS/tvOS player/DRM and optional hook | 1/2 | `ImpresarioHook` Swift product POSTs a snapshot to the runner on `127.0.0.1:47831`; without it AVPlayer/FairPlay facts stay UNVERIFIABLE. The hook ships as source and is linked by the app owner. | `ProbeCollector` tests cover the mapping; loopback receiver and hardware playback are unverified (`HD-1`). |
+| iOS/tvOS host-assisted DVT, syslog and pcapd metadata | 3 (not implemented) | The `idevice` DVT/pcapd path was evaluated (S-2) but no host-assisted collector is shipped; `doctor` does not invoke it. Apple playback evidence uses the hook instead. | Explicitly unverified/deferred; no claim of implementation. |
+| iOS/tvOS protected-surface inference | 1 | Design: XCTest screenshot + hook/decoder corroboration; never a standalone verdict. | Not a shipped verdict path; protected frames are not captured. |
+| Resident runner and OS autostart | 1 | Own per-user process using OS logon integration; tray icon is optional and best-effort (D-42). | Windows live tests planned in the resident phase; other OSes replay/runbook. |
+| Signing (Android, Apple, Tizen, webOS packaging) | 1/2 | Pure-Rust signing/packaging with embedded provider assets where required; no `openssl`, `apksigner`, `tar`, `ar` or `gzip` process. | Phase 6 fixtures green; hardware acceptance deferred (HD-3/HD-4/HD-7). |
+| Apple `.p12` re-sign and Tizen profiles | 1 | `apple-codesign` as an unmodified crate (MPL-2.0) and native PKCS#12/XML-DSig code; Samsung account certificate creation remains external. | Local `.p12` sign verified; Tizen creation unsupported by design. |
+
+No capability is silently moved to a lower rung: a fallback that changes input,
+confidence or output is recorded as a decision and reflected in the probe
+support matrix and `docs/STATUS.md`.
 

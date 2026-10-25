@@ -9,6 +9,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use impresario_core::command::{WireError, WireErrorCode};
+use impresario_core::probe::{
+    evaluate_assertions, evaluate_claim, Claim, ClaimVerdict, Confidence, Evidence, EvidenceClass,
+    EvidenceSource, Observation, Operator, ProbeResult,
+};
 use impresario_proto::v1 as pb;
 use pb::agent_server::Agent as AgentService;
 use tokio::net::TcpListener;
@@ -40,6 +44,8 @@ pub struct MockScript {
     /// Advertised `Capability` values (proto enums as `i32`).
     pub capabilities: Vec<i32>,
     pub device: pb::DeviceInfo,
+    /// Evidence sources advertised by the mock handshake.
+    pub probe_sources: Vec<pb::ProbeSourceInfo>,
     /// Reject every handshake with this error.
     pub reject: Option<WireError>,
     /// Per-command-kind delay before the result.
@@ -86,6 +92,7 @@ impl Default for MockScript {
                 pixel_ratio: 1.0,
                 runtime: "MockAgent".to_string(),
             },
+            probe_sources: mock_probe_sources(),
             reject: None,
             delay_kinds: HashMap::new(),
             failures: HashMap::new(),
@@ -114,7 +121,35 @@ pub fn mock_capabilities() -> Vec<i32> {
         pb::Capability::ProgrammaticFocus as i32,
         pb::Capability::KeyEvents as i32,
         pb::Capability::AppControl as i32,
+        pb::Capability::ProbeShowing as i32,
+        pb::Capability::ProbePlayer as i32,
+        pb::Capability::ProbeDrm as i32,
+        pb::Capability::NetMetadata as i32,
     ]
+}
+
+/// The evidence sources a mock executor claims to provide.
+#[must_use]
+pub fn mock_probe_sources() -> Vec<pb::ProbeSourceInfo> {
+    [
+        ("a11y_tree", "authoritative"),
+        ("screenshot_region", "system"),
+        ("media_session", "system"),
+        ("audio_playback", "system"),
+        ("media_codec", "system"),
+        ("media_drm", "authoritative"),
+        ("app_hook", "authoritative"),
+        ("net_flow", "system"),
+    ]
+    .into_iter()
+    .map(|(source, class)| pb::ProbeSourceInfo {
+        source: source.to_string(),
+        available: true,
+        class: class.to_string(),
+        reason: "mock".to_string(),
+        external_access: false,
+    })
+    .collect()
 }
 
 /// Records everything the mock saw; assertions live on this type.
@@ -231,6 +266,7 @@ pub fn command_kind(command: &pb::Command) -> &'static str {
         Some(pb::command::Body::Screenshot(_)) => "screenshot",
         Some(pb::command::Body::AppControl(_)) => "app_control",
         Some(pb::command::Body::Cancel(_)) => "cancel",
+        Some(pb::command::Body::Probe(_)) => "probe",
         None => "unknown",
     }
 }
@@ -516,6 +552,11 @@ impl AgentService for MockService {
                     None
                 },
                 error,
+                probe_sources: if accepted {
+                    script.probe_sources.clone()
+                } else {
+                    Vec::new()
+                },
             }
         };
         let reject = |code: WireErrorCode, message: &str| {
@@ -880,9 +921,175 @@ fn scripted_result(script: &MockScript, index: usize, command: &pb::Command) -> 
             result.observed_text = check.expected_text.clone();
             result.observed_count = check.expected_count;
         }
+        Some(pb::command::Body::Probe(probe)) => {
+            result.probe = Some(mock_probe_result(probe));
+        }
         _ => {}
     }
     result
+}
+
+/// A well-behaved probe result: every requested claim is supported by one
+/// authoritative observation, and assertion values are synthesized to
+/// satisfy the expectation. Tests that need failure/unverifiable paths use
+/// `fail_command` or a real executor.
+fn mock_probe_result(probe: &pb::ProbeCommand) -> pb::ProbeResult {
+    let min_confidence =
+        convert::confidence_from_proto(probe.min_confidence).unwrap_or(Confidence::Corroborated);
+    let claims: Vec<Claim> = probe.claims.iter().map(convert::claim_from_proto).collect();
+    let assertions: Vec<_> = probe
+        .assertions
+        .iter()
+        .map(convert::assertion_from_proto)
+        .collect();
+    let source = EvidenceSource::Other("mock".to_string());
+    let mut evidence = Vec::new();
+    for claim in &claims {
+        evidence.push(Evidence::supporting(
+            source.clone(),
+            "mock",
+            Observation::Bool(true),
+            EvidenceClass::Authoritative,
+            claim.id.clone(),
+        ));
+    }
+    let mut observed = std::collections::BTreeMap::new();
+    for assertion in &assertions {
+        let observation = mock_observation(assertion);
+        observed.insert(assertion.claim_id(), observation.render());
+        evidence.push(Evidence::supporting(
+            source.clone(),
+            "mock",
+            observation,
+            EvidenceClass::Authoritative,
+            assertion.claim_id(),
+        ));
+    }
+    let mut verdicts: Vec<ClaimVerdict> = claims
+        .iter()
+        .map(|claim| evaluate_claim(claim, &evidence, min_confidence))
+        .collect();
+    verdicts.extend(evaluate_assertions(&assertions, &evidence, min_confidence));
+    let result = ProbeResult {
+        verdicts,
+        evidence,
+        confidence: Confidence::Authoritative,
+        unverifiable_reason: None,
+        observed,
+        window_ms: probe.window_ms,
+    };
+    convert::probe_result_to_proto(&result)
+}
+
+fn mock_observation(assertion: &impresario_core::probe::ProbeAssertion) -> Observation {
+    if assertion.negated {
+        return mock_negated_observation(assertion);
+    }
+    match assertion.operator {
+        None => Observation::Bool(true),
+        Some(Operator::Contains) => {
+            if assertion.negated {
+                Observation::Text("mock".to_string())
+            } else {
+                Observation::Text(format!("mock {} mock", assertion.value))
+            }
+        }
+        Some(Operator::Ne) => {
+            if assertion.value == "__mock_other__" {
+                Observation::Text(String::new())
+            } else {
+                Observation::Text("__mock_other__".to_string())
+            }
+        }
+        Some(Operator::Gt) | Some(Operator::Ge) => assertion.value.parse::<f64>().map_or_else(
+            |_| Observation::Text(format!("{}z", assertion.value)),
+            |value| Observation::Number(value + 1.0),
+        ),
+        Some(Operator::Lt) | Some(Operator::Le) => assertion.value.parse::<f64>().map_or_else(
+            |_| Observation::Text(String::new()),
+            |value| Observation::Number(value - 1.0),
+        ),
+        Some(Operator::Eq) => observation_equal_to(assertion.value.as_str()),
+    }
+}
+
+/// A mock observation whose *base* comparison is false, so the assertion's
+/// `not` flips it to a pass. This must not simply reuse the positive values:
+/// `not muted is true` needs a `false` observation, and `not position > 3`
+/// needs a value at or below 3.
+fn mock_negated_observation(assertion: &impresario_core::probe::ProbeAssertion) -> Observation {
+    match assertion.operator {
+        None => Observation::Bool(false),
+        Some(Operator::Contains) => {
+            if assertion.value.is_empty() {
+                // No string fails "contains ''"; the evaluator will report
+                // this impossible assertion rather than the mock faking it.
+                Observation::Text(String::new())
+            } else {
+                Observation::Text("__mock_other__".to_string())
+            }
+        }
+        Some(Operator::Ne) => observation_equal_to(assertion.value.as_str()),
+        Some(Operator::Eq) => observation_not_equal_to(assertion.value.as_str()),
+        Some(Operator::Gt) => {
+            if let Ok(value) = assertion.value.parse::<f64>() {
+                Observation::Number(value)
+            } else {
+                Observation::Text(String::new())
+            }
+        }
+        Some(Operator::Ge) => {
+            if let Ok(value) = assertion.value.parse::<f64>() {
+                Observation::Number(value - 1.0)
+            } else {
+                Observation::Text(String::new())
+            }
+        }
+        Some(Operator::Lt) => {
+            if let Ok(value) = assertion.value.parse::<f64>() {
+                Observation::Number(value)
+            } else {
+                Observation::Text(format!("{}z", assertion.value))
+            }
+        }
+        Some(Operator::Le) => {
+            if let Ok(value) = assertion.value.parse::<f64>() {
+                Observation::Number(value + 1.0)
+            } else {
+                Observation::Text(format!("{}z", assertion.value))
+            }
+        }
+    }
+}
+
+fn observation_equal_to(value: &str) -> Observation {
+    if let Ok(number) = value.parse::<f64>() {
+        Observation::Number(number)
+    } else if let Some(boolean) = parse_mock_bool(value) {
+        Observation::Bool(boolean)
+    } else {
+        Observation::Text(value.to_string())
+    }
+}
+
+fn observation_not_equal_to(value: &str) -> Observation {
+    if let Ok(number) = value.parse::<f64>() {
+        Observation::Number(number + 1.0)
+    } else if let Some(boolean) = parse_mock_bool(value) {
+        Observation::Bool(!boolean)
+    } else if value == "__mock_other__" {
+        Observation::Text(String::new())
+    } else {
+        Observation::Text("__mock_other__".to_string())
+    }
+}
+
+fn parse_mock_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -916,6 +1123,60 @@ mod tests {
             body: None,
         };
         assert_eq!(command_kind(&command), "unknown");
+    }
+
+    #[test]
+    fn mock_probe_satisfies_negated_assertions() {
+        let probe = pb::ProbeCommand {
+            kind: pb::ProbeKind::Player as i32,
+            selector: None,
+            claims: vec![pb::ProbeClaim {
+                claim: "state=Playing".to_string(),
+                negated: false,
+            }],
+            assertions: vec![
+                pb::ProbeAssertion {
+                    property: "muted".to_string(),
+                    operator: "=".to_string(),
+                    value: "true".to_string(),
+                    negated: true,
+                },
+                pb::ProbeAssertion {
+                    property: "position".to_string(),
+                    operator: ">".to_string(),
+                    value: "3".to_string(),
+                    negated: true,
+                },
+                pb::ProbeAssertion {
+                    property: "error".to_string(),
+                    operator: "=".to_string(),
+                    value: String::new(),
+                    negated: false,
+                },
+                pb::ProbeAssertion {
+                    property: "duration".to_string(),
+                    operator: "<=".to_string(),
+                    value: "120".to_string(),
+                    negated: true,
+                },
+            ],
+            min_confidence: pb::ProbeConfidence::Corroborated as i32,
+            window_ms: 1_000,
+            require_decoded: false,
+            require_source: false,
+            min_coverage: 0.0,
+        };
+        let result = convert::probe_result_from_proto(&mock_probe_result(&probe))
+            .expect("mock probe result converts");
+        assert_eq!(result.verdicts.len(), 5);
+        for verdict in &result.verdicts {
+            assert_eq!(
+                verdict.verdict,
+                impresario_core::probe::Verdict::Pass,
+                "claim {} did not pass: {verdict:?}",
+                verdict.claim
+            );
+        }
     }
 
     #[test]

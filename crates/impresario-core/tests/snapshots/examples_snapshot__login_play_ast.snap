@@ -66,11 +66,17 @@ acts:
           line: 8
           col: 22
           len: 3
-      - name: webos
+      - name: web
         span:
           file: examples/plays/login.play
           line: 8
           col: 27
+          len: 3
+      - name: webos
+        span:
+          file: examples/plays/login.play
+          line: 8
+          col: 32
           len: 5
     performs:
       - stage_name: Navigate and Login

@@ -813,3 +813,94 @@ fn theatrical_play_rejects_inline_stage_blocks() {
         .iter()
         .any(|d| d.message.contains("inline Stage")));
 }
+
+#[test]
+fn check_showing_parses_options() {
+    let play = play_ok(&play_with_steps(&[
+        "Check: Showing => PlayerSurface with coverage>=50%, decoded, source~\"https://cdn.example\" timeout 12s",
+        "Check: not Showing => PlayerSurface",
+    ]));
+    let parsed = steps(&play);
+    match &check(parsed[0]).condition {
+        CheckCondition::Showing(showing) => {
+            assert!(!showing.negated);
+            assert_eq!(
+                showing.options,
+                vec![
+                    crate::ast::ShowingOption::Coverage { percent: 50 },
+                    crate::ast::ShowingOption::Decoded,
+                    crate::ast::ShowingOption::Source {
+                        contains: "https://cdn.example".to_string()
+                    },
+                ]
+            );
+        }
+        other => panic!("expected Showing, got {other:?}"),
+    }
+    assert_eq!(parsed[0].timeout.map(|t| t.millis()), Some(12_000));
+    match &check(parsed[1]).condition {
+        CheckCondition::Showing(showing) => assert!(showing.negated),
+        other => panic!("expected negated Showing, got {other:?}"),
+    }
+}
+
+#[test]
+fn check_player_parses_status_drm_and_assertions() {
+    let play = play_ok(&play_with_steps(&[
+        "Check: Player => VideoContainer Paused DRM-enabled FairPlay with position>30s, resolution>=1080p, not muted timeout 20s",
+        "Check: Player => VideoContainer DRM-disabled with license=active, keyStatus=usable",
+        "Check: Player => VideoContainer not Buffering",
+    ]));
+    let parsed = steps(&play);
+    match &check(parsed[0]).condition {
+        CheckCondition::Player(player) => {
+            let status = player.status.expect("status");
+            assert_eq!(status.status, crate::probe::PlayerStatus::Paused);
+            assert!(!status.negated);
+            let drm = player.drm.as_ref().expect("drm");
+            assert!(drm.enabled);
+            assert_eq!(drm.provider, Some(crate::probe::DrmProvider::FairPlay));
+            assert_eq!(player.assertions.len(), 3);
+            assert_eq!(player.assertions[0].value, "30");
+            assert_eq!(player.assertions[1].value, "1080");
+            assert_eq!(
+                player.assertions[2].property,
+                crate::probe::ProbeProperty::Muted
+            );
+            assert!(player.assertions[2].negated);
+        }
+        other => panic!("expected Player, got {other:?}"),
+    }
+    assert_eq!(parsed[0].timeout.map(|t| t.millis()), Some(20_000));
+    match &check(parsed[1]).condition {
+        CheckCondition::Player(player) => {
+            assert!(player.status.is_none());
+            assert!(!player.drm.as_ref().expect("drm").enabled);
+            assert_eq!(player.assertions[0].value, "active");
+        }
+        other => panic!("expected Player, got {other:?}"),
+    }
+    match &check(parsed[2]).condition {
+        CheckCondition::Player(player) => {
+            let status = player.status.expect("status");
+            assert_eq!(status.status, crate::probe::PlayerStatus::Buffering);
+            assert!(status.negated);
+        }
+        other => panic!("expected Player, got {other:?}"),
+    }
+}
+
+#[test]
+fn check_player_rejects_empty_and_unknown_terms() {
+    let outcome = play_outcome(&play_with_steps(&["Check: Player => VideoContainer"]));
+    assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
+
+    let outcome = play_outcome(&play_with_steps(&[
+        "Check: Player => VideoContainer with nonsense=1",
+    ]));
+    assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
+    assert!(outcome
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("unknown player property")));
+}

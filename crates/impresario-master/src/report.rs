@@ -39,6 +39,7 @@ pub enum Status {
     Failed,
     Skipped,
     Aborted,
+    Unverifiable,
 }
 
 impl Status {
@@ -49,6 +50,7 @@ impl Status {
             Status::Failed => "failed",
             Status::Skipped => "skipped",
             Status::Aborted => "aborted",
+            Status::Unverifiable => "unverifiable",
         }
     }
 }
@@ -207,6 +209,7 @@ impl RunReport {
                         Status::Failed => summary.acts_failed += 1,
                         Status::Skipped => summary.acts_skipped += 1,
                         Status::Aborted => summary.acts_aborted += 1,
+                        Status::Unverifiable => summary.acts_unverifiable += 1,
                     }
                     for attempt in &act.attempts {
                         for stage in &attempt.stages {
@@ -231,6 +234,7 @@ pub struct Summary {
     pub acts_failed: u32,
     pub acts_skipped: u32,
     pub acts_aborted: u32,
+    pub acts_unverifiable: u32,
     pub steps_total: u32,
     pub steps_failed: u32,
 }

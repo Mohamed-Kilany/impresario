@@ -19,6 +19,13 @@ target* (or next to it) instead of shelling out screen taps from the host.
 - **Honest support matrix.** TVs get D-pad semantics, phones get touch,
   `swipe` is refused on TV platforms, `focus` on touch platforms — all
   documented in `docs/PARITY.md`, generated from the planner's own tables.
+- **Playback truth, not just pixels.** `Check: Showing => Piece` and `Check:
+  Player => Piece Playing DRM-enabled Widevine with position>30s` collect
+  DOM/HTMLMedia/EME, Android MediaSession/MediaDrm/accessibility or XCUITest
+  evidence, and return `pass`, `fail` or `unverifiable` from one core
+  evaluator. Missing evidence is never guessed; the optional debug-only in-app
+  SDKs add authoritative player/DRM state for your own apps. See
+  `docs/PROBES.md`.
 - **Reports you can file:** console tree, JUnit XML, `report.json`, and a
   self-contained HTML report (screenshots inlined).
 - **A language server and standalone editor** (`impresario lsp` plus the
@@ -47,16 +54,18 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-clients` | master-side `AgentClient`, device transports, `MockAgent` |
 | `crates/impresario-connector` | web/webOS/Tizen executor over CDP (raw + chromiumoxide backends) |
 | `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
-| `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub` |
-| `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, XCUITest runner needs macOS (`docs/STATUS.md`) |
+| `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub`, `:impresario-hook` |
+| `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, `ImpresarioHook` SDK, XCUITest runner needs macOS (`docs/STATUS.md`) |
+| `sdk/` | web JavaScript hook SDK; the Android and Swift SDKs live with their agents (`agents/android/impresario-hook`, `agents/apple/Sources/ImpresarioHook`) |
 | `editors/vscode` | VS Code client (LSP or standalone WASM) + TextMate grammar |
-| `docs/` | DSL, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
+| `docs/` | DSL, probes, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
 | `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example` (table scenes, `theatres/login.theatre`, theatrical play), CDP fixture pages |
 
 ## Requirements
 
-- Rust stable **1.88+** (developed against 1.94; `libadb` requires 1.87 and
-  `ratatui` 0.30.2 requires 1.88). Nothing else is needed for the quick start below.
+- Rust stable **1.89+** (developed against 1.94; `libadb` requires 1.87,
+  `ratatui` 0.30.2 requires 1.88, and `russh` 0.63.3 requires 1.89). Nothing
+  else is needed for the quick start below.
 - Optional, only for the matching targets:
   - Chrome/Chromium for `web` runs, or the pinned managed browser:
     `impresario tools install chromium` (consent + SHA-256 verified; I-123),
@@ -99,17 +108,15 @@ impresario mock-agent --port 50071
 # impresario: mock device listening on 127.0.0.1:50071
 ```
 
-Append this device to `impresario.devices.config` (the example play's act
-targets `webos`, and `webos` falls back to the `web` selectors, so the
-generated example workspace runs against it unchanged):
+Append this device to `impresario.devices.config` (the example play runs on
+the web platform as well, so the generated workspace works against it
+unchanged):
 
 ```yaml
   - name: mock_device
-    platform: webos
+    platform: web
     connection:
-      transport: ssh
-      host: 127.0.0.1
-      endpoint: ws://127.0.0.1:9999
+      transport: launch
     options:
       connector_address: 127.0.0.1:50071
 ```
@@ -201,7 +208,8 @@ cargo test --workspace          # mock-driven; no device required
 
 | Doc | Contents |
 |---|---|
-| `docs/DSL.md` | syntax, semantics, selectors, text entry, timeouts |
+| `docs/DSL.md` | syntax, semantics, selectors, text entry, timeouts, `Showing`/`Player` probes |
+| `docs/PROBES.md` | evidence/verdict model, per-platform reachability, fallback rungs, SDK contract |
 | `docs/PROTOCOL.md` | wire protocol, sequences, rules, error codes |
 | `docs/DEVICES.md` | per-platform setup and recorded hardware evidence |
 | `docs/PARITY.md` | action/check/key support per platform, generated + reconciled |

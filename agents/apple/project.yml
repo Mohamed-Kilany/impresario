@@ -163,6 +163,9 @@ targets:
     platform: iOS
     sources:
       - path: Xcode/AgentTargetStub
+    dependencies:
+      - package: ImpresarioAgent
+        product: ImpresarioHook
     info:
       path: Xcode/AgentTargetStub/Info-iOS.plist
       properties:
@@ -175,6 +178,9 @@ targets:
     platform: tvOS
     sources:
       - path: Xcode/AgentTargetStub
+    dependencies:
+      - package: ImpresarioAgent
+        product: ImpresarioHook
     info:
       path: Xcode/AgentTargetStub/Info-tvOS.plist
       properties:

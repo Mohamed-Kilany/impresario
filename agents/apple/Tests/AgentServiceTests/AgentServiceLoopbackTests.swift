@@ -59,7 +59,13 @@ final class AgentServiceLoopbackTests: XCTestCase {
         XCTAssertEqual(response.agentVersion, "0.1.0")
         XCTAssertEqual(
             Set(response.capabilities),
-            [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl]
+            [
+                .logs, .screenshot, .dpadFocus, .keyEvents, .appControl,
+                .probeShowing, .probePlayer, .probeDrm,
+            ]
+        )
+        XCTAssertTrue(
+            response.probeSources.contains { $0.source == "app_hook" && $0.available }
         )
         XCTAssertEqual(response.device.model, "iPhone Fake")
         XCTAssertEqual(response.device.pixelRatio, 3.0)

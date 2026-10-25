@@ -166,6 +166,10 @@ pub enum Capability {
     ProgrammaticFocus,
     KeyEvents,
     AppControl,
+    ProbeShowing,
+    ProbePlayer,
+    ProbeDrm,
+    NetMetadata,
 }
 
 impl Capability {
@@ -180,6 +184,10 @@ impl Capability {
             Capability::ProgrammaticFocus => "PROGRAMMATIC_FOCUS",
             Capability::KeyEvents => "KEY_EVENTS",
             Capability::AppControl => "APP_CONTROL",
+            Capability::ProbeShowing => "PROBE_SHOWING",
+            Capability::ProbePlayer => "PROBE_PLAYER",
+            Capability::ProbeDrm => "PROBE_DRM",
+            Capability::NetMetadata => "NET_METADATA",
         }
     }
 
@@ -193,6 +201,10 @@ impl Capability {
             Ok(pb::Capability::ProgrammaticFocus) => Some(Capability::ProgrammaticFocus),
             Ok(pb::Capability::KeyEvents) => Some(Capability::KeyEvents),
             Ok(pb::Capability::AppControl) => Some(Capability::AppControl),
+            Ok(pb::Capability::ProbeShowing) => Some(Capability::ProbeShowing),
+            Ok(pb::Capability::ProbePlayer) => Some(Capability::ProbePlayer),
+            Ok(pb::Capability::ProbeDrm) => Some(Capability::ProbeDrm),
+            Ok(pb::Capability::NetMetadata) => Some(Capability::NetMetadata),
             // Unknown capabilities are ignored for forward compatibility
             // (7.2.2: a newer executor may advertise more than we know).
             Ok(pb::Capability::Unspecified) | Err(_) => None,

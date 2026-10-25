@@ -46,6 +46,9 @@
         <activity
             android:name=".InfoActivity"
             android:exported="false" />
+        <activity
+            android:name=".MediaActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

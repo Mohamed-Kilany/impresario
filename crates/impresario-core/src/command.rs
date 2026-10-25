@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ast::{AppOp, Direction};
 use crate::keys::RemoteKey;
+use crate::probe::{Claim, Confidence, ProbeAssertion, ProbeKind, ProbeResult};
 use crate::selectors::Selector;
 
 /// `ActionType` of the wire contract.
@@ -217,6 +218,49 @@ impl ValidateCheck {
     }
 }
 
+/// `ProbeCommand` of the wire contract (TASK-3 section 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeCommand {
+    pub kind: ProbeKind,
+    pub selector: Selector,
+    pub claims: Vec<Claim>,
+    pub assertions: Vec<ProbeAssertion>,
+    pub min_confidence: Confidence,
+    pub window_ms: u32,
+    pub require_decoded: bool,
+    pub require_source: bool,
+    pub min_coverage_pct: u8,
+}
+
+impl ProbeCommand {
+    #[must_use]
+    pub fn new(kind: ProbeKind, selector: Selector, claims: Vec<Claim>) -> Self {
+        Self {
+            kind,
+            selector,
+            claims,
+            assertions: Vec::new(),
+            min_confidence: crate::probe::default_min_confidence(),
+            window_ms: 3000,
+            require_decoded: false,
+            require_source: false,
+            min_coverage_pct: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn with_assertions(mut self, assertions: Vec<ProbeAssertion>) -> Self {
+        self.assertions = assertions;
+        self
+    }
+
+    #[must_use]
+    pub fn with_window_ms(mut self, window_ms: u32) -> Self {
+        self.window_ms = window_ms.max(1);
+        self
+    }
+}
+
 /// `KeyPress` of the wire contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyPress {
@@ -245,6 +289,7 @@ pub enum Command {
     Screenshot { label: String },
     AppControl { op: AppOp, clear_data: bool },
     Cancel { target_command_id: String },
+    Probe(ProbeCommand),
 }
 
 impl Command {
@@ -258,6 +303,7 @@ impl Command {
             Command::Screenshot { .. } => "screenshot",
             Command::AppControl { .. } => "app_control",
             Command::Cancel { .. } => "cancel",
+            Command::Probe(_) => "probe",
         }
     }
 }
@@ -281,11 +327,12 @@ pub enum WireErrorCode {
     AlreadyInUse,
     DeviceUnavailable,
     Unauthenticated,
+    Unverifiable,
 }
 
 impl WireErrorCode {
     /// Every code, in wire-declaration order.
-    pub const ALL: [WireErrorCode; 16] = [
+    pub const ALL: [WireErrorCode; 17] = [
         WireErrorCode::ElementNotFound,
         WireErrorCode::Timeout,
         WireErrorCode::NotInteractable,
@@ -302,6 +349,7 @@ impl WireErrorCode {
         WireErrorCode::AlreadyInUse,
         WireErrorCode::DeviceUnavailable,
         WireErrorCode::Unauthenticated,
+        WireErrorCode::Unverifiable,
     ];
 
     #[must_use]
@@ -323,6 +371,7 @@ impl WireErrorCode {
             WireErrorCode::AlreadyInUse => "ALREADY_IN_USE",
             WireErrorCode::DeviceUnavailable => "DEVICE_UNAVAILABLE",
             WireErrorCode::Unauthenticated => "UNAUTHENTICATED",
+            WireErrorCode::Unverifiable => "UNVERIFIABLE",
         }
     }
 
@@ -361,7 +410,7 @@ impl WireError {
 }
 
 /// `CommandResult` of the wire contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandOutcome {
     pub command_id: String,
     pub ok: bool,
@@ -370,6 +419,8 @@ pub struct CommandOutcome {
     pub screenshot_png: Vec<u8>,
     pub observed_text: String,
     pub observed_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<ProbeResult>,
 }
 
 #[cfg(test)]
@@ -424,7 +475,7 @@ mod tests {
         assert_eq!(WireErrorCode::Unauthenticated.as_str(), "UNAUTHENTICATED");
         assert!(WireErrorCode::Transport.is_infrastructure());
         assert!(!WireErrorCode::CheckFailed.is_infrastructure());
-        assert_eq!(WireErrorCode::ALL.len(), 16);
+        assert_eq!(WireErrorCode::ALL.len(), 17);
         for code in WireErrorCode::ALL {
             assert!(!code.as_str().is_empty());
         }

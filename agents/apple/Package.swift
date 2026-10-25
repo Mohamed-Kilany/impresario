@@ -28,6 +28,7 @@ let package = Package(
         .library(name: "AgentCore", targets: ["AgentCore"]),
         .library(name: "ImpresarioWire", targets: ["ImpresarioWire"]),
         .library(name: "AgentService", targets: ["AgentService"]),
+        .library(name: "ImpresarioHook", targets: ["ImpresarioHook"]),
     ],
     dependencies: [
         // Pinned per TASK.md D-14 (grpc-swift 1.x while the OS floor is below
@@ -44,6 +45,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "AgentCore"),
+        .target(name: "ImpresarioHook"),
         .target(
             name: "ImpresarioWire",
             dependencies: [

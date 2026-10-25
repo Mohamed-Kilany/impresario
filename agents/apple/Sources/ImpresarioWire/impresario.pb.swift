@@ -100,6 +100,10 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
   case programmaticFocus // = 6
   case keyEvents // = 7
   case appControl // = 8
+  case probeShowing // = 9
+  case probePlayer // = 10
+  case probeDrm // = 11
+  case netMetadata // = 12
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -117,6 +121,10 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     case 6: self = .programmaticFocus
     case 7: self = .keyEvents
     case 8: self = .appControl
+    case 9: self = .probeShowing
+    case 10: self = .probePlayer
+    case 11: self = .probeDrm
+    case 12: self = .netMetadata
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -132,6 +140,10 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     case .programmaticFocus: return 6
     case .keyEvents: return 7
     case .appControl: return 8
+    case .probeShowing: return 9
+    case .probePlayer: return 10
+    case .probeDrm: return 11
+    case .netMetadata: return 12
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -147,6 +159,10 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     .programmaticFocus,
     .keyEvents,
     .appControl,
+    .probeShowing,
+    .probePlayer,
+    .probeDrm,
+    .netMetadata,
   ]
 
 }
@@ -564,6 +580,173 @@ public nonisolated enum Impresario_V1_AppOp: SwiftProtobuf.Enum, Swift.CaseItera
 
 }
 
+/// ---- Probes (TASK-3 section 3) -------------------------------------------
+/// Executors produce evidence; the master/core alone computes PASS/FAIL/
+/// UNVERIFIABLE (D-27). These messages are additive to protocol v1.
+public nonisolated enum Impresario_V1_ProbeKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case showing // = 1
+  case player // = 2
+  case drm // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .showing
+    case 2: self = .player
+    case 3: self = .drm
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .showing: return 1
+    case .player: return 2
+    case .drm: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Impresario_V1_ProbeKind] = [
+    .unspecified,
+    .showing,
+    .player,
+    .drm,
+  ]
+
+}
+
+public nonisolated enum Impresario_V1_ProbeConfidence: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case none // = 0
+  case inferred // = 1
+  case corroborated // = 2
+  case authoritative // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .none
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .none
+    case 1: self = .inferred
+    case 2: self = .corroborated
+    case 3: self = .authoritative
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .none: return 0
+    case .inferred: return 1
+    case .corroborated: return 2
+    case .authoritative: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Impresario_V1_ProbeConfidence] = [
+    .none,
+    .inferred,
+    .corroborated,
+    .authoritative,
+  ]
+
+}
+
+public nonisolated enum Impresario_V1_EvidenceClass: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case heuristic // = 0
+  case system // = 1
+  case authoritative // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .heuristic
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .heuristic
+    case 1: self = .system
+    case 2: self = .authoritative
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .heuristic: return 0
+    case .system: return 1
+    case .authoritative: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Impresario_V1_EvidenceClass] = [
+    .heuristic,
+    .system,
+    .authoritative,
+  ]
+
+}
+
+public nonisolated enum Impresario_V1_VerdictState: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case pass // = 1
+  case fail // = 2
+  case unverifiable // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .pass
+    case 2: self = .fail
+    case 3: self = .unverifiable
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .pass: return 1
+    case .fail: return 2
+    case .unverifiable: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Impresario_V1_VerdictState] = [
+    .unspecified,
+    .pass,
+    .fail,
+    .unverifiable,
+  ]
+
+}
+
 public nonisolated enum Impresario_V1_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -583,6 +766,7 @@ public nonisolated enum Impresario_V1_ErrorCode: SwiftProtobuf.Enum, Swift.CaseI
   case alreadyInUse // = 14
   case deviceUnavailable // = 15
   case unauthenticated // = 16
+  case unverifiable // = 17
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -608,6 +792,7 @@ public nonisolated enum Impresario_V1_ErrorCode: SwiftProtobuf.Enum, Swift.CaseI
     case 14: self = .alreadyInUse
     case 15: self = .deviceUnavailable
     case 16: self = .unauthenticated
+    case 17: self = .unverifiable
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -631,6 +816,7 @@ public nonisolated enum Impresario_V1_ErrorCode: SwiftProtobuf.Enum, Swift.CaseI
     case .alreadyInUse: return 14
     case .deviceUnavailable: return 15
     case .unauthenticated: return 16
+    case .unverifiable: return 17
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -654,6 +840,7 @@ public nonisolated enum Impresario_V1_ErrorCode: SwiftProtobuf.Enum, Swift.CaseI
     .alreadyInUse,
     .deviceUnavailable,
     .unauthenticated,
+    .unverifiable,
   ]
 
 }
@@ -768,12 +955,39 @@ public nonisolated struct Impresario_V1_HandshakeResponse: Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   public mutating func clearError() {self._error = nil}
 
+  public var probeSources: [Impresario_V1_ProbeSourceInfo] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _device: Impresario_V1_DeviceInfo? = nil
   fileprivate var _error: Impresario_V1_ErrorInfo? = nil
+}
+
+//// One evidence source advertised by an executor (TASK-3 section 3.3).
+public nonisolated struct Impresario_V1_ProbeSourceInfo: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// stable id, e.g. "media_session"
+  public var source: String = String()
+
+  public var available: Bool = false
+
+  /// authoritative|system|heuristic|na
+  public var `class`: String = String()
+
+  /// why unavailable, or the access method
+  public var reason: String = String()
+
+  /// source needs a non-default port/pcapd/root
+  public var externalAccess: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public nonisolated struct Impresario_V1_DeviceInfo: Sendable {
@@ -922,6 +1136,150 @@ public nonisolated struct Impresario_V1_AppControl: Sendable {
   public init() {}
 }
 
+public nonisolated struct Impresario_V1_ProbeClaim: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var claim: String = String()
+
+  public var negated: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_ProbeAssertion: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var property: String = String()
+
+  /// "", "=", "!=", ">", ">=", "<", "<=", "~"
+  public var `operator`: String = String()
+
+  public var value: String = String()
+
+  public var negated: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_ProbeCommand: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Impresario_V1_ProbeKind = .unspecified
+
+  public var selector: Impresario_V1_Selector {
+    get {_selector ?? Impresario_V1_Selector()}
+    set {_selector = newValue}
+  }
+  /// Returns true if `selector` has been explicitly set.
+  public var hasSelector: Bool {self._selector != nil}
+  /// Clears the value of `selector`. Subsequent reads from it will return its default value.
+  public mutating func clearSelector() {self._selector = nil}
+
+  public var claims: [Impresario_V1_ProbeClaim] = []
+
+  public var assertions: [Impresario_V1_ProbeAssertion] = []
+
+  /// default CORROBORATED
+  public var minConfidence: Impresario_V1_ProbeConfidence = .none
+
+  /// observation window, default 3000
+  public var windowMs: UInt32 = 0
+
+  /// Showing with decoded
+  public var requireDecoded: Bool = false
+
+  /// Showing with source
+  public var requireSource: Bool = false
+
+  /// Showing with coverage, 0..1; 0 = not required
+  public var minCoverage: Double = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _selector: Impresario_V1_Selector? = nil
+}
+
+public nonisolated struct Impresario_V1_ProbeEvidence: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var source: String = String()
+
+  public var kind: String = String()
+
+  /// bool|number|text|enum|range
+  public var observationType: String = String()
+
+  public var observation: String = String()
+
+  public var atUnixMs: UInt64 = 0
+
+  public var windowMs: UInt32 = 0
+
+  public var `class`: Impresario_V1_EvidenceClass = .heuristic
+
+  public var supports: [String] = []
+
+  public var contradicts: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_ClaimVerdict: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var claim: String = String()
+
+  public var verdict: Impresario_V1_VerdictState = .unspecified
+
+  public var confidence: Impresario_V1_ProbeConfidence = .none
+
+  public var reason: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_ProbeResult: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var verdicts: [Impresario_V1_ClaimVerdict] = []
+
+  public var evidence: [Impresario_V1_ProbeEvidence] = []
+
+  public var confidence: Impresario_V1_ProbeConfidence = .none
+
+  public var unverifiableReason: String = String()
+
+  public var observed: Dictionary<String,String> = [:]
+
+  public var windowMs: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Impresario_V1_Cancel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -995,6 +1353,14 @@ public nonisolated struct Impresario_V1_Command: Sendable {
     set {body = .cancel(newValue)}
   }
 
+  public var probe: Impresario_V1_ProbeCommand {
+    get {
+      if case .probe(let v)? = body {return v}
+      return Impresario_V1_ProbeCommand()
+    }
+    set {body = .probe(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
@@ -1004,6 +1370,7 @@ public nonisolated struct Impresario_V1_Command: Sendable {
     case screenshot(Impresario_V1_Screenshot)
     case appControl(Impresario_V1_AppControl)
     case cancel(Impresario_V1_Cancel)
+    case probe(Impresario_V1_ProbeCommand)
 
   }
 
@@ -1054,11 +1421,22 @@ public nonisolated struct Impresario_V1_CommandResult: Sendable {
 
   public var observedCount: UInt32 = 0
 
+  /// set for Probe commands, even when ok=false
+  public var probe: Impresario_V1_ProbeResult {
+    get {_probe ?? Impresario_V1_ProbeResult()}
+    set {_probe = newValue}
+  }
+  /// Returns true if `probe` has been explicitly set.
+  public var hasProbe: Bool {self._probe != nil}
+  /// Clears the value of `probe`. Subsequent reads from it will return its default value.
+  public mutating func clearProbe() {self._probe = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _error: Impresario_V1_ErrorInfo? = nil
+  fileprivate var _probe: Impresario_V1_ProbeResult? = nil
 }
 
 public nonisolated struct Impresario_V1_Heartbeat: Sendable {
@@ -1241,7 +1619,7 @@ nonisolated extension Impresario_V1_Platform: SwiftProtobuf._ProtoNameProviding 
 }
 
 nonisolated extension Impresario_V1_Capability: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CAPABILITY_UNSPECIFIED\0\u{1}MULTI_SESSION\0\u{1}LOGS\0\u{1}SCREENSHOT\0\u{1}TOUCH_GESTURES\0\u{1}DPAD_FOCUS\0\u{1}PROGRAMMATIC_FOCUS\0\u{1}KEY_EVENTS\0\u{1}APP_CONTROL\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CAPABILITY_UNSPECIFIED\0\u{1}MULTI_SESSION\0\u{1}LOGS\0\u{1}SCREENSHOT\0\u{1}TOUCH_GESTURES\0\u{1}DPAD_FOCUS\0\u{1}PROGRAMMATIC_FOCUS\0\u{1}KEY_EVENTS\0\u{1}APP_CONTROL\0\u{1}PROBE_SHOWING\0\u{1}PROBE_PLAYER\0\u{1}PROBE_DRM\0\u{1}NET_METADATA\0")
 }
 
 nonisolated extension Impresario_V1_SelectorStrategy: SwiftProtobuf._ProtoNameProviding {
@@ -1268,8 +1646,24 @@ nonisolated extension Impresario_V1_AppOp: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0APP_OP_UNSPECIFIED\0\u{1}LAUNCH\0\u{1}TERMINATE\0\u{1}RESTART\0\u{1}BACKGROUND\0")
 }
 
+nonisolated extension Impresario_V1_ProbeKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROBE_KIND_UNSPECIFIED\0\u{1}PROBE_KIND_SHOWING\0\u{1}PROBE_KIND_PLAYER\0\u{1}PROBE_KIND_DRM\0")
+}
+
+nonisolated extension Impresario_V1_ProbeConfidence: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PROBE_CONFIDENCE_NONE\0\u{1}PROBE_CONFIDENCE_INFERRED\0\u{1}PROBE_CONFIDENCE_CORROBORATED\0\u{1}PROBE_CONFIDENCE_AUTHORITATIVE\0")
+}
+
+nonisolated extension Impresario_V1_EvidenceClass: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EVIDENCE_CLASS_HEURISTIC\0\u{1}EVIDENCE_CLASS_SYSTEM\0\u{1}EVIDENCE_CLASS_AUTHORITATIVE\0")
+}
+
+nonisolated extension Impresario_V1_VerdictState: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VERDICT_STATE_UNSPECIFIED\0\u{1}VERDICT_STATE_PASS\0\u{1}VERDICT_STATE_FAIL\0\u{1}VERDICT_STATE_UNVERIFIABLE\0")
+}
+
 nonisolated extension Impresario_V1_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ELEMENT_NOT_FOUND\0\u{1}TIMEOUT\0\u{1}NOT_INTERACTABLE\0\u{1}STALE_ELEMENT\0\u{1}FOCUS_UNREACHABLE\0\u{1}UNSUPPORTED_ACTION\0\u{1}INVALID_SELECTOR\0\u{1}CHECK_FAILED\0\u{1}APP_CRASHED\0\u{1}CANCELLED\0\u{1}TRANSPORT\0\u{1}PROTOCOL\0\u{1}INTERNAL\0\u{1}ALREADY_IN_USE\0\u{1}DEVICE_UNAVAILABLE\0\u{1}UNAUTHENTICATED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ELEMENT_NOT_FOUND\0\u{1}TIMEOUT\0\u{1}NOT_INTERACTABLE\0\u{1}STALE_ELEMENT\0\u{1}FOCUS_UNREACHABLE\0\u{1}UNSUPPORTED_ACTION\0\u{1}INVALID_SELECTOR\0\u{1}CHECK_FAILED\0\u{1}APP_CRASHED\0\u{1}CANCELLED\0\u{1}TRANSPORT\0\u{1}PROTOCOL\0\u{1}INTERNAL\0\u{1}ALREADY_IN_USE\0\u{1}DEVICE_UNAVAILABLE\0\u{1}UNAUTHENTICATED\0\u{1}UNVERIFIABLE\0")
 }
 
 nonisolated extension Impresario_V1_LogLevel: SwiftProtobuf._ProtoNameProviding {
@@ -1348,7 +1742,7 @@ nonisolated extension Impresario_V1_HandshakeRequest: SwiftProtobuf.Message, Swi
 
 nonisolated extension Impresario_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HandshakeResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}session_id\0\u{3}agent_version\0\u{3}protocol_version\0\u{1}capabilities\0\u{1}device\0\u{1}error\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{3}session_id\0\u{3}agent_version\0\u{3}protocol_version\0\u{1}capabilities\0\u{1}device\0\u{1}error\0\u{3}probe_sources\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1363,6 +1757,7 @@ nonisolated extension Impresario_V1_HandshakeResponse: SwiftProtobuf.Message, Sw
       case 5: try { try decoder.decodeRepeatedEnumField(value: &self.capabilities) }()
       case 6: try { try decoder.decodeSingularMessageField(value: &self._device) }()
       case 7: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 8: try { try decoder.decodeRepeatedMessageField(value: &self.probeSources) }()
       default: break
       }
     }
@@ -1394,6 +1789,9 @@ nonisolated extension Impresario_V1_HandshakeResponse: SwiftProtobuf.Message, Sw
     try { if let v = self._error {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
     } }()
+    if !self.probeSources.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.probeSources, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1405,6 +1803,57 @@ nonisolated extension Impresario_V1_HandshakeResponse: SwiftProtobuf.Message, Sw
     if lhs.capabilities != rhs.capabilities {return false}
     if lhs._device != rhs._device {return false}
     if lhs._error != rhs._error {return false}
+    if lhs.probeSources != rhs.probeSources {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ProbeSourceInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeSourceInfo"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}source\0\u{1}available\0\u{1}class\0\u{1}reason\0\u{3}external_access\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.source) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.available) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.`class`) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.externalAccess) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.source.isEmpty {
+      try visitor.visitSingularStringField(value: self.source, fieldNumber: 1)
+    }
+    if self.available != false {
+      try visitor.visitSingularBoolField(value: self.available, fieldNumber: 2)
+    }
+    if !self.`class`.isEmpty {
+      try visitor.visitSingularStringField(value: self.`class`, fieldNumber: 3)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 4)
+    }
+    if self.externalAccess != false {
+      try visitor.visitSingularBoolField(value: self.externalAccess, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeSourceInfo, rhs: Impresario_V1_ProbeSourceInfo) -> Bool {
+    if lhs.source != rhs.source {return false}
+    if lhs.available != rhs.available {return false}
+    if lhs.`class` != rhs.`class` {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs.externalAccess != rhs.externalAccess {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1723,6 +2172,330 @@ nonisolated extension Impresario_V1_AppControl: SwiftProtobuf.Message, SwiftProt
   }
 }
 
+nonisolated extension Impresario_V1_ProbeClaim: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeClaim"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}claim\0\u{1}negated\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.claim) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.negated) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.claim.isEmpty {
+      try visitor.visitSingularStringField(value: self.claim, fieldNumber: 1)
+    }
+    if self.negated != false {
+      try visitor.visitSingularBoolField(value: self.negated, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeClaim, rhs: Impresario_V1_ProbeClaim) -> Bool {
+    if lhs.claim != rhs.claim {return false}
+    if lhs.negated != rhs.negated {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ProbeAssertion: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeAssertion"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}property\0\u{1}operator\0\u{1}value\0\u{1}negated\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.property) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.`operator`) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.value) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.negated) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.property.isEmpty {
+      try visitor.visitSingularStringField(value: self.property, fieldNumber: 1)
+    }
+    if !self.`operator`.isEmpty {
+      try visitor.visitSingularStringField(value: self.`operator`, fieldNumber: 2)
+    }
+    if !self.value.isEmpty {
+      try visitor.visitSingularStringField(value: self.value, fieldNumber: 3)
+    }
+    if self.negated != false {
+      try visitor.visitSingularBoolField(value: self.negated, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeAssertion, rhs: Impresario_V1_ProbeAssertion) -> Bool {
+    if lhs.property != rhs.property {return false}
+    if lhs.`operator` != rhs.`operator` {return false}
+    if lhs.value != rhs.value {return false}
+    if lhs.negated != rhs.negated {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ProbeCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeCommand"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}selector\0\u{1}claims\0\u{1}assertions\0\u{3}min_confidence\0\u{3}window_ms\0\u{3}require_decoded\0\u{3}require_source\0\u{3}min_coverage\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._selector) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.claims) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.assertions) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.minConfidence) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.windowMs) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.requireDecoded) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.requireSource) }()
+      case 9: try { try decoder.decodeSingularDoubleField(value: &self.minCoverage) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 1)
+    }
+    try { if let v = self._selector {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.claims.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.claims, fieldNumber: 3)
+    }
+    if !self.assertions.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.assertions, fieldNumber: 4)
+    }
+    if self.minConfidence != .none {
+      try visitor.visitSingularEnumField(value: self.minConfidence, fieldNumber: 5)
+    }
+    if self.windowMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.windowMs, fieldNumber: 6)
+    }
+    if self.requireDecoded != false {
+      try visitor.visitSingularBoolField(value: self.requireDecoded, fieldNumber: 7)
+    }
+    if self.requireSource != false {
+      try visitor.visitSingularBoolField(value: self.requireSource, fieldNumber: 8)
+    }
+    if self.minCoverage.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.minCoverage, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeCommand, rhs: Impresario_V1_ProbeCommand) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs._selector != rhs._selector {return false}
+    if lhs.claims != rhs.claims {return false}
+    if lhs.assertions != rhs.assertions {return false}
+    if lhs.minConfidence != rhs.minConfidence {return false}
+    if lhs.windowMs != rhs.windowMs {return false}
+    if lhs.requireDecoded != rhs.requireDecoded {return false}
+    if lhs.requireSource != rhs.requireSource {return false}
+    if lhs.minCoverage != rhs.minCoverage {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ProbeEvidence: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeEvidence"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}source\0\u{1}kind\0\u{3}observation_type\0\u{1}observation\0\u{3}at_unix_ms\0\u{3}window_ms\0\u{1}class\0\u{1}supports\0\u{1}contradicts\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.source) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.observationType) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.observation) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.atUnixMs) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.windowMs) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.`class`) }()
+      case 8: try { try decoder.decodeRepeatedStringField(value: &self.supports) }()
+      case 9: try { try decoder.decodeRepeatedStringField(value: &self.contradicts) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.source.isEmpty {
+      try visitor.visitSingularStringField(value: self.source, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.observationType.isEmpty {
+      try visitor.visitSingularStringField(value: self.observationType, fieldNumber: 3)
+    }
+    if !self.observation.isEmpty {
+      try visitor.visitSingularStringField(value: self.observation, fieldNumber: 4)
+    }
+    if self.atUnixMs != 0 {
+      try visitor.visitSingularUInt64Field(value: self.atUnixMs, fieldNumber: 5)
+    }
+    if self.windowMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.windowMs, fieldNumber: 6)
+    }
+    if self.`class` != .heuristic {
+      try visitor.visitSingularEnumField(value: self.`class`, fieldNumber: 7)
+    }
+    if !self.supports.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.supports, fieldNumber: 8)
+    }
+    if !self.contradicts.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.contradicts, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeEvidence, rhs: Impresario_V1_ProbeEvidence) -> Bool {
+    if lhs.source != rhs.source {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.observationType != rhs.observationType {return false}
+    if lhs.observation != rhs.observation {return false}
+    if lhs.atUnixMs != rhs.atUnixMs {return false}
+    if lhs.windowMs != rhs.windowMs {return false}
+    if lhs.`class` != rhs.`class` {return false}
+    if lhs.supports != rhs.supports {return false}
+    if lhs.contradicts != rhs.contradicts {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ClaimVerdict: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClaimVerdict"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}claim\0\u{1}verdict\0\u{1}confidence\0\u{1}reason\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.claim) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.verdict) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.confidence) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.claim.isEmpty {
+      try visitor.visitSingularStringField(value: self.claim, fieldNumber: 1)
+    }
+    if self.verdict != .unspecified {
+      try visitor.visitSingularEnumField(value: self.verdict, fieldNumber: 2)
+    }
+    if self.confidence != .none {
+      try visitor.visitSingularEnumField(value: self.confidence, fieldNumber: 3)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ClaimVerdict, rhs: Impresario_V1_ClaimVerdict) -> Bool {
+    if lhs.claim != rhs.claim {return false}
+    if lhs.verdict != rhs.verdict {return false}
+    if lhs.confidence != rhs.confidence {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_ProbeResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProbeResult"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}verdicts\0\u{1}evidence\0\u{1}confidence\0\u{3}unverifiable_reason\0\u{1}observed\0\u{3}window_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.verdicts) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.evidence) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.confidence) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.unverifiableReason) }()
+      case 5: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.observed) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.windowMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.verdicts.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.verdicts, fieldNumber: 1)
+    }
+    if !self.evidence.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.evidence, fieldNumber: 2)
+    }
+    if self.confidence != .none {
+      try visitor.visitSingularEnumField(value: self.confidence, fieldNumber: 3)
+    }
+    if !self.unverifiableReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.unverifiableReason, fieldNumber: 4)
+    }
+    if !self.observed.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.observed, fieldNumber: 5)
+    }
+    if self.windowMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.windowMs, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_ProbeResult, rhs: Impresario_V1_ProbeResult) -> Bool {
+    if lhs.verdicts != rhs.verdicts {return false}
+    if lhs.evidence != rhs.evidence {return false}
+    if lhs.confidence != rhs.confidence {return false}
+    if lhs.unverifiableReason != rhs.unverifiableReason {return false}
+    if lhs.observed != rhs.observed {return false}
+    if lhs.windowMs != rhs.windowMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Impresario_V1_Cancel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Cancel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}target_command_id\0")
@@ -1755,7 +2528,7 @@ nonisolated extension Impresario_V1_Cancel: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Impresario_V1_Command: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Command"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{3}timeout_ms\0\u{4}\u{8}run_action\0\u{3}validate_check\0\u{3}key_press\0\u{1}screenshot\0\u{3}app_control\0\u{1}cancel\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{3}timeout_ms\0\u{4}\u{8}run_action\0\u{3}validate_check\0\u{3}key_press\0\u{1}screenshot\0\u{3}app_control\0\u{1}cancel\0\u{1}probe\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1843,6 +2616,19 @@ nonisolated extension Impresario_V1_Command: SwiftProtobuf.Message, SwiftProtobu
           self.body = .cancel(v)
         }
       }()
+      case 16: try {
+        var v: Impresario_V1_ProbeCommand?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .probe(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .probe(v)
+        }
+      }()
       default: break
       }
     }
@@ -1883,6 +2669,10 @@ nonisolated extension Impresario_V1_Command: SwiftProtobuf.Message, SwiftProtobu
     case .cancel?: try {
       guard case .cancel(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+    }()
+    case .probe?: try {
+      guard case .probe(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
     }()
     case nil: break
     }
@@ -1940,7 +2730,7 @@ nonisolated extension Impresario_V1_ErrorInfo: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Impresario_V1_CommandResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CommandResult"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}ok\0\u{3}duration_ms\0\u{1}error\0\u{3}screenshot_png\0\u{3}observed_text\0\u{3}observed_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}command_id\0\u{1}ok\0\u{3}duration_ms\0\u{1}error\0\u{3}screenshot_png\0\u{3}observed_text\0\u{3}observed_count\0\u{1}probe\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1955,6 +2745,7 @@ nonisolated extension Impresario_V1_CommandResult: SwiftProtobuf.Message, SwiftP
       case 5: try { try decoder.decodeSingularBytesField(value: &self.screenshotPng) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.observedText) }()
       case 7: try { try decoder.decodeSingularUInt32Field(value: &self.observedCount) }()
+      case 8: try { try decoder.decodeSingularMessageField(value: &self._probe) }()
       default: break
       }
     }
@@ -1986,6 +2777,9 @@ nonisolated extension Impresario_V1_CommandResult: SwiftProtobuf.Message, SwiftP
     if self.observedCount != 0 {
       try visitor.visitSingularUInt32Field(value: self.observedCount, fieldNumber: 7)
     }
+    try { if let v = self._probe {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1997,6 +2791,7 @@ nonisolated extension Impresario_V1_CommandResult: SwiftProtobuf.Message, SwiftP
     if lhs.screenshotPng != rhs.screenshotPng {return false}
     if lhs.observedText != rhs.observedText {return false}
     if lhs.observedCount != rhs.observedCount {return false}
+    if lhs._probe != rhs._probe {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

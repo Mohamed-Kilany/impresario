@@ -43,6 +43,7 @@ fn test_case(play: &PlayReport, act: &ActReport) -> TestCase {
         Status::Failed => TestCaseStatus::non_success(NonSuccessKind::Failure),
         Status::Aborted => TestCaseStatus::non_success(NonSuccessKind::Error),
         Status::Skipped => TestCaseStatus::skipped(),
+        Status::Unverifiable => TestCaseStatus::skipped(),
     };
     match act.status {
         Status::Passed => {}
@@ -57,6 +58,14 @@ fn test_case(play: &PlayReport, act: &ActReport) -> TestCase {
         }
         Status::Skipped => {
             status.set_message("not run");
+        }
+        Status::Unverifiable => {
+            if let Some(failure) = last_failure(act) {
+                status.set_message(format!("{}: {}", failure.code, failure.message));
+                status.set_type(failure.code.clone());
+            } else {
+                status.set_message("unverifiable");
+            }
         }
     }
 

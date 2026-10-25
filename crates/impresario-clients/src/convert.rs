@@ -8,11 +8,15 @@
 
 use impresario_core::ast::{AppOp, Direction};
 use impresario_core::command::{
-    ActionType, CheckKind, Command, CommandOutcome, KeyPress, RunAction, ValidateCheck, WireError,
-    WireErrorCode,
+    ActionType, CheckKind, Command, CommandOutcome, KeyPress, ProbeCommand, RunAction,
+    ValidateCheck, WireError, WireErrorCode,
 };
 use impresario_core::keys::RemoteKey;
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{
+    Claim, ClaimVerdict, Confidence, DrmProvider, Evidence, EvidenceClass, EvidenceSource,
+    Observation, Operator, ProbeAssertion, ProbeKind, ProbeProperty, ProbeResult, Verdict,
+};
 use impresario_core::selectors::{Selector, Strategy};
 use impresario_proto::v1 as pb;
 
@@ -191,6 +195,7 @@ pub fn error_code_to_proto(code: WireErrorCode) -> pb::ErrorCode {
         WireErrorCode::AlreadyInUse => pb::ErrorCode::AlreadyInUse,
         WireErrorCode::DeviceUnavailable => pb::ErrorCode::DeviceUnavailable,
         WireErrorCode::Unauthenticated => pb::ErrorCode::Unauthenticated,
+        WireErrorCode::Unverifiable => pb::ErrorCode::Unverifiable,
     }
 }
 
@@ -213,6 +218,7 @@ pub fn error_code_from_proto(value: i32) -> Result<WireErrorCode, WireError> {
         Ok(pb::ErrorCode::AlreadyInUse) => Ok(WireErrorCode::AlreadyInUse),
         Ok(pb::ErrorCode::DeviceUnavailable) => Ok(WireErrorCode::DeviceUnavailable),
         Ok(pb::ErrorCode::Unauthenticated) => Ok(WireErrorCode::Unauthenticated),
+        Ok(pb::ErrorCode::Unverifiable) => Ok(WireErrorCode::Unverifiable),
         Ok(pb::ErrorCode::Unspecified) | Err(_) => Err(protocol_error(format!(
             "unknown error code enum value {value}"
         ))),
@@ -297,6 +303,292 @@ pub fn key_press_to_proto(press: &KeyPress) -> pb::KeyPress {
 }
 
 #[must_use]
+pub fn probe_kind_to_proto(kind: ProbeKind) -> pb::ProbeKind {
+    match kind {
+        ProbeKind::Showing => pb::ProbeKind::Showing,
+        ProbeKind::Player => pb::ProbeKind::Player,
+        ProbeKind::Drm => pb::ProbeKind::Drm,
+    }
+}
+
+pub fn probe_kind_from_proto(value: i32) -> Result<ProbeKind, WireError> {
+    match pb::ProbeKind::try_from(value) {
+        Ok(pb::ProbeKind::Showing) => Ok(ProbeKind::Showing),
+        Ok(pb::ProbeKind::Player) => Ok(ProbeKind::Player),
+        Ok(pb::ProbeKind::Drm) => Ok(ProbeKind::Drm),
+        Ok(pb::ProbeKind::Unspecified) | Err(_) => Err(protocol_error(format!(
+            "unknown probe kind enum value {value}"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn confidence_to_proto(confidence: Confidence) -> pb::ProbeConfidence {
+    match confidence {
+        Confidence::None => pb::ProbeConfidence::None,
+        Confidence::Inferred => pb::ProbeConfidence::Inferred,
+        Confidence::Corroborated => pb::ProbeConfidence::Corroborated,
+        Confidence::Authoritative => pb::ProbeConfidence::Authoritative,
+    }
+}
+
+pub fn confidence_from_proto(value: i32) -> Result<Confidence, WireError> {
+    match pb::ProbeConfidence::try_from(value) {
+        Ok(pb::ProbeConfidence::None) => Ok(Confidence::None),
+        Ok(pb::ProbeConfidence::Inferred) => Ok(Confidence::Inferred),
+        Ok(pb::ProbeConfidence::Corroborated) => Ok(Confidence::Corroborated),
+        Ok(pb::ProbeConfidence::Authoritative) => Ok(Confidence::Authoritative),
+        Err(_) => Err(protocol_error(format!(
+            "unknown probe confidence enum value {value}"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn evidence_class_to_proto(class: EvidenceClass) -> pb::EvidenceClass {
+    match class {
+        EvidenceClass::Heuristic => pb::EvidenceClass::Heuristic,
+        EvidenceClass::System => pb::EvidenceClass::System,
+        EvidenceClass::Authoritative => pb::EvidenceClass::Authoritative,
+    }
+}
+
+pub fn evidence_class_from_proto(value: i32) -> Result<EvidenceClass, WireError> {
+    match pb::EvidenceClass::try_from(value) {
+        Ok(pb::EvidenceClass::Heuristic) => Ok(EvidenceClass::Heuristic),
+        Ok(pb::EvidenceClass::System) => Ok(EvidenceClass::System),
+        Ok(pb::EvidenceClass::Authoritative) => Ok(EvidenceClass::Authoritative),
+        Err(_) => Err(protocol_error(format!(
+            "unknown evidence class enum value {value}"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn verdict_to_proto(verdict: Verdict) -> pb::VerdictState {
+    match verdict {
+        Verdict::Pass => pb::VerdictState::Pass,
+        Verdict::Fail => pb::VerdictState::Fail,
+        Verdict::Unverifiable => pb::VerdictState::Unverifiable,
+    }
+}
+
+pub fn verdict_from_proto(value: i32) -> Result<Verdict, WireError> {
+    match pb::VerdictState::try_from(value) {
+        Ok(pb::VerdictState::Pass) => Ok(Verdict::Pass),
+        Ok(pb::VerdictState::Fail) => Ok(Verdict::Fail),
+        Ok(pb::VerdictState::Unverifiable) => Ok(Verdict::Unverifiable),
+        Ok(pb::VerdictState::Unspecified) | Err(_) => Err(protocol_error(format!(
+            "unknown verdict enum value {value}"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn probe_command_to_proto(command: &ProbeCommand) -> pb::ProbeCommand {
+    pb::ProbeCommand {
+        kind: probe_kind_to_proto(command.kind) as i32,
+        selector: Some(selector_to_proto(&command.selector)),
+        claims: command
+            .claims
+            .iter()
+            .map(|claim| pb::ProbeClaim {
+                claim: claim.id.clone(),
+                negated: claim.negated,
+            })
+            .collect(),
+        assertions: command
+            .assertions
+            .iter()
+            .map(|assertion| pb::ProbeAssertion {
+                property: assertion.property.clone(),
+                operator: assertion
+                    .operator
+                    .map_or_else(String::new, |operator| operator.as_str().to_string()),
+                value: assertion.value.clone(),
+                negated: assertion.negated,
+            })
+            .collect(),
+        min_confidence: confidence_to_proto(command.min_confidence) as i32,
+        window_ms: command.window_ms,
+        require_decoded: command.require_decoded,
+        require_source: command.require_source,
+        min_coverage: f64::from(command.min_coverage_pct) / 100.0,
+    }
+}
+
+#[must_use]
+pub fn observation_to_proto(observation: &Observation) -> (String, String) {
+    match observation {
+        Observation::Bool(value) => ("bool".to_string(), value.to_string()),
+        Observation::Number(value) => ("number".to_string(), value.to_string()),
+        Observation::Text(value) => ("text".to_string(), value.clone()),
+        Observation::Enum(value) => ("enum".to_string(), value.clone()),
+        Observation::Range { min, max } => ("range".to_string(), format!("{min}..{max}")),
+    }
+}
+
+pub fn observation_from_proto(kind: &str, value: &str) -> Result<Observation, WireError> {
+    match kind {
+        "bool" => value
+            .parse::<bool>()
+            .map(Observation::Bool)
+            .map_err(|_| protocol_error(format!("invalid boolean observation '{value}'"))),
+        "number" => value
+            .parse::<f64>()
+            .map(Observation::Number)
+            .map_err(|_| protocol_error(format!("invalid number observation '{value}'"))),
+        "text" => Ok(Observation::Text(value.to_string())),
+        "enum" => Ok(Observation::Enum(value.to_string())),
+        "range" => {
+            let (min, max) = value
+                .split_once("..")
+                .ok_or_else(|| protocol_error(format!("invalid range observation '{value}'")))?;
+            Ok(Observation::Range {
+                min: min
+                    .parse::<f64>()
+                    .map_err(|_| protocol_error(format!("invalid range minimum '{min}'")))?,
+                max: max
+                    .parse::<f64>()
+                    .map_err(|_| protocol_error(format!("invalid range maximum '{max}'")))?,
+            })
+        }
+        other => Err(protocol_error(format!(
+            "unknown observation type '{other}'"
+        ))),
+    }
+}
+
+#[must_use]
+pub fn evidence_to_proto(evidence: &Evidence) -> pb::ProbeEvidence {
+    let (observation_type, observation) = observation_to_proto(&evidence.observation);
+    pb::ProbeEvidence {
+        source: evidence.source.as_str().to_string(),
+        kind: evidence.kind.clone(),
+        observation_type,
+        observation,
+        at_unix_ms: evidence.at_unix_ms,
+        window_ms: evidence.window_ms,
+        class: evidence_class_to_proto(evidence.class) as i32,
+        supports: evidence.supports.clone(),
+        contradicts: evidence.contradicts.clone(),
+    }
+}
+
+pub fn evidence_from_proto(evidence: &pb::ProbeEvidence) -> Result<Evidence, WireError> {
+    Ok(Evidence {
+        source: EvidenceSource::parse(&evidence.source),
+        kind: evidence.kind.clone(),
+        observation: observation_from_proto(&evidence.observation_type, &evidence.observation)?,
+        at_unix_ms: evidence.at_unix_ms,
+        window_ms: evidence.window_ms,
+        class: evidence_class_from_proto(evidence.class)?,
+        supports: evidence.supports.clone(),
+        contradicts: evidence.contradicts.clone(),
+    })
+}
+
+#[must_use]
+pub fn claim_verdict_to_proto(verdict: &ClaimVerdict) -> pb::ClaimVerdict {
+    pb::ClaimVerdict {
+        claim: verdict.claim.clone(),
+        verdict: verdict_to_proto(verdict.verdict) as i32,
+        confidence: confidence_to_proto(verdict.confidence) as i32,
+        reason: verdict.reason.clone().unwrap_or_default(),
+    }
+}
+
+pub fn claim_verdict_from_proto(verdict: &pb::ClaimVerdict) -> Result<ClaimVerdict, WireError> {
+    Ok(ClaimVerdict {
+        claim: verdict.claim.clone(),
+        verdict: verdict_from_proto(verdict.verdict)?,
+        confidence: confidence_from_proto(verdict.confidence)?,
+        reason: (!verdict.reason.is_empty()).then(|| verdict.reason.clone()),
+    })
+}
+
+#[must_use]
+pub fn probe_result_to_proto(result: &ProbeResult) -> pb::ProbeResult {
+    pb::ProbeResult {
+        verdicts: result.verdicts.iter().map(claim_verdict_to_proto).collect(),
+        evidence: result.evidence.iter().map(evidence_to_proto).collect(),
+        confidence: confidence_to_proto(result.confidence) as i32,
+        unverifiable_reason: result.unverifiable_reason.clone().unwrap_or_default(),
+        observed: result.observed.clone().into_iter().collect(),
+        window_ms: result.window_ms,
+    }
+}
+
+pub fn probe_result_from_proto(result: &pb::ProbeResult) -> Result<ProbeResult, WireError> {
+    Ok(ProbeResult {
+        verdicts: result
+            .verdicts
+            .iter()
+            .map(claim_verdict_from_proto)
+            .collect::<Result<Vec<_>, _>>()?,
+        evidence: result
+            .evidence
+            .iter()
+            .map(evidence_from_proto)
+            .collect::<Result<Vec<_>, _>>()?,
+        confidence: confidence_from_proto(result.confidence)?,
+        unverifiable_reason: (!result.unverifiable_reason.is_empty())
+            .then(|| result.unverifiable_reason.clone()),
+        observed: result
+            .observed
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        window_ms: result.window_ms,
+    })
+}
+
+/// Parse optional assertion operators and property names from the wire. The
+/// collector is expected to ignore properties it cannot observe; the planner
+/// already rejected unsupported names, so an unknown value is a bug and
+/// reported as `PROTOCOL` by the agent, not silently accepted.
+pub fn assertion_from_proto(assertion: &pb::ProbeAssertion) -> ProbeAssertion {
+    ProbeAssertion {
+        property: assertion.property.clone(),
+        operator: if assertion.operator.is_empty() {
+            None
+        } else {
+            Operator::parse(&assertion.operator)
+        },
+        value: assertion.value.clone(),
+        negated: assertion.negated,
+    }
+}
+
+/// Claim ids are opaque strings generated by the master; no validation here.
+#[must_use]
+pub fn claim_from_proto(claim: &pb::ProbeClaim) -> Claim {
+    Claim {
+        id: claim.claim.clone(),
+        negated: claim.negated,
+    }
+}
+
+/// The names of the probe properties accepted by this build (docs and
+/// diagnostics use the same list).
+#[must_use]
+pub fn probe_property_names() -> Vec<&'static str> {
+    ProbeProperty::ALL
+        .iter()
+        .map(|property| property.as_str())
+        .collect()
+}
+
+/// The provider names accepted by this build.
+#[must_use]
+pub fn drm_provider_names() -> Vec<&'static str> {
+    DrmProvider::ALL
+        .iter()
+        .map(|provider| provider.as_str())
+        .collect()
+}
+
+#[must_use]
 pub fn error_info_to_proto(error: &WireError) -> pb::ErrorInfo {
     pb::ErrorInfo {
         code: error_code_to_proto(error.code) as i32,
@@ -341,6 +633,7 @@ pub fn command_to_proto(command: &Command, command_id: &str, timeout_ms: u32) ->
         Command::Cancel { target_command_id } => pb::command::Body::Cancel(pb::Cancel {
             target_command_id: target_command_id.clone(),
         }),
+        Command::Probe(probe) => pb::command::Body::Probe(probe_command_to_proto(probe)),
     };
     pb::Command {
         command_id: command_id.to_string(),
@@ -362,6 +655,11 @@ pub fn outcome_from_proto(result: &pb::CommandResult) -> Result<CommandOutcome, 
             result.command_id
         )));
     }
+    let probe = result
+        .probe
+        .as_ref()
+        .map(probe_result_from_proto)
+        .transpose()?;
     Ok(CommandOutcome {
         command_id: result.command_id.clone(),
         ok: result.ok,
@@ -370,6 +668,7 @@ pub fn outcome_from_proto(result: &pb::CommandResult) -> Result<CommandOutcome, 
         screenshot_png: result.screenshot_png.clone(),
         observed_text: result.observed_text.clone(),
         observed_count: result.observed_count,
+        probe,
     })
 }
 
@@ -406,6 +705,83 @@ mod tests {
         }
         assert!(platform_from_proto(0).is_err());
         assert!(platform_from_proto(99).is_err());
+    }
+
+    #[test]
+    fn probe_command_and_result_round_trip() {
+        let mut command = ProbeCommand::new(
+            ProbeKind::Player,
+            Selector {
+                key: Platform::Web,
+                strategy: Strategy::Css,
+                value: "#video".to_string(),
+                index: 0,
+            },
+            vec![
+                Claim::negated("state=Paused"),
+                Claim::new("drm.enabled=false"),
+            ],
+        );
+        command.assertions = vec![ProbeAssertion {
+            property: "position".to_string(),
+            operator: Some(Operator::Gt),
+            value: "3".to_string(),
+            negated: false,
+        }];
+        command.min_confidence = Confidence::Authoritative;
+        command.window_ms = 1_500;
+        command.require_decoded = true;
+        command.require_source = true;
+        command.min_coverage_pct = 40;
+
+        let proto = probe_command_to_proto(&command);
+        assert_eq!(proto.kind, pb::ProbeKind::Player as i32);
+        assert_eq!(proto.claims.len(), 2);
+        assert!(proto.claims[0].negated);
+        assert_eq!(proto.assertions[0].property, "position");
+        assert_eq!(
+            proto.min_confidence,
+            pb::ProbeConfidence::Authoritative as i32
+        );
+        assert_eq!(proto.window_ms, 1_500);
+        assert!(proto.require_decoded);
+        assert!(proto.require_source);
+        assert!((proto.min_coverage - 0.4).abs() < f64::EPSILON);
+
+        let evidence = vec![
+            Evidence::supporting(
+                EvidenceSource::MediaSession,
+                "media_state",
+                Observation::Enum("Playing".to_string()),
+                EvidenceClass::Authoritative,
+                "state=Paused",
+            ),
+            Evidence::contradicting(
+                EvidenceSource::MediaDrm,
+                "drm_enabled",
+                Observation::Bool(false),
+                EvidenceClass::Authoritative,
+                "state=Paused",
+            ),
+        ];
+        let result = ProbeResult {
+            verdicts: vec![ClaimVerdict {
+                claim: "state=Paused".to_string(),
+                verdict: Verdict::Fail,
+                confidence: Confidence::Authoritative,
+                reason: Some("evidence contradicts the claim".to_string()),
+            }],
+            evidence,
+            confidence: Confidence::Authoritative,
+            unverifiable_reason: None,
+            observed: [("state".to_string(), "Playing".to_string())]
+                .into_iter()
+                .collect(),
+            window_ms: 1_500,
+        };
+        let round_tripped =
+            probe_result_from_proto(&probe_result_to_proto(&result)).expect("result round trip");
+        assert_eq!(round_tripped, result);
     }
 
     #[test]

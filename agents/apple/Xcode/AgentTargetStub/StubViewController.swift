@@ -52,6 +52,8 @@ final class StubViewController: UIViewController {
         content.addArrangedSubview(keyRow())
         content.addArrangedSubview(section("Info"))
         content.addArrangedSubview(info())
+        content.addArrangedSubview(section("Media"))
+        content.addArrangedSubview(button("Playback", "stub_scenario_media", action: #selector(onMedia)))
 
         let scroll = UIScrollView()
         scroll.accessibilityIdentifier = "stub_page"
@@ -248,6 +250,12 @@ final class StubViewController: UIViewController {
 
     @objc private func onInputChanged() {
         echoLabel.text = "echo: \(input.text ?? "")"
+    }
+
+    @objc private func onMedia() {
+        let media = MediaViewController()
+        media.modalPresentationStyle = .fullScreen
+        present(media, animated: false)
     }
 
     @objc private func onKeyA() { onKey("a") }

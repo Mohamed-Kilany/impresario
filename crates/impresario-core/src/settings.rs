@@ -215,6 +215,13 @@ pub const SETTINGS: &[SettingDef] = &[
         doc: "Reporters attached to a run.",
     },
     SettingDef {
+        key: "unverifiable_policy",
+        kind: Kind::Enum(&["fail", "warn"]),
+        default: "fail",
+        scope: Scope::Both,
+        doc: "Fail or warn when a probe cannot reach the required confidence.",
+    },
+    SettingDef {
         key: "workspace",
         kind: Kind::Path,
         default: "",
@@ -757,6 +764,10 @@ impl EffectiveSettings {
             Some("never") => AppReset::Never,
             _ => AppReset::PerAct,
         };
+        let unverifiable_policy = match text("unverifiable_policy").as_deref() {
+            Some("warn") => crate::probe::UnverifiablePolicy::Warn,
+            _ => crate::probe::UnverifiablePolicy::Fail,
+        };
         ImpresarioConfig {
             project,
             timeout_default_ms: u64::try_from(int("timeout_default_ms")).unwrap_or(30_000),
@@ -778,6 +789,7 @@ impl EffectiveSettings {
             agent_start_timeout_ms: u64::try_from(int("agent_start_timeout_ms")).unwrap_or(60_000),
             command_grace_ms: u64::try_from(int("command_grace_ms")).unwrap_or(2_000),
             reporters,
+            unverifiable_policy,
         }
     }
 }

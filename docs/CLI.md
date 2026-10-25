@@ -78,9 +78,16 @@ impresario rm <id>                       # remove a finished job's state and log
 `docs/CONFIG.md`: `--play` (file, directory, glob or bare name), `--act`,
 `--tag`, `--exclude-tag`, `--device` (repeatable or `all`), `--platform`,
 `--app`, `--var K=V`, `--arg ACT.PARAM=VALUE`, `--timeout`, `--retries`,
-`--reporter`, `--fail-fast`, `--only-failed`. `--exclude-tag` wins over
-`--tag`. Inline platform filtering treats an act stage with no explicit
-platform restriction as applicable (I-129).
+`--unverifiable fail|warn`, `--reporter`, `--fail-fast`, `--only-failed`.
+`--exclude-tag` wins over `--tag`. Inline platform filtering treats an act
+stage with no explicit platform restriction as applicable (I-129).
+
+`--unverifiable` overrides `unverifiable_policy` for one run. Probes (`Check:
+Showing`, `Check: Player`) are tri-state: a claim that cannot reach the required
+confidence is `unverifiable`. The default `fail` makes the step fail; `warn`
+records the status and keeps the run green. Executor-supplied verdicts are
+recomputed by the master. See `docs/PROBES.md` for the DSL, evidence sources,
+fallback rungs and the in-app SDK contract.
 
 `--dry-run` (also `/plan` in the TUI) resolves the plan without touching a
 device and prints the act × device matrix, parameter bindings (secrets masked)
@@ -139,6 +146,51 @@ attached run against a detached one. `--on-busy` chooses the policy:
 Any number of jobs can run concurrently on different devices. Within one job,
 devices run in parallel up to `parallel_devices`; fail-fast, retries and
 per-device reporters are unchanged.
+
+## Packaging and signing
+
+Packaging and signing are local, deterministic and pure Rust (D-19). They do
+not call `ares-*`, `tizen`, `openssl`, `ar`, `tar` or `gzip`.
+
+```powershell
+# deterministic webOS IPK
+impresario package webos .\build\web -o .\build\shop.ipk
+impresario package inspect .\build\shop.ipk --json
+
+# deterministic unsigned Tizen WGT
+impresario package tizen .\build\web -o .\build\shop.wgt
+
+# import an existing author + distributor profile (passwords from env/keychain,
+# never from the command line)
+$env:IMPRESARIO_TIZEN_AUTHOR_PASSWORD = '...'
+$env:IMPRESARIO_TIZEN_DISTRIBUTOR_PASSWORD = '...'
+impresario sign tizen profile add living-room `
+  --author .\keys\author.p12 --distributor .\keys\distributor.p12
+
+impresario sign tizen profile list
+impresario sign tizen profile show living-room --json
+impresario sign tizen profile remove living-room
+
+# re-sign for one TV and validate the result
+impresario sign tizen package .\build\shop.wgt `
+  --profile living-room --duid 1234567890 -o .\build\shop-signed.wgt
+impresario sign tizen check .\build\shop-signed.wgt
+```
+
+`package inspect` accepts `.ipk` and `.wgt`; `--json` is the stable machine
+shape. Errors are `IMP-SIGN-*` (see `docs/ERRORS.md`), and the full pipeline,
+paths and RSA/ECDSA details are in `docs/SIGNING.md`.
+
+During a run, a Tizen device reads `auth.profile` and resolves its own DUID;
+Tizen 7.0+ signs automatically, older Tizen installs the original package.
+A webOS app directory or `.ipk` may be named in `platforms.webos.package`;
+a directory is packaged into the cache, while an `.ipk` is validated first.
+
+`impresario device check` and `impresario doctor` use the native TV probes:
+webOS connects over SSH and queries deviceInfo/listApps; Tizen reads SDB
+capabilities, DUID and app list. Both are read-only (no install, launch or
+sign) and print warnings for luna/SDB/profile problems; see `docs/DEVICES.md`
+§1.3/§1.4 for setup and the deferred hardware runbooks.
 
 ## Profiles
 
