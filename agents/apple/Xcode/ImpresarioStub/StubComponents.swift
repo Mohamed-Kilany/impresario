@@ -123,7 +123,10 @@ enum StubTheme {
     }
 
     private static func baseButton(_ title: String, id: String?) -> StubButton {
-        let button = StubButton(type: .system)
+        // `.custom` keeps UIKit's system button fill out of the row. Android
+        // paints only the 36 dp nine-patch bar inside the 48 dp row; the
+        // custom background view below owns that bar and its focus colour.
+        let button = StubButton(type: .custom)
         button.setTitle(title, for: .normal)
         button.accessibilityIdentifier = id
         button.titleLabel?.font = .systemFont(ofSize: dp(18))
@@ -134,6 +137,11 @@ enum StubTheme {
         // left-aligned label because AlertDialog list items are not Buttons.
         button.contentHorizontalAlignment = .center
         button.backgroundColor = .clear
+        #if os(tvOS)
+        // Disable UIKit's white focus highlight; `didUpdateFocus` paints the
+        // Android #646365 focused bar instead.
+        button.focusEffect = nil
+        #endif
         return button
     }
 
