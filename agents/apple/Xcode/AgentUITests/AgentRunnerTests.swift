@@ -34,7 +34,15 @@ final class AgentRunnerTests: XCTestCase {
         let service = AgentService(config: config, driver: driver)
 
         // Alerts must be handled before they block the first connection.
+        //
+        // `addUIInterruptionMonitor` is main-thread-only; this async test starts
+        // on a Swift-concurrency thread, so XCTest aborts with "No current
+        // XCTContext" on tvOS. tvOS also has no touch input, so a monitor could
+        // never tap Allow. The one-time local-network prompt is granted with
+        // the remote instead (see SystemAlerts.tapAllow).
+        #if !os(tvOS)
         SystemAlerts.register(on: self)
+        #endif
 
         let handle = try service.start()
         print(
@@ -47,8 +55,11 @@ final class AgentRunnerTests: XCTestCase {
         )
 
         // The local-network prompt appears right after the first bind; tap it
-        // so a WLAN run needs no human (I-88).
+        // so a WLAN run needs no human (I-88). tvOS cannot tap, and polling
+        // SpringBoard for 20 s would only delay the agent, so skip it there.
+        #if !os(tvOS)
         SystemAlerts.allowLocalNetworkIfPrompted()
+        #endif
         print("impresario agent: serving; waiting for a master (Shutdown ends the run)")
 
         await handle.serveUntilShutdown()
