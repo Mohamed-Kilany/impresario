@@ -2,6 +2,7 @@ import AgentCore
 import CoreGraphics
 import Foundation
 import ImageIO
+import UIKit
 import XCTest
 // Xcode 26 splits the UI-automation classes into their own framework; XCTest
 // re-exports them on older SDKs (docs/DECISIONS.md I-89).
@@ -214,31 +215,41 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
 
     func typeText(_ e: ElementRef, _ t: String) throws {
         try onQueue {
-            let element = try xcElement(e)
-            try ensureEditable(element)
-            var error: NSString?
-            guard IMPXCUShim.type(t, into: element, error: &error) else {
-                throw AgentError.notInteractable("typing failed: \(message(error))")
+            // XCUIElement.typeText asserts that it runs on the main thread.
+            // Keep the driver queue held while dispatching there so a query
+            // cannot interleave with the keyboard session.
+            try onMain {
+                let element = try xcElement(e)
+                try ensureEditable(element)
+                var error: NSString?
+                guard IMPXCUShim.type(t, into: element, error: &error) else {
+                    throw AgentError.notInteractable("typing failed: \(message(error))")
+                }
             }
         }
     }
 
     func deleteAll(_ e: ElementRef) throws {
         try onQueue {
-            let element = try xcElement(e)
-            try ensureEditable(element)
-            let current = (element.value as? String) ?? ""
-            guard !current.isEmpty else {
-                return
-            }
-            // XCUITest has no "clear" API: press delete once per character.
-            // The executor rewrites the whole field (I-87), so this is the
-            // deterministic path (a locale-dependent Clear/Select-All menu
-            // would not be).
-            let deletes = String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count)
-            var error: NSString?
-            guard IMPXCUShim.type(deletes, into: element, error: &error) else {
-                throw AgentError.notInteractable("clearing the field failed: \(message(error))")
+            try onMain {
+                let element = try xcElement(e)
+                try ensureEditable(element)
+                let current = (element.value as? String) ?? ""
+                guard !current.isEmpty else {
+                    return
+                }
+                // XCUITest has no "clear" API: press delete once per character.
+                // The executor rewrites the whole field (I-87), so this is the
+                // deterministic path (a locale-dependent Clear/Select-All menu
+                // would not be).
+                let deletes = String(
+                    repeating: XCUIKeyboardKey.delete.rawValue,
+                    count: current.count
+                )
+                var error: NSString?
+                guard IMPXCUShim.type(deletes, into: element, error: &error) else {
+                    throw AgentError.notInteractable("clearing the field failed: \(message(error))")
+                }
             }
         }
     }
@@ -379,8 +390,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
 
     func screenshotPNG() throws -> Data {
         try onQueue {
-            let png = XCUIScreen.main.screenshot().pngRepresentation
-            guard !png.isEmpty, Png.dimensions(png) != nil else {
+            // tvOS 26.1's `pngRepresentation` renders repeated text down the
+            // frame. Encode the screenshot image through UIKit instead, after
+            // giving focus/layout animations a settled frame.
+            Thread.sleep(forTimeInterval: 0.5)
+            let image = XCUIScreen.main.screenshot().image
+            guard let png = image.pngData(), !png.isEmpty, Png.dimensions(png) != nil else {
                 throw AgentError.internalError("the screenshot did not produce a PNG")
             }
             return png
