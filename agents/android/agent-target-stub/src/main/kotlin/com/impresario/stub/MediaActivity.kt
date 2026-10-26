@@ -94,11 +94,11 @@ class MediaActivity : Activity() {
                 object : MediaSession.Callback() {
                     override fun onPlay() = startPlayback()
                     override fun onPause() {
-                        player.pause()
+                        if (::player.isInitialized) player.pause()
                         publishState()
                     }
                     override fun onSeekTo(pos: Long) {
-                        player.seekTo(pos.toInt())
+                        if (::player.isInitialized) player.seekTo(pos.toInt())
                         publishState()
                     }
                 },
