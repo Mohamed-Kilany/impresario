@@ -10,6 +10,7 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
@@ -54,6 +55,15 @@ class UiAutomatorDriver(
     private val instrumentation: Instrumentation,
     private val device: UiDevice = UiDevice.getInstance(instrumentation),
 ) : UiDriver, DriverExtras {
+
+    init {
+        // uiautomator waits up to 10 s for an idle window before every
+        // accessibility query. A playing video never reports idle, so each
+        // find() on the Media screen outlived its command deadline. Impresario
+        // owns readiness: the master polls bounded checks and the hook reports
+        // app state, so implicit idling is disabled here.
+        Configurator.getInstance().setWaitForIdleTimeout(0)
+    }
 
     @Volatile
     var lastLaunchedPackage: String = ""
@@ -154,6 +164,9 @@ class UiAutomatorDriver(
     }
 
     override fun screenshotPng(): ByteArray {
+        // Let a just-started activity transition settle; with implicit idle
+        // waits disabled, a capture immediately after launch can blend frames.
+        Thread.sleep(500)
         val bitmap = device.takeScreenshot() ?: return ByteArray(0)
         val stream = ByteArrayOutputStream()
         val compressed = bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
