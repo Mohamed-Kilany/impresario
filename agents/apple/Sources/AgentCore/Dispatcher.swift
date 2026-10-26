@@ -1,6 +1,6 @@
 import Foundation
 
-/// Session-level command runner (spec 7.2 rules 3–5): strict ordering, exactly
+/// Session-level command dispatcher (spec 7.2 rules 3–5): strict ordering, exactly
 /// one result per command, immediate `Cancel` handling, heartbeats, and the
 /// `SessionClosed` event. Free of gRPC types: the service feeds commands in and
 /// serializes the emitted events onto the response stream.

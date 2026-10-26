@@ -7,7 +7,7 @@ import Foundation
 /// `agent_address`.
 ///
 /// The publisher owns the `NetService`, publishes on the main run loop (the
-/// runner's run loop keeps spinning while the test waits) and re-publishes on
+/// test bundle's run loop keeps spinning while the test waits) and re-publishes on
 /// name collisions; `stop()` releases it. Darwin-only: a Linux `swift test`
 /// uses the stub below and never touches the local network.
 public final class BonjourPublisher: NSObject, NetServiceDelegate {

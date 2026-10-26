@@ -14,6 +14,7 @@
 //! and the MCP server.
 
 pub mod account;
+pub mod apple;
 pub mod artifact_cmd;
 pub mod cli;
 pub mod definitions;

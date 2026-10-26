@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 impresario-core = { path = "../impresario-core" }
 impresario-proto = { path = "../impresario-proto" }
+impresario-apple-device = { path = "../impresario-apple-device" }
 tonic.workspace = true
 prost.workspace = true
 tonic-prost.workspace = true

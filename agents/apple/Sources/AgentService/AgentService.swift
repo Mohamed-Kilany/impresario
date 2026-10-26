@@ -7,9 +7,9 @@ import NIO
 /// Configuration of the in-app agent (spec 12.1).
 ///
 /// The master expects the agent on `agent_port` (the Apple default is 50062,
-/// see `crates/impresario-clients/src/transport.rs`); the runner reads
-/// `IMPRESARIO_AGENT_PORT` from the xctestrun environment when a different
-/// port is wanted, so both sides must agree.
+/// see `crates/impresario-clients/src/transport.rs`); the test bundle reads
+/// `IMPRESARIO_AGENT_PORT` from its launch environment when a different port
+/// is wanted, so both sides must agree.
 public struct AgentServiceConfig: Sendable {
     /// The default port the master connects to (`APPLE_AGENT_PORT`).
     public static let defaultPort = 50062
@@ -160,7 +160,7 @@ public final class AgentService: @unchecked Sendable {
         // gone (SwiftNIO logs "Cannot schedule tasks on an EventLoop that has
         // already shut down" and announces a forced crash in future versions).
         // The drain is bounded: a client that holds a stream open must not
-        // delay the runner for long.
+        // delay the agent for long.
         let idle = DispatchSemaphore(value: 0)
         provider.whenIdle { idle.signal() }
         _ = idle.wait(timeout: .now() + 2)
@@ -181,7 +181,7 @@ public final class AgentService: @unchecked Sendable {
     /// Quiesces the listener and every accepted connection on its own loop,
     /// then closes the server hard. `Server.close()` alone only closes the
     /// listening socket; the drain window is bounded because a client that
-    /// keeps a stream open must not delay the runner, and `close()` is
+    /// keeps a stream open must not delay the agent, and `close()` is
     /// idempotent.
     private func stopServer() {
         lock.lock()
@@ -201,7 +201,7 @@ public final class AgentService: @unchecked Sendable {
     }
 }
 
-/// A running agent. The runner waits in `testServe()` until a master calls
+/// A running agent. The UI test waits in `testServe()` until a master calls
 /// `Shutdown` (spec 12.1, D-18) and then stops the service.
 public final class AgentServiceHandle: @unchecked Sendable {
     /// The bound port (equals the configured port unless 0 was requested).
@@ -222,7 +222,8 @@ public final class AgentServiceHandle: @unchecked Sendable {
         }
     }
 
-    /// Convenience for runners and tests: wait for `Shutdown`, then stop.
+    /// Convenience for the UI test and loopback tests: wait for `Shutdown`,
+    /// then stop.
     public func serveUntilShutdown() async {
         await waitForShutdown()
         stop()

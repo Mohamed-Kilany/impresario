@@ -280,7 +280,7 @@ the same planner, probe commands and policy.
 | `fixtures/web/hook.html` + `sdk/web/impresario-hook.js` | Web in-app hook shape and connector `app_hook` evidence. |
 | `fixtures/web/tizen-avplay.html` | Synthetic Tizen `webapis.avplay` API for the connector parser and Tizen-only source health; not a hardware playback result. |
 | `agents/android/agent-target-stub` `MediaActivity` | Android MediaSession state, local video, decoded and empty images, screenshot coverage, D-pad controls, `:impresario-hook` reporting. |
-| `agents/apple/Xcode/AgentTargetStub/MediaViewController.swift` | Apple local video/audio/image, empty image slot, public HLS, Swift hook reports. |
+| `agents/apple/Xcode/ImpresarioStub/MediaViewController.swift` | Apple local video/audio/image, empty image slot, public HLS, Swift hook reports. |
 | Public streams | Apple BipBop HLS; no private account, FairPlay asset or license proxy is used. |
 
 The web fixture is exercised by

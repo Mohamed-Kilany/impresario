@@ -16,7 +16,7 @@ agents/apple/.build/
 agents/apple/**/xcuserdata/
 agents/apple/**/DerivedData/
 agents/apple/.swiftpm/
-agents/apple/ImpresarioApple.xcodeproj/
+agents/apple/ImpresarioAgent.xcodeproj/
 agents/apple/build-*/
 *.xcuserstate
 *.xcresult

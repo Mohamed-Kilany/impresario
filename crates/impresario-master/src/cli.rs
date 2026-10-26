@@ -111,6 +111,8 @@ pub enum Command {
     },
     /// Apple ID account used for free provisioning (global one-time login).
     Account(crate::account::AccountArgs),
+    /// Apple TV pairing, signing, products, DDI and agent sessions (global setup).
+    Apple(crate::apple::AppleArgs),
     /// Device definitions: add, edit, list, check, import, export.
     #[command(alias = "devices")]
     Device {
@@ -410,6 +412,9 @@ pub fn run_with(argv: &[String]) -> i32 {
     if let Some(Command::Account(args)) = cli.command.as_ref() {
         return crate::account::run(args, &home);
     }
+    if let Some(Command::Apple(args)) = cli.command.as_ref() {
+        return crate::apple::run(args, &home);
+    }
 
     let (base, base_source) = workspace_base(&cli.workspace, &home);
     let config_path = resolve_path(&base, &cli.config, "impresario.config");
@@ -429,6 +434,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Tags { json } => cmd_tags(&base, &config_path, *json),
         // Handled before workspace resolution.
         Command::Account(_) => EXIT_INFRA,
+        Command::Apple(_) => EXIT_INFRA,
         Command::Device { command } => match command {
             DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)
@@ -491,10 +497,11 @@ fn init_logging(verbose: u8, quiet: bool) {
             "debug"
         } else {
             // libadb logs one WARN per session for ADB banner features it
-            // does not use (`server_status`, `track_mdns`). Those are benign
-            // and would otherwise drown the CLI output; RUST_LOG overrides
-            // this filter for protocol debugging.
-            "warn,libadb=error"
+            // does not use (`server_status`, `track_mdns`), and
+            // apple-codesign logs every sealed resource at WARN. Those are
+            // benign and would otherwise drown the CLI output; RUST_LOG
+            // overrides this filter for protocol debugging.
+            "warn,libadb=error,apple_codesign=error"
         };
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default));

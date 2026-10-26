@@ -101,28 +101,46 @@ async fn connector_handles_a_loopback_address_with_nothing_listening() {
 }
 
 #[tokio::test]
-async fn apple_transport_explains_on_non_macos_hosts() {
-    if cfg!(target_os = "macos") {
-        return;
-    }
+async fn apple_transport_rejects_simulators_and_requires_a_lan_host() {
     let mut transport = AppleTransport::new();
-    let dev = device(
+    let simulator = device(
         "test_iphone",
         Platform::Ios,
-        "00008110-001A2345021E001E",
+        "11111111-2222-3333-4444-555555555555",
         None,
     );
-    let error = transport.prepare(&dev, None).await.expect_err("not macOS");
+    let error = transport
+        .prepare(&simulator, None)
+        .await
+        .expect_err("simulator");
     match error {
         TransportError::DeviceUnavailable(message) => {
-            assert!(message.contains("macOS"), "{message}");
+            assert!(message.contains("simulator"), "{message}");
         }
         other => panic!("unexpected error: {other}"),
     }
     assert_eq!(
         transport.log_sources().first().map(|s| s.name.as_str()),
-        Some("xcodebuild")
+        Some("xctest")
     );
+
+    let physical = device(
+        "test_apple_tv",
+        Platform::Tvos,
+        "00008110-001A2345021E001E",
+        None,
+    );
+    let error = transport
+        .prepare(&physical, None)
+        .await
+        .expect_err("missing LAN host");
+    match error {
+        TransportError::DeviceUnavailable(message) => {
+            assert!(message.contains("connection.host"), "{message}");
+            assert!(message.contains("connection.endpoint"), "{message}");
+        }
+        other => panic!("unexpected error: {other}"),
+    }
 }
 
 #[tokio::test]
@@ -161,6 +179,6 @@ async fn transport_for_matches_the_platform_family() {
             .log_sources()
             .first()
             .map(|s| s.name.as_str()),
-        Some("xcodebuild")
+        Some("xctest")
     );
 }

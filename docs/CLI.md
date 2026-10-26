@@ -224,6 +224,69 @@ The flow and store are covered by offline unit tests; a live Apple login and
 2FA were not exercised yet (I-151), so treat the wizard as implemented and
 tested, not Apple-verified.
 
+## Impresario Agent for Apple (global setup)
+
+`impresario apple` is also dispatched before workspace resolution. Pairing
+records, signing sets, unsigned product sets and personalized DDIs are
+machine-global under `~/.impresario/apple/`; a workspace only names the Apple
+TV and the app under test.
+
+```powershell
+impresario apple status
+
+# once per device (or import a pymobiledevice3 pair plist)
+impresario apple pair --host <apple-tv-host>
+impresario apple import-pair .\remote.plist --save <udid>
+
+# once per signing identity / Xcode build
+impresario apple signing import .\signing-source --name default
+impresario apple signing verify --name default --products current --output .\signed-check
+impresario apple signing status --name default
+
+impresario apple products import .\build-tvos\Build\Products\Debug-appletvos --name current
+impresario apple products status --name current
+impresario apple ddi import .\ddi-source --build <build>
+impresario apple ddi status
+
+# live check and a manual agent session
+impresario apple doctor --host <apple-tv-host> --signing default --products current
+impresario apple session --host <apple-tv-host> --udid <udid> --signing default --products current
+```
+
+A signing source contains `identity.p12` and one directory per bundle with
+`profile.mobileprovision` + `entitlements.plist`. The PKCS#12 password is read
+interactively and stored in the OS credential store. For a headless import
+only, `IMPRESARIO_APPLE_P12_PASSWORD` is read and not persisted;
+`signing clear-password` removes a stored password. There is no plaintext
+password file and no password flag.
+
+The product set is imported from Xcode's `Debug-appletvos`/`Debug-iphoneos`
+output; exactly one host app, one stub and one `-Runner.app` are required.
+The imported host, stub and nested test bundle ids are used to sign and launch
+the agent, so a renamed build needs no Rust changes. The DDI is personalized
+externally for the OS build reported by RSD; Impresario does not download it.
+
+At runtime `AppleTransport` reads these machine-global stores:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `IMPRESARIO_APPLE_SIGNING` | `default` | signing set name |
+| `IMPRESARIO_APPLE_PRODUCTS` | `current` | product set name |
+| `IMPRESARIO_APPLE_DDI` | detected OS build | explicit DDI directory |
+| `IMPRESARIO_APPLE_START_TIMEOUT_SECS` | `120` | wait for the agent port |
+| `IMPRESARIO_APPLE_HOST_ID` | host-derived UUID | RemotePairing host id override |
+
+A device needs `connection.udid`; the host comes from `connection.host` or
+`connection.endpoint`, and the agent port from `options.agent_port`, the
+endpoint port or `50062`. The same port is passed to the UI test as
+`IMPRESARIO_AGENT_PORT`. The transport installs/signs over AFC and
+InstallationProxy and starts the XCUITest bundle over the direct outer-RSD
+`testmanagerd`/`dtservicehub` path; it does not spawn `xcodebuild`, `iproxy`,
+`simctl`, `devicectl` or `ideviceinstaller`. Simulator UDIDs are rejected and
+a USB-only iPhone is not supported yet. See `docs/DEVICES.md` §3.3 and
+`agents/apple/README.md`; the physical-tvOS path is proven (I-150/I-152), the
+renamed bundle ids still need new profiles.
+
 ## Profiles
 
 Profiles are saved run selections under the top-level `profiles:` mapping of

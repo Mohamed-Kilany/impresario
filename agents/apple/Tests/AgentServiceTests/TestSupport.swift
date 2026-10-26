@@ -355,7 +355,7 @@ final class AgentHarness {
     }
 
     func stop() {
-        // The master closes its connection first and the runner stops the
+        // The master closes its connection first and the test bundle stops the
         // agent afterwards: that is the order a real shutdown follows (and it
         // lets the service drain its streams instead of waiting for us).
         try? connection.close().wait()

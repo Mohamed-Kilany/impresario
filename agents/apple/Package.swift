@@ -1,6 +1,6 @@
 // swift-tools-version:5.10
 //
-// Impresario Apple agent (iOS/tvOS), spec TASK.md section 12.
+// Impresario Agent for Apple (iOS/tvOS), spec TASK.md section 12.
 //
 // Layout (decision D-13, D-14):
 //   AgentCore       — pure Swift (Foundation only): wire model, selector parsing,
@@ -13,7 +13,7 @@
 //   AgentService    — bridges ImpresarioWire <-> AgentCore and serves the gRPC
 //                     `Agent` service on SwiftNIO (grpc-swift 1.x).
 //
-// The XCUITest runner target lives in the Xcode project (project.yml): it
+// The XCUITest bundle target lives in the Xcode project (project.yml): it
 // implements `UIDriver` over XCUIApplication and calls `AgentService.run`.
 import PackageDescription
 

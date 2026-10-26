@@ -27,7 +27,7 @@ public enum RemoteButton: String, Sendable, Equatable {
     case pageDown
 }
 
-/// The UI driver (spec 12.2, verbatim). The XCUITest runner implements it over
+/// The UI driver (spec 12.2, verbatim). The XCUITest bundle implements it over
 /// `XCUIApplication`; `swift test` drives fakes through it.
 public protocol UIDriver: AnyObject {
     func find(_ s: SelectorSpec, timeout: TimeInterval) throws -> [ElementRef]
@@ -77,7 +77,7 @@ public protocol DriverExtras: AnyObject {
     /// `false` when the element is not an adjustable picker.
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool
 
-    /// Current media/player evidence. The XCTest runner cannot see another
+    /// Current media/player evidence. The XCUITest bundle cannot see another
     /// app's AVPlayer, so its implementation returns `nil` unless an in-app
     /// hook (D-41) or a supported system channel supplies the snapshot.
     func mediaSnapshot() -> MediaSnapshot?
@@ -86,7 +86,7 @@ public protocol DriverExtras: AnyObject {
     func drmSnapshot() -> DrmSnapshot?
 
     /// Fraction (0...1) of non-background pixels inside `rect` of `png`.
-    /// Implemented with CoreGraphics in the XCUITest runner; fakes used by
+    /// Implemented with CoreGraphics in the XCUITest bundle; fakes used by
     /// `swift test` provide deterministic values.
     func regionCoverage(png: Data, rect: CGRect) -> Double?
 

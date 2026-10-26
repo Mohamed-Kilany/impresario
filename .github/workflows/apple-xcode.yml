@@ -1,9 +1,9 @@
 name: Apple Xcode
 
-# Compile the Xcode-only Apple targets on a macOS runner. This verifies the
-# XCUITest runner, fixture app and project.yml; it does not run on a device and
-# cannot reach a LAN Apple TV. Device installation still needs a local Mac
-# paired with the Apple TV (docs/DEVICES.md section 3.2).
+# Compile the Xcode-only Apple targets on a macOS runner. This verifies
+# Impresario Agent for Apple, the fixture app and project.yml; it does not run
+# on a device and cannot reach a LAN Apple TV. Device installation/signing uses
+# the pure-Rust host path (docs/DEVICES.md section 3.3).
 on:
   workflow_dispatch:
   push:
@@ -39,35 +39,35 @@ jobs:
         working-directory: agents/apple
         run: xcodegen generate
 
-      - name: Build tvOS stub and runner (unsigned)
+      - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
         run: |
           set -o pipefail
-          xcodebuild -project ImpresarioApple.xcodeproj \
-            -scheme AgentTargetStub-tvOS -configuration Debug \
+          xcodebuild -project ImpresarioAgent.xcodeproj \
+            -scheme ImpresarioStub-tvOS -configuration Debug \
             -destination 'generic/platform=tvOS' \
             -derivedDataPath build-tvos \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
-          xcodebuild -project ImpresarioApple.xcodeproj \
-            -scheme AgentUITests-tvOS -configuration Debug \
+          xcodebuild -project ImpresarioAgent.xcodeproj \
+            -scheme ImpresarioAgentTests-tvOS -configuration Debug \
             -destination 'generic/platform=tvOS' \
             -derivedDataPath build-tvos \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build-for-testing
 
-      - name: Build iOS stub and runner (unsigned)
+      - name: Build iOS stub and agent tests (unsigned)
         working-directory: agents/apple
         run: |
           set -o pipefail
-          xcodebuild -project ImpresarioApple.xcodeproj \
-            -scheme AgentTargetStub-iOS -configuration Debug \
+          xcodebuild -project ImpresarioAgent.xcodeproj \
+            -scheme ImpresarioStub-iOS -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build-ios \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
-          xcodebuild -project ImpresarioApple.xcodeproj \
-            -scheme AgentUITests-iOS -configuration Debug \
+          xcodebuild -project ImpresarioAgent.xcodeproj \
+            -scheme ImpresarioAgentTests-iOS -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build-ios \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \

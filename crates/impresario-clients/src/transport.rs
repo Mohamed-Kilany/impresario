@@ -13,6 +13,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use impresario_apple_device::ddi::DdiAssets;
+use impresario_apple_device::pairing::ApplePaths;
+use impresario_apple_device::products::ProductSet;
+use impresario_apple_device::session::{self, PreparedDevice, SessionOptions};
+use impresario_apple_device::signing_set::SigningSet;
+use impresario_apple_device::RunnerOptions;
 use impresario_core::apps::AppConfig;
 use impresario_core::command::{WireError, WireErrorCode};
 use impresario_core::config::DeviceConfig;
@@ -29,9 +35,6 @@ use crate::log::{unix_ms_now, LogBuffer, LogLevel, LogRecord};
 /// How long the executor may take to start listening after `prepare` spawned
 /// it. Overridable with `IMPRESARIO_AGENT_START_TIMEOUT_MS`.
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Timeout for the Apple clean-state reinstall (`simctl`/`devicectl`).
-const APPLE_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Port defaults used when the device entry does not override them.
 const ANDROID_AGENT_PORT: u16 = 50061;
@@ -137,113 +140,6 @@ pub enum ResetOutcome {
     /// The host cannot reset this app's container; the agent degrades to a
     /// cold start (Apple without `options.app_path`).
     Unavailable(String),
-}
-
-/// One host command of the Apple clean-state sequence (I-84).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResetCommand {
-    pub program: String,
-    pub args: Vec<String>,
-    /// A failing command is tolerated (uninstalling an app that is not
-    /// installed is not an error).
-    pub tolerate_failure: bool,
-}
-
-/// Which host tool performs the Apple clean-state reinstall (I-84).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppleResetTool {
-    /// `xcrun simctl` for iOS simulators.
-    Simctl,
-    /// `xcrun devicectl` for iOS/tvOS devices (Xcode 15+).
-    Devicectl,
-    /// `ideviceinstaller` (libimobiledevice) fallback.
-    IdeviceInstaller,
-}
-
-/// Pure argv builder for the Apple clean-state sequence: uninstall, then
-/// install the app under test (I-84; unit-tested).
-#[must_use]
-pub fn apple_reset_commands(
-    tool: AppleResetTool,
-    udid: &str,
-    app_id: &str,
-    app_path: &str,
-) -> Vec<ResetCommand> {
-    let xcrun = |args: Vec<String>, tolerate_failure: bool| ResetCommand {
-        program: "xcrun".to_string(),
-        args,
-        tolerate_failure,
-    };
-    match tool {
-        AppleResetTool::Simctl => vec![
-            xcrun(
-                vec![
-                    "simctl".to_string(),
-                    "uninstall".to_string(),
-                    udid.to_string(),
-                    app_id.to_string(),
-                ],
-                true,
-            ),
-            xcrun(
-                vec![
-                    "simctl".to_string(),
-                    "install".to_string(),
-                    udid.to_string(),
-                    app_path.to_string(),
-                ],
-                false,
-            ),
-        ],
-        AppleResetTool::Devicectl => vec![
-            xcrun(
-                vec![
-                    "devicectl".to_string(),
-                    "device".to_string(),
-                    "uninstall".to_string(),
-                    "app".to_string(),
-                    "--device".to_string(),
-                    udid.to_string(),
-                    app_id.to_string(),
-                ],
-                true,
-            ),
-            xcrun(
-                vec![
-                    "devicectl".to_string(),
-                    "device".to_string(),
-                    "install".to_string(),
-                    "app".to_string(),
-                    "--device".to_string(),
-                    udid.to_string(),
-                    app_path.to_string(),
-                ],
-                false,
-            ),
-        ],
-        AppleResetTool::IdeviceInstaller => vec![
-            ResetCommand {
-                program: "ideviceinstaller".to_string(),
-                args: vec![
-                    "-u".to_string(),
-                    udid.to_string(),
-                    "-U".to_string(),
-                    app_id.to_string(),
-                ],
-                tolerate_failure: true,
-            },
-            ResetCommand {
-                program: "ideviceinstaller".to_string(),
-                args: vec![
-                    "-u".to_string(),
-                    udid.to_string(),
-                    "-i".to_string(),
-                    app_path.to_string(),
-                ],
-                tolerate_failure: false,
-            },
-        ],
-    }
 }
 
 /// Health information gathered without installing or launching an app.
@@ -428,32 +324,6 @@ fn parse_logcat_line(line: &str) -> LogRecord {
         source: "logcat".to_string(),
         message: line.to_string(),
     }
-}
-
-async fn command_output(
-    cmd: &mut Command,
-    timeout: Duration,
-    what: &str,
-) -> Result<std::process::Output, TransportError> {
-    cmd.stdin(Stdio::null());
-    match tokio::time::timeout(timeout, cmd.output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => Err(TransportError::Transport(format!(
-            "failed to run {what}: {e}"
-        ))),
-        Err(_) => Err(TransportError::Transport(format!(
-            "{what} did not finish within {} s",
-            timeout.as_secs()
-        ))),
-    }
-}
-
-fn output_text(output: &std::process::Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 async fn free_local_port() -> Result<u16, TransportError> {
@@ -1117,12 +987,15 @@ fn write_cache(path: &Path, map: &BTreeMap<String, String>) {
 // AppleTransport (ios, tvos)
 // ---------------------------------------------------------------------------
 
-/// Apple-family transport: macOS hosts only. iOS devices go through
-/// `iproxy`; iOS and tvOS simulators are reached directly on loopback; a real
-/// tvOS uses the configured `agent_address` (network).
+/// Apple-family transport for physical iOS devices and Apple TVs.
+///
+/// Pairing, RSD, signing, installation, DDI mounting and XCUITest all run
+/// through `impresario-apple-device`; no `xcodebuild`, `iproxy`, `simctl`,
+/// `devicectl` or `ideviceinstaller` is spawned. Simulators are rejected
+/// because the pure-Rust path cannot drive them and D-19 forbids the host
+/// tools that could.
 pub struct AppleTransport {
-    runner: Option<ManagedChild>,
-    iproxy: Option<ManagedChild>,
+    session: Option<PreparedDevice>,
     endpoint: Option<String>,
     logs: LogBuffer,
 }
@@ -1137,84 +1010,16 @@ impl AppleTransport {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            runner: None,
-            iproxy: None,
+            session: None,
             endpoint: None,
             logs: LogBuffer::new(1000),
         }
     }
 
-    fn start_xctestrun(&mut self, udid: &str, platform: Platform) -> Result<(), TransportError> {
-        let xctestrun = std::env::var("IMPRESARIO_XCTESTRUN").map_err(|_| {
-            TransportError::DeviceUnavailable(
-                "set IMPRESARIO_XCTESTRUN to the .xctestrun file produced by the Apple agent \
-                 build (docs/STATUS.md; the Apple build is verified on macOS only)"
-                    .to_string(),
-            )
-        })?;
-        let xcodebuild = find_in_path("xcodebuild").ok_or_else(|| {
-            TransportError::DeviceUnavailable("xcodebuild not found on PATH".to_string())
-        })?;
-        let default_bundle = match platform {
-            Platform::Tvos => "com.impresario.agent.AgentUITests-tvOS",
-            _ => "com.impresario.agent.AgentUITests-iOS",
-        };
-        let bundle = std::env::var("IMPRESARIO_APPLE_TEST_BUNDLE")
-            .unwrap_or_else(|_| default_bundle.to_string());
-        let mut cmd = Command::new(xcodebuild);
-        cmd.args([
-            "test-without-building".to_string(),
-            "-xctestrun".to_string(),
-            xctestrun,
-            "-destination".to_string(),
-            format!("id={udid}"),
-            "-only-testing".to_string(),
-            format!("{bundle}/AgentRunnerTests/testServe"),
-            "-test-timeouts-enabled".to_string(),
-            "NO".to_string(),
-            "-parallel-testing-enabled".to_string(),
-            "NO".to_string(),
-        ]);
-        let mut child = ManagedChild::spawn("xcodebuild runner", &mut cmd)?;
-        drain_child(&mut child, &self.logs, "xcodebuild");
-        self.runner = Some(child);
-        Ok(())
-    }
-
-    /// Tool that performs the clean-state reinstall for this target (I-84).
-    async fn reset_tool(&self, udid: &str) -> AppleResetTool {
-        if is_simulator_udid(udid) {
-            return AppleResetTool::Simctl;
-        }
-        if find_in_path("xcrun").is_some() && self.devicectl_available().await {
-            return AppleResetTool::Devicectl;
-        }
-        AppleResetTool::IdeviceInstaller
-    }
-
-    /// `xcrun devicectl` exists from Xcode 15 on; older hosts fall back to
-    /// `ideviceinstaller`.
-    async fn devicectl_available(&self) -> bool {
-        let Some(xcrun) = find_in_path("xcrun") else {
-            return false;
-        };
-        let mut cmd = Command::new(xcrun);
-        cmd.args(["devicectl", "--version"]);
-        matches!(
-            command_output(
-                &mut cmd,
-                Duration::from_secs(30),
-                "xcrun devicectl --version"
-            )
-            .await,
-            Ok(output) if output.status.success()
-        )
-    }
-
-    /// Uninstall + install the app under test (`options.app_path`) so the next
-    /// launch starts from a clean container (I-84). Returns `NotRequested`
-    /// when `clear_app_data` is off and `Unavailable` when the host has no way
-    /// to reinstall the app (the agent then degrades to a cold start).
+    /// Uninstall + install the app under test (`entry.package`) through the
+    /// live RemotePairing control tunnel so the next launch starts from a clean
+    /// container (I-84). Returns `NotRequested` when `clear_data` is off and
+    /// `Unavailable` when there is no prepared session or package.
     async fn reset_app_data_for(
         &mut self,
         device: &DeviceConfig,
@@ -1241,44 +1046,39 @@ impl AppleTransport {
         let Some(app_path) = entry.package.as_deref() else {
             return Ok(ResetOutcome::Unavailable(format!(
                 "app '{}' has no package for platform {}; set package to a signed .app bundle \
-                 or .ipa so the host can reinstall it, otherwise the agent only cold-starts it \
-                 (docs/DEVICES.md section 3)",
+                 or .ipa so the transport can reinstall it (docs/DEVICES.md section 3)",
                 app.name, device.platform
             )));
         };
-        let udid = device.target_endpoint();
-        let tool = self.reset_tool(&udid).await;
-        for step in apple_reset_commands(tool, &udid, app_id, app_path) {
-            let program = find_in_path(&step.program).ok_or_else(|| {
-                TransportError::DeviceUnavailable(format!(
-                    "{} not found on PATH; install libimobiledevice with \
-                     'brew install libimobiledevice'",
-                    step.program
+        let Some(session) = self.session.as_mut() else {
+            return Ok(ResetOutcome::Unavailable(
+                "no live Apple agent session; the transport must prepare the device before a \
+                 clean-state reinstall"
+                    .to_string(),
+            ));
+        };
+        let report = session
+            .reset_app(Path::new(app_path), app_id)
+            .await
+            .map_err(|error| {
+                TransportError::Transport(format!(
+                    "clean-state reinstall of {app_id} from {app_path} failed: {error}"
                 ))
             })?;
-            let mut cmd = Command::new(program);
-            cmd.args(&step.args);
-            let what = format!("{} {}", step.program, step.args.join(" "));
-            tracing::debug!(command = %what, "resetting the app under test");
-            let output = command_output(&mut cmd, APPLE_INSTALL_TIMEOUT, &what).await?;
-            if output.status.success() {
-                continue;
-            }
-            let text = output_text(&output).trim().to_string();
-            if step.tolerate_failure {
-                tracing::debug!(command = %what, %text, "tolerated reset failure");
-                continue;
-            }
-            return Err(TransportError::Transport(format!(
-                "{what} failed with {}: {text}",
-                output.status
-            )));
-        }
         self.logs.push(LogRecord {
             unix_ms: unix_ms_now(),
             level: LogLevel::Info,
-            source: "xcodebuild".to_string(),
-            message: format!("reinstalled {app_id} from {app_path} for a clean state (I-84)"),
+            source: "xctest".to_string(),
+            message: format!(
+                "reinstalled {} from {app_path} for a clean state (I-84, {} bytes){}",
+                report.bundle_id,
+                report.ipa_bytes,
+                report
+                    .version
+                    .as_deref()
+                    .map(|version| format!(", version {version}"))
+                    .unwrap_or_default()
+            ),
         });
         Ok(ResetOutcome::Reset)
     }
@@ -1289,81 +1089,110 @@ impl DeviceTransport for AppleTransport {
     async fn prepare(
         &mut self,
         device: &DeviceConfig,
-        _app: Option<&AppConfig>,
+        app: Option<&AppConfig>,
     ) -> Result<Endpoint, TransportError> {
-        if !cfg!(target_os = "macos") {
-            return Err(TransportError::DeviceUnavailable(format!(
-                "device '{}' ({}) needs a macOS host: iproxy/xcodebuild are not available on {}",
-                device.name,
-                device.platform,
-                std::env::consts::OS
+        if !matches!(device.platform, Platform::Ios | Platform::Tvos) {
+            return Err(TransportError::Transport(format!(
+                "the Apple transport cannot serve platform {}",
+                device.platform
             )));
         }
-        let udid = device.target_endpoint();
-        let agent_port = device.effective_agent_port().unwrap_or(APPLE_AGENT_PORT);
-        match device.platform {
-            Platform::Tvos if is_simulator_udid(&udid) => {
-                // Xcode runs tvOS UI tests in the simulator exactly like iOS:
-                // the simulator shares the host network stack, so the runner
-                // is reachable on loopback and needs no `agent_address`.
-                self.start_xctestrun(&udid, device.platform)?;
-                let address = format!("127.0.0.1:{agent_port}");
-                wait_for_port(&address, start_timeout()).await?;
-                self.endpoint = Some(address.clone());
-                Ok(Endpoint::new(address))
-            }
-            Platform::Tvos => {
-                let address = device.connection.endpoint.as_deref().ok_or_else(|| {
-                    TransportError::DeviceUnavailable(format!(
-                        "tvOS device '{}' requires connection.endpoint (Bonjour discovery is not \
-                         implemented, I-09); a tvOS simulator UUID uses loopback instead",
-                        device.name
-                    ))
-                })?;
-                self.endpoint = Some(address.to_string());
-                Ok(Endpoint::new(address))
-            }
-            Platform::Ios if is_simulator_udid(&udid) => {
-                self.start_xctestrun(&udid, device.platform)?;
-                let address = format!("127.0.0.1:{agent_port}");
-                wait_for_port(&address, start_timeout()).await?;
-                self.endpoint = Some(address.clone());
-                Ok(Endpoint::new(address))
-            }
-            Platform::Ios => {
-                let iproxy = find_in_path("iproxy").ok_or_else(|| {
-                    TransportError::DeviceUnavailable(
-                        "iproxy (libimobiledevice) not found on PATH; install it with \
-                         'brew install libimobiledevice'"
-                            .to_string(),
-                    )
-                })?;
-                let local_port = free_local_port().await?;
-                let mut cmd = Command::new(iproxy);
-                cmd.args([
-                    format!("{local_port}:{agent_port}"),
-                    "-u".to_string(),
-                    udid.clone(),
-                ]);
-                let mut child = ManagedChild::spawn("iproxy", &mut cmd)?;
-                drain_child(&mut child, &self.logs, "iproxy");
-                self.iproxy = Some(child);
-                let address = format!("127.0.0.1:{local_port}");
-                wait_for_port(&address, start_timeout())
-                    .await
-                    .map_err(|e| {
-                        TransportError::Transport(format!(
-                            "iproxy did not open {address} for device {udid}: {e}"
-                        ))
-                    })?;
-                self.start_xctestrun(&udid, device.platform)?;
-                self.endpoint = Some(address.clone());
-                Ok(Endpoint::new(address))
-            }
-            other => Err(TransportError::Transport(format!(
-                "the Apple transport cannot serve platform {other}"
-            ))),
+        let udid = device.connection.udid.as_deref().ok_or_else(|| {
+            TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' has no connection.udid",
+                device.name
+            ))
+        })?;
+        if is_simulator_udid(udid) {
+            return Err(TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' is a simulator; the pure-Rust transport only drives physical \
+                 devices. Simulators would need xcrun/simctl, which D-19 forbids.",
+                device.name
+            )));
         }
+        let (host, agent_port) = apple_host_port(device)?;
+        let home = Home::resolve().map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "could not resolve the Impresario home directory for Apple setup: {error}"
+            ))
+        })?;
+        let paths = ApplePaths::new(home.root());
+        let pairing = paths.load_pairing(udid).map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "no pairing for Apple device {udid}: {error}; run `impresario apple import-pair` \
+                 or `impresario apple pair --host {host}`"
+            ))
+        })?;
+        let signing_name = apple_env("IMPRESARIO_APPLE_SIGNING", "default");
+        let signing = SigningSet::load(&paths.signing_dir(), &signing_name).map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "Apple signing set '{}' is not usable: {error}; run \
+                 `impresario apple signing import <dir> --name {}`",
+                signing_name, signing_name
+            ))
+        })?;
+        let product_name = apple_env("IMPRESARIO_APPLE_PRODUCTS", "current");
+        let products =
+            ProductSet::load(&paths.product_set_dir(&product_name)).map_err(|error| {
+                TransportError::DeviceUnavailable(format!(
+                    "Apple product set '{}' is not usable: {error}; run \
+                     `impresario apple products import <Debug-appletvos> --name {}`",
+                    product_name, product_name
+                ))
+            })?;
+        let ddi = match std::env::var_os("IMPRESARIO_APPLE_DDI") {
+            Some(dir) if !dir.is_empty() => {
+                let dir = PathBuf::from(dir);
+                Some(DdiAssets::from_dir(&dir).map_err(|error| {
+                    TransportError::DeviceUnavailable(format!(
+                        "IMPRESARIO_APPLE_DDI={} is not a usable DDI: {error}",
+                        dir.display()
+                    ))
+                })?)
+            }
+            _ => None,
+        };
+        let (app_path, app_bundle_id) = apple_app_options(app, device.platform);
+        let options = SessionOptions {
+            host: host.clone(),
+            pairing,
+            paths,
+            products,
+            signing,
+            ddi,
+            app: app_path,
+            app_bundle_id,
+            expected_udid: Some(udid.to_string()),
+            runner: RunnerOptions {
+                agent_port,
+                startup_timeout: apple_start_timeout(),
+                ..RunnerOptions::default()
+            },
+        };
+        let prepared = session::prepare(options).await.map_err(|error| {
+            TransportError::Transport(format!("prepare Apple device {udid} at {host}: {error}"))
+        })?;
+        let endpoint = prepared.endpoint().to_string();
+        for install in prepared.installs() {
+            self.logs.push(LogRecord {
+                unix_ms: unix_ms_now(),
+                level: LogLevel::Info,
+                source: "xctest".to_string(),
+                message: format!(
+                    "installed {} ({} bytes){}",
+                    install.bundle_id,
+                    install.ipa_bytes,
+                    install
+                        .version
+                        .as_deref()
+                        .map(|version| format!(", version {version}"))
+                        .unwrap_or_default()
+                ),
+            });
+        }
+        self.session = Some(prepared);
+        self.endpoint = Some(endpoint.clone());
+        Ok(Endpoint::new(endpoint))
     }
 
     async fn reset_app_data(
@@ -1371,28 +1200,20 @@ impl DeviceTransport for AppleTransport {
         device: &DeviceConfig,
         app: Option<&AppConfig>,
     ) -> Result<ResetOutcome, TransportError> {
-        if !cfg!(target_os = "macos") {
-            return Err(TransportError::DeviceUnavailable(format!(
-                "device '{}' ({}) needs a macOS host to reset the app under test",
-                device.name, device.platform
-            )));
-        }
         self.reset_app_data_for(device, app).await
     }
 
     async fn teardown(&mut self) -> Result<(), TransportError> {
-        if let Some(mut runner) = self.runner.take() {
-            runner.stop().await;
+        if let Some(mut session) = self.session.take() {
+            session.abort();
         }
-        if let Some(mut iproxy) = self.iproxy.take() {
-            iproxy.stop().await;
-        }
+        self.endpoint = None;
         Ok(())
     }
 
     fn log_sources(&self) -> Vec<LogSource> {
         vec![
-            LogSource::new("xcodebuild", LogSourceKind::Host),
+            LogSource::new("xctest", LogSourceKind::Host),
             LogSource::new("agent", LogSourceKind::Agent),
         ]
     }
@@ -1407,6 +1228,115 @@ impl DeviceTransport for AppleTransport {
 #[must_use]
 pub fn is_simulator_udid(udid: &str) -> bool {
     impresario_core::config::simulator_udid(udid)
+}
+
+/// The optional user app and the bundle id the agent must launch.
+///
+/// A package is only installed when the app definition names one. The fixture
+/// stub comes from the agent product set, so a play targeting it has an id but
+/// no package.
+fn apple_app_options(
+    app: Option<&AppConfig>,
+    platform: Platform,
+) -> (Option<PathBuf>, Option<String>) {
+    let Some(entry) = app.and_then(|app| app.platform_with_fallback(platform)) else {
+        return (None, None);
+    };
+    (
+        entry.package.as_deref().map(PathBuf::from),
+        entry.id.clone(),
+    )
+}
+
+/// Resolve the Apple TV's LAN host and agent port from the device config.
+///
+/// `connection.host` wins; otherwise the host part of `connection.endpoint`
+/// (the usual tvOS form, `HOST:50062`) is used. The port can also come from
+/// `options.agent_port`, with 50062 as the final default.
+fn apple_host_port(device: &DeviceConfig) -> Result<(String, u16), TransportError> {
+    let configured = device
+        .connection
+        .host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            device
+                .connection
+                .endpoint
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' needs connection.host or connection.endpoint (LAN IP), for \
+                 example `host: {device_name}`",
+                device.name,
+                device_name = device.name
+            ))
+        })?;
+    let (host, endpoint_port) = split_host_port(configured);
+    if host.is_empty() {
+        return Err(TransportError::DeviceUnavailable(format!(
+            "Apple device '{}' has no host in '{}'",
+            device.name, configured
+        )));
+    }
+    if host.contains("://") {
+        return Err(TransportError::DeviceUnavailable(format!(
+            "Apple device '{}' needs a LAN host, not a URL: '{}'",
+            device.name, configured
+        )));
+    }
+    let port = device
+        .options
+        .agent_port
+        .or(endpoint_port)
+        .unwrap_or(APPLE_AGENT_PORT);
+    if port == 0 {
+        return Err(TransportError::DeviceUnavailable(format!(
+            "Apple device '{}' has agent port 0",
+            device.name
+        )));
+    }
+    Ok((host, port))
+}
+
+fn split_host_port(value: &str) -> (String, Option<u16>) {
+    let value = value.trim();
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some((host, tail)) = rest.split_once(']') {
+            let port = tail
+                .strip_prefix(':')
+                .and_then(|port| port.parse::<u16>().ok());
+            return (host.to_string(), port);
+        }
+    }
+    if value.matches(':').count() == 1 {
+        if let Some((host, port)) = value.rsplit_once(':') {
+            if !host.is_empty() {
+                if let Ok(port) = port.parse::<u16>() {
+                    return (host.to_string(), Some(port));
+                }
+            }
+        }
+    }
+    (value.to_string(), None)
+}
+
+fn apple_env(key: &str, default: &str) -> String {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn apple_start_timeout() -> Duration {
+    std::env::var("IMPRESARIO_APPLE_START_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or_else(|| Duration::from_secs(120), Duration::from_secs)
 }
 
 #[cfg(test)]
@@ -1475,7 +1405,7 @@ mod tests {
         assert_eq!(transport_for(Platform::Android).log_sources().len(), 3);
         assert_eq!(
             transport_for(Platform::Tvos).log_sources()[0].name,
-            "xcodebuild"
+            "xctest"
         );
     }
 
@@ -1516,91 +1446,63 @@ mod tests {
     }
 
     #[test]
-    fn apple_reset_plan_for_simulators() {
-        let steps = apple_reset_commands(
-            AppleResetTool::Simctl,
-            "11111111-2222-3333-4444-555555555555",
-            "com.example.app",
-            "/tmp/Example.app",
-        );
-        assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].program, "xcrun");
-        assert_eq!(
-            steps[0].args,
-            vec![
-                "simctl",
-                "uninstall",
-                "11111111-2222-3333-4444-555555555555",
-                "com.example.app"
-            ]
-        );
-        assert!(steps[0].tolerate_failure, "uninstall must tolerate absence");
-        assert_eq!(
-            steps[1].args,
-            vec![
-                "simctl",
-                "install",
-                "11111111-2222-3333-4444-555555555555",
-                "/tmp/Example.app"
-            ]
-        );
-        assert!(!steps[1].tolerate_failure, "install failures are fatal");
+    fn apple_host_port_reads_the_tvos_endpoint() {
+        let mut device = apple_device(Platform::Tvos, "00008110-001A2345021E001E");
+        device.connection.endpoint = Some("192.0.2.10:50062".to_string());
+        let (host, port) = apple_host_port(&device).expect("tvOS endpoint");
+        assert_eq!(host, "192.0.2.10");
+        assert_eq!(port, 50062);
+
+        device.options.agent_port = Some(50123);
+        let (_, port) = apple_host_port(&device).expect("option wins");
+        assert_eq!(port, 50123);
+
+        device.connection.host = Some("[fd00::1]".to_string());
+        device.connection.endpoint = None;
+        let (host, port) = apple_host_port(&device).expect("IPv6 host");
+        assert_eq!(host, "fd00::1");
+        assert_eq!(port, 50123);
     }
 
     #[test]
-    fn apple_reset_plan_for_devices_and_fallback() {
-        let steps = apple_reset_commands(
-            AppleResetTool::Devicectl,
-            "00008110-000123456789001E",
-            "com.example.app",
-            "/tmp/Example.ipa",
-        );
-        assert_eq!(
-            steps[0].args,
-            vec![
-                "devicectl",
-                "device",
-                "uninstall",
-                "app",
-                "--device",
-                "00008110-000123456789001E",
-                "com.example.app"
-            ]
-        );
-        assert_eq!(
-            steps[1].args,
-            vec![
-                "devicectl",
-                "device",
-                "install",
-                "app",
-                "--device",
-                "00008110-000123456789001E",
-                "/tmp/Example.ipa"
-            ]
-        );
+    fn apple_host_port_rejects_missing_or_url_hosts() {
+        let mut device = apple_device(Platform::Tvos, "00008110-001A2345021E001E");
+        let error = apple_host_port(&device).expect_err("no host");
+        assert!(matches!(error, TransportError::DeviceUnavailable(_)));
 
-        let fallback = apple_reset_commands(
-            AppleResetTool::IdeviceInstaller,
-            "00008110-000123456789001E",
-            "com.example.app",
-            "/tmp/Example.ipa",
-        );
-        assert_eq!(fallback[0].program, "ideviceinstaller");
-        assert_eq!(
-            fallback[0].args,
-            vec!["-u", "00008110-000123456789001E", "-U", "com.example.app"]
-        );
-        assert_eq!(
-            fallback[1].args,
-            vec!["-u", "00008110-000123456789001E", "-i", "/tmp/Example.ipa"]
-        );
+        device.connection.endpoint = Some("https://example.test:50062".to_string());
+        let error = apple_host_port(&device).expect_err("URL");
+        assert!(error.to_string().contains("LAN host"));
+    }
+
+    #[test]
+    fn apple_app_options_use_the_platform_fallback_and_package() {
+        let app = apple_app(false, Some("build/Example.app"));
+        let (package, bundle_id) = apple_app_options(Some(&app), Platform::Tvos);
+        assert_eq!(bundle_id.as_deref(), Some("com.example.app"));
+        assert_eq!(package.as_deref(), Some(Path::new("build/Example.app")));
+
+        let (package, bundle_id) = apple_app_options(None, Platform::Tvos);
+        assert!(package.is_none());
+        assert!(bundle_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn apple_prepare_rejects_simulators_without_host_tools() {
+        let mut transport = AppleTransport::new();
+        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let error = transport
+            .prepare(&device, None)
+            .await
+            .expect_err("simulator");
+        assert!(matches!(error, TransportError::DeviceUnavailable(_)));
+        assert!(error.to_string().contains("simulator"));
     }
 
     #[tokio::test]
     async fn apple_reset_is_a_noop_without_clear_app_data() {
         let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let device = apple_device(Platform::Ios, "00008110-000123456789001E");
         let app = apple_app(false, None);
         let outcome = transport
             .reset_app_data_for(&device, Some(&app))
@@ -1612,7 +1514,7 @@ mod tests {
     #[tokio::test]
     async fn apple_reset_reports_a_missing_app_path() {
         let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
+        let device = apple_device(Platform::Ios, "00008110-000123456789001E");
         let app = apple_app(true, None);
         let outcome = transport
             .reset_app_data_for(&device, Some(&app))
@@ -1624,20 +1526,5 @@ mod tests {
             }
             other => panic!("expected Unavailable, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn apple_reset_requires_a_macos_host() {
-        if cfg!(target_os = "macos") {
-            return;
-        }
-        let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Tvos, "00008110-000123456789001E");
-        let app = apple_app(true, Some("/tmp/Example.ipa"));
-        let error = transport
-            .reset_app_data(&device, Some(&app))
-            .await
-            .expect_err("host check");
-        assert!(matches!(error, TransportError::DeviceUnavailable(_)));
     }
 }

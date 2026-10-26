@@ -5,7 +5,7 @@ import CoreGraphics
 
 /// Collects TASK-3 probe evidence on iOS/tvOS.
 ///
-/// The runner can prove what XCUITest exposes (tree visibility, element frames,
+/// The agent can prove what XCUITest exposes (tree visibility, element frames,
 /// screenshots) and what an optional in-app hook supplies (player/DRM/decoder
 /// state). It cannot inspect another app's AVPlayer or FairPlay session through
 /// a public API; those fields stay `nil` and the claims become UNVERIFIABLE.

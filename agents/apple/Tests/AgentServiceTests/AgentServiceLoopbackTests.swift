@@ -250,7 +250,7 @@ final class AgentServiceLoopbackTests: XCTestCase {
         session.commands.finish()
         _ = try await session.events.until(isClosed)
 
-        // The runner serves the next Act without restarting (spec 9.2, D-18);
+        // The agent serves the next Act without restarting (spec 9.2, D-18);
         // the server releases the session right after the stream ended.
         var second = try await harness.handshake()
         for _ in 0..<50 where !second.accepted {
@@ -315,7 +315,7 @@ final class AgentServiceLoopbackTests: XCTestCase {
         XCTAssertEqual(entry.source, "agent")
     }
 
-    func testShutdownClosesTheSessionAndSignalsTheRunner() async throws {
+    func testShutdownClosesTheSessionAndSignalsTheAgent() async throws {
         let harness = try AgentHarness.start()
         defer { harness.stop() }
 
@@ -337,7 +337,7 @@ final class AgentServiceLoopbackTests: XCTestCase {
         }
         XCTAssertEqual(reason.reason, "shutdown")
 
-        // The runner's `testServe()` returns and the app can exit (spec 12.1).
+        // The UI test's `testServe()` returns and the app can exit (spec 12.1).
         try await withTimeout {
             await harness.handle.waitForShutdown()
         }

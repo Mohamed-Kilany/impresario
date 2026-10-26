@@ -83,7 +83,7 @@ public final class CommandExecutor: @unchecked Sendable {
             ).collect(probe, timeoutMs: timeout)
             return .ok(probe: result)
         case .cancel:
-            throw AgentError.protocolError("cancel commands are handled by the session runner")
+            throw AgentError.protocolError("cancel commands are handled by the session dispatcher")
         case .unspecified:
             throw AgentError.unsupportedAction("the command has no body")
         }
@@ -497,7 +497,7 @@ public final class CommandExecutor: @unchecked Sendable {
         return .ok(png: png)
     }
 
-    /// The Apple analogue of `pm clear` (I-82/I-84): the runner cannot wipe
+    /// The Apple analogue of `pm clear` (I-82/I-84): the agent cannot wipe
     /// another app's sandbox. The host transport reinstalls the app under test
     /// when `options.app_path` is set (`docs/DEVICES.md` §3); with no reinstall
     /// the launch still becomes a cold start and a WARN is logged once.

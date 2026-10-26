@@ -20,6 +20,7 @@ impresario-language = { path = "../impresario-language" }
 impresario-clients = { path = "../impresario-clients" }
 impresario-proto = { path = "../impresario-proto" }
 impresario-apple-auth = { path = "../impresario-apple-auth" }
+impresario-apple-device = { path = "../impresario-apple-device" }
 clap.workspace = true
 rpassword.workspace = true
 zeroize.workspace = true
@@ -50,6 +51,7 @@ ratatui.workspace = true
 crossterm.workspace = true
 interprocess.workspace = true
 getrandom.workspace = true
+uuid = { version = "1.20.0", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

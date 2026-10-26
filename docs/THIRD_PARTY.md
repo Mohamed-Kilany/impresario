@@ -29,7 +29,7 @@ facts only).
 | `inquire` | 0.9.4 | MIT | interactive wizards | candidate — not adopted; Phase 4 wizard/prompt is line-based |
 | `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate — not adopted |
 | `indicatif` | 0.18.6 | MIT | progress bars | candidate — not adopted |
-| `idevice` | 0.1.68 | MIT | iOS/tvOS: usbmuxd client, lockdown, pairing, AFC, install, DDI, DVT, RSD | chosen — I-95 |
+| `idevice` | 0.1.68 | MIT | iOS/tvOS: usbmuxd client, lockdown, pairing, AFC, install, DDI, DVT, RSD | vendored under `vendor/idevice` with the direct outer-RSD XCUITest patch and upstream MIT text added - I-152 |
 | `apple-codesign` | 0.29.0 | **MPL-2.0** | Mach-O / `.app` / `.ipa` signing, entitlements | chosen, **flagged to the user** (weak copyleft, unmodified dependency) — I-96 |
 | `app-store-connect` | 0.7.0 | Apache-2.0 OR MIT | App Store Connect API (certs/profiles/devices) | candidate — I-96(b) |
 | `isideload` | 0.5.0 | MIT | free-Apple-ID auth/anisette/developer prior art; the `auth`/`anisette`/`dev`/`util` subset is vendored as `impresario-apple-auth` | vendored - I-151 |

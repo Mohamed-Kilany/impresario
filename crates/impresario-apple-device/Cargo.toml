@@ -1,0 +1,37 @@
+[package]
+name = "impresario-apple-device"
+description = "Pure-Rust Apple device pairing, RSD, signing, installation and XCUITest for Impresario."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+apple-codesign.workspace = true
+cryptographic-message-syntax.workspace = true
+idevice = { workspace = true, features = [
+    "afc",
+    "crashreportcopymobile",
+    "diagnostics_relay",
+    "installation_proxy",
+    "mobile_image_mounter",
+    "remote_pairing",
+    "rsd",
+    "rustcrypto",
+    "syslog_relay",
+    "tcp",
+    "tss",
+    "tunnel_tcp_stack",
+    "xctest",
+] }
+keyring.workspace = true
+mdns-sd.workspace = true
+p12-keystore.workspace = true
+plist = "1.8"
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid = { version = "1.20.0", features = ["v4"] }
+x509-certificate.workspace = true
+zeroize.workspace = true
+zip.workspace = true

@@ -7,6 +7,7 @@ members = [
     "crates/impresario-language-wasm",
     "crates/impresario-clients",
     "crates/impresario-apple-auth",
+    "crates/impresario-apple-device",
     "crates/impresario-connector",
     "crates/impresario-master",
 ]
@@ -103,6 +104,14 @@ ar = "=0.9.0"
 p12-keystore = "=0.4.1"
 ua-cryptography-xml-c14n = "=0.1.6"
 x509-parser = "=0.18.0"
+
+# Apple device services (RemotePairing/RSD/AFC/installation/XCUITest) are
+# pure Rust. The crate is vendored only for the direct outer-RSD XCUITest
+# entry point; see vendor/idevice/PATCHES.md.
+idevice = { version = "=0.1.68", default-features = false }
+apple-codesign = { version = "=0.29.0", default-features = false }
+cryptographic-message-syntax = "=0.27.0"
+x509-certificate = "=0.24.0"
 roxmltree = "=0.21.1"
 keyring = "=4.2.0"
 
@@ -136,3 +145,4 @@ lto = "thin"
 # `as_slice()` calls and is documented in docs/THIRD_PARTY.md.
 [patch.crates-io]
 srp = { path = "vendor/srp" }
+idevice = { path = "vendor/idevice" }

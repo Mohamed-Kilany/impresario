@@ -52,10 +52,11 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-core` | DSL scanner/parser/AST, config, validation, support matrix |
 | `crates/impresario-proto` | generated gRPC bindings (vendored protoc) |
 | `crates/impresario-clients` | master-side `AgentClient`, device transports, `MockAgent` |
+| `crates/impresario-apple-device` | pure-Rust Apple pairing/RSD/signing/install/DDI/XCUITest library |
 | `crates/impresario-connector` | web/webOS/Tizen executor over CDP (raw + chromiumoxide backends) |
 | `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub`, `:impresario-hook` |
-| `agents/apple` | Swift agent for iOS/tvOS: package builds + unit-tests on Linux, `ImpresarioHook` SDK, XCUITest runner needs macOS (`docs/STATUS.md`) |
+| `agents/apple` | Impresario Agent for iOS/tvOS: Swift package builds + unit-tests on Linux, `ImpresarioHook` SDK, XCUITest bundle (macOS/Xcode only to build the artifact; the Rust host path installs/starts it) |
 | `sdk/` | web JavaScript hook SDK; the Android and Swift SDKs live with their agents (`agents/android/impresario-hook`, `agents/apple/Sources/ImpresarioHook`) |
 | `editors/vscode` | VS Code client (LSP or standalone WASM) + TextMate grammar |
 | `docs/` | DSL, probes, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
@@ -72,8 +73,9 @@ target* (or next to it) instead of shelling out screen taps from the host.
   - JDK 17+ and the Android SDK (with `adb`) only to build or manually debug
     the Android agent; using a device needs no `adb` (I-121) - see
     `docs/DEVICES.md`,
-  - macOS + Xcode to build the Apple agent's XCUITest runner (the Swift package
-  itself builds on Linux; `docs/DEVICES.md` §3).
+  - macOS + Xcode only to build Impresario Agent's XCUITest bundle (the Swift
+    package itself builds on Linux; pairing, signing, install and session start
+    are pure Rust on Windows/macOS/Linux; `docs/DEVICES.md` §3).
 
 ## Quick start (works from a clean clone)
 
@@ -151,9 +153,13 @@ You get the console tree on stdout and `reports/<run-id>/report.json` +
 - **android / androidtv** — build/install the agent and run over Wi-Fi:
   `docs/DEVICES.md` §2.2–2.7 record the exact commands (verified on a
   Galaxy A51 and a TCL Android TV).
-- **iOS / tvOS** — the Swift agent package builds and unit-tests on Linux
-  (`docs/DEVICES.md` §3.1); the XCUITest runner targets need macOS + Xcode and
-  are written but unbuilt on this host (`docs/STATUS.md`, gaps 1–2).
+- **iOS / tvOS** — Impresario Agent builds and unit-tests as a Swift package on
+  Linux (`docs/DEVICES.md` §3.1). The XCUITest bundle needs macOS + Xcode to
+  build (CI does this unsigned), but the host path is pure Rust: pair once,
+  import signing/product/DDI sets, then `impresario device check` /
+  `impresario run`. Physical tvOS has hardware evidence (agent start,
+  handshake, shutdown); the renamed bundle ids still need profiles and a full
+  play. See `agents/apple/README.md` and `docs/STATUS.md` gaps 1–2.
 
 ## Editor support
 

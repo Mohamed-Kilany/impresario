@@ -1,296 +1,290 @@
-# Impresario Apple agent (iOS / tvOS)
+# Impresario Agent for Apple (iOS / tvOS)
 
-The Apple side of Impresario: an in-runner gRPC agent that drives iOS and tvOS
-devices through XCUITest. Spec: `TASK.md` §12; parity gaps: `docs/PARITY.md`;
-verification status: `docs/STATUS.md`.
+The Apple side of Impresario: **Impresario Agent** runs inside an XCUITest
+bundle and drives iOS/tvOS apps over gRPC. The host pipeline is pure Rust:
+pairing, RSD tunnels, signing, AFC upload, InstallationProxy, Developer Disk
+Image mounting and XCUITest all live in `impresario-apple-device`. No
+`xcodebuild`, `iproxy`, `simctl`, `devicectl`, `ideviceinstaller` or
+libimobiledevice binary runs at runtime (D-19).
+
+Spec: `TASK.md` §12. Verification: `docs/STATUS.md` and `docs/DEVICES.md` §3.3.
+
+## Layout
 
 ```
 agents/apple/
-  Package.swift              AgentCore (pure Swift) + ImpresarioWire + AgentService
-  Sources/AgentCore/         wire model, selectors, key tables, focus navigator,
-                             ordered dispatcher, command executor  (no XCTest!)
-  Sources/ImpresarioWire/    committed protobuf/gRPC code (scripts/gen-swift.sh)
-  Sources/AgentService/      proto <-> core bridge, grpc-swift server, Bonjour
-  Tests/AgentCoreTests/      executor/dispatcher/focus tests against fakes
-  Tests/AgentServiceTests/   loopback gRPC tests (no device needed)
-  Xcode/AgentUITests/        the runner: XCUIDriver over XCUIApplication,
-                             AgentRunnerTests/testServe, ObjC safety shim
-  Xcode/AgentHost/           empty host apps (the test bundles' target app)
-  Xcode/AgentTargetStub/     the fixture app under test
-  project.yml                XcodeGen spec: the Xcode project is generated, not
-                             committed (docs/DECISIONS.md I-89)
+  Package.swift                 AgentCore + ImpresarioWire + AgentService
+  Sources/AgentCore/            wire model, selectors, keys, focus, dispatcher
+  Sources/ImpresarioWire/       committed protobuf/gRPC code
+  Sources/AgentService/         proto <-> core bridge, grpc-swift server, Bonjour
+  Tests/                        Swift tests (no device needed)
+  Xcode/ImpresarioAgent/        UI-test host app
+  Xcode/ImpresarioAgentTests/   XCUITest bundle: XCUIDriver, AgentEnvironment,
+                                ImpresarioAgentTests/testServe, ObjC shim
+  Xcode/ImpresarioStub/         fixture app under test
+  project.yml                   XcodeGen spec (the .xcodeproj is generated)
 ```
 
-Two layers exist because devices are only reachable from XCUITest:
+The XCUITest process is an implementation detail. The installed product is
+always **Impresario Agent** (`com.impresario.agent`); the `-Runner` and
+`.xctrunner` names are Xcode artifacts.
 
-| Layer | Runs where | Tested by |
-| --- | --- | --- |
-| `AgentCore` / `AgentService` | any platform (Linux, macOS, iOS, tvOS) | `swift test` |
-| `XCUIDriver` + `AgentRunnerTests` | inside the XCUITest runner on a device/simulator | Xcode (device), manual |
-
-## 1. Build and unit-test (works without a device)
+## 1. Build and test
 
 ```bash
 cd agents/apple
-swift build          # AgentCore + ImpresarioWire + AgentService
-swift test           # AgentCoreTests + AgentServiceTests (loopback gRPC over 127.0.0.1)
+swift build
+swift test          # AgentCoreTests + AgentServiceTests over loopback gRPC
 ```
 
-Both run on Linux and macOS. `swift test` starts a real grpc-swift server on a
-loopback port and speaks the full protocol (handshake, commands, logs,
-screenshots, shutdown), so the wire layer is verified without any Apple device.
+Both run on Linux and macOS. `swift test` starts a real grpc-swift server and
+exercises handshake, actions, checks, logs, screenshots and shutdown without an
+Apple device.
 
-### 1.1 Physical tvOS executes; iOS hardware and the full play are unverified
-
-Apple simulator testing is out of scope by user direction. The simulator
-workflow, helper scripts and smoke test were removed. `AgentCore`/`AgentService`
-remain unit-tested on Linux and the unsigned `Apple Xcode` CI job compiles the
-host/stub/UI-test targets.
-
-On 2026-10-26 the physical Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1,
-UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`, `10.102.93.222`) ran
-`AgentRunnerTests.testServe()` after a local Windows-first pipeline installed
-the signed host, stub and runner. The personalized DDI was mounted, the runner
-was started over the direct outer-RSD `testmanagerd`/`dtservicehub` path, the
-agent bound `50062`, a real gRPC `Handshake` was accepted and `Shutdown`
-completed the test (I-150). This did **not** use a Mac or a simulator. The
-pipeline is still in temporary Rust binaries; `AppleTransport` retains its
-macOS `xcodebuild`/`iproxy` route, the pair record came from an earlier
-pymobiledevice3 setup, and the full action/focus/playback matrix plus the
-local-network prompt are still open (HD-1/HD-2).
-
-Dependencies are pinned (`Package.resolved` is committed):
-
-| Package | Pin |
-| --- | --- |
-| swift-protobuf | 1.39.0 |
-| grpc-swift | 1.27.6 |
-| swift-nio | 2.104.0 (resolved) |
-| swift-nio-http2 | 1.46.0 (resolved) |
-
-Wire code is generated, not hand-written:
-
-```bash
-scripts/gen-swift.sh          # protoc + protoc-gen-swift/grpc-swift -> Sources/ImpresarioWire
-```
-
-## 2. Generate the Xcode project
+Generate and build the Xcode deliverables (macOS only):
 
 ```bash
 brew install xcodegen
-cd agents/apple
-xcodegen generate             # writes ImpresarioApple.xcodeproj
+xcodegen generate                       # writes ImpresarioAgent.xcodeproj
+
+xcodebuild -project ImpresarioAgent.xcodeproj \
+  -scheme ImpresarioAgentTests-tvOS -configuration Debug \
+  -destination 'generic/platform=tvOS' -derivedDataPath build-tvos \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build-for-testing
+xcodebuild -project ImpresarioAgent.xcodeproj \
+  -scheme ImpresarioStub-tvOS -configuration Debug \
+  -destination 'generic/platform=tvOS' -derivedDataPath build-tvos \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
 ```
 
-Targets and bundle ids:
+Use `-iOS` schemes and `generic/platform=iOS` for iPhone/iPad. The GitHub
+`Apple Xcode` workflow builds both platforms unsigned; signing happens on the
+machine that owns the development identity/profiles.
 
-| Target | Type | Bundle id |
+| Target | Bundle id | Artifact |
 | --- | --- | --- |
-| `AgentHost-iOS` / `AgentHost-tvOS` | empty app | `com.impresario.agent.AgentHost-iOS` / `-tvOS` |
-| `AgentUITests-iOS` / `AgentUITests-tvOS` | UI-test bundle (the runner) | `com.impresario.agent.AgentUITests-iOS` / `-tvOS` |
-| `AgentTargetStub-iOS` / `AgentTargetStub-tvOS` | fixture app under test | `com.impresario.agent.AgentTargetStub-iOS` / `-tvOS` |
+| `ImpresarioAgent-iOS` / `-tvOS` | `com.impresario.agent` | host app |
+| `ImpresarioAgentTests-iOS` / `-tvOS` | `com.impresario.agent.tests` | nested `.xctest` UI-test bundle |
+| `ImpresarioAgentTests-iOS` / `-tvOS` | `com.impresario.agent.tests.xctrunner` | Xcode's outer `-Runner.app` |
+| `ImpresarioStub-iOS` / `-tvOS` | `com.impresario.stub` | fixture app |
 
-`AppleTransport` (`crates/impresario-clients/src/transport.rs`) hard-codes the
-runner selection:
+The outer runner and the nested test bundle are two different bundle ids and
+both need signing material. A wildcard profile for
+`com.impresario.agent.tests*` covers both.
 
-```
--only-testing com.impresario.agent.AgentUITests-iOS/AgentRunnerTests/testServe
--only-testing com.impresario.agent.AgentUITests-tvOS/AgentRunnerTests/testServe
-```
+`testServe` is the entry point. The agent platform is chosen at compile time;
+the test bundle identifier is the same on iOS and tvOS.
 
-Do not rename the test bundle or `testServe`.
+## 2. One-time machine setup
 
-Signing: device runs need a development team. A free Apple ID personal team
-works, but its provisioning profile expires after 7 days and the apps must be
-reinstalled; the GitHub Actions artifact is unsigned. Set the team in Xcode
-(Signing & Capabilities) or add a `Local.xcconfig` - nothing in the repo
-hard-codes a team id. Sign in interactively on the macOS host; do not store or
-pass a plaintext Apple ID password.
+Everything is machine-global under `~/.impresario/apple/` (or
+`%USERPROFILE%\.impresario\apple\` on Windows). Projects never contain
+pairing secrets, certificates or profiles.
 
-## 3. Build the app under test (the fixture)
+### 2.1 Pair the device
 
-```bash
-xcodebuild build -scheme AgentTargetStub-iOS \
-  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
-# -> build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app
+```powershell
+impresario apple pair --host <apple-tv-host>
 ```
 
-Point the config at it so `clear_app_data` can reinstall it per test
-(`docs/DECISIONS.md` I-84):
+Or import an existing pymobiledevice3 pair plist and key it by the device UDID:
 
-```toml
-[[devices]]
-id = "<udid>"
-platform = "ios"
-app_id = "com.impresario.agent.AgentTargetStub-iOS"
-
-[devices.options]
-clear_app_data = true
-app_path = "/abs/path/build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app"
+```powershell
+impresario apple import-pair `
+  "$env:USERPROFILE\.pymobiledevice3\remote_....plist" `
+  --save <udid>
 ```
 
-## 4. Start the runner and connect a master
+`impresario apple status` lists what the machine has without touching a device.
 
-```bash
-# one-time per device/OS combination (produces the .xctestrun)
-xcodebuild build-for-testing -scheme AgentUITests-iOS \
-  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
-```
+### 2.2 Import signing materials
 
-The master starts the runner itself when `IMPRESARIO_XCTESTRUN` points at the
-produced file:
-
-```bash
-IMPRESARIO_XCTESTRUN=build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun \
-  impresario run --config impresario.toml
-```
-
-Runner environment (read from the `.xctestrun`'s `TestingEnvironmentVariables`,
-so inject them there with `plutil` or by editing the plist):
-
-| Variable | Meaning |
-| --- | --- |
-| `IMPRESARIO_AGENT_PORT` | port the agent binds (default `50062`, the value `AppleTransport` dials) |
-| `IMPRESARIO_AGENT_TOKEN` | shared token; when set, the master must send it (spec 7.2.1) |
-| `IMPRESARIO_NO_BONJOUR` | `1` disables the `_impresario._tcp` advertisement |
-
-```bash
-plutil -insert TestingEnvironmentVariables.IMPRESARIO_AGENT_PORT -string 50062 \
-  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun
-```
-
-The runner logs everything it knows at start (visible in the `xcodebuild`
-output the master drains):
+Create a directory with a PKCS#12 identity and one profile + entitlements pair
+per bundle id. Profiles may be wildcard; all bundles share one certificate.
 
 ```
-impresario agent: platform=ios port=50062 bonjour=on token=off
-impresario agent: reachable at http://<device-ip>:50062 (grpc) — pass agent_address=<device-ip>:50062 to the master for WLAN runs
-impresario agent: addresses en0=192.168.1.42
-impresario agent: serving; waiting for a master (Shutdown ends the run)
+signing-source/
+  identity.p12
+  host/     profile.mobileprovision  entitlements.plist  # com.impresario.agent
+  stub/     profile.mobileprovision  entitlements.plist  # com.impresario.stub
+  tests/    profile.mobileprovision  entitlements.plist  # com.impresario.agent.tests
+  runner/   profile.mobileprovision  entitlements.plist  # com.impresario.agent.tests.xctrunner
 ```
 
-For tvOS (no USB path) put that address into the device config:
+One wildcard profile for `com.impresario.agent.tests*` can replace the two test
+directories.
 
-```toml
-[[devices]]
-id = "<udid>"
-platform = "tvos"
-agent_address = "192.168.1.42:50062"
+```powershell
+impresario apple signing import .\signing-source --name default
 ```
 
-For iOS over USB the master runs `iproxy` itself. iOS over WLAN works the same
-way as tvOS: `agent_address = "<device-ip>:50062"`.
+The PKCS#12 password is read interactively and stored in the OS credential
+store, never on disk. For a headless import only, set
+`IMPRESARIO_APPLE_P12_PASSWORD`; unset it afterwards.
 
-## 5. Clean state per test (I-84)
+The profile's `Entitlements.application-identifier` names the bundle id, so the
+directory names are arbitrary. Free Apple ID profiles expire after seven days
+and must be regenerated; `impresario apple signing status --name default` shows
+expiry. Validity can be checked without a device:
 
-Android wipes the app's data dir in the agent; iOS/tvOS have no such API, so the
-**host** performs the equivalent — uninstall + reinstall the app under test
-before the runner launches it. `clear_app_data = true` plus `options.app_path`
-selects the tool automatically:
-
-| Device | Tool |
-| --- | --- |
-| simulator | `xcrun simctl uninstall` + `install` |
-| real device, Xcode 15+ | `xcrun devicectl device uninstall` + `install` |
-| real device, older host | `ideviceinstaller` (from `libimobiledevice`) |
-
-When the host cannot do it (`app_path` unset, no tool installed), the run
-continues: `clear_app_data` degrades to a once-per-session `WARN` log line plus
-a cold start (`terminate` + `launch`), and the reason is reported in the run's
-log. Nothing else about the agent changes.
-
-## 6. Real devices over WLAN: what is automatic, what is not
-
-The first run after an install has to pass Apple's local-network gate. The
-agent does as much as it can on its own (`docs/DECISIONS.md` I-88):
-
-* `NSLocalNetworkUsageDescription` + `NSBonjourServices` are in the Info.plist
-  of both the runner and the host app, so the process is *allowed* to ask
-  instead of being killed on first use;
-* `SystemAlerts` registers an XCUITest interruption monitor **and** polls
-  SpringBoard right after the server starts, tapping Allow when it can find the
-  button ("Allow", "Erlauben", … and the "[Don't Allow, Allow]" two-button
-  case);
-* the agent binds `0.0.0.0`, advertises `_impresario._tcp` with a
-  `platform`/`protocol`/`agent` TXT record, and prints every local address it
-  has, so the operator (or a future discovery step in the master) can copy the
-  address straight into `agent_address`.
-
-Still human, once per device: if the alert's buttons are not reachable from the
-test process (Apple does not guarantee SpringBoard's hierarchy), the runner logs
-
-```
-impresario agent: a system alert is up but its buttons are unknown (...) — tap the allow button on the device once
+```powershell
+impresario apple signing verify --name default --products current `
+  --output $env:TEMP\signed-check
 ```
 
-and somebody taps Allow on the device (an Apple TV remote can do it). After
-that the permission is remembered and runs need no human. `IMPRESARIO_NO_BONJOUR=1`
-skips the advertisement if a network blocks Bonjour; the master can always
-connect to `agent_address`.
+### 2.3 Import the unsigned agent build
 
-### 6.1 Physical-tvOS sequence (executed on 2026-10-26)
+```powershell
+impresario apple products import `
+  .\agents\apple\build-tvos\Build\Products\Debug-appletvos `
+  --name current
+```
 
-The sequence that produced the hardware evidence was:
+The import requires exactly one host app, one stub and one `-Runner.app`, copies
+them as `host.app`, `stub.app`, `runner.app`, and records the real bundle ids.
+`impresario apple products status --name current` prints them.
 
-1. `Apple Xcode` run `40286509471` at `89d35e3` built the unsigned bundles.
-2. The user's existing free-team profiles and identity signed the host, stub
-   and runner locally (local `identity.p12` and profiles; the password is
-   supplied interactively and never stored); `embedded.mobileprovision` is
-   sealed before signing.
-3. A pure-Rust RemotePairing tunnel on `_remotepairing._tcp:49152` uploaded the
-   three `.ipa`s over AFC and installed them with the installation proxy.
-4. The personalized tvOS DDI for `AppleTV5,3` (`27A9269`) was mounted.
-5. The runner was launched through the outer-RSD
-   `com.apple.dt.testmanagerd.remote` and
-   `com.apple.instruments.dtservicehub` services; the runner's
-   `SystemAlerts` calls are skipped on tvOS.
-6. `testServe()` passed, the agent listened on `50062`, a real gRPC
-   `Handshake` was accepted and `Shutdown(terminate_app=true)` returned.
+### 2.4 Import a personalized DDI
 
-For config, run `impresario device wizard` on any host, choose `tvos`, enter
-the UDID and the runner endpoint (`10.102.93.222:50062` for the current
-on-device runner). The wizard writes `transport: network`; its live check is
-skipped on non-macOS hosts. The profiles expire on 2026-11-02 and the product
-rename requires regenerating them. See `docs/DEVICES.md` §3.3 and
-`docs/DECISIONS.md` I-150.
+The device reports the exact OS build. Supply the three files produced for that
+build:
 
-## 7. Semantics worth knowing (details in TASK.md §5–6, docs/PARITY.md)
+```
+ddi-source/
+  Image.dmg
+  Image.dmg.trustcache
+  BuildManifest.plist
+```
 
-* `scroll <dir>` reveals content in `<dir>` (one step = a drag across 80% of the
-  container), so the finger moves the other way; `swipe <dir>` moves the finger
-  in `<dir>`.
-* On tvOS `click` = D-pad focus traversal + Select, falling back to a touch tap
-  when the element is hittable but unreachable (`FOCUS_UNREACHABLE` only when
-  neither works); `swipe`/`select` are tvos-only/ios-only respectively and fail
-  with `UNSUPPORTED_ACTION` where the platform has no equivalent.
-* Keys (`key` action): tvOS `ok`=Select, `back`=Menu, arrows, `playpause`, `home`;
-  iOS only `home`.
-* `type`/`append`/`clear` read the field first, use the field's focus, delete
-  the current content and type the new text, then read it back and verify.
-* Predicate selectors are compiled through the ObjC shim: a syntax error is
-  `INVALID_SELECTOR`, never a crashed runner.
-* `animations_disabled` is passed to the app under test as the launch argument
-  `-impresario-animations-disabled` (Apple has no API to disable another app's
-  animations; the stub app honours it).
+```powershell
+impresario apple ddi import .\ddi-source --build <build>
+```
 
-## 8. Troubleshooting
+No DDI is downloaded and no external personalization tool runs.
+
+### 2.5 Sign in to Apple once
+
+The Apple ID session, used by future provisioning work, is machine-global and
+encrypted. Password entry is interactive only; the password is never stored.
+
+```powershell
+impresario account login          # Apple ID + password + trusted-device/SMS code
+impresario account status
+impresario account logout
+```
+
+## 3. Configure a device and run
+
+```yaml
+devices:
+  - name: rama
+    platform: tvos
+    connection:
+      transport: network
+      udid: <udid>
+      endpoint: <apple-tv-host>:50062
+```
+
+`connection.endpoint` is the agent address the master dials. The transport
+starts XCUITest on that device and opens the tunnel to the same host. Select a
+non-default signing/product set with environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `IMPRESARIO_APPLE_SIGNING` | `default` | signing set under `apple/signing/` |
+| `IMPRESARIO_APPLE_PRODUCTS` | `current` | product set under `apple/products/` |
+| `IMPRESARIO_APPLE_DDI` | detected build | explicit DDI directory |
+| `IMPRESARIO_APPLE_START_TIMEOUT_SECS` | `120` | wait for the agent port |
+
+Smoke-test the whole path (pairing, signing, install, DDI, XCUITest,
+handshake):
+
+```powershell
+impresario device check rama --plain
+```
+
+Start the agent without a play:
+
+```powershell
+impresario apple session --host <apple-tv-host> `
+  --udid <udid>
+```
+
+It prints `Agent endpoint: <host>:50062` and waits until a master sends
+`Shutdown` (or Ctrl-C). A run uses the same pipeline through `AppleTransport`.
+
+The app under test is optional during install. A signed `.app`/`.ipa` can be
+installed with `impresario apple session --app ... --app-bundle-id ...`; normal
+runs name the already-installed app in the play.
+
+## 4. Clean state per test (I-84)
+
+iOS/tvOS have no `pm clear`. With `clear_data = true`, the host uninstalls and
+reinstalls the app under test over the live RemotePairing control tunnel before
+the agent launches it. Set the app's signed package and id:
+
+```yaml
+apps:
+  - name: fixture
+    platforms:
+      tvos:
+        id: com.impresario.stub
+        package: C:\build\ImpresarioStub.app
+    options:
+      clear_data: true
+```
+
+No `simctl`, `devicectl` or `ideviceinstaller` is used. If the package is not
+configured, the agent cold-starts the app and logs that the clean reinstall was
+unavailable. Simulators are rejected: the pure-Rust path cannot drive them and
+D-19 forbids the host tools that could.
+
+## 5. First-run local-network permission
+
+The host app and the test bundle declare `NSLocalNetworkUsageDescription` and
+`_impresario._tcp`. iOS may show a permission prompt on first run. On tvOS the
+`SystemAlerts` workarounds are compiled out: accept the prompt once with the
+Apple TV remote. The permission is remembered afterwards. The agent binds
+`0.0.0.0`, publishes `_impresario._tcp` when Bonjour is available, and prints
+its addresses in the device log.
+
+## 6. Evidence and open work
+
+* On 2026-10-26 the physical Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1
+  `23J582`, UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`,
+  `10.102.93.222`) ran the full pure-Rust path: pair-verify, RSD, DDI mount,
+  signing, AFC + InstallationProxy install, direct outer-RSD
+  `testmanagerd`/`dtservicehub`, and an XCUITest agent session. A real gRPC
+  `Handshake` and `Shutdown` completed (session
+  `47123c1c-df6e-44b8-8efd-0043cdb3d001`, capabilities
+  `2,3,5,7,8,9,10,11`).
+* The same path was repeated through the productized `AppleTransport`
+  (`impresario device check`) with the pre-rename old bundle ids.
+* The product rename to `com.impresario.agent` / `com.impresario.agent.tests` /
+  `com.impresario.stub` is implemented in `project.yml`; those new bundles have
+  **not** yet been signed and installed on hardware because their profiles must
+  be generated after the rename.
+* Still unverified on hardware: the full action/check matrix, `XCUIRemote`
+  focus, local-network prompt handling, `HookReceiver`, playback/probes, and
+  clean-state reinstall via `reset_app_data`.
+* The pair record used for the evidence came from an earlier pymobiledevice3
+  setup; `impresario apple pair` has not yet produced a hardware-verified pair.
+* The Apple ID wizard is implemented and unit-tested offline; no live Apple
+  login/2FA has been exercised.
+
+## 7. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
-| `set IMPRESARIO_XCTESTRUN …` | the transport cannot find the runner's `.xctestrun`; build it (`build-for-testing`) and export the path |
-| runner exits with "Address already in use" | a previous runner still holds the port; kill the old `xcodebuild`/runner app or change `IMPRESARIO_AGENT_PORT` **and** the master's port |
-| `the play did not name an app under test (app_id)` | the play has no `app_id`; the Apple agent cannot guess the target app |
-| `UNSUPPORTED_ACTION … tvos-only / ios-only` | platform gap by design, see `docs/PARITY.md` |
-| `clear_app_data` warns "reinstall unavailable" | set `options.app_path` (see §5) |
-| screenshots/logs empty on a device | the runner needs `NSLocalNetworkUsageDescription`; regenerate the project with `xcodegen` after pulling |
-
-## 9. Verification status
-
-`swift build`/`swift test` run on Linux (the `CI` workflow). The Xcode targets
-are compiled unsigned by `Apple Xcode`; the physical tvOS execution above ran
-the signed bundles under XCUITest on the Apple TV, not in CI. Installation,
-free-7-day signing and runner startup are proven (I-150); the full action /
-`XCUIRemote` / playback matrix, the local-network prompt, the Swift loopback
-hook and the product-side transport port remain open (`docs/STATUS.md` HD-1 and
-HD-2, `docs/DEVICES.md` §3.3). The global Apple ID wizard is implemented and
-unit-tested offline; no live Apple login/2FA has run yet (I-151).
+| `no pairing for Apple device …` | run `impresario apple pair` or `import-pair` for that UDID |
+| `signing set 'default' is not usable` | import the `.p12`, profiles and entitlements; check expiry with `signing status` |
+| `Apple product set 'current' is not usable` | import the unsigned Xcode output with `products import` |
+| `Image.dmg` / `BuildManifest` missing | import the personalized DDI for the OS build RSD reports |
+| `simulator` / `DEVICE_UNAVAILABLE` | the pure-Rust transport supports physical devices only |
+| agent port already in use | let the previous session exit, or change `--agent-port`, the device endpoint and `options.agent_port` together |
+| `UNSUPPORTED_ACTION … tvos-only / ios-only` | platform gap by design; see `docs/PARITY.md` |
+| `clear_app_data` warns the reinstall is unavailable | give the app a signed `package` and `id` (see §4) |
+| profile expired | generate new profiles for the current bundle ids and re-import the signing set |
+| Apple ID login not stored | `impresario account status`; log in with trusted-device or SMS 2FA |

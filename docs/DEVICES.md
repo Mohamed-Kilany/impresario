@@ -15,7 +15,8 @@ The master is always the gRPC **client**. Every executor is a gRPC **server**:
   the master),
 - Android -> an **instrumentation process** started over Impresario's native
   ADB transport (no `adb` binary at runtime; I-121),
-- iOS/tvOS → a UI-test runner started with `iproxy`/direct network.
+- iOS/tvOS → Impresario Agent inside an XCUITest bundle, started by the
+  pure-Rust RemotePairing/RSD transport.
 
 `impresario device check` probes one device end to end: transport →
 handshake → `Shutdown` (no `Session` stream). `devices check` remains an alias.
@@ -386,12 +387,13 @@ does not install, launch or sign.
 - **Apple TV** – now `10.102.93.222` (was `192.168.93.19` on 2026-10-25).
   AirPlay `/info` reports `AppleTV5,3` (Apple TV HD), `RAMA (4)`, device ID
   `B6:FD:1D:0C:99:3C`, build `23J582`; the developer record reports UDID
-  `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. The agent host, stub and runner
-  are installed, the personalized DDI is mounted, and `testServe` passed with a
-  real handshake/shutdown over the direct-RSD path (I-150). `AppleTransport`
-  itself still uses the macOS `xcodebuild`/`iproxy` route, so `device check` on
-  this Windows host is not yet the proven path. Full tvOS actions/focus and
-  playback are not verified.
+  `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. Impresario Agent, the stub and
+  the UI-test bundle are installed, the personalized DDI is mounted, and
+  `testServe` passed with a real handshake/shutdown over the direct-RSD path
+  (I-150). `AppleTransport` now uses the same pure-Rust path; `device check`
+  passed on this Windows host with the pre-rename bundle ids. The renamed
+  bundle ids need new profiles, and full tvOS actions/focus/playback are not
+  verified.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; `options.key_dispatch` picks the
@@ -1000,121 +1002,95 @@ Simulator Tests` workflow, its helper scripts, the `ci` sample workspace and
 simulator execution as evidence.
 
 The Xcode targets are still compiled unsigned by the `Apple Xcode` CI job. That
-job cannot reach the LAN Apple TV, and compilation is not execution. The tvOS
-simulator loopback branch in `config.rs`/`AppleTransport` remains untested
-support only; it is not a test result.
+job cannot reach the LAN Apple TV, and compilation is not execution. The
+product `AppleTransport` now **rejects simulator UDIDs** with an explicit
+`DEVICE_UNAVAILABLE`; the pure-Rust path cannot drive a simulator and D-19
+forbids the host tools that could.
 
-### 3.3 Physical device (Windows Rust path proven; macOS Xcode build optional)
+### 3.3 Physical device (pure-Rust product path; tvOS hardware proven)
 
-**Proven on 2026-10-26 (I-150).** The Apple TV `RAMA (4)` at
-`10.102.93.222` (`AppleTV5,3`, tvOS 26.1 build `23J582`, UDID
-`a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) ran the full local path without a
-Mac: the unsigned GitHub artifact from `Apple Xcode` run `40286509471` at
-`89d35e3` was signed locally with the user's free-team profiles, installed
-through a pure-Rust RemotePairing -> RSD -> AFC -> installation-proxy pipeline,
-the personalized tvOS Developer Disk Image was mounted, and the runner started
-through a direct outer-RSD `testmanagerd`/`dtservicehub` connection.
-`AgentRunnerTests.testServe()` passed, the agent accepted a real gRPC
-`Handshake` on `50062` (session `47123c1c-df6e-44b8-8efd-0043cdb3d001`,
-capabilities `2,3,5,7,8,9,10,11`) and completed `Shutdown`. The evidence run
-used temporary Rust binaries; porting that pipeline into `AppleTransport` and
-replacing its `xcodebuild`/`iproxy` shell-out is still open (HD-2), as are the
-full action matrix, `XCUIRemote` focus and playback/probes.
+**Proven on 2026-10-26 (I-150; productized in I-152).** The Apple TV
+`RAMA (4)` at `10.102.93.222` (`AppleTV5,3`, tvOS 26.1 build `23J582`, UDID
+`a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) ran the whole path without a Mac:
+the unsigned GitHub artifact from `Apple Xcode` run `40286509471` at `89d35e3`
+was signed locally with the user's free-team profiles and installed through the
+pure-Rust RemotePairing -> RSD -> AFC -> InstallationProxy pipeline; the
+personalized tvOS Developer Disk Image was mounted; the UI test started through
+a direct outer-RSD `testmanagerd`/`dtservicehub` connection.
+`AgentRunnerTests.testServe()` (the pre-rename name) passed, Impresario Agent
+accepted a real gRPC `Handshake` on `50062` (session
+`47123c1c-df6e-44b8-8efd-0043cdb3d001`, capabilities `2,3,5,7,8,9,10,11`) and
+completed `Shutdown`. The same install/start/handshake path was then repeated
+through the product `AppleTransport` with `impresario device check`.
 
-The signing profiles were user-controlled and expire `2026-11-02`; the current
-build still uses the old bundle IDs. Regenerate profiles after the product
-rename. The pair record used by the Rust tunnel was originally created by
-pymobiledevice3; the product still needs pure-Rust pairing creation.
+The `impresario-apple-device` crate now owns pairing verification, tunnels,
+DDI, signing, product classification, AFC + InstallationProxy install and the
+direct-RSD XCUITest start. `AppleTransport` spawns no host tool:
+`xcodebuild`, `iproxy`, `simctl`, `devicectl` and `ideviceinstaller` are gone
+from the Apple path (D-19). Unit tests cover the signing store, product import,
+IPA inspection, DDI state, pairing normalization and the agent-port launch
+environment; the physical `device check` above is the integration evidence.
 
-Building the payload on a Mac (optional for local development):
+**Not yet hardware-verified after the rename.** The 2026-10-26 evidence used
+the old bundle ids. The product rename to `com.impresario.agent`,
+`com.impresario.agent.tests` and `com.impresario.stub` is implemented in
+`agents/apple/project.yml`; those new bundles need new profiles, a fresh
+`Apple Xcode` build and a reinstall. The existing profiles expire
+`2026-11-02`. Use separate signing-set names for iOS and tvOS if the profiles
+are platform-specific; both can map the same bundle ids.
+
+Machine-global setup (the project holds no pairing secrets or certificates):
+
+```bash
+impresario apple status
+impresario apple pair --host <apple-tv-host>
+# or: impresario apple import-pair <pair.plist> --save <udid>
+
+impresario apple signing import ./signing-source --name default
+impresario apple products import ./build-tvos/Build/Products/Debug-appletvos --name current
+impresario apple ddi import ./ddi-source --build <build>
+impresario apple doctor --host <apple-tv-host> --signing default --products current
+```
+
+Signing source layout: `identity.p12` at the root or beside any profile, and one
+directory per bundle containing `profile.mobileprovision` plus
+`entitlements.plist`. The PKCS#12 password is prompted for and stored in the OS
+credential store; `IMPRESARIO_APPLE_P12_PASSWORD` is for headless runs only.
+`impresario apple signing verify` signs a product set offline.
+See `agents/apple/README.md` for the full commands.
+
+Building the payload on a Mac (optional; CI produces the same unsigned apps):
 
 ```bash
 brew install xcodegen
 cd agents/apple
-xcodegen generate                                  # ImpresarioApple.xcodeproj
+xcodegen generate                                  # ImpresarioAgent.xcodeproj
 
-# the fixture app under test (what the app definition's id/package point at)
-xcodebuild build -scheme AgentTargetStub-iOS \
-  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
-xcodebuild build -scheme AgentTargetStub-tvOS \
-  -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
-
-# the runner (the master starts this itself when IMPRESARIO_XCTESTRUN is set)
-xcodebuild build-for-testing -scheme AgentUITests-iOS \
-  -destination 'platform=iOS,id=<udid>' -derivedDataPath build
-xcodebuild build-for-testing -scheme AgentUITests-tvOS \
-  -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
+xcodebuild -project ImpresarioAgent.xcodeproj \
+  -scheme ImpresarioAgentTests-tvOS -configuration Debug \
+  -destination 'generic/platform=tvOS' -derivedDataPath build-tvos \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build-for-testing
+xcodebuild -project ImpresarioAgent.xcodeproj \
+  -scheme ImpresarioStub-tvOS -configuration Debug \
+  -destination 'generic/platform=tvOS' -derivedDataPath build-tvos \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= build
 ```
 
-Physical builds need a development team (set it in Xcode or a local xcconfig;
-the repo pins none) and the device must trust the host. A free Apple ID
-personal team works, but its provisioning profile expires after 7 days and the
-apps must be reinstalled. Sign in interactively on the Mac; never store or pass
-a plaintext Apple ID password. The unsigned GitHub artifact cannot be installed
-directly. `xcrun devicectl list devices` / `xcrun xctrace list devices` prints
-the udids (`xcodebuild -destination 'platform=iOS,id=<udid>'` takes the same
-value).
+Use the `-iOS` schemes for iPhone/iPad. Physical builds need a development
+team (set it in Xcode or a local xcconfig; the repo pins none). A free Apple ID
+personal team works but its profile expires after seven days. Sign in
+interactively; Impresario never stores or passes a plaintext Apple ID password.
+The unsigned GitHub artifact cannot be installed directly.
 
 The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
 device ID `B6:FD:1D:0C:99:3C`, build `23J582`; it moved from `192.168.93.19`
-to `10.102.93.222`. Developer Mode was enabled and the device trusted the
-host. The first runner start asks for local-network access; tvOS has no XCTest
-`tap`, so grant that one prompt with the remote (`SystemAlerts` logs it rather
-than guessing focus). Put the runner address in `connection.endpoint` and the
-UDID in `connection.udid`.
-
-The wizard's physical-tvOS branch is available on Windows and macOS, but it
-only writes and validates the definition:
-
-```bash
-impresario device wizard --workspace
-# Platform: tvos
-# Physical Apple TV UDID: ...
-# Runner endpoint (LAN HOST:PORT, usually :50062): 10.102.93.222:50062
-```
-
-It writes `platform: tvos`, `connection.transport: network`, `udid` and
-`endpoint`. The endpoint is the XCUITest runner's LAN address, which for the
-current on-device runner is the Apple TV's own address (`10.102.93.222`), not a
-Mac. On Windows the wizard's live check is still skipped and `device check`
-reports `DEVICE_UNAVAILABLE` because `AppleTransport` retains its macOS path;
-the proven Windows runner/install path has not been wired into the product.
-
-Runner environment (the `.xctestrun`'s `TestingEnvironmentVariables`; the
-master drains the `xcodebuild` output, where the runner logs its port and
-addresses):
-
-```bash
-plutil -insert TestingEnvironmentVariables.IMPRESARIO_AGENT_PORT -string 50062 \
-  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun
-plutil -insert TestingEnvironmentVariables.IMPRESARIO_AGENT_TOKEN -string <token> \
-  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun   # optional
-plutil -insert TestingEnvironmentVariables.IMPRESARIO_NO_BONJOUR -string 1 \
-  build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun   # optional
-```
+to `10.102.93.222`. Developer Mode is enabled and the device trusted the host.
+The first start asks for local-network access; tvOS has no XCTest `tap`, so
+grant that one prompt with the remote. The permission is remembered after that.
 
 Master side:
-
-```yaml
-devices:
-  - name: iphone
-    platform: ios                     # or tvos
-    connection:
-      transport: usb                  # network over WLAN
-      udid: "<udid>"                  # what xcodebuild -destination takes
-      # endpoint: "192.168.1.42:50062"  # WLAN agent address; omit over USB
-
-apps:
-  - name: stub
-    platforms:
-      ios:
-        id: com.impresario.agent.AgentTargetStub-iOS
-        package: /abs/path/build/Build/Products/Debug-iphoneos/AgentTargetStub-iOS.app
-    options:
-      clear_data: true
-```
-
-For the physical Apple TV, the wizard writes the equivalent:
 
 ```yaml
 devices:
@@ -1122,56 +1098,69 @@ devices:
     platform: tvos
     connection:
       transport: network
-      udid: "<udid>"
-      endpoint: "10.102.93.222:50062"  # proven on-device runner (AppleTV5,3), I-150
+      udid: <udid>
+      endpoint: "<apple-tv-host>:50062"
+
+apps:
+  - name: stub
+    platforms:
+      tvos:
+        id: com.impresario.stub
+        package: /abs/path/build-tvos/Build/Products/Debug-appletvos/ImpresarioStub.app
+    options:
+      clear_data: true
 ```
 
 ```bash
-IMPRESARIO_XCTESTRUN=build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun \
-  impresario run --play plays/login.play --device iphone --app stub
+impresario device check rama --plain
+impresario run --play plays/login.play --device rama --app stub
 ```
 
-Endpoint resolution for Apple devices (`AppleTransport`): an **iOS or tvOS
-simulator** is configured to use loopback (the UDID is a UUID; no
-`connection.endpoint`), but this branch is untested support and must not be
-cited as evidence; an **iOS device** over USB gets an `iproxy` tunnel the
-transport starts itself (port `50062` by default, `IMPRESARIO_AGENT_PORT`
-changes both sides); a physical iOS device or Apple TV over **WLAN** uses
-`connection.endpoint` — the address the runner logs at start
-(`impresario agent: addresses en0=…`). macOS only: without `xcodebuild`/
-`iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84). These host tools
-are a **recorded D-19 gap**. A pure-Rust RemotePairing/RSD/AFC/install and
-direct-RSD XCUITest path has been proven on the Apple TV in temporary binaries
-(I-150); wiring it into `AppleTransport` and removing the host-tool route
-remains open (HD-2).
+Endpoint resolution: `connection.udid` is required. The host comes from
+`connection.host`, else the host part of `connection.endpoint`; the port comes
+from `options.agent_port`, else the endpoint port, else `50062`. The transport
+passes that port to the UI test as `IMPRESARIO_AGENT_PORT`, so both sides always
+agree. The pure-Rust path reaches devices over the network (RemotePairing on
+`_remotepairing._tcp:49152`); a USB-only iPhone is not supported yet. iOS/tvOS
+**simulators are rejected** because the Rust path cannot drive them and D-19
+forbids the host tools that could. Physical iOS over WLAN would use the same
+path but is not hardware-verified.
 
-Clean state per test is a host-side uninstall + reinstall (`clear_data` +
-the app platform's `package`, I-84); the tool is chosen automatically
-(`simctl` → `devicectl` → `ideviceinstaller`, the latter from
-`brew install libimobiledevice`). When none is available the option degrades to
-a cold start and one WARN line.
+Set a non-default signing/product/DDI with:
 
-First physical run after an install: iOS/tvOS ask for local-network permission. The
-runner declares the usage description and tries to dismiss the alert itself
-(interruption monitor + SpringBoard poll, `SystemAlerts`); if the buttons are
-not reachable it logs the labels it saw and one human tap on the device grants
-it for good (I-88). Uninstall + reinstall does **not** reset that permission,
-so it is a one-time cost per device.
+| Variable | Default |
+| --- | --- |
+| `IMPRESARIO_APPLE_SIGNING` | `default` |
+| `IMPRESARIO_APPLE_PRODUCTS` | `current` |
+| `IMPRESARIO_APPLE_DDI` | detected OS build |
+| `IMPRESARIO_APPLE_START_TIMEOUT_SECS` | `120` |
 
-Apple TV specifics: no USB path, so WLAN is the only way (put the logged
-address into `connection.endpoint`); the runner presses remote buttons through
-`XCUIRemote` (D-pad/Select/Menu/PlayPause; `home` = `XCUIDevice.press(.home)`),
-and the stub app's focused row is visible in its `stub_key_log`/`stub_status`
-labels while a play runs.
+Clean state per test is a pure-Rust uninstall + reinstall over the live
+RemotePairing control tunnel (`clear_data` + the app platform's signed
+`package`/`id`, I-84). It needs no `simctl`, `devicectl` or
+`ideviceinstaller`. If the package is not configured, the agent cold-starts the
+app and logs that the clean reinstall was unavailable.
+
+First physical run after an install: iOS/tvOS ask for local-network permission.
+The host app and test bundle declare the usage description and Bonjour service.
+On iOS the test bundle tries an interruption monitor + SpringBoard poll; on
+tvOS those calls are compiled out and one human press on the remote grants it
+for good (I-88). Uninstall + reinstall does **not** reset that permission.
+
+Apple TV specifics: no USB path, so WLAN is the only way; Impresario Agent
+presses remote buttons through `XCUIRemote` (D-pad/Select/Menu/PlayPause;
+`home` = `XCUIDevice.press(.home)`), and the stub app's focused row is visible
+in its `stub_key_log`/`stub_status` labels while a play runs.
 
 ### Playback probes and the Apple hook
 
 The Xcode layer is **not compiled on this host** (no Xcode); the macOS GitHub
-Actions job compiles both the tvOS and iOS targets unsigned (run 40267731478
-at `4e44203`), but it has never run on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver`
-and the Swift `ImpresarioHook` product build/test only to the extent of
-`swift test` under WSL here; `XCUIDriver`/`HookReceiver` depend on XCTest and
-need macOS + a paired device to execute.
+Actions job compiles both the tvOS and iOS targets unsigned (latest pre-rename
+run `40294832377` at `b96c7fd`). The agent UI test has run on the Apple TV, but
+the action matrix, `ProbeCollector`, `HookReceiver`, `XCUIDriver` interactions
+and the Swift `ImpresarioHook` product have not. In this host's WSL only
+`swift test` runs; `XCUIDriver`/`HookReceiver` depend on XCTest and need a real
+device to execute.
 
 XCUITest cannot read another app's `AVPlayer`, decoder or FairPlay session.
 The stub `MediaViewController` therefore opens a local H.264/AAC video, a

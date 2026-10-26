@@ -966,9 +966,9 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
     fn tvos_udid(&mut self) -> Result<Step, String> {
         let default = self.answers.connection.udid.clone();
         let _ = self.ui.say(
-            "On the macOS host, pair the Apple TV in Xcode (Settings > Remotes and Devices > \
-             Remote App and Devices), then read the UDID with `xcrun devicectl list devices` \
-             or `xcrun xctrace list devices`.",
+            "Pair the Apple TV once with `impresario apple pair --host <ip>` (or import an \
+             existing pair plist with `impresario apple import-pair`). The UDID is the device's \
+             Apple UDID; `impresario apple status` lists saved pairings.",
         );
         match self
             .ui
@@ -992,14 +992,13 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
     fn tvos_endpoint(&mut self) -> Result<Step, String> {
         let default = self.answers.connection.endpoint.clone();
         let _ = self.ui.say(
-            "Enter the XCUITest runner's LAN address, not the Apple TV's address. Start the \
-             signed runner on the macOS host and use the address it logs (`addresses en0=...`); \
-             pairing, signing, installation and runner startup are not possible from this host.",
+            "Enter the Apple TV's LAN address and the agent port (usually 50062). Impresario \
+             starts Impresario Agent on that device; this is not a Mac address.",
         );
         match self
             .ui
             .ask_value(
-                "Runner endpoint (Mac LAN HOST:PORT, usually :50062)",
+                "Agent endpoint (Apple TV LAN HOST:PORT, usually :50062)",
                 default.as_ref(),
                 parse_tvos_endpoint,
                 Clone::clone,
@@ -1324,14 +1323,15 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             }
             Platform::Tvos => {
                 let _ = self.ui.say(
-                    "tvOS check skipped: pairing, signing, installation and starting the \
-                     XCUITest runner require macOS/Xcode on the same LAN; this host cannot probe \
-                     the agent.",
+                    "tvOS is not probed while writing the definition. After saving, finish the \
+                     machine-global setup (`impresario apple pairing/signing/products/ddi`) and \
+                     run `impresario device check <name>`; it signs, installs and starts the \
+                     agent over the pure-Rust path.",
                 );
                 if let Some(endpoint) = self.answers.connection.endpoint.as_deref() {
-                    let _ = self.ui.say(format!(
-                        "configured runner endpoint: {endpoint} (not the Apple TV address)"
-                    ));
+                    let _ = self
+                        .ui
+                        .say(format!("configured agent endpoint: {endpoint}"));
                 }
                 Ok(Step::Next(Stage::Review))
             }
@@ -1445,9 +1445,8 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                     ));
                     let next = match device.platform {
                         Platform::Tvos => {
-                            "next: bind an app with `impresario app add ...`; pairing, signing, \
-                             runner startup and `impresario device check` require macOS/Xcode on the \
-                             LAN"
+                            "next: bind an app with `impresario app add ...`; after the \
+                             machine-global Apple setup, run `impresario device check <name>`"
                         }
                         _ => {
                             "next: bind an app with `impresario app add ...` and run `impresario device check`"
@@ -1664,10 +1663,10 @@ fn parse_tvos_udid(text: &str) -> Result<String, String> {
         );
     }
     if !config::valid_udid(text) {
-        return Err(
-            "expected the physical Apple TV UDID from `xcrun devicectl list devices` on macOS"
-                .to_string(),
-        );
+        return Err("expected the physical Apple TV UDID (for example \
+             0123456789abcdef0123456789abcdef01234567 or \
+             00008110-001B3456021E002F)"
+            .to_string());
     }
     Ok(text.to_string())
 }
@@ -1676,7 +1675,7 @@ fn parse_tvos_endpoint(text: &str) -> Result<String, String> {
     let text = text.trim();
     if !is_host_port(text) {
         return Err(
-            "expected the runner's HOST:PORT (the Mac's LAN address, not the Apple TV IP)"
+            "expected the Apple TV's LAN HOST:PORT for Impresario Agent (usually :50062)"
                 .to_string(),
         );
     }
@@ -1808,7 +1807,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_physical_tvos_udids_and_runner_endpoints() {
+    fn parses_physical_tvos_udids_and_agent_endpoints() {
         assert_eq!(
             parse_tvos_udid("00008110-001B3456021E002F").expect("physical udid"),
             "00008110-001B3456021E002F"

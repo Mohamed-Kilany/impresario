@@ -1,33 +1,34 @@
-# XcodeGen spec for the Impresario Apple agent (spec TASK.md section 12).
+# XcodeGen spec for Impresario Agent (spec TASK.md section 12).
 #
 #   brew install xcodegen
-#   cd agents/apple && xcodegen generate          # writes ImpresarioApple.xcodeproj
+#   cd agents/apple && xcodegen generate          # writes ImpresarioAgent.xcodeproj
 #
 # The generated project is *not* committed (docs/DECISIONS.md I-89): it cannot be
 # produced or opened on Windows, so the spec is the source of truth and the
 # `.xcodeproj` is rebuilt on the macOS host that runs the devices.
 #
 # Targets
-#   AgentHost-iOS / -tvOS     empty host apps; the UI-test bundles use them as
-#                             their target application (XCTest needs one to open
-#                             an automation session). The app under test is *not*
-#                             a build target — the master names it via `app_id`
-#                             and the runner launches it with XCUIApplication.
-#   AgentUITests-iOS / -tvOS  the runner: AgentRunnerTests/testServe starts the
-#                             gRPC agent with the XCUIDriver and serves until
-#                             `Shutdown` (AppleTransport -only-testing bundle
-#                             ids below must not change).
-#   AgentTargetStub-iOS/-tvOS the fixture app under test (same accessibility ids
-#                             as agents/android/agent-target-stub).
+#   ImpresarioAgent-iOS / -tvOS      the host app and UI-test target application.
+#                                    The app under test is *not* a build target:
+#                                    the master names it via `app_id` and the
+#                                    agent launches it with XCUIApplication.
+#   ImpresarioAgentTests-iOS / -tvOS the UI-test bundle. Its `testServe` method
+#                                    starts Impresario Agent with the XCUIDriver
+#                                    and serves until `Shutdown`.
+#   ImpresarioStub-iOS / -tvOS       the fixture app under test (same
+#                                    accessibility ids as the Android stub).
+#
+# The `-Runner` names and `.xctrunner` suffix below are Xcode artifacts, not a
+# product name. The installed agent is always Impresario Agent
+# (`com.impresario.agent`).
 #
 # Usage on the host (see README.md):
-#   xcodebuild build-for-testing -scheme AgentUITests-iOS \
+#   xcodebuild build-for-testing -scheme ImpresarioAgentTests-iOS \
 #     -destination 'platform=iOS,id=<udid>' -derivedDataPath build
-#   xcodebuild test-without-building -xctestrun build/Build/Products/*.xctestrun ...
-name: ImpresarioApple
+name: ImpresarioAgent
 
 options:
-  bundleIdPrefix: com.impresario.agent
+  bundleIdPrefix: com.impresario
   deploymentTarget:
     iOS: "16.0"
     tvOS: "16.0"
@@ -39,7 +40,7 @@ options:
 
 settings:
   base:
-    # The runner drives XCUITest from a non-main serial queue (XCUIDriver) and
+    # The XCUITest bundle drives XCUIApplication from a non-main serial queue and
     # the package is Swift 5.10; Swift 6 language mode would demand main-actor
     # isolation for every XCUIAutomation call. See docs/DECISIONS.md I-88.
     SWIFT_VERSION: "5.0"
@@ -62,117 +63,131 @@ packages:
 
 targets:
   # ------------------------------------------------------------------
-  # Empty host apps (the UI-test bundles' target application)
+  # Host apps (the UI-test bundle's target application)
   # ------------------------------------------------------------------
-  AgentHost-iOS:
+  ImpresarioAgent-iOS:
     type: application
     platform: iOS
     sources:
-      - path: Xcode/AgentHost
+      - path: Xcode/ImpresarioAgent
         excludes: ["Info-*.plist"]
     info:
-      path: Xcode/AgentHost/Info-iOS.plist
+      path: Xcode/ImpresarioAgent/Info-iOS.plist
       properties:
-        CFBundleDisplayName: Impresario Agent Host
+        CFBundleDisplayName: Impresario Agent
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
-        # The runner process binds the agent port; the host app shows the
+        # The XCUITest process binds the agent port; the host app shows the
         # permission prompt when XCTest launches it first (I-88).
         NSLocalNetworkUsageDescription: >-
-          Impresario runs automated UI tests over your local network. The test
-          runner must be reachable by the build machine to receive commands.
+          Impresario Agent serves automated UI sessions over your local network.
+          The agent must be reachable by the build machine to receive commands.
         NSBonjourServices:
           - _impresario._tcp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent
+        PRODUCT_NAME: ImpresarioAgent
+        GENERATE_INFOPLIST_FILE: NO
 
-  AgentHost-tvOS:
+  ImpresarioAgent-tvOS:
     type: application
     platform: tvOS
     sources:
-      - path: Xcode/AgentHost
+      - path: Xcode/ImpresarioAgent
         excludes: ["Info-*.plist"]
     info:
-      path: Xcode/AgentHost/Info-tvOS.plist
+      path: Xcode/ImpresarioAgent/Info-tvOS.plist
       properties:
-        CFBundleDisplayName: Impresario Agent Host
+        CFBundleDisplayName: Impresario Agent
         NSLocalNetworkUsageDescription: >-
-          Impresario runs automated UI tests over your local network. The test
-          runner must be reachable by the build machine to receive commands.
+          Impresario Agent serves automated UI sessions over your local network.
+          The agent must be reachable by the build machine to receive commands.
         NSBonjourServices:
           - _impresario._tcp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent
+        PRODUCT_NAME: ImpresarioAgent
+        GENERATE_INFOPLIST_FILE: NO
 
   # ------------------------------------------------------------------
-  # The runner (UI-test bundles)
+  # The agent UI-test bundles
   # ------------------------------------------------------------------
-  AgentUITests-iOS:
+  ImpresarioAgentTests-iOS:
     type: bundle.ui-testing
     platform: iOS
     sources:
-      - path: Xcode/AgentUITests
+      - path: Xcode/ImpresarioAgentTests
         excludes: ["Info-*.plist"]
     dependencies:
-      - target: AgentHost-iOS
+      - target: ImpresarioAgent-iOS
       - package: ImpresarioAgent
         product: AgentCore
       - package: ImpresarioAgent
         product: AgentService
     info:
-      path: Xcode/AgentUITests/Info-iOS.plist
+      path: Xcode/ImpresarioAgentTests/Info-iOS.plist
       properties:
-        # Required: without the usage description the runner is terminated the
+        CFBundleDisplayName: Impresario Agent Tests
+        # Required: without the usage description the agent is terminated the
         # first time it serves the local network (iOS 14+).
         NSLocalNetworkUsageDescription: >-
-          Impresario runs automated UI tests over your local network. The test
-          runner must be reachable by the build machine to receive commands.
+          Impresario Agent serves automated UI sessions over your local network.
+          The agent must be reachable by the build machine to receive commands.
         NSBonjourServices:
           - _impresario._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.AgentUITests-iOS
-        TEST_TARGET_NAME: AgentHost-iOS
-        SWIFT_OBJC_BRIDGING_HEADER: Xcode/AgentUITests/AgentUITests-Bridging-Header.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.tests
+        PRODUCT_NAME: ImpresarioAgentTests
+        TEST_TARGET_NAME: ImpresarioAgent-iOS
+        SWIFT_OBJC_BRIDGING_HEADER: Xcode/ImpresarioAgentTests/ImpresarioAgentTests-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: NO
 
-  AgentUITests-tvOS:
+  ImpresarioAgentTests-tvOS:
     type: bundle.ui-testing
     platform: tvOS
     sources:
-      - path: Xcode/AgentUITests
+      - path: Xcode/ImpresarioAgentTests
         excludes: ["Info-*.plist"]
     dependencies:
-      - target: AgentHost-tvOS
+      - target: ImpresarioAgent-tvOS
       - package: ImpresarioAgent
         product: AgentCore
       - package: ImpresarioAgent
         product: AgentService
     info:
-      path: Xcode/AgentUITests/Info-tvOS.plist
+      path: Xcode/ImpresarioAgentTests/Info-tvOS.plist
       properties:
+        CFBundleDisplayName: Impresario Agent Tests
         NSLocalNetworkUsageDescription: >-
-          Impresario runs automated UI tests over your local network. The test
-          runner must be reachable by the build machine to receive commands.
+          Impresario Agent serves automated UI sessions over your local network.
+          The agent must be reachable by the build machine to receive commands.
         NSBonjourServices:
           - _impresario._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.AgentUITests-tvOS
-        TEST_TARGET_NAME: AgentHost-tvOS
-        SWIFT_OBJC_BRIDGING_HEADER: Xcode/AgentUITests/AgentUITests-Bridging-Header.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.tests
+        PRODUCT_NAME: ImpresarioAgentTests
+        TEST_TARGET_NAME: ImpresarioAgent-tvOS
+        SWIFT_OBJC_BRIDGING_HEADER: Xcode/ImpresarioAgentTests/ImpresarioAgentTests-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: NO
 
   # ------------------------------------------------------------------
   # The fixture app under test
   # ------------------------------------------------------------------
-  AgentTargetStub-iOS:
+  ImpresarioStub-iOS:
     type: application
     platform: iOS
     sources:
-      - path: Xcode/AgentTargetStub
+      - path: Xcode/ImpresarioStub
         excludes: ["Info-*.plist"]
     dependencies:
       - package: ImpresarioAgent
         product: ImpresarioHook
     info:
-      path: Xcode/AgentTargetStub/Info-iOS.plist
+      path: Xcode/ImpresarioStub/Info-iOS.plist
       properties:
         CFBundleDisplayName: Impresario Stub
         UILaunchScreen: {}
@@ -181,55 +196,65 @@ targets:
         # for everything else and allow only local traffic.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.stub
+        PRODUCT_NAME: ImpresarioStub
+        GENERATE_INFOPLIST_FILE: NO
 
-  AgentTargetStub-tvOS:
+  ImpresarioStub-tvOS:
     type: application
     platform: tvOS
     sources:
-      - path: Xcode/AgentTargetStub
+      - path: Xcode/ImpresarioStub
         excludes: ["Info-*.plist"]
     dependencies:
       - package: ImpresarioAgent
         product: ImpresarioHook
     info:
-      path: Xcode/AgentTargetStub/Info-tvOS.plist
+      path: Xcode/ImpresarioStub/Info-tvOS.plist
       properties:
         CFBundleDisplayName: Impresario Stub
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.stub
+        PRODUCT_NAME: ImpresarioStub
+        GENERATE_INFOPLIST_FILE: NO
 
 schemes:
-  AgentUITests-iOS:
+  ImpresarioAgentTests-iOS:
     build:
       targets:
-        AgentHost-iOS: all
-        AgentUITests-iOS: [test]
+        ImpresarioAgent-iOS: all
+        ImpresarioAgentTests-iOS: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - AgentUITests-iOS
-  AgentUITests-tvOS:
+        - ImpresarioAgentTests-iOS
+  ImpresarioAgentTests-tvOS:
     build:
       targets:
-        AgentHost-tvOS: all
-        AgentUITests-tvOS: [test]
+        ImpresarioAgent-tvOS: all
+        ImpresarioAgentTests-tvOS: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - AgentUITests-tvOS
-  AgentTargetStub-iOS:
+        - ImpresarioAgentTests-tvOS
+  ImpresarioStub-iOS:
     build:
       targets:
-        AgentTargetStub-iOS: all
+        ImpresarioStub-iOS: all
     run:
       config: Debug
-  AgentTargetStub-tvOS:
+  ImpresarioStub-tvOS:
     build:
       targets:
-        AgentTargetStub-tvOS: all
+        ImpresarioStub-tvOS: all
     run:
       config: Debug
