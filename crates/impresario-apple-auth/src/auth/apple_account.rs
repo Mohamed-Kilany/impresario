@@ -1136,15 +1136,12 @@ fn censor_email(email: &str) -> String {
     }
     if let Some(at_pos) = email.find('@') {
         let (local, domain) = email.split_at(at_pos);
+        let first = local.get(0..1).unwrap_or("?");
         if local.len() <= 2 {
-            format!("{}***{}", &local[0..1], &domain)
+            format!("{first}***{domain}")
         } else {
-            format!(
-                "{}***{}{}",
-                &local[0..1],
-                &local[local.len() - 1..],
-                &domain
-            )
+            let last = local.get(local.len() - 1..).unwrap_or("?");
+            format!("{first}***{last}{domain}")
         }
     } else {
         "***".to_string()

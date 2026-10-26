@@ -112,7 +112,7 @@ impl DeveloperSession {
             "userLocale": ["en_US"],
         });
 
-        let body = base.into_iter().chain(body.into_iter()).collect();
+        let body = base.into_iter().chain(body).collect();
 
         let text = self
             .client
