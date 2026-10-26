@@ -1,54 +1,82 @@
 import UIKit
 
-/// Shared visual language for the fixture. The sizes, gaps and copy come from
-/// `agents/android/agent-target-stub`; the target is an exact mirror, not a
-/// lookalike, so both platforms can be driven by the same plays.
+/// Shared visual language for the fixture. The logical sizes, gaps, colours
+/// and copy come from `agents/android/agent-target-stub`; the target is an
+/// exact mirror, not a lookalike, so both platforms can be driven by the same
+/// plays. Android expresses the sizes in dp/sp and the TV runs at density 2.0
+/// (the hardware run reports `1920x1080 @2.00x`), while tvOS points are 1:1
+/// pixels on the same 1080p panel. `dp()` therefore scales Android logical
+/// units by 2 on tvOS; iOS keeps the 1:1 phone/tablet mapping.
 enum StubTheme {
-    static let background = UIColor.black
-    static let foreground = UIColor.white
-    static let buttonBackground = UIColor(white: 0.18, alpha: 1)
-    static let buttonDisabledTitle = UIColor(white: 0.45, alpha: 1)
+    static var scale: CGFloat {
+        #if os(tvOS)
+        return 2
+        #else
+        return 1
+        #endif
+    }
+
+    /// Converts an Android dp/sp value into the matching Apple point size.
+    static func dp(_ value: CGFloat) -> CGFloat { value * scale }
+
+    // Android Theme.DeviceDefault on this TCL TV: black action bar, #303030
+    // content, #C1C1C1 primary text, #5A595B button, #646365 focused button.
+    static let background = UIColor(white: 48.0 / 255.0, alpha: 1)
+    static let appBarBackground = UIColor.black
+    static let appBarForeground = UIColor.white
+    static let foreground = UIColor(white: 193.0 / 255.0, alpha: 1)
+    static let buttonBackground = UIColor(white: 90.0 / 255.0, alpha: 1)
+    static let buttonFocusedBackground = UIColor(white: 100.0 / 255.0, alpha: 1)
+    static let buttonDisabledBackground = UIColor(white: 61.0 / 255.0, alpha: 1)
+    /// Android's TV button label is pure white, unlike the #C1C1C1 text views.
+    static let buttonTitle = UIColor.white
+    static let buttonDisabledTitle = UIColor(white: 120.0 / 255.0, alpha: 1)
     static let inputBackground = UIColor(white: 0.12, alpha: 1)
     static let inputUnderline = UIColor(white: 0.55, alpha: 1)
-    static let dialogBackground = UIColor(white: 0.12, alpha: 1)
-    static let dialogSeparator = UIColor(white: 0.30, alpha: 1)
+    static let dialogBackground = UIColor(white: 48.0 / 255.0, alpha: 1)
+    static let dialogSeparator = UIColor(white: 90.0 / 255.0, alpha: 1)
     static let mediaBrokenBackground = UIColor(white: 32.0 / 255.0, alpha: 1)
+    static let plainFocusedBackground = UIColor(white: 0.25, alpha: 1)
 
     /// Android `MainActivity`/`ScenarioActivity` use 48 x 36 dp.
-    static let horizontalInset: CGFloat = 48
-    static let verticalInset: CGFloat = 36
+    static var horizontalInset: CGFloat { dp(48) }
+    static var verticalInset: CGFloat { dp(36) }
 
     /// Android `MediaActivity` uses 24 x 20 dp.
-    static let mediaHorizontalInset: CGFloat = 24
-    static let mediaVerticalInset: CGFloat = 20
+    static var mediaHorizontalInset: CGFloat { dp(24) }
+    static var mediaVerticalInset: CGFloat { dp(20) }
 
     /// Android `Ui.kt`: 10 dp on phones/tablets, 6 dp on television.
     static var stackGap: CGFloat {
         #if os(tvOS)
-        return 6
+        return dp(6)
         #else
-        return 10
+        return dp(10)
         #endif
     }
 
     /// Android `ScrollActivity` hardcodes `STACK_GAP_DP` (10 dp) above the
     /// scroller even on television; the status line below uses `stackGap`.
-    static let fixedStackGap: CGFloat = 10
+    static var fixedStackGap: CGFloat { dp(10) }
 
     static func titleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.text = text
         label.textColor = foreground
-        label.font = .systemFont(ofSize: 24, weight: .bold)
+        label.font = .systemFont(ofSize: dp(24), weight: .bold)
         label.numberOfLines = 0
         return label
     }
 
-    static func label(_ text: String, size: CGFloat = 18) -> UILabel {
+    static func label(
+        _ text: String,
+        size: CGFloat = 18,
+        weight: UIFont.Weight = .regular
+    ) -> UILabel {
         let label = UILabel()
         label.text = text
         label.textColor = foreground
-        label.font = .systemFont(ofSize: size)
+        label.font = .systemFont(ofSize: dp(size), weight: weight)
         label.numberOfLines = 0
         return label
     }
@@ -59,31 +87,92 @@ enum StubTheme {
         return label
     }
 
-    static func button(_ title: String, id: String) -> StubButton {
+    private static func baseButton(_ title: String, id: String?) -> StubButton {
         let button = StubButton(type: .system)
         button.setTitle(title, for: .normal)
         button.accessibilityIdentifier = id
-        button.titleLabel?.font = .systemFont(ofSize: 18)
-        button.setTitleColor(foreground, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: dp(18))
+        button.setTitleColor(buttonTitle, for: .normal)
         button.setTitleColor(buttonDisabledTitle, for: .disabled)
-        button.backgroundColor = buttonBackground
-        button.layer.cornerRadius = 4
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        // Android's platform Button centers its label inside the 12 dp
+        // horizontal content padding. The dialog rows below opt back into a
+        // left-aligned label because AlertDialog list items are not Buttons.
+        button.contentHorizontalAlignment = .center
+        button.backgroundColor = .clear
+        return button
+    }
+
+    static func button(_ title: String, id: String) -> StubButton {
+        let button = baseButton(title, id: id)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: dp(48)).isActive = true
+
+        // Android's 48 dp Button draws a 36 dp background inside the 48 dp
+        // view (the TV theme's 9-patch leaves 6 dp transparent above/below).
+        // Reproduce that so the row pitch is 48 + 6 dp while the visible bar
+        // stays 36 dp, exactly as in the Android screenshot.
+        let background = UIView()
+        background.translatesAutoresizingMaskIntoConstraints = false
+        background.isUserInteractionEnabled = false
+        background.isAccessibilityElement = false
+        background.backgroundColor = buttonBackground
+        background.layer.cornerRadius = dp(2)
+        button.insertSubview(background, at: 0)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            background.topAnchor.constraint(equalTo: button.topAnchor, constant: dp(6)),
+            background.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -dp(6)),
+        ])
+        button.stubBackgroundView = background
         return button
     }
 
     static func plainButton(_ title: String, id: String? = nil) -> StubButton {
-        let button = StubButton(type: .system)
-        button.setTitle(title, for: .normal)
-        button.accessibilityIdentifier = id
-        button.titleLabel?.font = .systemFont(ofSize: 18)
-        button.setTitleColor(foreground, for: .normal)
+        let button = baseButton(title, id: id)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: dp(48)).isActive = true
         button.contentHorizontalAlignment = .leading
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
         button.plainStyle = true
         return button
     }
 }
+
+#if os(tvOS)
+/// Android's platform action bar. Every stub Activity carries the app label in
+/// a black 48 dp bar above the #303030 content; the Apple mirror adds the same
+/// bar because the hidden-bar navigation controller has no system equivalent.
+final class StubAppBar: UIView {
+    private let label = UILabel()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = StubTheme.appBarBackground
+
+        label.text = "Impresario Stub"
+        label.textColor = StubTheme.appBarForeground
+        label.font = .systemFont(ofSize: StubTheme.dp(20), weight: .semibold)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: StubTheme.dp(48)),
+            // Android's action bar title starts at 16 dp.
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: StubTheme.dp(16)),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.55
+        layer.shadowRadius = StubTheme.dp(4)
+        layer.shadowOffset = CGSize(width: 0, height: StubTheme.dp(2))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+}
+#endif
 
 /// A UIButton with the fixture's two behaviours that UIKit does not provide
 /// out of the box: a long-press that matches Android's long-click, and a
@@ -99,6 +188,11 @@ final class StubButton: UIButton {
     #endif
     var titleInset: CGFloat = 0
     var plainStyle = false
+    /// The Android 36 dp bar inside the 48 dp row on television; nil for the
+    /// plain dialog rows that paint their own full-row highlight.
+    weak var stubBackgroundView: UIView?
+
+    private var isFocusedState = false
 
     /// Android's default long-press timeout is 500 ms.
     private static let longPressDuration: TimeInterval = 0.5
@@ -110,6 +204,10 @@ final class StubButton: UIButton {
     private var lastPrimaryAction: Date?
     private var suppressPrimaryUntil: Date?
     private var lastPressWasLong = false
+
+    override var isEnabled: Bool {
+        didSet { updateVisualState() }
+    }
 
     #if os(tvOS)
     override func sendActions(for controlEvents: UIControl.Event) {
@@ -207,6 +305,7 @@ final class StubButton: UIButton {
     ) {
         super.didUpdateFocus(in: context, with: coordinator)
         let focused = context.nextFocusedView === self
+        isFocusedState = focused
         coordinator.addCoordinatedAnimations({
             self.applyFocusAppearance(focused)
         }, completion: nil)
@@ -216,16 +315,23 @@ final class StubButton: UIButton {
     }
     #endif
 
+    private func updateVisualState() {
+        guard let stubBackgroundView else { return }
+        if !isEnabled {
+            stubBackgroundView.backgroundColor = StubTheme.buttonDisabledBackground
+        } else if isFocusedState {
+            stubBackgroundView.backgroundColor = StubTheme.buttonFocusedBackground
+        } else {
+            stubBackgroundView.backgroundColor = StubTheme.buttonBackground
+        }
+    }
+
     private func applyFocusAppearance(_ focused: Bool) {
         if plainStyle {
-            backgroundColor = focused ? UIColor(white: 0.25, alpha: 1) : .clear
-            setTitleColor(.white, for: .normal)
-        } else if focused {
-            backgroundColor = .white
-            setTitleColor(.black, for: .normal)
-        } else {
-            backgroundColor = StubTheme.buttonBackground
+            backgroundColor = focused ? StubTheme.plainFocusedBackground : .clear
             setTitleColor(StubTheme.foreground, for: .normal)
+        } else {
+            updateVisualState()
         }
     }
 }
@@ -241,10 +347,10 @@ final class FocusableScrollView: UIScrollView {
         for press in presses {
             switch press.type {
             case .upArrow:
-                scrollBy(-120)
+                scrollBy(-StubTheme.dp(120))
                 handled = true
             case .downArrow:
-                scrollBy(120)
+                scrollBy(StubTheme.dp(120))
                 handled = true
             default:
                 break

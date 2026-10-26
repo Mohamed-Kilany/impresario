@@ -35,12 +35,12 @@ final class SelectionDialogViewController: UIViewController {
         view.addSubview(backdrop)
 
         card.backgroundColor = StubTheme.dialogBackground
-        card.layer.cornerRadius = 8
+        card.layer.cornerRadius = StubTheme.dp(4)
         card.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(card)
 
         let title = StubTheme.titleLabel(dialogTitle)
-        title.font = .systemFont(ofSize: 20, weight: .bold)
+        title.font = .systemFont(ofSize: StubTheme.dp(20), weight: .bold)
         title.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(title)
 
@@ -59,7 +59,7 @@ final class SelectionDialogViewController: UIViewController {
                 rows.addArrangedSubview(separator)
             }
             let button = StubTheme.plainButton(option)
-            button.titleInset = 24
+            button.titleInset = StubTheme.dp(24)
             button.tag = index
             button.addTarget(self, action: #selector(choose(_:)), for: .primaryActionTriggered)
             rows.addArrangedSubview(button)
@@ -68,11 +68,11 @@ final class SelectionDialogViewController: UIViewController {
             }
         }
 
-        let width = card.widthAnchor.constraint(equalToConstant: 560)
+        let width = card.widthAnchor.constraint(equalToConstant: StubTheme.dp(560))
         width.priority = .defaultHigh
         let maximumWidth = card.widthAnchor.constraint(
             lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor,
-            constant: -96
+            constant: -StubTheme.dp(96)
         )
 
         NSLayoutConstraint.activate([
@@ -86,13 +86,13 @@ final class SelectionDialogViewController: UIViewController {
             width,
             maximumWidth,
 
-            title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
-            title.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            title.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+            title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: StubTheme.dp(24)),
+            title.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -StubTheme.dp(24)),
+            title.topAnchor.constraint(equalTo: card.topAnchor, constant: StubTheme.dp(20)),
 
             rows.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             rows.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            rows.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 12),
+            rows.topAnchor.constraint(equalTo: title.bottomAnchor, constant: StubTheme.dp(12)),
             rows.bottomAnchor.constraint(equalTo: card.bottomAnchor),
         ])
     }

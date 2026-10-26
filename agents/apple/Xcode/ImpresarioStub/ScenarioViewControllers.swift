@@ -20,6 +20,20 @@ class ScenarioViewController: UIViewController {
         column.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(column)
 
+        let contentTop: NSLayoutYAxisAnchor
+        #if os(tvOS)
+        let appBar = StubAppBar()
+        view.addSubview(appBar)
+        NSLayoutConstraint.activate([
+            appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appBar.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+        contentTop = appBar.bottomAnchor
+        #else
+        contentTop = view.safeAreaLayoutGuide.topAnchor
+        #endif
+
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
@@ -30,7 +44,7 @@ class ScenarioViewController: UIViewController {
                 constant: -StubTheme.horizontalInset
             ),
             column.topAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                equalTo: contentTop,
                 constant: StubTheme.verticalInset
             ),
             column.bottomAnchor.constraint(
@@ -150,7 +164,7 @@ final class TextScenarioViewController: ScenarioViewController {
         input.accessibilityIdentifier = "stub_input"
         // Android's empty EditText has no text; its hint is not the value.
         input.accessibilityLabel = ""
-        input.font = .systemFont(ofSize: 18)
+        input.font = .systemFont(ofSize: StubTheme.dp(18))
         input.textColor = StubTheme.foreground
         input.tintColor = StubTheme.foreground
         input.attributedPlaceholder = NSAttributedString(
@@ -159,9 +173,9 @@ final class TextScenarioViewController: ScenarioViewController {
         )
         input.backgroundColor = StubTheme.inputBackground
         input.borderStyle = .none
-        input.layer.cornerRadius = 4
-        input.heightAnchor.constraint(equalToConstant: 48).isActive = true
-        let padding = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 1))
+        input.layer.cornerRadius = StubTheme.dp(2)
+        input.heightAnchor.constraint(equalToConstant: StubTheme.dp(48)).isActive = true
+        let padding = UIView(frame: CGRect(x: 0, y: 0, width: StubTheme.dp(12), height: 1))
         input.leftView = padding
         input.leftViewMode = .always
         input.addTarget(self, action: #selector(onInputChanged), for: .editingChanged)
@@ -207,10 +221,23 @@ final class ScrollScenarioViewController: UIViewController {
 
         let rows = UIStackView()
         rows.axis = .vertical
-        rows.spacing = 24
+        rows.spacing = 0
         rows.translatesAutoresizingMaskIntoConstraints = false
         for index in 0..<30 {
-            rows.addArrangedSubview(StubTheme.label("row \(index)"))
+            // Android's rows are TextViews with 12 dp top/bottom padding and
+            // no stack gap; the padding, not a spacing property, gives the
+            // 24 dp rhythm visible on the TV.
+            let row = UIView()
+            let label = StubTheme.label("row \(index)")
+            label.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                label.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+                label.topAnchor.constraint(equalTo: row.topAnchor, constant: StubTheme.dp(12)),
+                label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -StubTheme.dp(12)),
+            ])
+            rows.addArrangedSubview(row)
         }
 
         list.addSubview(rows)
@@ -218,6 +245,20 @@ final class ScrollScenarioViewController: UIViewController {
         view.addSubview(titleLabel)
         view.addSubview(scroller)
         view.addSubview(statusLabel)
+
+        let contentTop: NSLayoutYAxisAnchor
+        #if os(tvOS)
+        let appBar = StubAppBar()
+        view.addSubview(appBar)
+        NSLayoutConstraint.activate([
+            appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appBar.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+        contentTop = appBar.bottomAnchor
+        #else
+        contentTop = view.safeAreaLayoutGuide.topAnchor
+        #endif
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
@@ -229,7 +270,7 @@ final class ScrollScenarioViewController: UIViewController {
                 constant: -StubTheme.horizontalInset
             ),
             titleLabel.topAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                equalTo: contentTop,
                 constant: StubTheme.verticalInset
             ),
 
@@ -271,8 +312,8 @@ final class ScrollScenarioViewController: UIViewController {
 
             rows.leadingAnchor.constraint(equalTo: list.leadingAnchor),
             rows.trailingAnchor.constraint(equalTo: list.trailingAnchor),
-            rows.topAnchor.constraint(equalTo: list.topAnchor, constant: 12),
-            rows.bottomAnchor.constraint(equalTo: list.bottomAnchor, constant: -12),
+            rows.topAnchor.constraint(equalTo: list.topAnchor),
+            rows.bottomAnchor.constraint(equalTo: list.bottomAnchor),
         ])
     }
 
