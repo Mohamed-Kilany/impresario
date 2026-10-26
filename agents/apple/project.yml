@@ -107,7 +107,7 @@ targets:
           - _impresario._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.AgentHost-tvOS
         PRODUCT_NAME: ImpresarioAgent
         GENERATE_INFOPLIST_FILE: NO
 
@@ -168,7 +168,7 @@ targets:
           - _impresario._tcp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.AgentUITests-tvOS
         PRODUCT_NAME: ImpresarioAgentTests
         TEST_TARGET_NAME: ImpresarioAgent-tvOS
         SWIFT_OBJC_BRIDGING_HEADER: Xcode/ImpresarioAgentTests/ImpresarioAgentTests-Bridging-Header.h
@@ -219,7 +219,7 @@ targets:
           NSAllowsLocalNetworking: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.stub
+        PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent.AgentTargetStub-tvOS
         PRODUCT_NAME: ImpresarioStub
         GENERATE_INFOPLIST_FILE: NO
 
