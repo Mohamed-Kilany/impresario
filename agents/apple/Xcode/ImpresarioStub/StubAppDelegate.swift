@@ -25,7 +25,13 @@ final class StubAppDelegate: UIResponder, UIApplicationDelegate {
         // it only lets Impresario Agent raise confidence when it is listening.
         ImpresarioHook.shared.start()
         let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = StubViewController()
+        // Android opens each scenario as its own activity; a hidden-bar
+        // navigation stack gives the same one-screen-per-scenario flow and
+        // lets the tvOS Menu button (Android back) return to the home screen.
+        let home = StubViewController()
+        let navigation = UINavigationController(rootViewController: home)
+        navigation.setNavigationBarHidden(true, animated: false)
+        window.rootViewController = navigation
         window.makeKeyAndVisible()
         self.window = window
         return true
