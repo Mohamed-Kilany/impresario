@@ -149,8 +149,12 @@ object ImpresarioHook {
     }
 
     private fun replace(target: JSONObject, source: JSONObject) {
-        val names = target.keys()
-        while (names.hasNext()) target.remove(names.next())
+        // JSONObject.keys() iterates the backing map. Removing through that
+        // iterator invalidates it (ConcurrentModificationException), which
+        // crashed every media fixture on its first 250 ms tick. Snapshot the
+        // keys, then remove; the incoming object is separate and unmodified.
+        val stale = target.keys().asSequence().toList()
+        stale.forEach(target::remove)
         val incoming = source.keys()
         while (incoming.hasNext()) {
             val key = incoming.next()
@@ -159,7 +163,7 @@ object ImpresarioHook {
     }
 
     private fun clear(target: JSONObject) {
-        val names = target.keys()
-        while (names.hasNext()) target.remove(names.next())
+        val stale = target.keys().asSequence().toList()
+        stale.forEach(target::remove)
     }
 }
