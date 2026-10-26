@@ -53,7 +53,7 @@ class ScenarioViewController: UIViewController {
             ),
         ])
 
-        let title = StubTheme.titleLabel(scenarioTitle())
+        let title = StubTheme.titleLabel(scenarioTitle(), lineHeight: 32.5)
         title.accessibilityIdentifier = "stub_title"
         title.accessibilityHint = "stub badge"
         column.addArrangedSubview(title)
@@ -116,7 +116,7 @@ class ScenarioViewController: UIViewController {
 /// Click + long press with a tap counter and a status line.
 final class BasicScenarioViewController: ScenarioViewController {
     private var taps = 0
-    private let counter = StubTheme.label("taps=0")
+    private let counter = StubTheme.label("taps=0", lineHeight: 24.5)
     private var tapButton: StubButton?
 
     override func scenarioTitle() -> String { "Basic controls" }
@@ -155,7 +155,8 @@ final class BasicScenarioViewController: ScenarioViewController {
 /// Text entry: a field with an echo label (type/append/clear/backspace).
 final class TextScenarioViewController: ScenarioViewController {
     private let input = UITextField()
-    private let echo = StubTheme.label("echo:")
+    private let echo = StubTheme.label("echo:", lineHeight: 24.5)
+    private let inputUnderline = UIView()
 
     override func scenarioTitle() -> String { "Text entry" }
 
@@ -166,19 +167,42 @@ final class TextScenarioViewController: ScenarioViewController {
         input.accessibilityLabel = ""
         input.font = .systemFont(ofSize: StubTheme.dp(18))
         input.textColor = StubTheme.foreground
-        input.tintColor = StubTheme.foreground
+        input.tintColor = StubTheme.inputUnderline
         input.attributedPlaceholder = NSAttributedString(
             string: "type here",
-            attributes: [.foregroundColor: UIColor(white: 0.55, alpha: 1)]
+            attributes: [.foregroundColor: StubTheme.inputHint]
         )
-        input.backgroundColor = StubTheme.inputBackground
+        // Android EditText: transparent surface, 12 dp text inset and a 2 dp
+        // underline 7 dp above the bottom of a 36.5 dp field. The underline is
+        // the teal accent while editing and gray otherwise.
+        input.backgroundColor = .clear
         input.borderStyle = .none
-        input.layer.cornerRadius = StubTheme.dp(2)
-        input.heightAnchor.constraint(equalToConstant: StubTheme.dp(48)).isActive = true
+        input.heightAnchor.constraint(equalToConstant: StubTheme.dp(36.5)).isActive = true
         let padding = UIView(frame: CGRect(x: 0, y: 0, width: StubTheme.dp(12), height: 1))
         input.leftView = padding
         input.leftViewMode = .always
         input.addTarget(self, action: #selector(onInputChanged), for: .editingChanged)
+        input.addTarget(self, action: #selector(onInputFocus), for: .editingDidBegin)
+        input.addTarget(self, action: #selector(onInputBlur), for: .editingDidEnd)
+
+        inputUnderline.backgroundColor = StubTheme.inputIdleUnderline
+        inputUnderline.translatesAutoresizingMaskIntoConstraints = false
+        input.addSubview(inputUnderline)
+        NSLayoutConstraint.activate([
+            inputUnderline.leadingAnchor.constraint(
+                equalTo: input.leadingAnchor,
+                constant: StubTheme.dp(4)
+            ),
+            inputUnderline.trailingAnchor.constraint(
+                equalTo: input.trailingAnchor,
+                constant: -StubTheme.dp(4)
+            ),
+            inputUnderline.bottomAnchor.constraint(
+                equalTo: input.bottomAnchor,
+                constant: -StubTheme.dp(7)
+            ),
+            inputUnderline.heightAnchor.constraint(equalToConstant: StubTheme.dp(2)),
+        ])
         column.addArrangedSubview(input)
 
         echo.accessibilityIdentifier = "stub_echo"
@@ -189,6 +213,14 @@ final class TextScenarioViewController: ScenarioViewController {
     @objc private func onInputChanged() {
         echo.text = "echo:" + (input.text ?? "")
     }
+
+    @objc private func onInputFocus() {
+        inputUnderline.backgroundColor = StubTheme.inputUnderline
+    }
+
+    @objc private func onInputBlur() {
+        inputUnderline.backgroundColor = StubTheme.inputIdleUnderline
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -198,7 +230,7 @@ final class TextScenarioViewController: ScenarioViewController {
 /// Scrollable list with 30 `row N` entries, matching Android `ScrollActivity`.
 /// The scroller takes the space between the title and the shared status line.
 final class ScrollScenarioViewController: UIViewController {
-    private let titleLabel = StubTheme.titleLabel("Scroller")
+    private let titleLabel = StubTheme.titleLabel("Scroller", lineHeight: 32.5)
     private let statusLabel = StubTheme.statusLabel()
     private let scroller = FocusableScrollView()
 
@@ -228,7 +260,7 @@ final class ScrollScenarioViewController: UIViewController {
             // no stack gap; the padding, not a spacing property, gives the
             // 24 dp rhythm visible on the TV.
             let row = UIView()
-            let label = StubTheme.label("row \(index)")
+            let label = StubTheme.label("row \(index)", lineHeight: 24.5)
             label.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(label)
             NSLayoutConstraint.activate([
@@ -379,13 +411,13 @@ final class FlagsScenarioViewController: ScenarioViewController {
         disabled.isEnabled = false
         column.addArrangedSubview(disabled)
 
-        let visible = StubTheme.label("visible text")
+        let visible = StubTheme.label("visible text", lineHeight: 24.5)
         visible.accessibilityIdentifier = "stub_visible"
         column.addArrangedSubview(visible)
 
         // Android INVISIBLE: the label keeps its space but is not drawn and is
         // not exposed to accessibility. `isHidden` would remove the space.
-        let hidden = StubTheme.label("hidden text")
+        let hidden = StubTheme.label("hidden text", lineHeight: 24.5)
         hidden.accessibilityIdentifier = "stub_hidden"
         hidden.alpha = 0
         hidden.isAccessibilityElement = false
@@ -408,7 +440,7 @@ final class FlagsScenarioViewController: ScenarioViewController {
 /// label that records the last key (`key=DPAD_DOWN`, `key=MEDIA_PLAY_PAUSE`,
 /// ...) so TV key handling is observable.
 final class KeysScenarioViewController: ScenarioViewController {
-    private let log = StubTheme.label("key=none")
+    private let log = StubTheme.label("key=none", lineHeight: 24.5)
     private var lastFocusedIndex: Int?
 
     override func scenarioTitle() -> String { "Key log" }
@@ -495,6 +527,11 @@ final class InfoScenarioViewController: ScenarioViewController {
             "tv=\(tv)"
         let info = StubTheme.label(text, size: 16)
         info.accessibilityIdentifier = "stub_info"
+        #if os(tvOS)
+        // Android's 16 sp TextView is a 43 px line box on the TV.
+        info.heightAnchor.constraint(equalToConstant: StubTheme.dp(21.5)).isActive = true
+        info.numberOfLines = 1
+        #endif
         column.addArrangedSubview(info)
     }
 }

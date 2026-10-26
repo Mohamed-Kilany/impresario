@@ -30,7 +30,7 @@ final class StubViewController: UIViewController {
         column.spacing = StubTheme.stackGap
         column.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = StubTheme.titleLabel("Impresario stub")
+        let title = StubTheme.titleLabel("Impresario stub", lineHeight: 32.5)
         title.accessibilityIdentifier = "stub_title"
         // Android puts contentDescription "stub badge" on the title. UIKit has
         // one label per element, so the text stays the label and the badge is
@@ -38,7 +38,11 @@ final class StubViewController: UIViewController {
         title.accessibilityHint = "stub badge"
         column.addArrangedSubview(title)
 
-        let subtitle = StubTheme.label("One screen per test scenario.", size: 15)
+        let subtitle = StubTheme.label(
+            "One screen per test scenario.",
+            size: 15,
+            lineHeight: 20.5
+        )
         subtitle.alpha = 0.8
         column.addArrangedSubview(subtitle)
         column.setCustomSpacing(0, after: title)

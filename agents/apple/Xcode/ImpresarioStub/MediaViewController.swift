@@ -7,12 +7,12 @@ import UIKit
 /// image slot and the same status strings. The accessibility ids are the
 /// Android ids, so a play differs only in selector strategy.
 final class MediaViewController: UIViewController {
-    private let titleLabel = StubTheme.titleLabel("Playback fixture")
+    private let titleLabel = StubTheme.titleLabel("Playback fixture", lineHeight: 30)
     private let videoContainer = UIView()
     private let videoLayer = AVPlayerLayer()
     private let imageView = UIImageView()
     private let brokenView = UIImageView()
-    private let statusLabel = StubTheme.label("loading", size: 16)
+    private let statusLabel = StubTheme.label("loading", size: 16, lineHeight: 21.5)
 
     private var player: AVPlayer?
     private var statusObservation: NSKeyValueObservation?
@@ -88,9 +88,11 @@ final class MediaViewController: UIViewController {
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
                 constant: inset
             ),
-            videoContainer.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                constant: -inset
+            // Android VideoView shrinks its MATCH_PARENT width to the 4:3
+            // sample (586 x 440 px), leaving the rest of the row #303030.
+            videoContainer.widthAnchor.constraint(
+                equalTo: videoContainer.heightAnchor,
+                multiplier: 4.0 / 3.0
             ),
             videoContainer.topAnchor.constraint(
                 equalTo: titleLabel.bottomAnchor,

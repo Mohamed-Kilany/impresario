@@ -31,12 +31,36 @@ enum StubTheme {
     /// Android's TV button label is pure white, unlike the #C1C1C1 text views.
     static let buttonTitle = UIColor.white
     static let buttonDisabledTitle = UIColor(white: 120.0 / 255.0, alpha: 1)
-    static let inputBackground = UIColor(white: 0.12, alpha: 1)
-    static let inputUnderline = UIColor(white: 0.55, alpha: 1)
-    static let dialogBackground = UIColor(white: 48.0 / 255.0, alpha: 1)
-    static let dialogSeparator = UIColor(white: 90.0 / 255.0, alpha: 1)
+    static let inputHint = UIColor(white: 0.6, alpha: 1)
+    static let inputUnderline = UIColor(
+        red: 128.0 / 255.0,
+        green: 203.0 / 255.0,
+        blue: 196.0 / 255.0,
+        alpha: 1
+    )
+    static let inputIdleUnderline = UIColor(white: 0.42, alpha: 1)
+    // Theme.DeviceDefault's AlertDialog on this TV is teal-tinted, not the
+    // #303030 used by activities: #324248 surface, #3F4E53 selected row.
+    static let dialogBackground = UIColor(
+        red: 50.0 / 255.0,
+        green: 66.0 / 255.0,
+        blue: 72.0 / 255.0,
+        alpha: 1
+    )
+    static let dialogTitle = UIColor(
+        red: 200.0 / 255.0,
+        green: 203.0 / 255.0,
+        blue: 204.0 / 255.0,
+        alpha: 1
+    )
+    static let dialogFocusedBackground = UIColor(
+        red: 63.0 / 255.0,
+        green: 78.0 / 255.0,
+        blue: 83.0 / 255.0,
+        alpha: 1
+    )
     static let mediaBrokenBackground = UIColor(white: 32.0 / 255.0, alpha: 1)
-    static let plainFocusedBackground = UIColor(white: 0.25, alpha: 1)
+    static let plainFocusedBackground = dialogFocusedBackground
 
     /// Android `MainActivity`/`ScenarioActivity` use 48 x 36 dp.
     static var horizontalInset: CGFloat { dp(48) }
@@ -59,30 +83,41 @@ enum StubTheme {
     /// scroller even on television; the status line below uses `stackGap`.
     static var fixedStackGap: CGFloat { dp(10) }
 
-    static func titleLabel(_ text: String) -> UILabel {
+    /// Android TextView line boxes measured from the TV's accessibility tree:
+    /// 24 sp -> 65 px, 18 sp -> 49 px, 16 sp -> 43 px, 15 sp -> 41 px. UIKit's
+    /// SF metrics are shorter, so single-line labels pin the measured height
+    /// to keep every following row on the same pixel as Android.
+    static func titleLabel(_ text: String, lineHeight: CGFloat? = nil) -> UILabel {
         let label = UILabel()
         label.text = text
         label.textColor = foreground
         label.font = .systemFont(ofSize: dp(24), weight: .bold)
         label.numberOfLines = 0
+        if let lineHeight {
+            label.heightAnchor.constraint(equalToConstant: dp(lineHeight)).isActive = true
+        }
         return label
     }
 
     static func label(
         _ text: String,
         size: CGFloat = 18,
-        weight: UIFont.Weight = .regular
+        weight: UIFont.Weight = .regular,
+        lineHeight: CGFloat? = nil
     ) -> UILabel {
         let label = UILabel()
         label.text = text
         label.textColor = foreground
         label.font = .systemFont(ofSize: dp(size), weight: weight)
         label.numberOfLines = 0
+        if let lineHeight {
+            label.heightAnchor.constraint(equalToConstant: dp(lineHeight)).isActive = true
+        }
         return label
     }
 
     static func statusLabel(_ text: String = "status=idle") -> UILabel {
-        let label = label(text, size: 16)
+        let label = label(text, size: 16, lineHeight: 21.5)
         label.alpha = 0.85
         return label
     }
@@ -118,8 +153,10 @@ enum StubTheme {
         background.layer.cornerRadius = dp(2)
         button.insertSubview(background, at: 0)
         NSLayoutConstraint.activate([
-            background.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            background.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            // The TV 9-patch leaves 4 dp transparent on the left/right too:
+            // Android paints x=104..1815 inside the 96..1824 content column.
+            background.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: dp(4)),
+            background.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -dp(4)),
             background.topAnchor.constraint(equalTo: button.topAnchor, constant: dp(6)),
             background.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -dp(6)),
         ])
@@ -150,7 +187,9 @@ final class StubAppBar: UIView {
 
         label.text = "Impresario Stub"
         label.textColor = StubTheme.appBarForeground
-        label.font = .systemFont(ofSize: StubTheme.dp(20), weight: .semibold)
+        // The Android action bar title measures 14 sp: a 19 px cap height and
+        // a 195 px run for "Impresario Stub".
+        label.font = .systemFont(ofSize: StubTheme.dp(14), weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
@@ -161,9 +200,10 @@ final class StubAppBar: UIView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
+        // Android draws a 14 px elevation gradient under the black bar.
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.55
-        layer.shadowRadius = StubTheme.dp(4)
+        layer.shadowOpacity = 0.35
+        layer.shadowRadius = StubTheme.dp(6)
         layer.shadowOffset = CGSize(width: 0, height: StubTheme.dp(2))
     }
 
@@ -329,7 +369,7 @@ final class StubButton: UIButton {
     private func applyFocusAppearance(_ focused: Bool) {
         if plainStyle {
             backgroundColor = focused ? StubTheme.plainFocusedBackground : .clear
-            setTitleColor(StubTheme.foreground, for: .normal)
+            setTitleColor(StubTheme.buttonTitle, for: .normal)
         } else {
             updateVisualState()
         }

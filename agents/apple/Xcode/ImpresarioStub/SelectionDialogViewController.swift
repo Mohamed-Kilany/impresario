@@ -29,19 +29,26 @@ final class SelectionDialogViewController: UIViewController {
         view.backgroundColor = .clear
 
         let backdrop = BackdropControl()
-        backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        // Android dims the activity behind the dialog to #131313 (48 * 0.4).
+        backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.6)
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addTarget(self, action: #selector(cancel), for: .touchUpInside)
         view.addSubview(backdrop)
 
         card.backgroundColor = StubTheme.dialogBackground
-        card.layer.cornerRadius = StubTheme.dp(4)
+        card.layer.cornerRadius = StubTheme.dp(2)
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.6
+        card.layer.shadowRadius = StubTheme.dp(12)
+        card.layer.shadowOffset = .zero
         card.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(card)
 
         let title = StubTheme.titleLabel(dialogTitle)
-        title.font = .systemFont(ofSize: StubTheme.dp(20), weight: .bold)
+        title.font = .systemFont(ofSize: StubTheme.dp(24), weight: .medium)
+        title.textColor = StubTheme.dialogTitle
         title.translatesAutoresizingMaskIntoConstraints = false
+        title.heightAnchor.constraint(equalToConstant: StubTheme.dp(27)).isActive = true
         card.addSubview(title)
 
         let rows = UIStackView()
@@ -52,12 +59,6 @@ final class SelectionDialogViewController: UIViewController {
         card.addSubview(rows)
 
         for (index, option) in options.enumerated() {
-            if index > 0 {
-                let separator = UIView()
-                separator.backgroundColor = StubTheme.dialogSeparator
-                separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
-                rows.addArrangedSubview(separator)
-            }
             let button = StubTheme.plainButton(option)
             button.titleInset = StubTheme.dp(24)
             button.tag = index
@@ -68,7 +69,8 @@ final class SelectionDialogViewController: UIViewController {
             }
         }
 
-        let width = card.widthAnchor.constraint(equalToConstant: StubTheme.dp(560))
+        // Android's dialog measures 496 x 205 dp on the 1080p TV.
+        let width = card.widthAnchor.constraint(equalToConstant: StubTheme.dp(496))
         width.priority = .defaultHigh
         let maximumWidth = card.widthAnchor.constraint(
             lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor,
@@ -88,12 +90,12 @@ final class SelectionDialogViewController: UIViewController {
 
             title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: StubTheme.dp(24)),
             title.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -StubTheme.dp(24)),
-            title.topAnchor.constraint(equalTo: card.topAnchor, constant: StubTheme.dp(20)),
+            title.topAnchor.constraint(equalTo: card.topAnchor, constant: StubTheme.dp(18)),
 
             rows.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             rows.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            rows.topAnchor.constraint(equalTo: title.bottomAnchor, constant: StubTheme.dp(12)),
-            rows.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            rows.topAnchor.constraint(equalTo: title.bottomAnchor, constant: StubTheme.dp(8)),
+            rows.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -StubTheme.dp(8)),
         ])
     }
 
@@ -109,6 +111,9 @@ final class SelectionDialogViewController: UIViewController {
         #if os(tvOS)
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
+        // Android's ListView marks the first row selected as soon as the
+        // dialog opens, before any D-pad movement.
+        firstOption?.backgroundColor = StubTheme.plainFocusedBackground
         #endif
     }
 
