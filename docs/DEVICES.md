@@ -383,14 +383,15 @@ does not install, launch or sign.
   for the session and rerun (there is no CLI command that stores the secret).
   No install/launch/CDP is verified on this TV. The 2026-10-21 four-device run used the web connector
   path, not `WebOsTransport`.
-- **Apple TV** – `192.168.93.19`. AirPlay `/info` reports `AppleTV5,3`
-  (Apple TV HD), `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build `23J582`;
-  TCP 7000, 62078 and 49152 are open. This proves only network identity.
-  AirPlay does not expose the UDID, and a direct lockdown query on 62078 closed
-  without a response. A Mac on the same LAN must pair it with Xcode, enable UI
-  automation, sign and install the runner, and provide the runner endpoint
-  before `AppleTransport` can connect; the GitHub macOS runner cannot route to
-  `192.168.93.x`. Physical tvOS is the active P0 path, not verified here.
+- **Apple TV** – now `10.102.93.222` (was `192.168.93.19` on 2026-10-25).
+  AirPlay `/info` reports `AppleTV5,3` (Apple TV HD), `RAMA (4)`, device ID
+  `B6:FD:1D:0C:99:3C`, build `23J582`; the developer record reports UDID
+  `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. The agent host, stub and runner
+  are installed, the personalized DDI is mounted, and `testServe` passed with a
+  real handshake/shutdown over the direct-RSD path (I-150). `AppleTransport`
+  itself still uses the macOS `xcodebuild`/`iproxy` route, so `device check` on
+  this Windows host is not yet the proven path. Full tvOS actions/focus and
+  playback are not verified.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; `options.key_dispatch` picks the
@@ -960,11 +961,12 @@ Three layers, with different reachability:
 * the **Xcode targets** are compiled unsigned by the `Apple Xcode` GitHub
   Actions job. They are not executed in CI: the user rejected simulator tests
   on 2026-10-25 and the simulator workflow/scripts were removed (§3.2);
-* a **physical Apple TV or iPhone** still needs macOS/Xcode on the same LAN for
-  pairing and XCUITest execution (§3.3). Physical tvOS is the active P0 path;
-  GitHub-hosted runners cannot reach `192.168.93.x`, and Apple exposes no
-  Windows/Linux XCUITest runtime. No simulator or hardware execution is claimed
-  (`docs/STATUS.md` HD-1/I-149).
+* a **physical Apple TV** has now run the agent on hardware from Windows:
+  RemotePairing/RSD install, DDI mount and direct-RSD XCUITest startup, ending
+  in a real handshake and `Shutdown` (§3.3, I-150). iOS on hardware is still
+  unverified. GitHub-hosted runners cannot reach the LAN, so the device run is
+  local. Full tvOS actions, focus and playback remain open
+  (`docs/STATUS.md` HD-1).
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1002,11 +1004,29 @@ job cannot reach the LAN Apple TV, and compilation is not execution. The tvOS
 simulator loopback branch in `config.rs`/`AppleTransport` remains untested
 support only; it is not a test result.
 
-### 3.3 Physical device (macOS host on the LAN)
+### 3.3 Physical device (Windows Rust path proven; macOS Xcode build optional)
 
-Physical builds need Xcode and a development team. Nothing in this repository
-proves any of the following, because no paired macOS/Xcode host is attached yet
-(the Apple TV itself is reachable at `192.168.93.19`).
+**Proven on 2026-10-26 (I-150).** The Apple TV `RAMA (4)` at
+`10.102.93.222` (`AppleTV5,3`, tvOS 26.1 build `23J582`, UDID
+`a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) ran the full local path without a
+Mac: the unsigned GitHub artifact from `Apple Xcode` run `40286509471` at
+`89d35e3` was signed locally with the user's free-team profiles, installed
+through a pure-Rust RemotePairing -> RSD -> AFC -> installation-proxy pipeline,
+the personalized tvOS Developer Disk Image was mounted, and the runner started
+through a direct outer-RSD `testmanagerd`/`dtservicehub` connection.
+`AgentRunnerTests.testServe()` passed, the agent accepted a real gRPC
+`Handshake` on `50062` (session `47123c1c-df6e-44b8-8efd-0043cdb3d001`,
+capabilities `2,3,5,7,8,9,10,11`) and completed `Shutdown`. The evidence run
+used temporary Rust binaries; porting that pipeline into `AppleTransport` and
+replacing its `xcodebuild`/`iproxy` shell-out is still open (HD-2), as are the
+full action matrix, `XCUIRemote` focus and playback/probes.
+
+The signing profiles were user-controlled and expire `2026-11-02`; the current
+build still uses the old bundle IDs. Regenerate profiles after the product
+rename. The pair record used by the Rust tunnel was originally created by
+pymobiledevice3; the product still needs pure-Rust pairing creation.
+
+Building the payload on a Mac (optional for local development):
 
 ```bash
 brew install xcodegen
@@ -1026,25 +1046,22 @@ xcodebuild build-for-testing -scheme AgentUITests-tvOS \
   -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
 ```
 
-Physical device runs need a development team (set it in Xcode or a local
-xcconfig; the repo pins none) and the device must trust the host. A free Apple
-ID personal team works, but its provisioning profile expires after 7 days and
-the apps must be reinstalled; this is the selected P0 signing path. Sign in
-interactively on the Mac; never store or pass a plaintext Apple ID password.
-The unsigned GitHub artifact cannot be installed directly. `xcrun devicectl
-list devices` / `xcrun xctrace list devices` prints the udids (`xcodebuild
--destination 'platform=iOS,id=<udid>'` takes the same value).
+Physical builds need a development team (set it in Xcode or a local xcconfig;
+the repo pins none) and the device must trust the host. A free Apple ID
+personal team works, but its provisioning profile expires after 7 days and the
+apps must be reinstalled. Sign in interactively on the Mac; never store or pass
+a plaintext Apple ID password. The unsigned GitHub artifact cannot be installed
+directly. `xcrun devicectl list devices` / `xcrun xctrace list devices` prints
+the udids (`xcodebuild -destination 'platform=iOS,id=<udid>'` takes the same
+value).
 
 The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
-device ID `B6:FD:1D:0C:99:3C`, build `23J582` at `192.168.93.19`. Network
-identity is not pairing. Before a run: put the Mac and TV on the same LAN with
-IPv6 enabled, enable `Settings > Remotes and Devices > Remote App and Devices`,
-pair from Xcode's Devices window and accept the prompt on the TV, then enable
-Developer/UI Automation if the tvOS build exposes it. The first runner start
-asks for local-network access; tvOS has no XCTest `tap`, so grant that one
-prompt with the remote (`SystemAlerts` logs it rather than guessing focus). Put
-the Xcode-reported address in `connection.endpoint` and the UDID in
-`connection.udid`.
+device ID `B6:FD:1D:0C:99:3C`, build `23J582`; it moved from `192.168.93.19`
+to `10.102.93.222`. Developer Mode was enabled and the device trusted the
+host. The first runner start asks for local-network access; tvOS has no XCTest
+`tap`, so grant that one prompt with the remote (`SystemAlerts` logs it rather
+than guessing focus). Put the runner address in `connection.endpoint` and the
+UDID in `connection.udid`.
 
 The wizard's physical-tvOS branch is available on Windows and macOS, but it
 only writes and validates the definition:
@@ -1053,15 +1070,15 @@ only writes and validates the definition:
 impresario device wizard --workspace
 # Platform: tvos
 # Physical Apple TV UDID: ...
-# Runner endpoint (Mac LAN HOST:PORT, usually :50062): 192.168.93.x:50062
+# Runner endpoint (LAN HOST:PORT, usually :50062): 10.102.93.222:50062
 ```
 
 It writes `platform: tvos`, `connection.transport: network`, `udid` and
-`endpoint`. The endpoint is the signed XCUITest runner's LAN address, **not**
-the Apple TV's IP (`192.168.93.19`). On Windows the live check is explicitly
-skipped; `device check` also reports `DEVICE_UNAVAILABLE` because
-`AppleTransport` needs macOS/Xcode. Pairing, signing, installation and runner
-startup happen on the Mac.
+`endpoint`. The endpoint is the XCUITest runner's LAN address, which for the
+current on-device runner is the Apple TV's own address (`10.102.93.222`), not a
+Mac. On Windows the wizard's live check is still skipped and `device check`
+reports `DEVICE_UNAVAILABLE` because `AppleTransport` retains its macOS path;
+the proven Windows runner/install path has not been wired into the product.
 
 Runner environment (the `.xctestrun`'s `TestingEnvironmentVariables`; the
 master drains the `xcodebuild` output, where the runner logs its port and
@@ -1106,7 +1123,7 @@ devices:
     connection:
       transport: network
       udid: "<udid>"
-      endpoint: "192.168.93.x:50062"   # Mac runner LAN address, not the TV IP
+      endpoint: "10.102.93.222:50062"  # proven on-device runner (AppleTV5,3), I-150
 ```
 
 ```bash
@@ -1123,8 +1140,10 @@ changes both sides); a physical iOS device or Apple TV over **WLAN** uses
 `connection.endpoint` — the address the runner logs at start
 (`impresario agent: addresses en0=…`). macOS only: without `xcodebuild`/
 `iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84). These host tools
-are a **recorded D-19 gap**; replacing them with the Rust `idevice` path
-remains open (I-149/HD-2).
+are a **recorded D-19 gap**. A pure-Rust RemotePairing/RSD/AFC/install and
+direct-RSD XCUITest path has been proven on the Apple TV in temporary binaries
+(I-150); wiring it into `AppleTransport` and removing the host-tool route
+remains open (HD-2).
 
 Clean state per test is a host-side uninstall + reinstall (`clear_data` +
 the app platform's `package`, I-84); the tool is chosen automatically

@@ -511,7 +511,8 @@ Errors prevent execution; lints are warnings:
 | `IMP-DSL-043` | lint: piece is never used by a step |
 | `IMP-DSL-044` | lint: stage is never performed by an Act |
 | `IMP-DSL-045` | lint: theatre has no stage reachable from an Act |
-| `IMP-DSL-046` | lint: variable is never referenced |
+| `IMP-DSL-046` | lint: duplicate `Audience:` declaration (the last one wins) |
+| `IMP-DSL-057` | lint: variable is never referenced |
 | `IMP-DSL-047` | lint: `Examples:` column is never used |
 | `IMP-DSL-048` | lint: duplicate `Var:` declaration (the last one wins) |
 | `IMP-DSL-049` | lint: Act without `Platforms:` uses a piece with no selector for a configured platform (add `Platforms:` or selectors) |

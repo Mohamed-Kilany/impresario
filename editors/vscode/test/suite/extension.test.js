@@ -75,7 +75,7 @@ describe("Impresario standalone extension", function () {
     );
     const codes = diagnostics.map((diagnostic) => diagnostic.code);
     for (const code of [
-      "IMP-DSL-046",
+      "IMP-DSL-057",
       "IMP-DSL-031",
       "IMP-DSL-037",
       "IMP-DSL-032",

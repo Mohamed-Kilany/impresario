@@ -109,6 +109,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Apple ID account used for free provisioning (global one-time login).
+    Account(crate::account::AccountArgs),
     /// Device definitions: add, edit, list, check, import, export.
     #[command(alias = "devices")]
     Device {
@@ -402,6 +404,13 @@ pub fn run_with(argv: &[String]) -> i32 {
             }
         }
     }
+    // The Apple account is machine-global and must work even when the current
+    // workspace config is missing or invalid. Dispatch it before resolving a
+    // workspace.
+    if let Some(Command::Account(args)) = cli.command.as_ref() {
+        return crate::account::run(args, &home);
+    }
+
     let (base, base_source) = workspace_base(&cli.workspace, &home);
     let config_path = resolve_path(&base, &cli.config, "impresario.config");
     let devices_path = resolve_path(&base, &cli.devices_config, "impresario.devices.config");
@@ -418,6 +427,8 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Tests(args) => crate::tests_cmd::run(&base, &config_path, args),
         Command::Fmt { paths, check } => cmd_fmt(&base, &config_path, paths, *check),
         Command::Tags { json } => cmd_tags(&base, &config_path, *json),
+        // Handled before workspace resolution.
+        Command::Account(_) => EXIT_INFRA,
         Command::Device { command } => match command {
             DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)

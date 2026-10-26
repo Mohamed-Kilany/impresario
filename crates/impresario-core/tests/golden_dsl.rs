@@ -22,7 +22,11 @@ fn formatter_golden_files() {
         ("messy/login.play", "expected/login.play"),
     ] {
         let source = std::fs::read_to_string(fixture(input)).expect("input fixture");
-        let want = std::fs::read_to_string(fixture(expected)).expect("expected fixture");
+        let want = std::fs::read_to_string(fixture(expected))
+            .expect("expected fixture")
+            // Git may check fixtures out with CRLF on Windows (core.autocrlf);
+            // the formatter always emits LF.
+            .replace("\r\n", "\n");
         let formatted = format_source(&source, &fixture(input)).expect("formatter succeeds");
         assert_eq!(formatted, want, "{input} does not match {expected}");
         let again = format_source(&formatted, &fixture(input)).expect("formatted output parses");

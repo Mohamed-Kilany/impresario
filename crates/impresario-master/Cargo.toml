@@ -19,7 +19,10 @@ impresario-core = { path = "../impresario-core" }
 impresario-language = { path = "../impresario-language" }
 impresario-clients = { path = "../impresario-clients" }
 impresario-proto = { path = "../impresario-proto" }
+impresario-apple-auth = { path = "../impresario-apple-auth" }
 clap.workspace = true
+rpassword.workspace = true
+zeroize.workspace = true
 clap_complete.workspace = true
 tokio = { workspace = true, features = ["io-std"] }
 tokio-util.workspace = true

@@ -40,18 +40,24 @@ Both run on Linux and macOS. `swift test` starts a real grpc-swift server on a
 loopback port and speaks the full protocol (handshake, commands, logs,
 screenshots, shutdown), so the wire layer is verified without any Apple device.
 
-### 1.1 Xcode execution is unverified; physical tvOS is P0
+### 1.1 Physical tvOS executes; iOS hardware and the full play are unverified
 
 Apple simulator testing is out of scope by user direction. The simulator
 workflow, helper scripts and smoke test were removed. `AgentCore`/`AgentService`
 remain unit-tested on Linux and the unsigned `Apple Xcode` CI job compiles the
-host/stub/UI-test targets, but nothing in this repository claims that XCUITest
-executed on a simulator or a device. The Apple TV at `192.168.93.19` is
-reachable, but no macOS/Xcode host is attached, AirPlay does not expose its
-UDID and no signed runner is installed. Physical tvOS still requires a Mac with
-Xcode on the same LAN (section 6) and remains HD-1; GitHub-hosted runners
-cannot route to a home LAN. The config wizard accepts `tvos` and writes the UDID
-plus the runner's LAN endpoint, but it skips the live check on non-macOS hosts.
+host/stub/UI-test targets.
+
+On 2026-10-26 the physical Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1,
+UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`, `10.102.93.222`) ran
+`AgentRunnerTests.testServe()` after a local Windows-first pipeline installed
+the signed host, stub and runner. The personalized DDI was mounted, the runner
+was started over the direct outer-RSD `testmanagerd`/`dtservicehub` path, the
+agent bound `50062`, a real gRPC `Handshake` was accepted and `Shutdown`
+completed the test (I-150). This did **not** use a Mac or a simulator. The
+pipeline is still in temporary Rust binaries; `AppleTransport` retains its
+macOS `xcodebuild`/`iproxy` route, the pair record came from an earlier
+pymobiledevice3 setup, and the full action/focus/playback matrix plus the
+local-network prompt are still open (HD-1/HD-2).
 
 Dependencies are pinned (`Package.resolved` is committed):
 
@@ -222,17 +228,31 @@ that the permission is remembered and runs need no human. `IMPRESARIO_NO_BONJOUR
 skips the advertisement if a network blocks Bonjour; the master can always
 connect to `agent_address`.
 
-### 6.1 Physical-tvOS sequence (not run on this host)
+### 6.1 Physical-tvOS sequence (executed on 2026-10-26)
 
-On a macOS host with Xcode: pair the Apple TV (`Settings > Remotes and Devices
-> Remote App and Devices`), sign the host, stub and UI-test targets with a
-personal team (free Apple ID, 7-day profile), install them, and start
-`AgentRunnerTests/testServe`. Then run `impresario device wizard` on the master
-host, choose `tvos`, enter the UDID from `xcrun devicectl list devices` and the
-runner's LAN `HOST:PORT` (not the Apple TV's IP). The wizard writes
-`transport: network`; its live check is skipped on non-macOS hosts. The
-unsigned GitHub Actions artifact cannot be installed directly. This sequence
-has not been executed here.
+The sequence that produced the hardware evidence was:
+
+1. `Apple Xcode` run `40286509471` at `89d35e3` built the unsigned bundles.
+2. The user's existing free-team profiles and identity signed the host, stub
+   and runner locally (local `identity.p12` and profiles; the password is
+   supplied interactively and never stored); `embedded.mobileprovision` is
+   sealed before signing.
+3. A pure-Rust RemotePairing tunnel on `_remotepairing._tcp:49152` uploaded the
+   three `.ipa`s over AFC and installed them with the installation proxy.
+4. The personalized tvOS DDI for `AppleTV5,3` (`27A9269`) was mounted.
+5. The runner was launched through the outer-RSD
+   `com.apple.dt.testmanagerd.remote` and
+   `com.apple.instruments.dtservicehub` services; the runner's
+   `SystemAlerts` calls are skipped on tvOS.
+6. `testServe()` passed, the agent listened on `50062`, a real gRPC
+   `Handshake` was accepted and `Shutdown(terminate_app=true)` returned.
+
+For config, run `impresario device wizard` on any host, choose `tvos`, enter
+the UDID and the runner endpoint (`10.102.93.222:50062` for the current
+on-device runner). The wizard writes `transport: network`; its live check is
+skipped on non-macOS hosts. The profiles expire on 2026-11-02 and the product
+rename requires regenerating them. See `docs/DEVICES.md` §3.3 and
+`docs/DECISIONS.md` I-150.
 
 ## 7. Semantics worth knowing (details in TASK.md §5–6, docs/PARITY.md)
 
@@ -267,8 +287,10 @@ has not been executed here.
 ## 9. Verification status
 
 `swift build`/`swift test` run on Linux (the `CI` workflow). The Xcode targets
-are compiled unsigned by `Apple Xcode`; they are **not executed** here or in
-CI, because simulator testing is out of scope and no macOS host is paired
-(section 1.1). Physical Apple TV installation, free-7-day signing,
-local-network permission and the remote pairing path remain on the macOS/LAN
-checklist (`docs/STATUS.md` HD-1 and `docs/DEVICES.md` section 3.3).
+are compiled unsigned by `Apple Xcode`; the physical tvOS execution above ran
+the signed bundles under XCUITest on the Apple TV, not in CI. Installation,
+free-7-day signing and runner startup are proven (I-150); the full action /
+`XCUIRemote` / playback matrix, the local-network prompt, the Swift loopback
+hook and the product-side transport port remain open (`docs/STATUS.md` HD-1 and
+HD-2, `docs/DEVICES.md` §3.3). The global Apple ID wizard is implemented and
+unit-tested offline; no live Apple login/2FA has run yet (I-151).

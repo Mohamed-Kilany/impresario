@@ -84,7 +84,8 @@ overrides.
 | `IMP-DSL-043` | lint: piece is never used by a step | unused table row / `Pieces:` entry |
 | `IMP-DSL-044` | lint: stage is never reachable from an Act | unreferenced `.theatre` stage |
 | `IMP-DSL-045` | lint: theatre has no stage reachable from an Act | unreferenced theatre |
-| `IMP-DSL-046` | lint: variable is never referenced | unused `Var:` |
+| `IMP-DSL-046` | lint: duplicate `Audience:` declaration (last wins) | two `Audience:` lines |
+| `IMP-DSL-057` | lint: variable is never referenced | unused `Var:` |
 | `IMP-DSL-047` | lint: `Examples:` column is never used | column not bound to a parameter or `${example.*}` |
 | `IMP-DSL-048` | lint: duplicate `Var:` declaration (last wins) | two `Var: USER` lines |
 | `IMP-DSL-049` | lint: Act has no `Platforms:` but a used piece has no selector for a configured platform | Android-only piece in an Act planned for web and Android |

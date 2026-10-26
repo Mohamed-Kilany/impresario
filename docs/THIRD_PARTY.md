@@ -32,7 +32,7 @@ facts only).
 | `idevice` | 0.1.68 | MIT | iOS/tvOS: usbmuxd client, lockdown, pairing, AFC, install, DDI, DVT, RSD | chosen — I-95 |
 | `apple-codesign` | 0.29.0 | **MPL-2.0** | Mach-O / `.app` / `.ipa` signing, entitlements | chosen, **flagged to the user** (weak copyleft, unmodified dependency) — I-96 |
 | `app-store-connect` | 0.7.0 | Apache-2.0 OR MIT | App Store Connect API (certs/profiles/devices) | candidate — I-96(b) |
-| `isideload` | 0.5.0 | MIT | free-Apple-ID sideloading prior art (not a dependency — studied) | reference |
+| `isideload` | 0.5.0 | MIT | free-Apple-ID auth/anisette/developer prior art; the `auth`/`anisette`/`dev`/`util` subset is vendored as `impresario-apple-auth` | vendored - I-151 |
 | `rusbmux` | 0.3.0 | MIT OR Apache-2.0 | pure-Rust usbmuxd over nusb (candidate replacement for Apple's service) | candidate, experimental (190 downloads; needs hardware) |
 | `libadb` | 0.6.0 | MIT | Android: direct TCP/USB ADB, TLS/RSA auth, Android 11+ pairing (SPAKE2), shell v2, sync, install, instrumentation, forwarding, logcat, screencap | chosen - I-121 (supersedes `adb_client`, I-97) |
 | `nusb` | 0.1.14 | Apache-2.0 OR MIT | Android USB backend for `libadb` (WinUSB on Windows) | chosen - I-121 |
@@ -41,7 +41,7 @@ facts only).
 | `curve25519-dalek` | 5.0.0 | BSD-3-Clause | pairing: Edwards point/scalar arithmetic (S-1 plan) | **not used** - own pairing superseded by `libadb` (I-121) |
 | `sha2` | 0.10.9 | MIT OR Apache-2.0 | managed Chromium archive SHA-256, webOS package cache, Tizen WGT digests and signing-cache keys | chosen - I-123/I-139/I-142 |
 | `hkdf` | 0.13.0 | MIT OR Apache-2.0 | pairing: AES key derivation (S-1 plan) | **not used** - own pairing superseded (I-121) |
-| `aes-gcm` | 0.11.1 | Apache-2.0 OR MIT | pairing: peer-info encryption (S-1 plan) | **not used** - own pairing superseded (I-121) |
+| `aes-gcm` | 0.11.1 | Apache-2.0 OR MIT | global Apple session/anisette encryption (AES-256-GCM); earlier Android peer-info plan was superseded | chosen - I-151 (pairing use not shipped, I-121) |
 | `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | pairing TLS 1.3 channel (S-1 plan; transitive via `libadb` only) | **not a direct dependency** - I-121 |
 | `tokio-rustls` | 0.26.6 | MIT OR Apache-2.0 | async TLS glue (S-1 plan) | **not used** - I-121 |
 | `rcgen` | =0.14.10 | MIT OR Apache-2.0 | generated test certificates for Tizen RSA/ECDSA signing tests (dev-dependency only) | chosen, test-only — I-141 |
@@ -61,7 +61,13 @@ facts only).
 | `flate2` | =1.1.4 | MIT OR Apache-2.0 | deterministic gzip for webOS `.ipk` | chosen — I-139 |
 | `tar` | =0.4.46 | MIT OR Apache-2.0 | deterministic ustar for webOS `.ipk` | chosen — I-139 |
 | `ar` | =0.9.0 | MIT | deterministic `ar` archive for webOS `.ipk` | chosen — I-139 |
-| `p12-keystore` | =0.4.1 | MIT OR Apache-2.0 | import Tizen author/distributor PKCS#12 profiles | chosen — I-141 |
+| `p12-keystore` | =0.4.1 | MIT OR Apache-2.0 | import Tizen author/distributor PKCS#12 profiles; local Apple signing identity | chosen — I-141/I-150 |
+| `rpassword` | =7.4.0 | Apache-2.0 | hidden Apple ID password prompt (one-shot, never stored) | chosen - I-151 |
+| `zeroize` | =1.9.1 | Apache-2.0 OR MIT | wipe the Apple ID password buffer after login | chosen - I-151 |
+| `reqwest` | 0.13.5 | MIT OR Apache-2.0 | GrandSlam/anisette/developer HTTPS; `rustls` + `ring` on every platform (no SChannel TLS, no OpenSSL) | chosen - I-151 |
+| `srp` | 0.7.0-rc.3 (patched) | MIT OR Apache-2.0 | Apple ID SRP-6a authentication | chosen, local patch - I-151; four `.as_slice()` coercions for `subtle` 2.6 |
+| `isideload` (vendored subset) | 0.5.0 | MIT | Apple ID GrandSlam/auth, anisette, developer teams/devices/App IDs/profiles, storage; vendored as `impresario-apple-auth` | chosen - I-151; `sideload`, signing and every LGPL dependency removed |
+| `apple-codesign-quick` | - | LGPL-2.1-or-later | prior-art Apple signing helper | **rejected** - LGPL; signing is reimplemented with `apple-codesign` (I-96/I-150) |
 | `ua-cryptography-xml-c14n` | =0.1.6 | MIT | exclusive XML C14N for Tizen XML-DSig | chosen — I-141 |
 | `x509-parser` | =0.18.0 | MIT OR Apache-2.0 | Tizen certificate subject, validity and DUID SAN inspection | chosen — I-141 |
 | `roxmltree` | =0.21.1 | MIT OR Apache-2.0 | Tizen `config.xml` and signature XML parsing | chosen — I-141 |

@@ -12,38 +12,52 @@ packages, SDKs); no probe claim is hardware-verified.
 Hardware access changed on 2026-10-25: a Samsung Tizen TV, an LG webOS TV and
 an Apple TV are reachable on the LAN. Tizen completed `device check` (SDB
 handshake without an AUTH challenge, capabilities, DUID and app list); the LG
-TV serves its Developer Mode key
-but not the passphrase, and Apple TV identity is readable over AirPlay. No
-install, launch, playback or probe acceptance has run on these TVs yet: the LG
-passphrase, a Tizen signing profile and a macOS/Xcode host are still missing.
-Reachability alone closes no HD item.
+TV serves its Developer Mode key but not the passphrase. The Apple TV moved to
+`10.102.93.222` on 2026-10-26 and now has a proven physical tvOS path: signed
+agent/stub/runner installed with a pure-Rust RemotePairing/RSD/AFC pipeline,
+`AgentRunnerTests/testServe` passed under XCUITest, and a real gRPC
+`Handshake` + `Shutdown` completed on port 50062 (I-150). The LG passphrase and
+a Tizen signing profile are still missing, and no playback or probe acceptance
+has run on any TV. Reachability alone closes no HD item.
 
 ## Current priority and parked work (2026-10-26)
 
-Physical tvOS is the active P0 path: add-device wizard -> pairing -> unsigned
-GitHub Actions build -> free-Apple-ID (7-day) signing -> install the
-agent/stub -> run the example. The Apple TV at `192.168.93.19` is reachable,
-but this Windows host has no macOS/Xcode, Apple Mobile Device Support, paired
-UDID or signed agent. No step after the unsigned CI build has run, so no
-pairing, install, launch or playback evidence is claimed. The wizard's tvOS
-branch is exercised by unit/scripted tests and one isolated CLI smoke that
-wrote `platform: tvos`, `transport: network`, `udid` and `endpoint`; that is
-config creation only, not pairing.
+Physical tvOS was the P0 blocker and its execution path is now proven. On
+2026-10-26 the Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 build `23J582`,
+UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) was reached at
+`10.102.93.222`. The unsigned `Apple Xcode` artifact from run `40286509471` at
+`89d35e3` was signed locally with the user's free-team profiles and installed
+over a pure-Rust RemotePairing -> RSD -> AFC -> installation-proxy pipeline.
+The personalized tvOS Developer Disk Image mounted, the runner was started over
+a direct outer-RSD `testmanagerd`/`dtservicehub` path, and
+`AgentRunnerTests.testServe()` passed: the agent bound `0.0.0.0:50062`, a real
+gRPC `Handshake` was accepted (session
+`47123c1c-df6e-44b8-8efd-0043cdb3d001`, `AppleTV5,3`, tvOS 26.1, 1920x1080,
+capabilities `2,3,5,7,8,9,10,11`) and `Shutdown` completed the test. The runner
+no longer crashes in `SystemAlerts` on tvOS. This is startup/serve evidence,
+not a full tvOS play: the action/check matrix, `XCUIRemote` focus and the
+local-network prompt were not exercised.
+
+The signing, DDI and XCUITest orchestration used temporary Rust binaries, not
+the product; `AppleTransport` still has its macOS `xcodebuild`/`iproxy`
+shell-out. The pairing record was created earlier by pymobiledevice3, so
+pure-Rust pairing creation (as opposed to verification/tunnelling) remains
+open. The global Apple ID wizard is implemented and unit-tested offline, but no
+live Apple login/2FA has been exercised yet.
 
 The TASK-3 Phase 2 actors/groups/audience/stage-resolution work is parked on
 branch `wip/phase2-tvos-p0` (based on `4e44203`), with the Rust gates green.
-It is parked, not abandoned; resume it after the tvOS acceptance flow or if the
-macOS host remains unavailable. The same branch carries the physical-tvOS
-wizard branch described below.
+It is parked, not abandoned; resume it after the Apple product path is ported
+and the full tvOS play runs. The same branch carries the physical-tvOS work.
 
 ## Environment constraints
 
 - Host: Windows. No local Xcode. `Apple Xcode` compiles the unsigned Xcode
   targets on GitHub's hosted `macos-15` runner; it does not execute them.
-  Latest green run is 40267731478 at `4e44203` (65,186,309-byte
-  `impresario-apple-unsigned` artifact, downloaded here; none of the three
-  tvOS `.app` bundles has a top-level `_CodeSignature` or
-  `embedded.mobileprovision`). Apple simulator testing was rejected by the
+  Latest green run is 40286509471 at `89d35e3` (the
+  `impresario-apple-unsigned` artifact replaced the `40267731478`/`4e44203`
+  build and was downloaded here; the three tvOS `.app` bundles are unsigned).
+  The signed copies were produced locally. Apple simulator testing was rejected by the
   user on 2026-10-25 and the simulator workflow/scripts were removed (I-148
   withdrawn), so no simulator execution is claimed. The Apple **agent
   package** is built and unit-tested
@@ -51,12 +65,15 @@ wizard branch described below.
   cover `AgentCore`/`AgentService`, including the full wire protocol over
   loopback gRPC. Both halves are documented in `docs/DEVICES.md` §3; the
   physical-device checklist is in `agents/apple/README.md`.
-- Physical Apple TV execution still needs a macOS/Xcode host on the same LAN,
-  paired with the TV; a GitHub-hosted runner cannot reach `192.168.93.x`. The
-  Apple TV is reachable, but no macOS host is attached and the UDID is unknown,
-  so pairing, free-7-day signing, install and runner startup have not run. The
-  tvOS system-alert/local-network prompt and `XCUIRemote` focus path remain
-  untested (D-14/D-18 are hardware-unverified; HD-1 stays open).
+- Physical Apple TV execution no longer needs a local Mac for the runner and
+  install path used in the evidence run: a Windows Rust host performed the
+  RemotePairing tunnel, AFC upload, installation and direct-RSD XCUITest
+  startup against `10.102.93.222`. Signing still uses the user's existing
+  free-team `.p12`/profiles in a local, user-controlled step, and those profiles
+  expire on 2026-11-02 (the rename requires regenerating them). The tvOS
+  system-alert/local-network prompt and `XCUIRemote` focus path remain
+  untested (D-14/D-18 are hardware-unverified; HD-1 stays open for the full
+  play).
 - Android SDK is present (`%LOCALAPPDATA%\Android\Sdk`), JDK 24, Gradle wrapper
   distributions cached. The Android acceptance runs on a real Android TV over
   adb (`docs/DEVICES.md` §2.5). The API 36.1 x86_64 AVD was retired after a
@@ -93,7 +110,7 @@ wizard branch described below.
 | `impresario-connector` (raw CDP + es5 helper + page resolution + `launch:headless`) | done | `fixtures_suite.rs` (spec 10.3 acceptance): 1 end-to-end session on `fixtures/web/index.html` covering handshake/capabilities/device info, click/type/append/clear/longpress/select/focus/keypress/back, hidden/disabled/obscured/count/text/xpath checks, auto-wait, scroll/scrollto (window + `scroll.html` container), shadow contenteditable, app restart + helper re-injection, in-band + out-of-band screenshots (PNG header parsed), console log stream, cancel by id (CANCELLED + PROTOCOL for unknown), multi-session + shutdown + SessionClosed, TV D-pad session, `launch:headless` + `app launch`/`app restart`, auth (token metadata/body) and error mapping — all against real headless Chrome; plus the media/probe, optional-hook and Tizen-AVPlay fixtures (five integration tests without the feature, six with it); 52 unit tests (keys, script ES5 lint, pages HTTP framing, png, focus, launch, probe, source health); `cargo test -p impresario-connector` green |
 | `impresario-connector` (chromiumoxide backend) | done (feature `chromiumoxide-backend`) | same fixture suite passes with `cdp_backend=chromiumoxide`; 57 unit tests with the feature; `cargo clippy -p impresario-connector --all-targets --features chromiumoxide-backend -- -D warnings` clean |
 | Android agent (Kotlin: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`) | done — verified on a real Android TV | `agents/android/tools/run-tv-suite.ps1` acceptance on the TCL TV over Wi-Fi (`docs/DEVICES.md` §2.5): driver class **26/26 in 160 s** and wire class **2/2 in 100 s**, each in its own fresh `am instrument` process (vendor freeze timer, I-68), zero `doFreeze` on impresario packages in either window; the wire class drives the published proto over real gRPC (full action/check matrix + cancel + shutdown), and the TV semantics are I-64..I-73 (D-pad, leanback IME/hint handling, `longpress` key hold, `scrollto` budget, `background`); the touch phone path is verified live too (Galaxy A51, Android 13, Wi-Fi — `docs/DEVICES.md` §2.7, `run 20261018-103702-ee29`), including the I-75 `scrollto` end-of-container fix; app-data reset hardening landed 2026-10-19 (I-82: `clear_data` honored on `LAUNCH`, `pm clear` output verified, a refused clear degrades to a WARN + force-stop cold start — the Realme RMX3997 ROM denies shell `CLEAR_APP_USER_DATA`; live MCP re-run `20261019-064750-dca4` passed) |
-| Apple agent (Swift: `AgentCore`, `ImpresarioWire`, `AgentService` + the `agents/apple/Xcode` runner project) | done in code; Swift package tested on Linux, Xcode targets compiled unsigned; physical tvOS execution unverified (P0) | `swift build` + `swift test` green through WSL (Ubuntu 22.04, Swift 6.4.1; `docs/DEVICES.md` §3.1): **173 tests, 0 failures** in one bundle — 32 `AgentService` (loopback suites against a real grpc-swift server on an ephemeral port with the generated client: handshake/device info/capabilities including probe sources, the whole action + check matrix over the wire, cancel, heartbeats, `SessionClosed`, token auth, `StreamLogs`, second-session rejection; plus the protocol conversion and element-type map) and 141 `AgentCore` (selector parsing incl. predicates, the 6.2 key table, the 6.3 D-pad navigator, ordered dispatcher, command executor on a fake driver incl. deadlines/cancel/hidden/`clear_data` WARN, PNG builder, state/log bus, and the probe collector). Shutdown ordering is I-90 (found with `SWIFTNIO_STRICT=1`, which crashes on any task scheduled after a loop stopped), TV semantics I-86/I-87, clean state I-84. The Xcode deliverables (`project.yml`, host apps, stub fixture, UI-test runner + ObjC shim) are compiled unsigned by `Apple Xcode`; they are not executed because simulator tests are out of scope and no macOS host is attached; physical tvOS is the active P0 path but pairing, signing and install remain open (I-148/I-149). Physical tvOS pairing, the local-network prompt and the remote focus path remain on the macOS/LAN checklist (`agents/apple/README.md`, `docs/DEVICES.md` §3.3, gaps 1-2) |
+| Apple agent (Swift: `AgentCore`, `ImpresarioWire`, `AgentService` + the `agents/apple/Xcode` runner project) | done in code; Swift package tested on Linux; physical tvOS runner start/handshake verified; full tvOS play unverified | `swift build` + `swift test` green through WSL (Ubuntu 22.04, Swift 6.4.1; `docs/DEVICES.md` §3.1): **173 tests, 0 failures** in one bundle — 32 `AgentService` (loopback suites against a real grpc-swift server on an ephemeral port with the generated client: handshake/device info/capabilities including probe sources, the whole action + check matrix over the wire, cancel, heartbeats, `SessionClosed`, token auth, `StreamLogs`, second-session rejection; plus the protocol conversion and element-type map) and 141 `AgentCore` (selector parsing incl. predicates, the 6.2 key table, the 6.3 D-pad navigator, ordered dispatcher, command executor on a fake driver incl. deadlines/cancel/hidden/`clear_data` WARN, PNG builder, state/log bus, and the probe collector). Shutdown ordering is I-90 (found with `SWIFTNIO_STRICT=1`, which crashes on any task scheduled after a loop stopped), TV semantics I-86/I-87, clean state I-84. The Xcode deliverables (`project.yml`, host apps, stub fixture, UI-test runner + ObjC shim) are compiled unsigned by `Apple Xcode`. On 2026-10-26 they were signed and installed on the physical Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 `23J582`) over a pure-Rust RemotePairing/RSD/AFC pipeline; the personalized DDI was mounted, the runner started over the direct-RSD path, and `AgentRunnerTests/testServe()` passed with a real gRPC `Handshake` and `Shutdown` (I-150). Not yet verified on hardware: the full action/check matrix, `XCUIRemote` focus, the local-network prompt, the hook receiver and playback/probes (HD-1; `agents/apple/README.md` §6.1, `docs/DEVICES.md` §3.3) |
 | Live E2E (master CLI → connector → headless Chrome) | verified | `impresario run` on a scratch workspace (`launch:headless`, `file:///…/fixtures/web/index.html`): connector auto-spawned, play passed 8/8 steps in 3.1 s, exit 0; `report.json`/`junit.xml`/PNG screenshot written (image shows the driven fixture page); one environment pitfall recorded: port 50051 was already held by `multipassd`, so the device config pinned the connector at `127.0.0.1:47654` (now `options.connector_address`) |
 | Live E2E (master CLI → Android agent → TCL Android TV) | verified | `impresario run` on the scratch TV workspace over Wi-Fi: agent auto-installed + started, network dial + handshake + session, full smoke play green — `run 20261018-094855-ddb9: passed (1m46s, exit 0)`, 1 device, 1 play, 2 acts, 89 steps, 0 failed (Act 1 scenario tour 1m02s incl. D-pad `scrollto` row 29/0, text entry, selection, key log; Act 2 app-control lifecycle 19.5s incl. `background`/`launch`, `restart`, `terminate`); agent process ≈ 100 s < the ~223 s freeze budget (I-68). First attempt hung silently before the play — fixed as I-74 (lazy `StreamLogs` headers vs a tonic client that awaits the open); re-verified after I-75: `run 20261018-104405-4f10` (1m42s, 89 steps, 0 failed) |
 | Live E2E (master CLI → Android agent → Android phone) | verified | `impresario run` on the scratch phone workspace over Wi-Fi (Galaxy A51, Android 13, device `pocket_phone`, `docs/DEVICES.md` §2.7): agent + stub auto-installed, network dial + handshake + session, full touch smoke play green — `run 20261018-103702-ee29: passed (1m53s, exit 0)`, 1 device, 1 play, 2 acts, 86 steps, 0 failed (Act 1 scenario tour 1m19s incl. touch `scroll`/`swipe up`/`swipe down`/`scrollto` both ways, text entry with `key backspace` echo checks, selection, `key back`/`key home`, device info `tv=false`; Act 2 app-control lifecycle 16.3s). The first attempts exposed the I-75 `scrollto` bug (end-of-container signal) |
@@ -133,7 +150,7 @@ real outcome on every platform.
 | Master evaluation | done | `canonicalize_probe` validates evidence and recomputes verdict/confidence/reason with the core functions; executor verdicts cannot drift the result. Reports/JUnit/console/HTML render `unverifiable`. |
 | Web / webOS / Tizen collector | done on fixtures | DOM, `HTMLMediaElement`, EME hook, Tizen AVPlay, screenshot coverage and optional app hook. Local web fixture covers showing/player/DRM/image/missing-piece; a synthetic AVPlay page covers the Tizen parser and Tizen-only source health. No TV hardware or TV CDP (HD-7). |
 | Android collector | done on fixtures | A11y tree, screenshot coverage, `dumpsys media_session`, conservative `dumpsys media.drm`, `logcat` app hook. Stub APK builds with local H.264/AAC video and decoded PNG. USB and real playback acceptance deferred (HD-5/HD-8). |
-| Apple collector | package tested; Xcode layer compiles but is not executed | `ProbeCollectorTests` pass under WSL and `Apple Xcode` compiles the unsigned runner. Simulator execution is out of scope and no macOS host is paired (I-148/I-149), so neither `XCUIDriver` nor the hook receiver has run beyond unit tests here. XCUITest cannot read another app's AVPlayer/FairPlay, so player/DRM claims still need the optional hook. Networking, local-network consent and the tvOS remote remain HD-1. |
+| Apple collector | package tested; XCUITest runner starts on physical tvOS; collector/hook not executed | `ProbeCollectorTests` pass under WSL and `AgentRunnerTests/testServe()` now runs on the physical Apple TV with a real handshake/shutdown (I-150). That acceptance does not drive the stub or collect probe evidence: `XCUIDriver`, the hook receiver and the full action matrix have not run on hardware, and XCUITest cannot read another app's AVPlayer/FairPlay, so player/DRM claims still need the optional hook. Local-network consent, playback and the tvOS remote remain HD-1. |
 | In-app SDKs | web, Android and Swift implemented | Same optional JSON contract; debug-only, no playback effect. Web reads `window.__impresarioHook`, Android logs an `IMPRESARIO_HOOK` line read by the driver, Swift POSTs to `127.0.0.1:47831`. Missing hook only lowers achievable confidence. |
 | Fixtures and docs | done | `fixtures/web/media.html` (video + audio-only + image), `hook.html`, `tizen-avplay.html`, `sample.webm`, `sample.png`; Android `MediaActivity` + assets; Apple `MediaViewController` + local video/audio/image and public BipBop HLS. `docs/PROBES.md` is the reference; fixtures are local/offline except the explicitly public HLS sample. |
 
@@ -155,14 +172,14 @@ not hardware.
 
 | ID | Technical debt | Evidence today | Planned |
 |---|---|---|---|
-| HD-1 | Apple iOS/tvOS Xcode runner and real-device path | The Swift package builds and unit-tests under WSL, including `ProbeCollectorTests`; the macOS Actions job compiles the Xcode host/stub/UI-test targets unsigned (run 40267731478 at `4e44203`; 65,186,309-byte artifact). Simulator tests are out of scope; the Apple TV is reachable but no macOS host is paired and the UDID is unknown, so `XCUIDriver`/`HookReceiver`, `testServe()`, the local-network prompt, the Swift loopback hook and the tvOS focus engine have never run in this project (gaps 1-2; I-148 withdrawn, I-149). Player/DRM probes on Apple remain unverified without the hook. | P0 now; macOS/Xcode + user-controlled Apple ID on the LAN |
-| HD-2 | Apple D-19 and signing | `AppleTransport` still shells out to `xcodebuild`/`iproxy`; local `.p12`/Mach-O signing was a spike only; App Store Connect and the user-controlled free-Apple-ID (7-day personal-team) flow are unexercised. No plaintext Apple ID password is stored or passed to Impresario. | P0 signing step; macOS/Xcode + user-controlled Apple ID |
+| HD-1 | Apple iOS/tvOS Xcode runner and real-device path | Startup/serve is now hardware-verified on the Apple TV: the device `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 `23J582`, UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) at `10.102.93.222` mounted the personalized DDI, launched the runner through the direct outer-RSD `testmanagerd`/`dtservicehub` path, and passed `AgentRunnerTests/testServe()`; the agent accepted a real gRPC `Handshake` and completed `Shutdown` (session `47123c1c-df6e-44b8-8efd-0043cdb3d001`, capabilities `2,3,5,7,8,9,10,11`). The test method no longer aborts in `SystemAlerts` on tvOS. Not yet run on hardware: the full action/check matrix, `XCUIRemote` focus, the local-network prompt, `HookReceiver` and the Swift loopback hook (I-150; gaps 1-2). Player/DRM probes on Apple remain unverified without the hook. | Full tvOS play after the product transport port; user grant for the local-network prompt if it appears |
+| HD-2 | Apple D-19 and signing | `AppleTransport` still shells out to `xcodebuild`/`iproxy`; the proven signing/install/DDI/XCUITest pipeline exists only in temporary Rust binaries, not in the product. Local `.p12`/Mach-O signing worked with the existing free-team profiles (they expire 2026-11-02), but App Store Connect and the global one-time Apple ID login/2FA have not been exercised against Apple. Pair verification/tunnelling is pure Rust; the pair record itself was created earlier by pymobiledevice3, so pure-Rust pairing creation remains open. No plaintext Apple ID password is stored or passed to Impresario. | Port the pipeline into the product, regenerate profiles for the renamed bundle IDs, exercise live login/2FA |
 | HD-3 | webOS TV transport and install | The full native SSH/SFTP/luna transport, deterministic IPK packaging and install/launch/forward path are implemented and replay-tested. The LG TV at `192.168.93.116` exposes SSH 9922 and the key server 9991; its encrypted key was fetched to `keys/webos/192.168.93.116.pem`, but SSH authentication is blocked on the Developer Mode passphrase, so no IPK was uploaded and no install/launch ran (gap 4). The earlier 2026-10-21 four-device run used the connector/web path, not this native transport. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.3 |
 | HD-4 | Tizen TV transport, install and signing | The native SDB transport, version-gated re-signing, verified app-list install and forwarding are implemented and replay-tested. On 2026-10-25 the Samsung TV completed `device check` over SDB: the handshake finished without an AUTH challenge, then capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0, staging `/home/owner/share/tmp/sdk_tools`, and the signing-required warning. A temporary self-signed profile then exercised upload and install: the TV accepted the per-WRTE-acknowledged sync push and `0 vd_appinstall`, reached certificate validation, and rejected the chain with `[118, -12] Invalid certificate chain with certificate in signature`. No app was installed. A Samsung-issued, DUID-bound profile is still required, and Samsung-account certificate creation remains external (gap 4). | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.4 |
 | HD-5 | Android USB data and playback probes | The native `libadb`/nusb path is implemented, but this host exposed no ADB USB interface; all live phone/TV runs used TCP. Windows WinUSB setup and the USB session limits need a hardware pass (gap 15). The Android media stub and `logcat` hook path compile but have not run on hardware; exact decoder/DRM facts remain vendor-dependent. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §4.1 |
 | HD-6 | Managed Chromium outside Windows x64 | Five archives are pinned with size and SHA-256. Only Windows x64 download, extraction, AppContainer ACLs and headless launch actually ran here (gap 16). The web media/probe fixtures have only run on this host's Chrome; repeat them on each managed archive. | Phase 6/7 release-matrix window; runbook `docs/DEVICES.md` §4.2 |
 | HD-7 | Real-TV CDP and web launch | The connector is verified against headless Chrome. Tizen/webOS CDP quirks and the `launch` path on a real TV are untested (gap 3); the native transports produce the forwarded inspector endpoint, but no TV has served CDP through it. Tizen reachability and the app list do not exercise `0 debug` or a forwarded WebSocket; LG SSH never authenticated. | Phase 6/7 hardware window; runbooks §1.3/§1.4 |
-| HD-8 | Fresh re-run of the Phase 4 device matrix | The four-device run `20261021-080459-ec51` and LG-only run `20261021-080418-843e` passed on 2026-10-21 and remain the acceptance evidence. LG and Tizen TVs are attached again as of 2026-10-25, but neither can install/launch the fixture (passphrase and a Samsung-issued signing profile missing) and the Apple TV has no local Mac, so no new matrix run was attempted. Include the media stub/probe checks in the rerun; no probe result has been hardware-verified. | Phase 6/7 regression window after Phase 7; runbook `docs/DEVICES.md` §4.3 |
+| HD-8 | Fresh re-run of the Phase 4 device matrix | The four-device run `20261021-080459-ec51` and LG-only run `20261021-080418-843e` passed on 2026-10-21 and remain the acceptance evidence. LG and Tizen TVs are attached again as of 2026-10-25, but neither can install/launch the fixture (passphrase and a Samsung-issued signing profile missing); the Apple TV now has a working runner path (I-150) but its play has not been run, so no new matrix run was attempted. Include the media stub/probe checks in the rerun; no probe result has been hardware-verified. | Phase 6/7 regression window after Phase 7; runbook `docs/DEVICES.md` §4.3 |
 
 These are scheduling items, not silent stubs: the corresponding docs and code
 still state the limits, and no command reports success for an unverified path.
@@ -187,17 +204,18 @@ still state the limits, and no command reports success for an unverified path.
   `~/.impresario/keys/webos/192.168.93.116.pem`. `device check` stops at
   `webOS key passphrase: no passphrase in the OS keychain`; no SSH session,
   upload or launch has run.
-- **Apple TV** at `192.168.93.19`. AirPlay `/info` identifies `AppleTV5,3`
-  (Apple TV HD), name `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build
-  `23J582`. TCP 7000, 62078 and 49152 are reachable. AirPlay does not expose
-  the UDID, and a direct lockdown query on 62078 closed without a response.
-  This is network identity, not Developer Mode, pairing or UI-automation
-  readiness; no macOS/Xcode host, Apple Mobile Device Support or signed runner
-  is attached. The Windows Sideloadly path cannot be used without a USB Apple
-  TV and Apple drivers; its network-only tvOS path is macOS-only. No Sideloadly
-  attempt was made.
-- No result above is a hardware/playback/probe acceptance. HD-1...HD-8 and
-  I-133 remain deferred.
+- **Apple TV** now at `10.102.93.222`; the 2026-10-25 address was
+  `192.168.93.19`. AirPlay `/info` identifies `AppleTV5,3` (Apple TV HD), name
+  `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build `23J582`; the developer
+  record reports tvOS 26.1 and UDID
+  `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. TCP 7000, 62078 and 49152 are
+  reachable. The signed host, stub and runner are installed, the personalized
+  DDI is mounted and the direct-RSD XCUITest path passed `testServe()` with a
+  real handshake and shutdown (I-150). The full UI action matrix and the
+  local-network prompt are still unverified.
+- The Apple TV runner start/handshake above is a hardware acceptance of that
+  path (I-150). No result above is a hardware playback or probe acceptance;
+  HD-1 (full play) and HD-3...HD-8 remain deferred.
 
 ## Known gaps and risks
 

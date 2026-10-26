@@ -13,6 +13,7 @@
 //! impresario-master: CLI, planner, executor, reporters, the embedded LSP
 //! and the MCP server.
 
+pub mod account;
 pub mod artifact_cmd;
 pub mod cli;
 pub mod definitions;

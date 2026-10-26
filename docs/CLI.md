@@ -192,6 +192,38 @@ capabilities, DUID and app list. Both are read-only (no install, launch or
 sign) and print warnings for luna/SDB/profile problems; see `docs/DEVICES.md`
 §1.3/§1.4 for setup and the deferred hardware runbooks.
 
+## Apple ID account (global, sign in once)
+
+The Apple ID used for free provisioning is machine-global, not per workspace.
+The command is dispatched before workspace/config resolution, so it works from
+an empty directory:
+
+```powershell
+impresario account login                 # alias: impresario account wizard
+impresario account status                # offline view of the stored session
+impresario account status --check        # validate/refresh the developer token
+impresario account logout
+```
+
+`login` asks for the email and password interactively (`rpassword`; the
+password is wiped with `zeroize` and never written or logged). It performs
+GrandSlam authentication, then supports either a trusted-device code or an SMS
+code sent to a trusted number; `s`, `r`, `b` and `q` switch to SMS, resend, go
+back or cancel. If the account has several Apple developer teams, choose one
+with `--team <id>` or at the prompt.
+
+The session lives in `~/.impresario/apple/session.bin` and the anisette state
+in `anisette.bin`, both AES-256-GCM encrypted with a random 96-bit nonce. The
+32-byte key is in the OS credential store under service `impresario.apple`,
+user `session-key`. Apple's short-lived developer token is refreshed from the
+stored `spd` + anisette state with `status --check`; re-login is only needed if
+Apple invalidates the underlying session. `logout` removes both encrypted
+files and the key.
+
+The flow and store are covered by offline unit tests; a live Apple login and
+2FA were not exercised yet (I-151), so treat the wizard as implemented and
+tested, not Apple-verified.
+
 ## Profiles
 
 Profiles are saved run selections under the top-level `profiles:` mapping of
