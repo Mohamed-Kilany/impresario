@@ -57,12 +57,27 @@ final class StubViewController: UIViewController {
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(column)
+
+        let contentTop: NSLayoutYAxisAnchor
+        #if os(tvOS)
+        let appBar = StubAppBar()
+        view.addSubview(appBar)
         view.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appBar.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+        contentTop = appBar.bottomAnchor
+        #else
+        view.addSubview(scrollView)
+        contentTop = view.safeAreaLayoutGuide.topAnchor
+        #endif
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: contentTop),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             column.leadingAnchor.constraint(
                 equalTo: scrollView.contentLayoutGuide.leadingAnchor,

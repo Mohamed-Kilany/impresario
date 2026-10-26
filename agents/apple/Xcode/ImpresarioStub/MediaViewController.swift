@@ -24,7 +24,7 @@ final class MediaViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = StubTheme.background
 
-        titleLabel.font = .systemFont(ofSize: 22)
+        titleLabel.font = .systemFont(ofSize: StubTheme.dp(22))
         titleLabel.accessibilityIdentifier = "stub_media_title"
 
         videoContainer.backgroundColor = .black
@@ -55,6 +55,20 @@ final class MediaViewController: UIViewController {
             view.addSubview(subview)
         }
 
+        let contentTop: NSLayoutYAxisAnchor
+        #if os(tvOS)
+        let appBar = StubAppBar()
+        view.addSubview(appBar)
+        NSLayoutConstraint.activate([
+            appBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            appBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            appBar.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+        contentTop = appBar.bottomAnchor
+        #else
+        contentTop = view.safeAreaLayoutGuide.topAnchor
+        #endif
+
         let inset = StubTheme.mediaHorizontalInset
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
@@ -66,7 +80,7 @@ final class MediaViewController: UIViewController {
                 constant: -inset
             ),
             titleLabel.topAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                equalTo: contentTop,
                 constant: StubTheme.mediaVerticalInset
             ),
 
@@ -78,24 +92,33 @@ final class MediaViewController: UIViewController {
                 equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                 constant: -inset
             ),
-            videoContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            videoContainer.heightAnchor.constraint(equalToConstant: 220),
+            videoContainer.topAnchor.constraint(
+                equalTo: titleLabel.bottomAnchor,
+                constant: StubTheme.dp(12)
+            ),
+            videoContainer.heightAnchor.constraint(equalToConstant: StubTheme.dp(220)),
 
             imageView.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
                 constant: inset
             ),
-            imageView.topAnchor.constraint(equalTo: videoContainer.bottomAnchor, constant: 12),
-            imageView.widthAnchor.constraint(equalToConstant: 120),
-            imageView.heightAnchor.constraint(equalToConstant: 120),
+            imageView.topAnchor.constraint(
+                equalTo: videoContainer.bottomAnchor,
+                constant: StubTheme.dp(12)
+            ),
+            imageView.widthAnchor.constraint(equalToConstant: StubTheme.dp(120)),
+            imageView.heightAnchor.constraint(equalToConstant: StubTheme.dp(120)),
 
             brokenView.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
                 constant: inset
             ),
-            brokenView.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 12),
-            brokenView.widthAnchor.constraint(equalToConstant: 120),
-            brokenView.heightAnchor.constraint(equalToConstant: 60),
+            brokenView.topAnchor.constraint(
+                equalTo: imageView.bottomAnchor,
+                constant: StubTheme.dp(12)
+            ),
+            brokenView.widthAnchor.constraint(equalToConstant: StubTheme.dp(120)),
+            brokenView.heightAnchor.constraint(equalToConstant: StubTheme.dp(60)),
 
             statusLabel.leadingAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.leadingAnchor,
@@ -105,10 +128,13 @@ final class MediaViewController: UIViewController {
                 equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                 constant: -inset
             ),
-            statusLabel.topAnchor.constraint(equalTo: brokenView.bottomAnchor, constant: 12),
-            statusLabel.bottomAnchor.constraint(
-                lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor,
-                constant: -StubTheme.mediaVerticalInset
+            // Android adds 12 dp of top padding to the status TextView and has
+            // no bottom constraint; on a 1080p TV the column is taller than
+            // the content area, so the status line is clipped in the same
+            // place on both platforms.
+            statusLabel.topAnchor.constraint(
+                equalTo: brokenView.bottomAnchor,
+                constant: StubTheme.dp(12)
             ),
         ])
 
