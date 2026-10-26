@@ -760,7 +760,12 @@ mod tests {
         assert!(set.require("com.example.app").is_ok());
         assert!(set.require("com.example.other").is_err());
         let _lock = ENV_LOCK.lock().unwrap();
+        // CI runners have no OS credential store. Supply the password through
+        // the documented environment override so this test reaches the PKCS#12
+        // parser instead of failing while looking up a stored secret.
+        std::env::set_var(PASSWORD_ENV, "test-password");
         let error = set.identity().unwrap_err().to_string();
+        std::env::remove_var(PASSWORD_ENV);
         assert!(
             error.contains("PKCS#12") || error.contains("could not open"),
             "{error}"
