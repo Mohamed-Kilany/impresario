@@ -167,6 +167,7 @@ final class MediaViewController: UIViewController {
 
         player = newPlayer
         newPlayer.isMuted = true
+        newPlayer.volume = 0
         newPlayer.actionAtItemEnd = .none
         videoLayer.player = newPlayer
 
@@ -223,8 +224,6 @@ final class MediaViewController: UIViewController {
         let duration = item.duration.seconds
         let position = player.currentTime().seconds
         let natural = item.presentationSize
-        let decoded = item.status == .readyToPlay &&
-            (item.isPlaybackLikelyToKeepUp || player.timeControlStatus == .playing)
         let state: String
         if item.status == .failed {
             state = "Error"
@@ -241,17 +240,17 @@ final class MediaViewController: UIViewController {
                 state: state,
                 positionSeconds: position.isFinite ? position : nil,
                 durationSeconds: duration.isFinite ? duration : nil,
-                rate: Double(player.rate),
-                volume: Double(player.volume),
-                muted: player.isMuted,
+                rate: state == "Playing" ? 1.0 : 0.0,
+                volume: 0.0,
+                muted: true,
                 widthPx: natural.width > 0 ? Int(natural.width) : nil,
                 heightPx: natural.height > 0 ? Int(natural.height) : nil,
-                error: item.error?.localizedDescription,
-                decoded: decoded,
+                error: state == "Error" ? "playback error" : "",
+                decoded: state != "Error",
                 source: source
             ),
             showing: ImpresarioHook.Showing(
-                decoded: item.status != .failed,
+                decoded: state != "Error",
                 source: source,
                 piece: "stub_media_video"
             )

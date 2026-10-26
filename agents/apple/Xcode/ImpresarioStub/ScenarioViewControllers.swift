@@ -103,6 +103,7 @@ class ScenarioViewController: UIViewController {
 final class BasicScenarioViewController: ScenarioViewController {
     private var taps = 0
     private let counter = StubTheme.label("taps=0")
+    private var tapButton: StubButton?
 
     override func scenarioTitle() -> String { "Basic controls" }
 
@@ -115,11 +116,18 @@ final class BasicScenarioViewController: ScenarioViewController {
             action: #selector(onTap),
             longPress: { [weak self] in self?.statusLabel.text = "status=long-pressed" }
         )
+        tapButton = button
         column.addArrangedSubview(counter)
         requestFocus(on: button)
     }
 
     @objc private func onTap() {
+        // Android's long-click listener consumes the long press; no click is
+        // delivered afterwards. tvOS can deliver the click separately, so
+        // discard the one that belongs to the long select.
+        if tapButton?.consumeLongPress() == true {
+            return
+        }
         taps += 1
         counter.text = "taps=\(taps)"
         statusLabel.text = "status=clicked"
@@ -235,7 +243,7 @@ final class ScrollScenarioViewController: UIViewController {
             ),
             scroller.topAnchor.constraint(
                 equalTo: titleLabel.bottomAnchor,
-                constant: StubTheme.stackGap
+                constant: StubTheme.fixedStackGap
             ),
             scroller.bottomAnchor.constraint(
                 equalTo: statusLabel.topAnchor,
@@ -360,6 +368,7 @@ final class FlagsScenarioViewController: ScenarioViewController {
 /// ...) so TV key handling is observable.
 final class KeysScenarioViewController: ScenarioViewController {
     private let log = StubTheme.label("key=none")
+    private var lastFocusedIndex: Int?
 
     override func scenarioTitle() -> String { "Key log" }
 
@@ -387,10 +396,20 @@ final class KeysScenarioViewController: ScenarioViewController {
         column.addArrangedSubview(log)
 
         #if os(tvOS)
-        for button in [alpha, bravo, charlie] {
+        for (index, button) in [alpha, bravo, charlie].enumerated() {
             button.onPress = { [weak self] type in
                 guard let name = Self.keyName(type) else { return }
                 self?.log.text = "key=\(name)"
+            }
+            // tvOS can consume arrows in the focus engine before the focused
+            // button sees them. The focus move itself still gives the same
+            // DPAD_UP/DPAD_DOWN observation Android logs from onKeyDown.
+            button.onFocusBecame = { [weak self] in
+                guard let self else { return }
+                if let last = self.lastFocusedIndex, last != index {
+                    self.log.text = index > last ? "key=DPAD_DOWN" : "key=DPAD_UP"
+                }
+                self.lastFocusedIndex = index
             }
         }
         #endif
