@@ -31,6 +31,10 @@ enum StubTheme {
         #endif
     }
 
+    /// Android `ScrollActivity` hardcodes `STACK_GAP_DP` (10 dp) above the
+    /// scroller even on television; the status line below uses `stackGap`.
+    static let fixedStackGap: CGFloat = 10
+
     static func titleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.text = text
@@ -87,12 +91,60 @@ enum StubTheme {
 final class StubButton: UIButton {
     var onLongPress: (() -> Void)?
     var onPress: ((UIPress.PressType) -> Void)?
+    #if os(tvOS)
+    /// Called when the button becomes focused. The Key log screen uses it to
+    /// mirror Android's D-pad key log if tvOS moves focus without delivering
+    /// the arrow press to the focused control.
+    var onFocusBecame: (() -> Void)?
+    #endif
     var titleInset: CGFloat = 0
     var plainStyle = false
 
     /// Android's default long-press timeout is 500 ms.
     private static let longPressDuration: TimeInterval = 0.5
+    /// Android delivers exactly one click per select. On tvOS the same select
+    /// can reach the button through UIKit's tracking path and the remote
+    /// responder path, so coalesce duplicate primary actions.
+    private static let actionCoalescing: TimeInterval = 0.25
     private var selectStarted: Date?
+    private var lastPrimaryAction: Date?
+    private var suppressPrimaryUntil: Date?
+    private var lastPressWasLong = false
+
+    #if os(tvOS)
+    override func sendActions(for controlEvents: UIControl.Event) {
+        if controlEvents == .primaryActionTriggered {
+            let now = Date()
+            if let until = suppressPrimaryUntil {
+                if now < until {
+                    suppressPrimaryUntil = nil
+                    return
+                }
+                suppressPrimaryUntil = nil
+            }
+            if let last = lastPrimaryAction, now.timeIntervalSince(last) < Self.actionCoalescing {
+                return
+            }
+            lastPrimaryAction = now
+        }
+        super.sendActions(for: controlEvents)
+    }
+    #endif
+
+    /// True when the primary action being delivered belongs to a long select.
+    /// Android suppresses the click after a long-click; the Basic screen uses
+    /// this even if UIKit delivers the click before `pressesEnded` runs.
+    func consumeLongPress() -> Bool {
+        if lastPressWasLong {
+            lastPressWasLong = false
+            return true
+        }
+        if let started = selectStarted,
+           Date().timeIntervalSince(started) >= Self.longPressDuration {
+            return true
+        }
+        return false
+    }
 
     override func titleRect(forContentRect contentRect: CGRect) -> CGRect {
         var rect = super.titleRect(forContentRect: contentRect)
@@ -112,6 +164,7 @@ final class StubButton: UIButton {
             if press.type == .select {
                 if selectStarted == nil {
                     selectStarted = Date()
+                    lastPressWasLong = false
                 }
                 handledSelect = true
             }
@@ -130,6 +183,8 @@ final class StubButton: UIButton {
             selectStarted = nil
             let held = Date().timeIntervalSince(started)
             if held >= Self.longPressDuration, let onLongPress {
+                lastPressWasLong = true
+                suppressPrimaryUntil = Date().addingTimeInterval(Self.actionCoalescing)
                 onLongPress()
             } else {
                 sendActions(for: .primaryActionTriggered)
@@ -142,6 +197,7 @@ final class StubButton: UIButton {
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         selectStarted = nil
+        lastPressWasLong = false
         super.pressesCancelled(presses, with: event)
     }
 
@@ -154,6 +210,9 @@ final class StubButton: UIButton {
         coordinator.addCoordinatedAnimations({
             self.applyFocusAppearance(focused)
         }, completion: nil)
+        if focused {
+            onFocusBecame?()
+        }
     }
     #endif
 
