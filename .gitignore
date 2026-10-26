@@ -20,8 +20,6 @@ agents/apple/ImpresarioApple.xcodeproj/
 agents/apple/build-*/
 *.xcuserstate
 *.xcresult
-agents/apple/ci/impresario.devices.config
-agents/apple/ci/reports/
 
 # Node / editors
 editors/vscode/node_modules/

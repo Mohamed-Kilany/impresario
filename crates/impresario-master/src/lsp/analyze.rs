@@ -276,6 +276,7 @@ fn merge_editor_diagnostics(
         "IMP-DSL-016",
         "IMP-DSL-030",
         "IMP-DSL-033",
+        "IMP-DSL-040",
         "IMP-DSL-035",
         "IMP-DSL-038",
         "IMP-DSL-048",

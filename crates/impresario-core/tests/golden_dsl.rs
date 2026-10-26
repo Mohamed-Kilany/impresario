@@ -36,7 +36,8 @@ fn migration_golden_workspace() {
     let loaded =
         workspace::load_paths(&[input.join("LoginScreen.scene"), input.join("login.play")]);
     assert!(!loaded.diagnostics.has_errors(), "{:?}", loaded.diagnostics);
-    let migration = impresario_core::migrate::migrate(&loaded.workspace, &input.join("theatres"));
+    let migration =
+        impresario_core::migrate::migrate(&loaded.workspace, &input.join("theatres"), &[]);
     assert!(!migration.errors.has_errors(), "{migration:?}");
     assert!(
         migration

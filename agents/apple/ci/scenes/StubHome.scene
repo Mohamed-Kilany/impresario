@@ -1,7 +1,0 @@
-Scene: StubHome
-
-| Piece     | ios                          | tvos                         |
-|-----------|------------------------------|------------------------------|
-| Title     | accessibilityId:stub_title   | accessibilityId:stub_title   |
-| TapButton | accessibilityId:stub_button  | accessibilityId:stub_button  |
-| Counter   | accessibilityId:stub_counter | accessibilityId:stub_counter |

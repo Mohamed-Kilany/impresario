@@ -13,11 +13,11 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{
-    ActDecl, Action, ActionVerb, AppOp, Argument, Check, CheckCondition, Direction, DrmTerm,
-    ExampleColumn, ExampleRow, ExampleTable, Ident, KeyName, Named, ParamDecl, PerformDecl,
-    PieceDecl, PieceSelector, PlayFile, PlayerAssertion, PlayerCheck, SceneBlock, SceneColumn,
-    SceneFile, ShowingCheck, ShowingOption, StageDecl, StageItem, StatusTerm, Step, StepKind,
-    TheatreFile, VarDecl,
+    ActDecl, Action, ActionVerb, ActorFilter, ActorFilterKind, AppOp, Argument, Check,
+    CheckCondition, Direction, DrmTerm, ExampleColumn, ExampleRow, ExampleTable, Ident, KeyName,
+    Named, ParamDecl, PerformDecl, PieceDecl, PieceSelector, PlayFile, PlayerAssertion,
+    PlayerCheck, SceneBlock, SceneColumn, SceneFile, ShowingCheck, ShowingOption, StageDecl,
+    StageItem, StatusTerm, Step, StepKind, TheatreFile, VarDecl,
 };
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
 use crate::duration::DslDuration;
@@ -937,8 +937,12 @@ const PLAY_KEYWORDS: &[&str] = &[
     "App",
     "Var",
     "Act",
+    "Actors",
+    "Audience",
     "Tags",
     "Platforms",
+    "Perform",
+    "Examples",
     "Stage",
     "Timeout",
     "Scene",
@@ -956,7 +960,7 @@ pub fn parse_play(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
     let scanned = crate::scanner::scan(source, path);
     let theatrical = scanned.lines.iter().any(|line| {
         (line.depth == 1
-            && (line.content.starts_with("Perform:") || line.content.starts_with("Examples:")))
+            && (is_perform_line(&line.content) || line.content.starts_with("Examples:")))
             || (line.depth == 0 && line.content.starts_with("Act:") && line.content.contains('('))
     });
     if theatrical {
@@ -975,6 +979,8 @@ fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
     let mut name_span: Option<Span> = None;
     let mut description: Option<String> = None;
     let mut app: Option<Named> = None;
+    let mut tags: Vec<Named> = Vec::new();
+    let mut actors: Vec<Named> = Vec::new();
     let mut var_decls: Vec<VarDecl> = Vec::new();
     let mut acts: Vec<ActDecl> = Vec::new();
     let mut i = 0usize;
@@ -1055,6 +1061,32 @@ fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
                 Err(diag) => diagnostics.push(diag),
             }
             i += 1;
+        }
+    }
+
+    // Optional play-wide Tags / Actors, in either order.
+    let mut saw_tags = false;
+    let mut saw_actors = false;
+    while let Some(line) = lines.get(i) {
+        if line.depth != 0 {
+            break;
+        }
+        if !saw_tags && line.content.starts_with("Tags:") {
+            match parse_tags_line(line, path) {
+                Ok(list) => tags = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_tags = true;
+            i += 1;
+        } else if !saw_actors && line.content.starts_with("Actors:") {
+            match parse_actors_line(line, path) {
+                Ok(list) => actors = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_actors = true;
+            i += 1;
+        } else {
+            break;
         }
     }
 
@@ -1157,16 +1189,32 @@ fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
         }
         i += 1;
 
-        // Optional Tags / Platforms directly after the Act line.
+        // Optional Tags / Actors / Platforms directly after the Act line.
         let mut tags: Vec<Named> = Vec::new();
+        let mut actors: Vec<Named> = Vec::new();
         let mut platforms: Vec<Named> = Vec::new();
-        if let Some(next) = lines.get(i) {
-            if next.depth == 0 && next.content.starts_with("Tags:") {
+        let mut saw_tags = false;
+        let mut saw_actors = false;
+        while let Some(next) = lines.get(i) {
+            if next.depth != 0 {
+                break;
+            }
+            if !saw_tags && next.content.starts_with("Tags:") {
                 match parse_tags_line(next, path) {
                     Ok(list) => tags = list,
                     Err(diag) => diagnostics.push(diag),
                 }
+                saw_tags = true;
                 i += 1;
+            } else if !saw_actors && next.content.starts_with("Actors:") {
+                match parse_actors_line(next, path) {
+                    Ok(list) => actors = list,
+                    Err(diag) => diagnostics.push(diag),
+                }
+                saw_actors = true;
+                i += 1;
+            } else {
+                break;
             }
         }
         if let Some(next) = lines.get(i) {
@@ -1234,6 +1282,7 @@ fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
                     name_span: act_span,
                     params: Vec::new(),
                     tags,
+                    actors,
                     platforms,
                     examples: None,
                     performs: Vec::new(),
@@ -1257,6 +1306,8 @@ fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
             name_span,
             description,
             app,
+            tags,
+            actors,
             var_decls,
             acts,
         }),
@@ -1308,7 +1359,33 @@ pub fn parse_theatre(source: &str, path: &Path) -> ParseOutcome<TheatreFile> {
     }
 
     let mut stages: Vec<StageDecl> = Vec::new();
+    let mut audience: Vec<Named> = Vec::new();
+    let mut theatre_tags: Vec<Named> = Vec::new();
     let mut i = 1usize;
+    let mut saw_audience = false;
+    let mut saw_tags = false;
+    while let Some(line) = lines.get(i) {
+        if line.depth != 0 {
+            break;
+        }
+        if !saw_audience && line.content.starts_with("Audience:") {
+            match parse_audience_line(line, path) {
+                Ok(list) => audience = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_audience = true;
+            i += 1;
+        } else if !saw_tags && line.content.starts_with("Tags:") {
+            match parse_tags_line(line, path) {
+                Ok(list) => theatre_tags = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_tags = true;
+            i += 1;
+        } else {
+            break;
+        }
+    }
     while i < lines.len() {
         let Some(line) = lines.get(i) else { break };
         if line.depth != 0 {
@@ -1326,7 +1403,7 @@ pub fn parse_theatre(source: &str, path: &Path) -> ParseOutcome<TheatreFile> {
                 Code::DslUnknownKeyword,
                 format!(
                     "unknown keyword '{keyword}' in a theatre{}",
-                    suggest(keyword, &["Stage"])
+                    suggest(keyword, &["Audience", "Tags", "Stage"])
                         .map(|h| format!("; {h}"))
                         .unwrap_or_default()
                 ),
@@ -1338,21 +1415,10 @@ pub fn parse_theatre(source: &str, path: &Path) -> ParseOutcome<TheatreFile> {
         let (stage, used) = parse_theatre_stage(&lines, i, path, &mut diagnostics);
         i += used;
         if let Some(stage) = stage {
-            if let Some(previous) = stages.iter().find(|s| s.name == stage.name) {
-                diagnostics.push(
-                    Diagnostic::error(
-                        Code::DslDuplicateStage,
-                        format!("stage '{}' is declared twice in this theatre", stage.name),
-                    )
-                    .with_span(stage.name_span.clone())
-                    .with_help(format!(
-                        "first declared at line {}",
-                        previous.name_span.line
-                    )),
-                );
-            } else {
-                stages.push(stage);
-            }
+            // Duplicate names may be legal when their audiences are disjoint;
+            // `Workspace` validates `(name, audience platform)` uniqueness and
+            // the shared parameter signature.
+            stages.push(stage);
         }
     }
 
@@ -1368,6 +1434,8 @@ pub fn parse_theatre(source: &str, path: &Path) -> ParseOutcome<TheatreFile> {
             path: PathBuf::from(path),
             name,
             name_span,
+            audience,
+            tags: theatre_tags,
             stages,
         }),
         _ => None,
@@ -1403,12 +1471,16 @@ fn parse_theatre_stage(
     );
 
     let mut description: Option<String> = None;
+    let mut audience: Vec<Named> = Vec::new();
+    let mut tags: Vec<Named> = Vec::new();
     let mut platforms: Vec<Named> = Vec::new();
     let mut timeout: Option<DslDuration> = None;
     let mut timeout_span: Option<Span> = None;
     let mut items: Vec<StageItem> = Vec::new();
     let mut scenes: Vec<SceneBlock> = Vec::new();
     let mut saw_item = false;
+    let mut saw_audience = false;
+    let mut saw_tags = false;
 
     while let Some(line) = lines.get(start + consumed) {
         if line.depth == 0 {
@@ -1442,6 +1514,42 @@ fn parse_theatre_stage(
                 )),
                 Err(diag) => diagnostics.push(diag),
             }
+            consumed += 1;
+            continue;
+        }
+        if line.content.starts_with("Audience:") {
+            if saw_audience || saw_item {
+                diagnostics.push(diag_at(
+                    Code::DslMissingHeader,
+                    "Audience: must come once, before the stage body",
+                    line.span(path),
+                ));
+                consumed += 1;
+                continue;
+            }
+            match parse_audience_line(line, path) {
+                Ok(list) => audience = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_audience = true;
+            consumed += 1;
+            continue;
+        }
+        if line.content.starts_with("Tags:") {
+            if saw_tags || saw_item {
+                diagnostics.push(diag_at(
+                    Code::DslMissingHeader,
+                    "Tags: must come once, before the stage body",
+                    line.span(path),
+                ));
+                consumed += 1;
+                continue;
+            }
+            match parse_tags_line(line, path) {
+                Ok(list) => tags = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_tags = true;
             consumed += 1;
             continue;
         }
@@ -1499,7 +1607,7 @@ fn parse_theatre_stage(
             }
             continue;
         }
-        if line.content.starts_with("Perform:") {
+        if is_perform_line(&line.content) {
             saw_item = true;
             match parse_perform_line(line, path) {
                 Ok(perform) => items.push(StageItem::Perform(perform)),
@@ -1536,6 +1644,8 @@ fn parse_theatre_stage(
             name_span,
             params,
             description,
+            audience,
+            tags,
             platforms,
             timeout,
             timeout_span,
@@ -1556,6 +1666,8 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
     let mut name_span: Option<Span> = None;
     let mut description: Option<String> = None;
     let mut app: Option<Named> = None;
+    let mut tags: Vec<Named> = Vec::new();
+    let mut actors: Vec<Named> = Vec::new();
     let mut var_decls: Vec<VarDecl> = Vec::new();
     let mut acts: Vec<ActDecl> = Vec::new();
     let mut i = 0usize;
@@ -1625,6 +1737,33 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
             i += 1;
         }
     }
+
+    // Optional play-wide Tags / Actors, in either order.
+    let mut saw_tags = false;
+    let mut saw_actors = false;
+    while let Some(line) = lines.get(i) {
+        if line.depth != 0 {
+            break;
+        }
+        if !saw_tags && line.content.starts_with("Tags:") {
+            match parse_tags_line(line, path) {
+                Ok(list) => tags = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_tags = true;
+            i += 1;
+        } else if !saw_actors && line.content.starts_with("Actors:") {
+            match parse_actors_line(line, path) {
+                Ok(list) => actors = list,
+                Err(diag) => diagnostics.push(diag),
+            }
+            saw_actors = true;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+
     while let Some(line) = lines.get(i) {
         if line.depth == 0 && line.content.starts_with("Var:") {
             match parse_var_line(line, path) {
@@ -1692,16 +1831,32 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
         i += 1;
 
         let mut tags: Vec<Named> = Vec::new();
+        let mut actors: Vec<Named> = Vec::new();
         let mut platforms: Vec<Named> = Vec::new();
         let mut examples: Option<ExampleTable> = None;
 
-        if let Some(next) = lines.get(i) {
-            if next.depth == 0 && next.content.starts_with("Tags:") {
+        let mut saw_tags = false;
+        let mut saw_actors = false;
+        while let Some(next) = lines.get(i) {
+            if next.depth != 0 {
+                break;
+            }
+            if !saw_tags && next.content.starts_with("Tags:") {
                 match parse_tags_line(next, path) {
                     Ok(list) => tags = list,
                     Err(diag) => diagnostics.push(diag),
                 }
+                saw_tags = true;
                 i += 1;
+            } else if !saw_actors && next.content.starts_with("Actors:") {
+                match parse_actors_line(next, path) {
+                    Ok(list) => actors = list,
+                    Err(diag) => diagnostics.push(diag),
+                }
+                saw_actors = true;
+                i += 1;
+            } else {
+                break;
             }
         }
         if let Some(next) = lines.get(i) {
@@ -1735,7 +1890,7 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
                 i += 1;
                 continue;
             }
-            if next.content.starts_with("Perform:") {
+            if is_perform_line(&next.content) {
                 match parse_perform_line(next, path) {
                     Ok(perform) => performs.push(perform),
                     Err(diag) => diagnostics.push(diag),
@@ -1801,6 +1956,7 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
                     name_span: act_span,
                     params,
                     tags,
+                    actors,
                     platforms,
                     examples,
                     performs,
@@ -1824,6 +1980,8 @@ fn parse_play_theatrical(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
             name_span,
             description,
             app,
+            tags,
+            actors,
             var_decls,
             acts,
         }),
@@ -1935,6 +2093,12 @@ fn parse_params(
     out
 }
 
+fn is_perform_line(content: &str) -> bool {
+    content.starts_with("Perform:")
+        || content.starts_with("Perform For")
+        || content.starts_with("Perform Except")
+}
+
 fn parse_perform_line(
     line: &crate::scanner::LogicalLine,
     path: &Path,
@@ -1943,14 +2107,81 @@ fn parse_perform_line(
     let leading = body_start.len() - body_start.trim_start().len();
     let body = body_start.trim();
     let body_col = line.col + "Perform:".len() + leading;
-    let (stage_name, args) = match body.find('(') {
-        Some(open) if body.trim_end().ends_with(')') => {
-            let stage_name = body.get(..open).unwrap_or("").trim();
-            let inner_end = body.trim_end().len().saturating_sub(1);
-            let inner = body.get(open + 1..inner_end).unwrap_or("");
-            (stage_name, Some((inner, body_col + open + 1)))
+
+    // `Perform For [a, b]: Stage(args)` / `Perform Except [a]: Stage(args)`.
+    // The filter precedes the stage; only one kind is allowed.
+    let mut filter: Option<ActorFilter> = None;
+    let mut stage_text = body;
+    let mut stage_col = body_col;
+    for (keyword, kind) in [
+        ("For", ActorFilterKind::For),
+        ("Except", ActorFilterKind::Except),
+    ] {
+        let Some(after_keyword) = body.strip_prefix(keyword) else {
+            continue;
+        };
+        let is_filter = after_keyword
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace);
+        if !is_filter {
+            continue;
         }
-        _ => (body.trim(), None),
+        let keyword_len = keyword.len();
+        let ws = after_keyword.len() - after_keyword.trim_start().len();
+        let open = keyword_len + ws;
+        if !body.get(open..).is_some_and(|rest| rest.starts_with('[')) {
+            return Err(diag_at(
+                Code::DslActorFilter,
+                format!(
+                    "Perform {keyword} needs an actor list in brackets, e.g. `{keyword} [tv1]`"
+                ),
+                line.span(path),
+            ));
+        }
+        let Some(close_rel) = body.get(open..).and_then(|rest| rest.find(']')) else {
+            return Err(diag_at(
+                Code::DslActorFilter,
+                format!("Perform {keyword} actor list is missing ']'"),
+                line.span(path),
+            ));
+        };
+        let close = open + close_rel;
+        let inner = body.get(open + 1..close).unwrap_or("");
+        let actors = parse_actor_list(inner, body_col + open + 1, line, path, keyword)?;
+        let after_close = body.get(close + 1..).unwrap_or("");
+        let colon_ws = after_close.len() - after_close.trim_start().len();
+        let colon = close + 1 + colon_ws;
+        if body.get(colon..).is_none_or(|rest| !rest.starts_with(':')) {
+            return Err(diag_at(
+                Code::DslActorFilter,
+                format!("Perform {keyword} [...] must be followed by ':' and a stage"),
+                line.span(path),
+            ));
+        }
+        let after_colon = body.get(colon + 1..).unwrap_or("");
+        let stage_ws = after_colon.len() - after_colon.trim_start().len();
+        stage_text = after_colon.trim_start();
+        stage_col = body_col + colon + 1 + stage_ws;
+        filter = Some(ActorFilter { kind, actors });
+        break;
+    }
+    if stage_text.trim().is_empty() {
+        return Err(diag_at(
+            Code::DslUnknownStage,
+            "Perform: needs a stage name",
+            line.span(path),
+        ));
+    }
+
+    let (stage_name, args) = match stage_text.find('(') {
+        Some(open) if stage_text.trim_end().ends_with(')') => {
+            let stage_name = stage_text.get(..open).unwrap_or("").trim();
+            let inner_end = stage_text.trim_end().len().saturating_sub(1);
+            let inner = stage_text.get(open + 1..inner_end).unwrap_or("");
+            (stage_name, Some((inner, stage_col + open + 1)))
+        }
+        _ => (stage_text.trim(), None),
     };
     if !strings::free_text_ok(stage_name) {
         return Err(diag_at(
@@ -2016,8 +2247,9 @@ fn parse_perform_line(
     }
     Ok(PerformDecl {
         stage_name: stage_name.to_string(),
-        stage_span: Span::new(path, line.line, body_col, stage_name.chars().count()),
+        stage_span: Span::new(path, line.line, stage_col, stage_name.chars().count()),
         args: arguments,
+        filter,
         span: line.span(path),
     })
 }
@@ -2256,15 +2488,172 @@ fn parse_tags_line(
             .find(trimmed)
             .map(|byte| body.get(..byte).map(|p| p.chars().count()).unwrap_or(0))
             .unwrap_or(0);
+        let span = Span::new(path, line.line, body_col + col + 1, trimmed.chars().count());
+        if let Some(previous) = out.iter().find(|named: &&Named| named.name == trimmed) {
+            return Err(diag_at(
+                Code::DslDuplicateTag,
+                format!("tag '{trimmed}' appears twice in Tags:"),
+                span,
+            )
+            .with_help(format!(
+                "first listed at line {}, column {}",
+                previous.span.line, previous.span.col
+            )));
+        }
         out.push(Named {
             name: trimmed.to_string(),
-            span: Span::new(path, line.line, body_col + col + 1, trimmed.chars().count()),
+            span,
         });
     }
     if out.is_empty() {
         return Err(diag_at(
             Code::DslUnknownKeyword,
             "Tags: needs at least one tag",
+            line.span(path),
+        ));
+    }
+    Ok(out)
+}
+
+/// Parse a comma-separated actor reference list. Each item is a device name
+/// or `@group`; spans point at the item, not the whole line.
+fn parse_actor_list(
+    body: &str,
+    base_col: usize,
+    line: &crate::scanner::LogicalLine,
+    path: &Path,
+    keyword: &str,
+) -> Result<Vec<Named>, Diagnostic> {
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for part in body.split(',') {
+        let leading = part.len() - part.trim_start().len();
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            offset += part.len() + 1;
+            continue;
+        }
+        if !crate::config::valid_actor_ref(trimmed) {
+            return Err(diag_at(
+                Code::DslUnknownActor,
+                format!("invalid actor or group '{trimmed}'"),
+                Span::new(
+                    path,
+                    line.line,
+                    base_col + offset + leading,
+                    trimmed.chars().count(),
+                ),
+            )
+            .with_help(
+                "actor names use a-z, 0-9, '_' and '-', optionally prefixed with '@' for a group",
+            ));
+        }
+        let span = Span::new(
+            path,
+            line.line,
+            base_col + offset + leading,
+            trimmed.chars().count(),
+        );
+        if let Some(previous) = out.iter().find(|named: &&Named| named.name == trimmed) {
+            return Err(diag_at(
+                Code::DslDuplicateActor,
+                format!("actor '{trimmed}' appears twice in {keyword}:"),
+                span,
+            )
+            .with_help(format!(
+                "first listed at line {}, column {}",
+                previous.span.line, previous.span.col
+            )));
+        }
+        out.push(Named {
+            name: trimmed.to_string(),
+            span,
+        });
+        offset += part.len() + 1;
+    }
+    if out.is_empty() {
+        return Err(diag_at(
+            Code::DslUnknownActor,
+            format!("{keyword}: needs at least one actor or group"),
+            line.span(path),
+        ));
+    }
+    Ok(out)
+}
+
+fn parse_actors_line(
+    line: &crate::scanner::LogicalLine,
+    path: &Path,
+) -> Result<Vec<Named>, Diagnostic> {
+    let body = line.content.get("Actors:".len()..).unwrap_or("");
+    let base_col = line.col + "Actors:".len();
+    parse_actor_list(body, base_col, line, path, "Actors")
+}
+
+fn parse_audience_line(
+    line: &crate::scanner::LogicalLine,
+    path: &Path,
+) -> Result<Vec<Named>, Diagnostic> {
+    let body = line.content.get("Audience:".len()..).unwrap_or("");
+    let base_col = line.col + "Audience:".len();
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    for part in body.split(',') {
+        let leading = part.len() - part.trim_start().len();
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            offset += part.len() + 1;
+            continue;
+        }
+        if trimmed == "cross-platform" || trimmed == "all" {
+            // Empty audience means every platform; "cross-platform" is the
+            // explicit spelling from the scene grammar.
+            offset += part.len() + 1;
+            continue;
+        }
+        match trimmed.parse::<Platform>() {
+            Ok(platform) => {
+                let span = Span::new(
+                    path,
+                    line.line,
+                    base_col + offset + leading,
+                    trimmed.chars().count(),
+                );
+                if out
+                    .iter()
+                    .any(|existing: &Named| existing.name == platform.as_str())
+                {
+                    return Err(diag_at(
+                        Code::DslDuplicateAudience,
+                        format!("platform '{}' appears twice in Audience:", platform),
+                        span,
+                    )
+                    .with_help("list each audience platform once"));
+                }
+                out.push(Named {
+                    name: platform.as_str().to_string(),
+                    span,
+                });
+            }
+            Err(()) => {
+                let names: Vec<&str> = Platform::ALL.iter().map(|p| p.as_str()).collect();
+                let hint = suggest(trimmed, &names)
+                    .map(|h| format!("; {h}"))
+                    .unwrap_or_default();
+                return Err(diag_at(
+                    Code::DslUnknownKeyword,
+                    format!("unknown platform '{trimmed}' in Audience:{hint}"),
+                    line.span(path),
+                )
+                .with_help("use a platform name or 'cross-platform'"));
+            }
+        }
+        offset += part.len() + 1;
+    }
+    if out.is_empty() && !body.contains("cross-platform") && !body.contains("all") {
+        return Err(diag_at(
+            Code::DslUnknownKeyword,
+            "Audience: needs at least one platform or 'cross-platform'",
             line.span(path),
         ));
     }
@@ -2444,6 +2833,8 @@ fn parse_stage(
             name_span,
             params: Vec::new(),
             description: None,
+            audience: Vec::new(),
+            tags: Vec::new(),
             platforms: Vec::new(),
             timeout,
             timeout_span,

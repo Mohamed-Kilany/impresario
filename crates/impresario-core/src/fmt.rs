@@ -201,7 +201,9 @@ fn canonical_keyword(content: &str) -> String {
     const KEYWORDS: &[&str] = &[
         "Action",
         "Act",
+        "Actors",
         "App",
+        "Audience",
         "Check",
         "Description",
         "Examples",
@@ -221,16 +223,78 @@ fn canonical_keyword(content: &str) -> String {
         return content.trim_end().to_string();
     };
     let token = content.get(..colon).unwrap_or("").trim();
+    if token.eq_ignore_ascii_case("Perform") {
+        return canonical_perform(content, colon);
+    }
     match KEYWORDS
         .iter()
         .find(|keyword| keyword.eq_ignore_ascii_case(token))
     {
         Some(keyword) => {
             let rest = content.get(colon + 1..).unwrap_or("");
-            format!("{keyword}:{rest}")
+            if matches!(*keyword, "Actors" | "Audience" | "Platforms" | "Tags") {
+                format!("{keyword}: {}", canonical_list(rest))
+            } else {
+                format!("{keyword}:{rest}")
+            }
         }
         None => content.trim_end().to_string(),
     }
+}
+
+fn canonical_perform(content: &str, colon: usize) -> String {
+    let after_keyword = content.get("Perform".len()..colon).unwrap_or("").trim();
+    if after_keyword.is_empty() {
+        let rest = content.get(colon + 1..).unwrap_or("");
+        return format!("Perform:{rest}");
+    }
+    let lower = after_keyword.to_ascii_lowercase();
+    let kind = if lower.starts_with("for") {
+        Some("For")
+    } else if lower.starts_with("except") {
+        Some("Except")
+    } else {
+        None
+    };
+    let Some(kind) = kind else {
+        return format!(
+            "Perform {after_keyword}:{}",
+            content.get(colon + 1..).unwrap_or("")
+        );
+    };
+    let after_kind = after_keyword.get(kind.len()..).unwrap_or("").trim();
+    let Some(open) = after_kind.find('[') else {
+        return format!(
+            "Perform {after_kind}:{}",
+            content.get(colon + 1..).unwrap_or("")
+        );
+    };
+    let Some(close) = after_kind.rfind(']') else {
+        return format!(
+            "Perform {after_kind}:{}",
+            content.get(colon + 1..).unwrap_or("")
+        );
+    };
+    if close < open {
+        return format!(
+            "Perform {after_kind}:{}",
+            content.get(colon + 1..).unwrap_or("")
+        );
+    }
+    let actors = after_kind.get(open + 1..close).unwrap_or("");
+    let stage = content
+        .get(colon + 1..)
+        .unwrap_or("")
+        .trim_start_matches([' ', '\t']);
+    format!("Perform {kind} [{}]: {stage}", canonical_list(actors))
+}
+
+fn canonical_list(rest: &str) -> String {
+    rest.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Format a contiguous table block. The first non-separator row is the header;

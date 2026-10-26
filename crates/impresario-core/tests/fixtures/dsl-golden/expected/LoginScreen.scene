@@ -1,5 +1,5 @@
 Scene: LoginScreen
-Platforms: web,android
+Platforms: web, android
 
 | Piece        | web                   | android        | index |
 |--------------|-----------------------|----------------|-------|

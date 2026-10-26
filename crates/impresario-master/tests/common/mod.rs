@@ -274,6 +274,8 @@ pub fn build_test_plan_with(
         workspace: &workspace,
         base: std::path::Path::new("."),
         devices,
+        all_devices: devices,
+        groups: &BTreeMap::new(),
         apps: &[],
         cli_app: None,
         plays: std::slice::from_ref(&play),

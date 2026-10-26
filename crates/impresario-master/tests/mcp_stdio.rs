@@ -419,7 +419,7 @@ fn modern_discover_protocol_errors_and_diagnostics() {
     let refusal = content_of(&refused);
     let refusal_text = refusal[0]["text"].as_str().expect("refusal text");
     assert!(
-        refusal_text.contains("nope.play") && refusal_text.contains("does not exist"),
+        refusal_text.contains("nope.play") && refusal_text.contains("is not a file"),
         "refusal text: {refusal_text}"
     );
 

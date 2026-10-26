@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::duration::DslDuration;
 use crate::keys::RemoteKey;
-use crate::platforms::{Platform, ScenePlatforms};
+use crate::platforms::Platform;
+use crate::platforms::ScenePlatforms;
 use crate::span::Span;
 use crate::strings::ParsedString;
 
@@ -75,6 +76,12 @@ pub struct PlayFile {
     pub description: Option<String>,
     /// `App: <name>` (TASK-2 section 5); the planner binds it to every device.
     pub app: Option<Named>,
+    /// `Tags: a, b` (inherited by every act and its stage tree).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Named>,
+    /// `Actors: a, @group` (default for acts; empty = all run-selected devices).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actors: Vec<Named>,
     pub var_decls: Vec<VarDecl>,
     pub acts: Vec<ActDecl>,
 }
@@ -83,6 +90,17 @@ impl PlayFile {
     #[must_use]
     pub fn var(&self, name: &str) -> Option<&VarDecl> {
         self.var_decls.iter().find(|v| v.name == name)
+    }
+
+    /// Actors for an act: the act's `Actors:` if present, else the play's.
+    /// An empty slice means every device selected for the run.
+    #[must_use]
+    pub fn effective_actors<'a>(&'a self, act: &'a ActDecl) -> &'a [Named] {
+        if act.actors.is_empty() {
+            &self.actors
+        } else {
+            &act.actors
+        }
     }
 }
 
@@ -101,6 +119,12 @@ pub struct TheatreFile {
     /// `Theatre: Name`
     pub name: String,
     pub name_span: Span,
+    /// `Audience:` platforms this theatre serves (empty = all platforms).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audience: Vec<Named>,
+    /// `Tags: a, b` (inherited by every stage).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Named>,
     pub stages: Vec<StageDecl>,
 }
 
@@ -108,6 +132,34 @@ impl TheatreFile {
     #[must_use]
     pub fn stage(&self, name: &str) -> Option<&StageDecl> {
         self.stages.iter().find(|stage| stage.name == name)
+    }
+
+    /// Platforms this implementation serves. A stage narrows the theatre;
+    /// `Platforms:` is the legacy spelling; empty means every platform.
+    #[must_use]
+    pub fn stage_audience(&self, stage: &StageDecl) -> Vec<Platform> {
+        let source = if !stage.audience.is_empty() {
+            &stage.audience
+        } else if !stage.platforms.is_empty() {
+            &stage.platforms
+        } else {
+            &self.audience
+        };
+        if source.is_empty() {
+            return Platform::ALL.to_vec();
+        }
+        source
+            .iter()
+            .filter_map(|named| named.name.parse::<Platform>().ok())
+            .collect()
+    }
+
+    /// Pick the implementation of `name` that serves `platform`.
+    #[must_use]
+    pub fn stage_for(&self, name: &str, platform: Platform) -> Option<&StageDecl> {
+        self.stages
+            .iter()
+            .find(|stage| stage.name == name && self.stage_audience(stage).contains(&platform))
     }
 }
 
@@ -121,7 +173,11 @@ pub struct ActDecl {
     pub params: Vec<ParamDecl>,
     /// `Tags: a, b`
     pub tags: Vec<Named>,
-    /// `Platforms: a, b` (empty = all platforms).
+    /// `Actors: a, @group` (overrides the play's actor list when non-empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actors: Vec<Named>,
+    /// Legacy `Platforms: a, b` (empty = all platforms).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub platforms: Vec<Named>,
     /// `Examples:` rows (one execution each).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,7 +200,14 @@ pub struct StageDecl {
     pub params: Vec<ParamDecl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// `Platforms:` restriction inside the stage.
+    /// `Audience:` platforms this implementation serves (empty = inherited
+    /// from the theatre, then all platforms).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audience: Vec<Named>,
+    /// `Tags: a, b` (inherited by nested performances).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Named>,
+    /// Legacy `Platforms:` restriction inside the stage.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub platforms: Vec<Named>,
     pub timeout: Option<DslDuration>,
@@ -180,8 +243,26 @@ pub struct PerformDecl {
     pub stage_name: String,
     pub stage_span: Span,
     pub args: Vec<Argument>,
+    /// Optional `For [...]` / `Except [...]` actor filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ActorFilter>,
     /// Span of the whole declaration.
     pub span: Span,
+}
+
+/// `For [actors]` or `Except [actors]` on a `Perform:` line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorFilter {
+    pub kind: ActorFilterKind,
+    pub actors: Vec<Named>,
+}
+
+/// Which side of an actor filter a performance is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorFilterKind {
+    For,
+    Except,
 }
 
 /// One named stage argument.

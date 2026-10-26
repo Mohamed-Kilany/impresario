@@ -303,7 +303,7 @@ fn duplicate_var_declaration_warns_about_shadowing() {
             .iter()
             .map(|diag| diag.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["IMP-DSL-048"]
+        vec!["IMP-DSL-059"]
     );
 }
 

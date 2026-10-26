@@ -72,7 +72,8 @@ fn examples_are_migrated_already_and_formatted() {
         &root.join("plays"),
     );
     assert!(!loaded.diagnostics.has_errors(), "{:?}", loaded.diagnostics);
-    let migrated = impresario_core::migrate::migrate(&loaded.workspace, &root.join("theatres"));
+    let migrated =
+        impresario_core::migrate::migrate(&loaded.workspace, &root.join("theatres"), &[]);
     assert!(!migrated.errors.has_errors(), "{migrated:?}");
     assert!(migrated.is_empty(), "{migrated:?}");
 

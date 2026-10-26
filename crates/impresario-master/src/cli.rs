@@ -4,6 +4,7 @@
 //! `config`, `workspace`, `validate`, `parse`, `devices list|check`, `run`, `lsp`, plus the
 //! development-only `mock-agent` (decision I-77) and `mcp` (decision I-80).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::time::Duration;
@@ -101,6 +102,12 @@ pub enum Command {
         /// Check only: exit 1 when a file would change.
         #[arg(long)]
         check: bool,
+    },
+    /// List workspace tags with counts, defining files and usages.
+    Tags {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Device definitions: add, edit, list, check, import, export.
     #[command(alias = "devices")]
@@ -293,8 +300,8 @@ pub struct RunArgs {
     /// App definition to bind (beats each play's `App:` header).
     #[arg(long, value_name = "NAME")]
     pub app: Option<String>,
-    /// Device name (repeatable) or `all`.
-    #[arg(long, value_name = "NAME")]
+    /// Actor/device name, `@group` (repeatable) or `all`.
+    #[arg(long, visible_alias = "actor", value_name = "NAME|@GROUP")]
     pub device: Vec<String>,
     /// Only devices on this platform (repeatable or comma list).
     #[arg(long, value_name = "PLATFORM")]
@@ -410,6 +417,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Parse { file, json } => cmd_parse(&base, file, *json),
         Command::Tests(args) => crate::tests_cmd::run(&base, &config_path, args),
         Command::Fmt { paths, check } => cmd_fmt(&base, &config_path, paths, *check),
+        Command::Tags { json } => cmd_tags(&base, &config_path, *json),
         Command::Device { command } => match command {
             DeviceCommand::Check { names } => {
                 cmd_devices_check(&base, &config_path, &devices_path, names)
@@ -1520,7 +1528,8 @@ pub(crate) fn validate_workspace(
         .iter()
         .map(|device| DeviceRef::new(device.name.clone(), device.platform))
         .collect();
-    let semantic = validation::validate(&loaded.workspace, &device_refs);
+    let semantic =
+        validation::validate_with_actors(&loaded.workspace, &device_refs, &devices.groups);
     all.extend(semantic.iter().cloned());
 
     // Resolve each play's `App:` header against the merged app layer.
@@ -1672,6 +1681,115 @@ fn collect_dsl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn cmd_tags(base: &Path, config_path: &Path, json: bool) -> i32 {
+    let cfg_outcome = load_effective_config(base, config_path);
+    render::eprint_all(&cfg_outcome.diagnostics);
+    let Some(cfg) = cfg_outcome.config else {
+        eprintln!("tags: cannot load configuration");
+        return EXIT_USAGE;
+    };
+    let loaded = workspace::load_dirs(
+        &base.join(&cfg.scenes_dir),
+        &base.join(&cfg.theatres_dir),
+        &base.join(&cfg.plays_dir),
+    );
+    if loaded.diagnostics.has_errors() {
+        render::eprint_all(&loaded.diagnostics);
+        return EXIT_USAGE;
+    }
+
+    #[derive(Default)]
+    struct TagEntry {
+        files: BTreeSet<String>,
+        usages: Vec<String>,
+    }
+    let mut index: BTreeMap<String, TagEntry> = BTreeMap::new();
+    let mut add = |tag: &str, file: &Path, usage: String| {
+        let entry = index.entry(tag.to_string()).or_default();
+        entry
+            .files
+            .insert(file.to_string_lossy().replace('\\', "/"));
+        if !entry.usages.contains(&usage) {
+            entry.usages.push(usage);
+        }
+    };
+    for play in &loaded.workspace.plays {
+        for tag in &play.tags {
+            add(&tag.name, &play.path, format!("play {}", play.name));
+        }
+        for act in &play.acts {
+            for tag in &act.tags {
+                add(
+                    &tag.name,
+                    &play.path,
+                    format!("act {} / {}", play.name, act.name),
+                );
+            }
+        }
+    }
+    for theatre in &loaded.workspace.theatres {
+        for tag in &theatre.tags {
+            add(
+                &tag.name,
+                &theatre.path,
+                format!("theatre {}", theatre.name),
+            );
+        }
+        for stage in &theatre.stages {
+            for tag in &stage.tags {
+                add(
+                    &tag.name,
+                    &theatre.path,
+                    format!("stage {}.{}", theatre.name, stage.name),
+                );
+            }
+        }
+    }
+
+    if json {
+        let tags: Vec<serde_json::Value> = index
+            .iter()
+            .map(|(tag, entry)| {
+                serde_json::json!({
+                    "tag": tag,
+                    "count": entry.usages.len(),
+                    "files": entry.files,
+                    "usages": entry.usages,
+                })
+            })
+            .collect();
+        match serde_json::to_string_pretty(&serde_json::json!({ "tags": tags })) {
+            Ok(text) => println!("{text}"),
+            Err(error) => {
+                eprintln!("tags: cannot render JSON: {error}");
+                return EXIT_INFRA;
+            }
+        }
+        return EXIT_OK;
+    }
+    if index.is_empty() {
+        println!("tags: none declared");
+        return EXIT_OK;
+    }
+    for (tag, entry) in &index {
+        println!(
+            "{}  ({} usage{}, {} file{})",
+            tag,
+            entry.usages.len(),
+            if entry.usages.len() == 1 { "" } else { "s" },
+            entry.files.len(),
+            if entry.files.len() == 1 { "" } else { "s" }
+        );
+        for file in &entry.files {
+            println!("  file  {file}");
+        }
+        for usage in &entry.usages {
+            println!("  use   {usage}");
+        }
+    }
+    EXIT_OK
 }
 
 fn cmd_validate(base: &Path, config_path: &Path, devices_path: &Path, paths: &[PathBuf]) -> i32 {
@@ -1834,7 +1952,7 @@ fn cmd_devices_check(
         );
         return EXIT_USAGE;
     };
-    let selected = match select_devices(&devices.devices, names) {
+    let selected = match select_devices_with_groups(&devices.devices, &devices.groups, names) {
         Ok(selected) => selected,
         Err(message) => {
             eprintln!("devices check: {message}");
@@ -2025,30 +2143,63 @@ pub(crate) fn select_devices(
     devices: &[DeviceConfig],
     requested: &[String],
 ) -> Result<Vec<DeviceConfig>, String> {
+    select_devices_with_groups(devices, &std::collections::BTreeMap::new(), requested)
+}
+
+/// Select devices by name or `@group`. Groups expand from the merged devices
+/// config, and `all` (or no selection) still means every configured device.
+pub(crate) fn select_devices_with_groups(
+    devices: &[DeviceConfig],
+    groups: &std::collections::BTreeMap<String, Vec<String>>,
+    requested: &[String],
+) -> Result<Vec<DeviceConfig>, String> {
     if requested.is_empty() || requested.iter().any(|name| name == "all") {
         return Ok(devices.to_vec());
     }
     let mut selected: Vec<DeviceConfig> = Vec::new();
     let mut unknown: Vec<&str> = Vec::new();
-    for name in requested {
-        match devices.iter().find(|device| &device.name == name) {
-            Some(device) => {
-                if !selected.iter().any(|chosen| chosen.name == device.name) {
-                    selected.push(device.clone());
+    for requested_name in requested {
+        let names: std::collections::BTreeSet<String> = if requested_name.starts_with('@') {
+            match config::expand_actor_ref(devices, groups, requested_name) {
+                Ok(names) => names,
+                Err(_) => {
+                    unknown.push(requested_name.as_str());
+                    continue;
                 }
             }
-            None => unknown.push(name.as_str()),
+        } else {
+            std::iter::once(requested_name.clone()).collect()
+        };
+        let mut missing = false;
+        for resolved in names {
+            match devices.iter().find(|device| device.name == resolved) {
+                Some(device) => {
+                    if !selected.iter().any(|chosen| chosen.name == device.name) {
+                        selected.push(device.clone());
+                    }
+                }
+                None => missing = true,
+            }
+        }
+        if missing {
+            unknown.push(requested_name.as_str());
         }
     }
     if !unknown.is_empty() {
         let known: Vec<&str> = devices.iter().map(|device| device.name.as_str()).collect();
+        let groups: Vec<&str> = groups.keys().map(String::as_str).collect();
         return Err(format!(
-            "unknown device(s): {} (configured: {})",
+            "unknown device/group(s): {} (configured devices: {}; groups: {})",
             unknown.join(", "),
             if known.is_empty() {
                 "none".to_string()
             } else {
                 known.join(", ")
+            },
+            if groups.is_empty() {
+                "none".to_string()
+            } else {
+                groups.join(", ")
             }
         ));
     }
@@ -2306,13 +2457,14 @@ pub(crate) fn run_workspace(
         }
     }
 
-    let mut selected_devices = match select_devices(&device_list.devices, &args.device) {
-        Ok(selected) => selected,
-        Err(message) => {
-            eprintln!("run: {message}");
-            return RunOutcome::refusal(EXIT_USAGE, format!("run: {message}"));
-        }
-    };
+    let mut selected_devices =
+        match select_devices_with_groups(&device_list.devices, &device_list.groups, &args.device) {
+            Ok(selected) => selected,
+            Err(message) => {
+                eprintln!("run: {message}");
+                return RunOutcome::refusal(EXIT_USAGE, format!("run: {message}"));
+            }
+        };
     if selected_devices.is_empty() {
         let message = format!(
             "run: no devices configured (see {})",
@@ -2383,7 +2535,8 @@ pub(crate) fn run_workspace(
     // --play patterns or plays_dir (spec 8.1).
     let scenes = workspace::load_scenes(&base.join(&config.scenes_dir));
     let theatres = workspace::load_theatres(&base.join(&config.theatres_dir));
-    let plays = load_play_selection(base, &config, &args.play);
+    let (play_patterns, inline_acts) = split_play_act_filters(&args.play);
+    let plays = load_play_selection(base, &config, &play_patterns);
     let mut load_diagnostics = scenes.diagnostics;
     load_diagnostics.extend(theatres.diagnostics);
     load_diagnostics.extend(plays.diagnostics);
@@ -2406,10 +2559,12 @@ pub(crate) fn run_workspace(
         );
     }
 
+    let mut acts = args.act.clone();
+    acts.extend(inline_acts);
     let mut selection = plan::Selection {
         tags: args.tag.clone(),
         exclude_tags: args.exclude_tag.clone(),
-        acts: args.act.clone(),
+        acts,
     };
     let mut selected_plays = ws.plays.clone();
     if args.only_failed {
@@ -2500,6 +2655,8 @@ pub(crate) fn run_workspace(
         workspace: &ws,
         base,
         devices: &selected_devices,
+        all_devices: &device_list.devices,
+        groups: &device_list.groups,
         apps: &app_list.apps,
         cli_app: args.app.as_deref(),
         plays: &selected_plays,
@@ -2766,7 +2923,9 @@ fn print_dry_run(
                 }
                 let reason = if !play_selected {
                     "play not in the --only-failed selection".to_string()
-                } else if let Some(reason) = act_skip_reason(act, selection, device.platform) {
+                } else if let Some(reason) =
+                    act_skip_reason(play, act, workspace, selection, device.platform)
+                {
                     reason
                 } else {
                     "not in the resolved plan".to_string()
@@ -2809,26 +2968,24 @@ fn plan_contains_act(plan: &plan::ExecutionPlan, device: &str, play: &str, act: 
 }
 
 fn act_skip_reason(
+    play: &impresario_core::ast::PlayFile,
     act: &impresario_core::ast::ActDecl,
+    workspace: &workspace::Workspace,
     selection: &plan::Selection,
     platform: Platform,
 ) -> Option<String> {
-    let tags: Vec<&str> = act.tags.iter().map(|tag| tag.name.as_str()).collect();
+    let tags = plan::effective_tags(play, act, workspace);
     if let Some(excluded) = selection
         .exclude_tags
         .iter()
-        .find(|excluded| tags.contains(&excluded.as_str()))
+        .find(|excluded| tags.contains(*excluded))
     {
         return Some(format!("excluded by --exclude-tag {excluded}"));
     }
-    if !selection.tags.is_empty()
-        && !tags
-            .iter()
-            .any(|tag| selection.tags.iter().any(|wanted| wanted == tag))
-    {
+    if !selection.tags.is_empty() && !selection.tags.iter().any(|wanted| tags.contains(wanted)) {
         return Some(format!("filtered by --tag {}", selection.tags.join(", ")));
     }
-    if !selection.acts.is_empty() && !selection.acts.iter().any(|name| name == &act.name) {
+    if !selection.acts.iter().any(|name| name == &act.name) && !selection.acts.is_empty() {
         return Some(format!("filtered by --act {}", selection.acts.join(", ")));
     }
     if !act.platforms.is_empty() {
@@ -2851,6 +3008,35 @@ fn act_skip_reason(
         }
     }
     None
+}
+
+/// Split `login#"Successful login"` into the play pattern and act name.
+fn split_play_act_filters(patterns: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut plays = Vec::new();
+    let mut acts = Vec::new();
+    for pattern in patterns {
+        match pattern.split_once('#') {
+            Some((play, act)) => {
+                if !play.trim().is_empty() {
+                    plays.push(play.trim().to_string());
+                }
+                let act = act.trim();
+                let act = act
+                    .strip_prefix('"')
+                    .and_then(|rest| rest.strip_suffix('"'))
+                    .or_else(|| {
+                        act.strip_prefix('\'')
+                            .and_then(|rest| rest.strip_suffix('\''))
+                    })
+                    .unwrap_or(act);
+                if !act.is_empty() {
+                    acts.push(act.to_string());
+                }
+            }
+            None => plays.push(pattern.clone()),
+        }
+    }
+    (plays, acts)
 }
 
 /// Expand `--play` file/dir/glob patterns (default: the configured
@@ -2907,10 +3093,74 @@ fn load_play_selection(
             if path.exists() {
                 push_unique(&mut targets, path);
             } else {
-                diagnostics.push(Diagnostic::error(
-                    Code::CfgInvalidValue,
-                    format!("--play '{pattern}' does not exist"),
-                ));
+                // Run-by-name fallback: a file stem or the play's `Play:` name.
+                let all = workspace::load_plays(&base.join(&config.plays_dir));
+                let matches: Vec<PathBuf> = all
+                    .workspace
+                    .plays
+                    .iter()
+                    .filter(|play| {
+                        let stem = play
+                            .path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or_default();
+                        stem == pattern
+                            || play.name == *pattern
+                            || pattern
+                                .strip_suffix(".play")
+                                .is_some_and(|without| stem == without || play.name == without)
+                            || play
+                                .path
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                                .ends_with(&normalized)
+                    })
+                    .map(|play| play.path.clone())
+                    .collect();
+                match matches.as_slice() {
+                    [] => {
+                        let names: Vec<String> = all
+                            .workspace
+                            .plays
+                            .iter()
+                            .map(|play| {
+                                play.path
+                                    .file_stem()
+                                    .and_then(|stem| stem.to_str())
+                                    .unwrap_or(&play.name)
+                                    .to_string()
+                            })
+                            .collect();
+                        let mut diagnostic = Diagnostic::error(
+                            Code::CfgInvalidValue,
+                            format!(
+                                "--play '{pattern}' is not a file, directory, file stem or Play: name"
+                            ),
+                        );
+                        if let Some(hint) = impresario_core::diag::suggest(
+                            pattern,
+                            &names.iter().map(String::as_str).collect::<Vec<_>>(),
+                        ) {
+                            diagnostic = diagnostic.with_help(hint);
+                        } else if !names.is_empty() {
+                            diagnostic = diagnostic
+                                .with_help(format!("available plays: {}", names.join(", ")));
+                        }
+                        diagnostics.push(diagnostic);
+                    }
+                    [path] => push_unique(&mut targets, path.clone()),
+                    many => diagnostics.push(Diagnostic::error(
+                        Code::CfgInvalidValue,
+                        format!(
+                            "--play '{pattern}' is ambiguous; it matches {}",
+                            many.iter()
+                                .map(|path| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    )),
+                }
             }
         }
     }

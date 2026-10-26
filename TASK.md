@@ -710,7 +710,7 @@ Compilation: filter Acts (platform, tags, names) → apply scene applicability �
 - `trait DeviceTransport { async fn prepare(&mut self, dev: &Device) -> Result<Endpoint>; async fn teardown(&mut self) -> Result<()>; fn log_sources(&self) -> Vec<LogSource>; }`, one implementation per family:
   - `ConnectorTransport` (web, webos, tizen): if `agent_address` is loopback and nothing listens, spawn `impresario-connector serve` as a child (killed on drop); otherwise just connect.
   - `AdbTransport` (android, androidtv): uses argument arrays (never shell strings). Steps: verify `adb devices` lists the serial and it is `device`; install/refresh the agent APKs when their version hash differs; (optional) `pm clear`; pick a free local port; `adb -s S forward tcp:<local> tcp:<agent_port>`; spawn `adb -s S shell am instrument -w -r -e class com.impresario.agent.AgentRunner -e port <agent_port> <test-package>/androidx.test.runner.AndroidJUnitRunner` as a monitored child process (stdout captured for diagnostics); optionally spawn host-side `adb logcat` filtered to the app pid as a `LogSource`. Teardown: `Shutdown` RPC → `adb forward --remove` → kill child → `am force-stop` of the agent package.
-  - `AppleTransport` (ios, tvos): macOS hosts only (otherwise `DEVICE_UNAVAILABLE` with an explanation). iOS device: `iproxy <local>:<agent_port> -u <udid>` (libimobiledevice; clear error if missing); iOS simulator: direct `127.0.0.1:<agent_port>` (UDID is a UUID). tvOS: uses `agent_address` (network). Start the runner: `xcodebuild test-without-building -xctestrun <file> -destination 'id=<udid>' -only-testing:<bundle>/AgentRunnerTests/testServe -test-timeouts-enabled NO -parallel-testing-enabled NO` as a monitored child; wait for the port (and optionally Bonjour `_impresario._tcp`) up to `agent_start_timeout_ms`. Teardown: `Shutdown` → kill child (process group) → kill `iproxy`.
+  - `AppleTransport` (ios, tvos): macOS hosts only (otherwise `DEVICE_UNAVAILABLE` with an explanation). iOS device: `iproxy <local>:<agent_port> -u <udid>` (libimobiledevice; clear error if missing); iOS **and tvOS** simulators: direct `127.0.0.1:<agent_port>` (the UDID is an RFC 4122 UUID, so no `agent_address` is required); a physical tvOS: uses `agent_address` (network). Start the runner: `xcodebuild test-without-building -xctestrun <file> -destination 'id=<udid>' -only-testing:<bundle>/AgentRunnerTests/testServe -test-timeouts-enabled NO -parallel-testing-enabled NO` as a monitored child; wait for the port (and optionally Bonjour `_impresario._tcp`) up to `agent_start_timeout_ms`. Teardown: `Shutdown` → kill child (process group) → kill `iproxy`.
 - `MockAgent` (in `impresario-clients::testing`): an in-process tonic server with scriptable behavior (delays, failures, hung commands, dropped streams) used by orchestrator integration tests.
 - All child processes are kill-on-drop, have captured stderr, and every wait has a timeout.
 
@@ -2342,10 +2342,13 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
   played, and no probe has run on these TVs. The HD ledger (`HD-1`...`HD-8`,
   `I-133`) stays deferred until it does, and reachability alone is never
   reported as hardware verification.
-- No local macOS/Xcode host is attached. The GitHub `macos-15` job builds the
-  Xcode targets unsigned but cannot reach the LAN Apple TV; device install and
-  XCUITest execution remain open. WSL Swift builds cover only
-  `AgentCore`/`AgentService`.
+- No local macOS/Xcode host is attached. Apple simulator execution is out of
+  scope by user direction; physical tvOS is the active P0 path. The simulator
+  workflow and helper scripts were removed, and no simulator or hardware-tested
+  claim is made. Xcode targets are compiled by the unsigned `Apple Xcode` CI
+  job only. WSL Swift builds cover the `AgentCore`/`AgentService` package on
+  Linux. Physical tvOS pairing, free-Apple-ID signing, install, local-network
+  permission and the remote focus path remain open (HD-1/I-149).
 
 ---
 
@@ -2430,3 +2433,18 @@ Still outstanding: the resident runner and watchers, the
 actors/audience/interface DSL migration, LSP/TUI/MCP parity, and all
 hardware-gated acceptance. Phase 6's native webOS/Tizen transports, packaging
 and signing remain intact. See `docs/STATUS.md` for evidence and limits.
+
+## Apple execution scope (2026-10-26 user direction)
+
+The user rejected Apple simulator testing; physical tvOS is now the active P0
+path. The simulator workflow, helper scripts, smoke test and CI job were
+removed, and no Apple simulator or hardware execution is claimed. The tvOS
+simulator loopback branch in config/`AppleTransport` remains as untested
+support; it is not evidence. The Apple TV at `192.168.93.19` is reachable over
+AirPlay, but this Windows host has no macOS/Xcode, Apple Mobile Device Support,
+paired UDID or signed runner. Pairing, the free-7-day Apple ID signing flow,
+install and the remote focus path still require a macOS host on the LAN and
+remain HD-1/deferred. The unsigned `Apple Xcode` compile job and the Linux
+Swift package tests remain valid build/unit-test evidence. The
+actors/groups/audience Phase 2 work is parked, not abandoned, on
+`wip/phase2-tvos-p0`.

@@ -7,18 +7,20 @@
 //! support check against 6.1/6.2 â†’ effective timeout (5.6). Any error aborts
 //! the run; **all** errors are collected and returned together.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use impresario_core::apps::AppConfig;
 use impresario_core::ast::{
-    ActDecl, ActionVerb, AppOp, CheckCondition, PerformDecl, PlayFile, PlayerCheck, SceneFile,
-    ShowingCheck, StageDecl, StageItem, Step, StepKind,
+    ActDecl, ActionVerb, ActorFilterKind, AppOp, CheckCondition, PerformDecl, PlayFile,
+    PlayerCheck, SceneFile, ShowingCheck, StageDecl, StageItem, Step, StepKind,
 };
 use impresario_core::command::{
     ActionType, CheckKind, Command, KeyPress, ProbeCommand, RunAction, ValidateCheck,
 };
-use impresario_core::config::{DeviceConfig, ImpresarioConfig};
+use impresario_core::config::{
+    expand_actor_ref, expand_actor_refs, ActorResolveError, DeviceConfig, ImpresarioConfig,
+};
 use impresario_core::diag::{suggest, Code, Diagnostic, Diagnostics};
 use impresario_core::platforms::Platform;
 use impresario_core::probe::{self, Claim, ProbeAssertion, ProbeKind};
@@ -41,21 +43,22 @@ pub struct Selection {
 }
 
 impl Selection {
-    fn act_selected(&self, act: &ActDecl) -> bool {
-        let tags: Vec<&str> = act.tags.iter().map(|t| t.name.as_str()).collect();
+    pub(crate) fn tags_selected(&self, tags: &BTreeSet<String>) -> bool {
         if tags
             .iter()
-            .any(|t| self.exclude_tags.iter().any(|e| e == t))
+            .any(|tag| self.exclude_tags.iter().any(|excluded| excluded == tag))
         {
             return false;
         }
-        if !self.tags.is_empty() && !tags.iter().any(|t| self.tags.iter().any(|s| s == t)) {
-            return false;
-        }
-        if !self.acts.is_empty() && !self.acts.iter().any(|name| name == &act.name) {
+        if !self.tags.is_empty() && !tags.iter().any(|tag| self.tags.contains(tag)) {
             return false;
         }
         true
+    }
+
+    fn act_selected(&self, act: &ActDecl, tags: &BTreeSet<String>) -> bool {
+        self.tags_selected(tags)
+            && (self.acts.is_empty() || self.acts.iter().any(|name| name == &act.name))
     }
 }
 
@@ -133,7 +136,12 @@ pub struct PlanInput<'a> {
     pub workspace: &'a Workspace,
     /// Workspace root, used to resolve relative app package paths.
     pub base: &'a Path,
+    /// Devices selected for this run (after `--device`/`--platform`).
     pub devices: &'a [DeviceConfig],
+    /// Every configured device, used to resolve actors that were not selected.
+    pub all_devices: &'a [DeviceConfig],
+    /// Merged actor groups (`@name`).
+    pub groups: &'a BTreeMap<String, Vec<String>>,
     /// App definitions from the global/workspace layers.
     pub apps: &'a [AppConfig],
     /// `--app` override (wins over every play's `App:` header).
@@ -152,6 +160,8 @@ pub struct PlanInput<'a> {
 /// Compile the plan. On any error returns every diagnostic collected.
 pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
     let mut diagnostics = Diagnostics::new();
+    diagnostics
+        .extend(impresario_core::workspace::stage_implementation_diagnostics(input.workspace));
     validate_cli_args(input, &mut diagnostics);
     let mut secrets: Vec<String> = Vec::new();
     let mut devices = Vec::new();
@@ -160,6 +170,7 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
 
     // Bind play -> app before any device work (TASK-2 section 5, D-21).
     let app = resolve_app(input, &mut diagnostics);
+    validate_actor_filters(input, &mut diagnostics);
 
     // Play variable values, resolved once per play: env is read now, `Var:`
     // values may interpolate, I-04 last-wins, CLI `--var` overrides win.
@@ -184,7 +195,11 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
         for (play, vars) in input.plays.iter().zip(&play_vars) {
             let mut acts = Vec::new();
             for act in &play.acts {
-                if !act_applies_to(act, platform) || !input.selection.act_selected(act) {
+                let tags = effective_tags(play, act, input.workspace);
+                if !act_applies_to(act, platform)
+                    || !input.selection.act_selected(act, &tags)
+                    || !act_actors_allow(play, act, device, input)
+                {
                     continue;
                 }
                 let act_args: BTreeMap<String, String> = input
@@ -233,7 +248,7 @@ pub fn build_plan(input: &PlanInput<'_>) -> Result<ExecutionPlan, Diagnostics> {
                     if !stages.is_empty() {
                         acts.push(PlannedAct {
                             name: act.name.clone(),
-                            tags: act.tags.iter().map(|t| t.name.clone()).collect(),
+                            tags: tags.iter().cloned().collect(),
                             example: ctx.examples.clone(),
                             stages,
                         });
@@ -397,15 +412,258 @@ fn act_applies_to(act: &ActDecl, platform: Platform) -> bool {
         .any(|p| p == platform)
 }
 
-fn stage_applies_to(stage: &StageDecl, platform: Platform) -> bool {
-    if stage.platforms.is_empty() {
+/// Effective tags of an act: play tags plus act tags plus the tags of every
+/// theatre/stage performed by the act, transitively and cycle-safely.
+pub(crate) fn effective_tags(
+    play: &PlayFile,
+    act: &ActDecl,
+    workspace: &Workspace,
+) -> BTreeSet<String> {
+    let mut tags: BTreeSet<String> = play.tags.iter().map(|tag| tag.name.clone()).collect();
+    tags.extend(act.tags.iter().map(|tag| tag.name.clone()));
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for stage in &act.stages {
+        tags.extend(stage.tags.iter().map(|tag| tag.name.clone()));
+    }
+    add_perform_tags(
+        &act.performs,
+        workspace,
+        &mut tags,
+        &mut visiting,
+        &mut visited,
+    );
+    tags
+}
+
+fn add_perform_tags(
+    performs: &[PerformDecl],
+    workspace: &Workspace,
+    tags: &mut BTreeSet<String>,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
+) {
+    for perform in performs {
+        for (theatre, stage) in workspace.stage_instances(&perform.stage_name) {
+            tags.extend(theatre.tags.iter().map(|tag| tag.name.clone()));
+            tags.extend(stage.tags.iter().map(|tag| tag.name.clone()));
+            let key = format!(
+                "{}:{}:{}",
+                stage.name_span.file().display(),
+                stage.name_span.line,
+                stage.name_span.col
+            );
+            if !visited.insert(key) || !visiting.insert(stage.name.clone()) {
+                continue;
+            }
+            let nested: Vec<PerformDecl> = stage
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    StageItem::Perform(perform) => Some(perform.clone()),
+                    StageItem::Scene(_) => None,
+                })
+                .collect();
+            add_perform_tags(&nested, workspace, tags, visiting, visited);
+            visiting.remove(&stage.name);
+        }
+    }
+}
+
+fn selected_actor_names(input: &PlanInput<'_>) -> BTreeSet<String> {
+    input
+        .devices
+        .iter()
+        .map(|device| device.name.clone())
+        .collect()
+}
+
+fn expand_actor_names<'a>(
+    references: impl IntoIterator<Item = &'a str>,
+    input: &PlanInput<'_>,
+) -> BTreeSet<String> {
+    expand_actor_refs(input.all_devices, input.groups, references).unwrap_or_default()
+}
+
+fn act_actors_allow(
+    play: &PlayFile,
+    act: &ActDecl,
+    device: &DeviceConfig,
+    input: &PlanInput<'_>,
+) -> bool {
+    let references = play.effective_actors(act);
+    if references.is_empty() {
         return true;
     }
-    stage
-        .platforms
-        .iter()
-        .filter_map(|named| named.name.parse::<Platform>().ok())
-        .any(|p| p == platform)
+    let configured: BTreeSet<String> =
+        expand_actor_names(references.iter().map(|named| named.name.as_str()), input);
+    configured.contains(&device.name)
+}
+
+fn filter_allows(
+    filter: &impresario_core::ast::ActorFilter,
+    device: &str,
+    input: &PlanInput<'_>,
+) -> bool {
+    let configured: BTreeSet<String> =
+        expand_actor_names(filter.actors.iter().map(|named| named.name.as_str()), input);
+    match filter.kind {
+        ActorFilterKind::For => configured.contains(device),
+        ActorFilterKind::Except => !configured.contains(device),
+    }
+}
+
+fn perform_allows(perform: &PerformDecl, device: &DeviceConfig, input: &PlanInput<'_>) -> bool {
+    perform
+        .filter
+        .as_ref()
+        .is_none_or(|filter| filter_allows(filter, &device.name, input))
+}
+
+fn actor_diagnostic(
+    diagnostics: &mut Diagnostics,
+    seen: &mut HashSet<String>,
+    named: &impresario_core::ast::Named,
+    error: &ActorResolveError,
+) {
+    let (code, message) = match error {
+        ActorResolveError::Unknown(name) => (
+            Code::DslUnknownActor,
+            format!(
+                "unknown actor or group '{name}'; it is not defined in the devices/groups configuration"
+            ),
+        ),
+        ActorResolveError::Cycle(path) => (
+            Code::DslGroupCycle,
+            format!("actor group cycle: {}", path.join(" -> ")),
+        ),
+    };
+    let key = format!("{}:{}", code, named.span);
+    if seen.insert(key) {
+        diagnostics.push(
+            Diagnostic::error(code, message)
+                .with_span(named.span.clone())
+                .with_help(
+                    "define the actor in impresario.devices.config or fix the group membership",
+                ),
+        );
+    }
+}
+
+fn validate_filter(
+    filter: &impresario_core::ast::ActorFilter,
+    effective: &BTreeSet<String>,
+    input: &PlanInput<'_>,
+    diagnostics: &mut Diagnostics,
+    seen: &mut HashSet<String>,
+) {
+    for named in &filter.actors {
+        match expand_actor_ref(input.all_devices, input.groups, &named.name) {
+            Ok(members) => {
+                for member in members {
+                    if effective.contains(&member) {
+                        continue;
+                    }
+                    let key = format!("{}:{}", Code::DslActorFilter, named.span);
+                    if seen.insert(key) {
+                        diagnostics.push(
+                            Diagnostic::error(
+                                Code::DslActorFilter,
+                                format!(
+                                    "actor '{member}' in Perform {:?} is not among the act's effective actors",
+                                    filter.kind
+                                ),
+                            )
+                            .with_span(named.span.clone())
+                            .with_help("use an actor from the act's Actors: list or remove it from the filter"),
+                        );
+                    }
+                }
+            }
+            Err(error) => actor_diagnostic(diagnostics, seen, named, &error),
+        }
+    }
+}
+
+fn validate_perform_filters(
+    performs: &[PerformDecl],
+    workspace: &Workspace,
+    effective: &BTreeSet<String>,
+    input: &PlanInput<'_>,
+    diagnostics: &mut Diagnostics,
+    seen: &mut HashSet<String>,
+    visiting: &mut HashSet<String>,
+) {
+    for perform in performs {
+        if let Some(filter) = &perform.filter {
+            validate_filter(filter, effective, input, diagnostics, seen);
+        }
+        let implementations = workspace.stage_implementations(&perform.stage_name);
+        for stage in implementations {
+            if !visiting.insert(stage.name.clone()) {
+                continue;
+            }
+            let nested: Vec<PerformDecl> = stage
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    StageItem::Perform(perform) => Some(perform.clone()),
+                    StageItem::Scene(_) => None,
+                })
+                .collect();
+            validate_perform_filters(
+                &nested,
+                workspace,
+                effective,
+                input,
+                diagnostics,
+                seen,
+                visiting,
+            );
+            visiting.remove(&stage.name);
+        }
+    }
+}
+
+/// Resolve actor/group references and check every `For`/`Except` against the
+/// act's effective actor set. Runs once so diagnostics are not repeated per
+/// device.
+fn validate_actor_filters(input: &PlanInput<'_>, diagnostics: &mut Diagnostics) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for play in input.plays {
+        for act in &play.acts {
+            let tags = effective_tags(play, act, input.workspace);
+            if !input.selection.act_selected(act, &tags) {
+                continue;
+            }
+            let references = play.effective_actors(act);
+            let mut configured = BTreeSet::new();
+            for named in references {
+                match expand_actor_ref(input.all_devices, input.groups, &named.name) {
+                    Ok(members) => configured.extend(members),
+                    Err(error) => actor_diagnostic(diagnostics, &mut seen, named, &error),
+                }
+            }
+            let effective = if references.is_empty() {
+                selected_actor_names(input)
+            } else {
+                configured
+                    .into_iter()
+                    .filter(|name| input.devices.iter().any(|device| &device.name == name))
+                    .collect()
+            };
+            let mut visiting = HashSet::new();
+            validate_perform_filters(
+                &act.performs,
+                input.workspace,
+                &effective,
+                input,
+                diagnostics,
+                &mut seen,
+                &mut visiting,
+            );
+        }
+    }
 }
 
 /// One execution per `Examples:` row; a table-less Act runs once.
@@ -503,22 +761,62 @@ fn expand_perform(
     stack: &mut Vec<String>,
     out: &mut Vec<PlannedStage>,
 ) {
-    let Some(stage) = workspace.stage(&perform.stage_name) else {
-        let mut diag = Diagnostic::error(
-            Code::DslUnknownStage,
-            format!("unknown stage '{}'", perform.stage_name),
-        )
-        .with_span(perform.stage_span.clone())
-        .with_help("declare it in a .theatre file under the configured theatres_dir");
-        if let Some(hint) = suggest(&perform.stage_name, &workspace.stage_names()) {
-            diag = diag.with_help(hint);
+    if !perform_allows(perform, ctx.device, ctx.input) {
+        return;
+    }
+    let Some(stage) = workspace.stage_for(&perform.stage_name, ctx.platform) else {
+        let mut diag = if workspace.stage(&perform.stage_name).is_some() {
+            Diagnostic::error(
+                Code::DslStageCoverage,
+                format!(
+                    "no implementation of stage '{}' serves platform '{}' for actor '{}'",
+                    perform.stage_name, ctx.platform, ctx.device.name
+                ),
+            )
+            .with_span(perform.stage_span.clone())
+            .with_help(format!(
+                "add an implementation with `Audience: {}` under a matching theatre, or remove the actor from the act",
+                ctx.platform
+            ))
+        } else {
+            let mut diag = Diagnostic::error(
+                Code::DslUnknownStage,
+                format!("unknown stage '{}'", perform.stage_name),
+            )
+            .with_span(perform.stage_span.clone())
+            .with_help("declare it in a .theatre file under the configured theatres_dir");
+            if let Some(hint) = suggest(&perform.stage_name, &workspace.stage_names()) {
+                diag = diag.with_help(hint);
+            }
+            diag
+        };
+        if workspace.stage(&perform.stage_name).is_some() {
+            diag = diag.with_help(format!(
+                "implementations exist for {}; the actor's device platform is '{}'",
+                workspace
+                    .stage_implementations(&perform.stage_name)
+                    .iter()
+                    .flat_map(|stage| {
+                        workspace
+                            .theatres
+                            .iter()
+                            .find(|theatre| {
+                                theatre.stages.iter().any(|item| item.name == stage.name)
+                            })
+                            .map(|theatre| theatre.stage_audience(stage))
+                            .unwrap_or_default()
+                    })
+                    .map(|platform| platform.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ctx.platform
+            ));
         }
         ctx.diagnostics.push(diag);
         return;
     };
-    if !stage_applies_to(stage, ctx.platform) {
-        return;
-    }
     if let Some(cycle_start) = stack.iter().position(|name| name == &stage.name) {
         let cycle = stack
             .get(cycle_start..)
@@ -2037,6 +2335,8 @@ mod tests {
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2063,6 +2363,8 @@ mod tests {
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2137,6 +2439,8 @@ mod tests {
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps,
             cli_app,
             plays: &plays,
@@ -2385,6 +2689,8 @@ Stage: S1
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2410,6 +2716,8 @@ Stage: S1
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2550,6 +2858,8 @@ Stage: S3
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2577,6 +2887,8 @@ Stage: S3
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &[],
             cli_app: None,
             plays: &plays,
@@ -2754,6 +3066,8 @@ Stage: S1
             workspace: &workspace,
             base: Path::new("."),
             devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
             apps: &apps,
             cli_app: None,
             plays: &plays,

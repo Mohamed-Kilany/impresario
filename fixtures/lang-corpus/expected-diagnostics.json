@@ -1,7 +1,7 @@
 {
   "plays/broken.play": [
     {
-      "code": "IMP-DSL-046",
+      "code": "IMP-DSL-057",
       "severity": "warning",
       "line": 4,
       "col": 6,
@@ -123,7 +123,7 @@
   ],
   "scenes/LoginScreen.scene": [
     {
-      "code": "IMP-DSL-043",
+      "code": "IMP-DSL-054",
       "severity": "warning",
       "line": 6,
       "col": 2,
@@ -148,7 +148,7 @@
       ]
     },
     {
-      "code": "IMP-DSL-045",
+      "code": "IMP-DSL-056",
       "severity": "warning",
       "line": 1,
       "col": 10,
@@ -156,21 +156,15 @@
       "related": []
     },
     {
-      "code": "IMP-DSL-030",
+      "code": "IMP-DSL-040",
       "severity": "error",
       "line": 3,
       "col": 8,
-      "message": "duplicate workspace stages 'Ghost Stage' (2 occurrences)",
-      "related": [
-        {
-          "line": 3,
-          "col": 8,
-          "message": "'Ghost Stage' also declared here"
-        }
-      ]
+      "message": "stage 'Ghost Stage' has more than one implementation for: web, webos, tizen, android, androidtv, ios, tvos",
+      "related": []
     },
     {
-      "code": "IMP-DSL-044",
+      "code": "IMP-DSL-055",
       "severity": "warning",
       "line": 3,
       "col": 8,
@@ -208,7 +202,7 @@
       ]
     },
     {
-      "code": "IMP-DSL-045",
+      "code": "IMP-DSL-056",
       "severity": "warning",
       "line": 1,
       "col": 10,
@@ -216,21 +210,15 @@
       "related": []
     },
     {
-      "code": "IMP-DSL-030",
+      "code": "IMP-DSL-040",
       "severity": "error",
       "line": 3,
       "col": 8,
-      "message": "duplicate workspace stages 'Ghost Stage' (2 occurrences)",
-      "related": [
-        {
-          "line": 3,
-          "col": 8,
-          "message": "'Ghost Stage' also declared here"
-        }
-      ]
+      "message": "stage 'Ghost Stage' has more than one implementation for: web, webos, tizen, android, androidtv, ios, tvos",
+      "related": []
     },
     {
-      "code": "IMP-DSL-044",
+      "code": "IMP-DSL-055",
       "severity": "warning",
       "line": 3,
       "col": 8,

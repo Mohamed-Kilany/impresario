@@ -119,6 +119,14 @@ pub fn analyze_sources(
         }
     }
     all.extend(semantic.clone());
+    for diagnostic in impresario_core::workspace::stage_implementation_diagnostics(&workspace) {
+        if let Some(span) = &diagnostic.span {
+            push_core(&mut by_file, &diagnostic, span.file());
+        } else {
+            push_core(&mut by_file, &diagnostic, Path::new(""));
+        }
+        all.push(diagnostic);
+    }
     add_duplicates(&workspace, sources, &mut by_file);
     dedupe(&mut by_file);
     (workspace, all, by_file)
@@ -242,14 +250,9 @@ fn add_duplicates(
             help: "theatre names must be unique across the workspace".to_string(),
         });
         for stage in &theatre.stages {
-            names.push(Name {
-                name: stage.name.clone(),
-                span: stage.name_span.clone(),
-                code: Code::DslDuplicateStage,
-                scope: "workspace stages".to_string(),
-                severity: Severity::Error,
-                help: "stage names must be unique across every theatre".to_string(),
-            });
+            // `(stage name, audience platform)` uniqueness is validated by the
+            // core workspace check; a duplicate name alone is legal when the
+            // audiences are disjoint.
             push_params(&mut names, &stage.params, &stage.name, "stage");
         }
     }
@@ -509,16 +512,8 @@ fn scan_duplicate_headers(source: &SourceFile, text: &str, names: &mut Vec<Name>
                     let name = name.trim();
                     let header = stage_header_name(name);
                     if !header.is_empty() {
-                        let span = line.span_of(path, header).unwrap_or_else(|| {
-                            Span::new(path, line.line, line.col + 6, header.chars().count())
-                        });
-                        add_header(
-                            header,
-                            span,
-                            Code::DslDuplicateStage,
-                            "workspace stages",
-                            names,
-                        );
+                        // Audience-aware stage uniqueness is checked by
+                        // `workspace::stage_implementation_diagnostics`.
                         scan_params(line, header, "stage", path, names);
                     }
                 }

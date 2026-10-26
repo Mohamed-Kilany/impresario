@@ -588,6 +588,7 @@ fn show_device(name: &str, _home: &Home, workspace_path: &Path) -> i32 {
     };
     match serde_yaml_ng::to_string(&DevicesConfig {
         devices: vec![device.clone()],
+        groups: std::collections::BTreeMap::new(),
     }) {
         Ok(text) => {
             print!("{text}");
@@ -1215,6 +1216,7 @@ fn migrate_definitions(base: &Path, dry_run: bool) -> i32 {
     }
     let devices_yaml = match serde_yaml_ng::to_string(&DevicesConfig {
         devices: new_devices,
+        groups: std::collections::BTreeMap::new(),
     }) {
         Ok(text) => text,
         Err(err) => {
@@ -1307,6 +1309,61 @@ fn migrate_definitions(base: &Path, dry_run: bool) -> i32 {
     EXIT_OK
 }
 
+/// Devices to use while migrating actors. A dry-run has not written the
+/// device/app split yet, so the legacy file is converted in memory instead of
+/// being rejected. A real run normally sees the already-migrated file.
+fn migration_devices(base: &Path) -> Result<Vec<DeviceConfig>, i32> {
+    let path = base.join("impresario.devices.config");
+    let outcome = config::load_devices_merged(&path);
+    if !outcome.diagnostics.has_errors() {
+        return Ok(outcome
+            .config
+            .map(|config| config.devices)
+            .unwrap_or_default());
+    }
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(_) => {
+            crate::render::eprint_all(&outcome.diagnostics);
+            eprintln!("migrate: fix the devices configuration before migrating actors");
+            return Err(EXIT_USAGE);
+        }
+    };
+    let value = match serde_yaml_ng::from_str::<Value>(&source) {
+        Ok(value) => value,
+        Err(_) => {
+            crate::render::eprint_all(&outcome.diagnostics);
+            eprintln!("migrate: fix the devices configuration before migrating actors");
+            return Err(EXIT_USAGE);
+        }
+    };
+    let Some(devices) = value.get("devices").and_then(Value::as_sequence) else {
+        crate::render::eprint_all(&outcome.diagnostics);
+        eprintln!("migrate: fix the devices configuration before migrating actors");
+        return Err(EXIT_USAGE);
+    };
+    if devices.is_empty()
+        || !devices
+            .iter()
+            .all(|device| device.get("target_endpoint").is_some())
+    {
+        crate::render::eprint_all(&outcome.diagnostics);
+        eprintln!("migrate: fix the devices configuration before migrating actors");
+        return Err(EXIT_USAGE);
+    }
+    let mut migrated = Vec::with_capacity(devices.len());
+    for device in devices {
+        match migrate_device(device) {
+            Ok((device, _app)) => migrated.push(device),
+            Err(message) => {
+                eprintln!("migrate: {message}");
+                return Err(EXIT_USAGE);
+            }
+        }
+    }
+    Ok(migrated)
+}
+
 fn migrate_dsl(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
     let cfg_outcome = crate::cli::load_effective_config(base, config_path);
     if cfg_outcome.diagnostics.has_errors() {
@@ -1326,7 +1383,11 @@ fn migrate_dsl(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
         eprintln!("migrate: fix the DSL errors above first");
         return EXIT_USAGE;
     }
-    let migration = impresario_core::migrate::migrate(&loaded.workspace, &theatres_dir);
+    let devices = match migration_devices(base) {
+        Ok(devices) => devices,
+        Err(code) => return code,
+    };
+    let migration = impresario_core::migrate::migrate(&loaded.workspace, &theatres_dir, &devices);
     if migration.errors.has_errors() {
         crate::render::eprint_all(&migration.errors);
         eprintln!("migrate: generated DSL did not validate; nothing was written");
@@ -1644,8 +1705,11 @@ where
             .skip(existing.devices.len())
             .cloned()
             .collect();
-        let body = serde_yaml_ng::to_string(&DevicesConfig { devices: appended })
-            .map_err(|err| err.to_string())?;
+        let body = serde_yaml_ng::to_string(&DevicesConfig {
+            devices: appended,
+            groups: std::collections::BTreeMap::new(),
+        })
+        .map_err(|err| err.to_string())?;
         append_items(&source, "devices", &body)
     } else {
         serde_yaml_ng::to_string(&parsed).map_err(|err| err.to_string())?

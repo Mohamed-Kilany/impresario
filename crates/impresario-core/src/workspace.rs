@@ -3,12 +3,14 @@
 //! The loader is recovering like the parsers: unreadable or broken files
 //! produce diagnostics, everything else still loads.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{PlayFile, SceneFile, TheatreFile};
+use crate::ast::{PlayFile, SceneFile, StageDecl, TheatreFile};
 use crate::diag::{Code, Diagnostic, Diagnostics};
 use crate::parser::{parse_play, parse_scene, parse_theatre};
+use crate::platforms::Platform;
 
 /// All parsed scenes, theatres and plays of one run.
 #[derive(Debug, Clone, Default)]
@@ -72,6 +74,84 @@ impl Workspace {
                 .find(|theatre| theatre.name == theatre_name)
             {
                 if let Some(stage) = theatre.stage(stage_name) {
+                    return Some(stage);
+                }
+            }
+        }
+        None
+    }
+
+    /// All implementations of a stage name (every audience/platform), using
+    /// the same `Stage` / `Theatre.Stage` spelling rules as [`Self::stage`].
+    #[must_use]
+    pub fn stage_implementations(&self, name: &str) -> Vec<&StageDecl> {
+        self.stage_instances(name)
+            .into_iter()
+            .map(|(_, stage)| stage)
+            .collect()
+    }
+
+    /// All `(theatre, implementation)` pairs for a stage name.
+    #[must_use]
+    pub fn stage_instances(&self, name: &str) -> Vec<(&TheatreFile, &StageDecl)> {
+        let direct: Vec<(&TheatreFile, &StageDecl)> = self
+            .theatres
+            .iter()
+            .flat_map(|theatre| {
+                theatre
+                    .stages
+                    .iter()
+                    .filter(|stage| stage.name == name)
+                    .map(move |stage| (theatre, stage))
+            })
+            .collect();
+        if !direct.is_empty() {
+            return direct;
+        }
+        for (index, _) in name.match_indices('.').rev() {
+            let (theatre_name, rest) = name.split_at(index);
+            let Some(stage_name) = rest.get(1..) else {
+                continue;
+            };
+            if let Some(theatre) = self
+                .theatres
+                .iter()
+                .find(|theatre| theatre.name == theatre_name)
+            {
+                let stages: Vec<(&TheatreFile, &StageDecl)> = theatre
+                    .stages
+                    .iter()
+                    .filter(|stage| stage.name == stage_name)
+                    .map(|stage| (theatre, stage))
+                    .collect();
+                if !stages.is_empty() {
+                    return stages;
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Resolve a stage implementation for a device platform, exact match only
+    /// (D-31). Accepts `Stage` and `Theatre.Stage` spellings.
+    #[must_use]
+    pub fn stage_for(&self, name: &str, platform: Platform) -> Option<&StageDecl> {
+        for theatre in &self.theatres {
+            if let Some(stage) = theatre.stage_for(name, platform) {
+                return Some(stage);
+            }
+        }
+        for (index, _) in name.match_indices('.').rev() {
+            let (theatre_name, rest) = name.split_at(index);
+            let Some(stage_name) = rest.get(1..) else {
+                continue;
+            };
+            if let Some(theatre) = self
+                .theatres
+                .iter()
+                .find(|theatre| theatre.name == theatre_name)
+            {
+                if let Some(stage) = theatre.stage_for(stage_name, platform) {
                     return Some(stage);
                 }
             }
@@ -281,29 +361,196 @@ fn load_files(files: &[PathBuf]) -> LoadedWorkspace {
         }
     }
 
-    // IMP-DSL-030 stage names are globally unique across all theatres.
-    let mut stages: Vec<(String, crate::span::Span)> = Vec::new();
-    for theatre in &loaded.workspace.theatres {
-        for stage in &theatre.stages {
-            if let Some((_, previous)) = stages.iter().find(|(name, _)| name == &stage.name) {
-                loaded.diagnostics.push(
-                    Diagnostic::error(
-                        Code::DslDuplicateStage,
-                        format!("duplicate stage '{}'", stage.name),
-                    )
-                    .with_span(stage.name_span.clone())
-                    .with_help(format!(
-                        "first declared at {}:{}",
-                        previous.file().display(),
-                        previous.line
-                    )),
-                );
-            } else {
-                stages.push((stage.name.clone(), stage.name_span.clone()));
+    loaded
+        .diagnostics
+        .extend(stage_implementation_diagnostics(&loaded.workspace));
+    loaded
+}
+
+/// Validate `(stage name, audience platform)` uniqueness, shared parameter
+/// signatures and theatre/audience narrowing for an in-memory workspace.
+///
+/// Workspace loading already runs this; callers that assemble a [`Workspace`]
+/// themselves (the planner, LSP and MCP) must merge the result too.
+#[must_use]
+pub fn stage_implementation_diagnostics(workspace: &Workspace) -> Diagnostics {
+    let mut diagnostics = Diagnostics::new();
+    validate_stage_implementations(workspace, &mut diagnostics);
+    diagnostics
+}
+
+/// Every staged implementation with its owning theatre, in stable file order.
+fn stage_implementations(workspace: &Workspace) -> Vec<(&TheatreFile, &StageDecl)> {
+    workspace
+        .theatres
+        .iter()
+        .flat_map(|theatre| theatre.stages.iter().map(move |stage| (theatre, stage)))
+        .collect()
+}
+
+fn stage_signature(stage: &StageDecl) -> Vec<(String, bool)> {
+    stage
+        .params
+        .iter()
+        .map(|param| (param.name.clone(), param.default.is_some()))
+        .collect()
+}
+
+/// `(stage name, audience platform)` uniqueness, shared parameter signatures
+/// and theatre/audience subset checks (TASK-3 section 13, IMP-DSL-040/041/046).
+fn validate_stage_implementations(workspace: &Workspace, diagnostics: &mut Diagnostics) {
+    let implementations = stage_implementations(workspace);
+    let mut duplicate_platforms: BTreeMap<usize, BTreeSet<Platform>> = BTreeMap::new();
+    let mut signature_mismatch: BTreeSet<usize> = BTreeSet::new();
+
+    for (left_index, (left_theatre, left)) in implementations.iter().enumerate() {
+        for (right_index, (right_theatre, right)) in
+            implementations.iter().enumerate().skip(left_index + 1)
+        {
+            if left.name != right.name {
+                continue;
+            }
+            let left_audience: BTreeSet<Platform> =
+                left_theatre.stage_audience(left).into_iter().collect();
+            let right_audience: BTreeSet<Platform> =
+                right_theatre.stage_audience(right).into_iter().collect();
+            let overlap: BTreeSet<Platform> = left_audience
+                .intersection(&right_audience)
+                .copied()
+                .collect();
+            if !overlap.is_empty() {
+                duplicate_platforms
+                    .entry(left_index)
+                    .or_default()
+                    .extend(overlap.iter().copied());
+                duplicate_platforms
+                    .entry(right_index)
+                    .or_default()
+                    .extend(overlap.iter().copied());
+            }
+            if stage_signature(left) != stage_signature(right) {
+                signature_mismatch.insert(left_index);
+                signature_mismatch.insert(right_index);
             }
         }
     }
-    loaded
+
+    for (index, (theatre, stage)) in implementations.iter().enumerate() {
+        if let Some(platforms) = duplicate_platforms.get(&index) {
+            let audience = platforms
+                .iter()
+                .map(|platform| platform.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let others = implementations
+                .iter()
+                .enumerate()
+                .filter(|(other, (other_theatre, other_stage))| {
+                    *other != index
+                        && other_stage.name == stage.name
+                        && !other_theatre
+                            .stage_audience(other_stage)
+                            .into_iter()
+                            .collect::<BTreeSet<_>>()
+                            .is_disjoint(platforms)
+                })
+                .map(|(_, (other_theatre, other_stage))| {
+                    format!(
+                        "{}:{} ({})",
+                        other_stage.name_span.file().display(),
+                        other_stage.name_span.line,
+                        other_theatre.name
+                    )
+                })
+                .collect::<Vec<_>>();
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslDuplicateStageImplementation,
+                    format!(
+                        "stage '{}' has more than one implementation for: {audience}",
+                        stage.name
+                    ),
+                )
+                .with_span(stage.name_span.clone())
+                .with_help(format!("other implementations: {}", others.join(", "))),
+            );
+        }
+        if signature_mismatch.contains(&index) {
+            let expected = implementations
+                .iter()
+                .find(|(_, other)| other.name == stage.name && !std::ptr::eq(*other, *stage))
+                .map(|(_, other)| format_signature(other))
+                .unwrap_or_else(|| "<none>".to_string());
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslStageSignatureMismatch,
+                    format!(
+                        "stage '{}' has parameter list {}, expected {expected}",
+                        stage.name,
+                        format_signature(stage)
+                    ),
+                )
+                .with_span(stage.name_span.clone())
+                .with_help(
+                    "all implementations of one stage name must share names, order and \
+                     whether each parameter has a default",
+                ),
+            );
+        }
+
+        // A stage may only narrow its theatre's audience.
+        let theatre_audience: BTreeSet<Platform> = if theatre.audience.is_empty() {
+            Platform::ALL.into_iter().collect()
+        } else {
+            theatre
+                .audience
+                .iter()
+                .filter_map(|named| named.name.parse::<Platform>().ok())
+                .collect()
+        };
+        let stage_audience: BTreeSet<Platform> =
+            theatre.stage_audience(stage).into_iter().collect();
+        let outside: Vec<&str> = stage_audience
+            .difference(&theatre_audience)
+            .map(|platform| platform.as_str())
+            .collect();
+        if !outside.is_empty() {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslDuplicateAudience,
+                    format!(
+                        "stage '{}' audience includes {} outside theatre '{}'",
+                        stage.name,
+                        outside.join(", "),
+                        theatre.name
+                    ),
+                )
+                .with_span(
+                    stage
+                        .audience
+                        .first()
+                        .map(|named| named.span.clone())
+                        .unwrap_or_else(|| stage.name_span.clone()),
+                )
+                .with_help("a stage may only narrow the theatre's Audience"),
+            );
+        }
+    }
+}
+
+fn format_signature(stage: &StageDecl) -> String {
+    let params = stage_signature(stage)
+        .into_iter()
+        .map(|(name, has_default)| {
+            if has_default {
+                format!("{name} = ...")
+            } else {
+                name
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({params})")
 }
 
 /// Where the workspace root came from (TASK-2 section 3.3).

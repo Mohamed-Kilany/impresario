@@ -383,12 +383,14 @@ does not install, launch or sign.
   for the session and rerun (there is no CLI command that stores the secret).
   No install/launch/CDP is verified on this TV. The 2026-10-21 four-device run used the web connector
   path, not `WebOsTransport`.
-- **Apple TV** — `192.168.93.19`. AirPlay `/info` reports `AppleTV5,3`
+- **Apple TV** – `192.168.93.19`. AirPlay `/info` reports `AppleTV5,3`
   (Apple TV HD), `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build `23J582`;
-  TCP 7000, 62078 and 49152 are open. This proves only network identity. A Mac
-  on the same LAN must pair it with Xcode, enable UI automation and provide the
-  UDID before `AppleTransport` can launch the runner; the GitHub macOS runner
-  cannot route to `192.168.93.x`.
+  TCP 7000, 62078 and 49152 are open. This proves only network identity.
+  AirPlay does not expose the UDID, and a direct lockdown query on 62078 closed
+  without a response. A Mac on the same LAN must pair it with Xcode, enable UI
+  automation, sign and install the runner, and provide the runner endpoint
+  before `AppleTransport` can connect; the GitHub macOS runner cannot route to
+  `192.168.93.x`. Physical tvOS is the active P0 path, not verified here.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; `options.key_dispatch` picks the
@@ -889,7 +891,11 @@ apps:
 - `impresario device wizard [--edit NAME] [--workspace] [--no-check]` writes
   only after the final preview; Enter accepts every default, `b` goes back
   and `q` cancels without writing. On a phone it detects the real form factor
-  and offers to switch `android`/`androidtv` if the declaration disagrees.
+  and offers to switch `android`/`androidtv` if the declaration disagrees. On
+  `tvos` it asks for the physical UDID and the XCUITest runner's LAN endpoint,
+  writes `transport: network`, rejects simulator UUIDs, and states that
+  pairing/signing/runner startup need macOS; the live check is skipped on
+  non-macOS hosts.
 - The TCP forwarding fallback was live-checked on the phone on 2026-10-20 by
   setting `connection.endpoint` to `127.0.0.1:59999` (unreachable). After the
   30 s network wait the transport logged the fallback, opened a native
@@ -951,15 +957,14 @@ Three layers, with different reachability:
 
 * the **SwiftPM package** (`agents/apple`) builds and unit-tests on any Swift
   host, including Linux — verified here (WSL Ubuntu 22.04, Swift 6.4.1, §3.1);
-* the **Xcode targets** are compiled and executed on iPhone, iPad and Apple TV
-  **simulators** by the `Apple Simulator Tests` GitHub Actions workflow. That
-  workflow is triggered from Windows/Linux with `gh`; no local Mac is needed
-  (§3.2). It also runs a master-driven Impresario play against the real
-  `XCUITest` agent, including the loopback hook on iOS/iPadOS;
+* the **Xcode targets** are compiled unsigned by the `Apple Xcode` GitHub
+  Actions job. They are not executed in CI: the user rejected simulator tests
+  on 2026-10-25 and the simulator workflow/scripts were removed (§3.2);
 * a **physical Apple TV or iPhone** still needs macOS/Xcode on the same LAN for
-  pairing and XCUITest execution (§3.3). GitHub-hosted runners cannot reach
-  `192.168.93.x`, and Apple exposes no Windows/Linux XCUITest runtime. The
-  simulator result is **not** hardware acceptance (`docs/STATUS.md` HD-1).
+  pairing and XCUITest execution (§3.3). Physical tvOS is the active P0 path;
+  GitHub-hosted runners cannot reach `192.168.93.x`, and Apple exposes no
+  Windows/Linux XCUITest runtime. No simulator or hardware execution is claimed
+  (`docs/STATUS.md` HD-1/I-149).
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -984,96 +989,24 @@ involved. `SWIFTNIO_STRICT=1 swift test` (the same run with SwiftNIO's strict
 mode) turns every task scheduled on an already-stopped event loop into a crash
 with a stack trace — the shutdown ordering of I-90 is verified that way.
 
-### 3.2 Simulator CI from Windows/Linux (no local Mac)
+### 3.2 Simulator execution is out of scope
 
-`.github/workflows/apple-simulator.yml` is the no-Mac gate. It runs on
-GitHub's hosted `macos-15` image, because Apple only ships the simulator and
-XCUITest runtime for macOS. Trigger it from any OS with GitHub CLI:
+The user rejected Apple simulator testing on 2026-10-25; simulator execution
+stays out of scope and physical tvOS is the active P0 path. The `Apple
+Simulator Tests` workflow, its helper scripts, the `ci` sample workspace and
+`SimulatorSmokeTests` were removed. Do not reintroduce a simulator gate or cite
+simulator execution as evidence.
 
-```powershell
-pwsh scripts/apple-tests.ps1                    # iPhone + iPad + Apple TV
-pwsh scripts/apple-tests.ps1 -Platform tvos
-```
-
-```bash
-scripts/apple-tests.sh                          # iPhone + iPad + Apple TV
-scripts/apple-tests.sh ipados
-```
-
-The raw equivalent is `gh workflow run apple-simulator.yml -f platforms=all`
-then `gh run watch <id> --exit-status` and `gh run download <id>`. The scripts
-do not need a local Xcode, Apple developer team or signing certificate.
-
-The job matrix selects the newest available simulator with
-`scripts/apple-simulator.py`, then for each family (`ios`, `ipados`, `tvos`):
-
-1. runs `xcodegen generate`;
-2. builds `AgentTargetStub-*` and `AgentUITests-*` with
-   `-destination 'platform=iOS Simulator,id=<udid>'` (or
-   `tvOS Simulator`) and `build-for-testing`;
-3. installs the stub with `xcrun simctl install`;
-4. runs `SimulatorSmokeTests/testDriverAgainstStub` with the real
-   `XCUIDriver`: launch, accessibility lookup, text, screenshot, the iOS/iPadOS
-   tap path, and the optional in-app hook decoding the bundled video;
-5. builds the Rust master and runs
-   `agents/apple/ci/plays/apple-smoke.play` through
-   `AgentRunnerTests/testServe`; the transport starts the runner itself, so
-   this is the same `AppleTransport` path as hardware;
-6. uploads `*-smoke.log`, `*-e2e.log`, the `.xcresult` and
-   `agents/apple/ci/reports/**`.
-
-The manual equivalent on a macOS host with a simulator already booted:
-
-```bash
-brew install xcodegen
-cd agents/apple
-xcodegen generate
-UDID=$(python3 ../../scripts/apple-simulator.py boot iphone)
-DEST="platform=iOS Simulator,id=$UDID"
-
-xcodebuild build -scheme AgentTargetStub-iOS \
-  -destination "$DEST" -derivedDataPath build-sim
-xcodebuild build-for-testing -scheme AgentUITests-iOS \
-  -destination "$DEST" -derivedDataPath build-sim
-xcrun simctl install "$UDID" \
-  build-sim/Build/Products/Debug-iphonesimulator/AgentTargetStub-iOS.app
-
-XCTESTRUN=$(find build-sim/Build/Products -name '*.xctestrun' -print -quit)
-xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-  -destination "id=$UDID" -parallel-testing-enabled NO \
-  -only-testing 'com.impresario.agent.AgentUITests-iOS/SimulatorSmokeTests/testDriverAgainstStub'
-```
-
-For the master-driven play, write a simulator device entry and run the sample
-workspace (`iPadOS` is still `platform: ios`; tvOS uses `platform: tvos` and
-`AgentTargetStub-tvOS`):
-
-```yaml
-# agents/apple/ci/impresario.devices.config
-devices:
-  - name: simulator
-    platform: ios
-    connection:
-      udid: "<simulator UUID>"
-```
-
-```bash
-cargo build --release --bin impresario
-IMPRESARIO_XCTESTRUN=$(find agents/apple/build-sim/Build/Products \
-  -name '*.xctestrun' -print -quit) \
-IMPRESARIO_AGENT_START_TIMEOUT_MS=180000 \
-  target/release/impresario --workspace agents/apple/ci \
-    run --play apple-smoke.play --device simulator --app stub
-```
-
-A simulator UUID works for both iOS/iPadOS and tvOS. The tvOS simulator uses
-loopback exactly like iOS; only a **physical** Apple TV requires
-`connection.endpoint`.
+The Xcode targets are still compiled unsigned by the `Apple Xcode` CI job. That
+job cannot reach the LAN Apple TV, and compilation is not execution. The tvOS
+simulator loopback branch in `config.rs`/`AppleTransport` remains untested
+support only; it is not a test result.
 
 ### 3.3 Physical device (macOS host on the LAN)
 
-Physical builds need Xcode and a development team. The simulator workflow above
-does not prove any of the following.
+Physical builds need Xcode and a development team. Nothing in this repository
+proves any of the following, because no paired macOS/Xcode host is attached yet
+(the Apple TV itself is reachable at `192.168.93.19`).
 
 ```bash
 brew install xcodegen
@@ -1093,9 +1026,13 @@ xcodebuild build-for-testing -scheme AgentUITests-tvOS \
   -destination 'platform=tvOS,id=<udid>' -derivedDataPath build
 ```
 
-Physical device runs need a development team (set it in Xcode or a local xcconfig; the
-repo pins none) and the device must trust the host. `xcrun devicectl list
-devices` / `xcrun xctrace list devices` prints the udids (`xcodebuild
+Physical device runs need a development team (set it in Xcode or a local
+xcconfig; the repo pins none) and the device must trust the host. A free Apple
+ID personal team works, but its provisioning profile expires after 7 days and
+the apps must be reinstalled; this is the selected P0 signing path. Sign in
+interactively on the Mac; never store or pass a plaintext Apple ID password.
+The unsigned GitHub artifact cannot be installed directly. `xcrun devicectl
+list devices` / `xcrun xctrace list devices` prints the udids (`xcodebuild
 -destination 'platform=iOS,id=<udid>'` takes the same value).
 
 The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
@@ -1108,6 +1045,23 @@ asks for local-network access; tvOS has no XCTest `tap`, so grant that one
 prompt with the remote (`SystemAlerts` logs it rather than guessing focus). Put
 the Xcode-reported address in `connection.endpoint` and the UDID in
 `connection.udid`.
+
+The wizard's physical-tvOS branch is available on Windows and macOS, but it
+only writes and validates the definition:
+
+```bash
+impresario device wizard --workspace
+# Platform: tvos
+# Physical Apple TV UDID: ...
+# Runner endpoint (Mac LAN HOST:PORT, usually :50062): 192.168.93.x:50062
+```
+
+It writes `platform: tvos`, `connection.transport: network`, `udid` and
+`endpoint`. The endpoint is the signed XCUITest runner's LAN address, **not**
+the Apple TV's IP (`192.168.93.19`). On Windows the live check is explicitly
+skipped; `device check` also reports `DEVICE_UNAVAILABLE` because
+`AppleTransport` needs macOS/Xcode. Pairing, signing, installation and runner
+startup happen on the Mac.
 
 Runner environment (the `.xctestrun`'s `TestingEnvironmentVariables`; the
 master drains the `xcodebuild` output, where the runner logs its port and
@@ -1143,20 +1097,34 @@ apps:
       clear_data: true
 ```
 
+For the physical Apple TV, the wizard writes the equivalent:
+
+```yaml
+devices:
+  - name: rama
+    platform: tvos
+    connection:
+      transport: network
+      udid: "<udid>"
+      endpoint: "192.168.93.x:50062"   # Mac runner LAN address, not the TV IP
+```
+
 ```bash
 IMPRESARIO_XCTESTRUN=build/Build/Products/AgentUITests-iOS_iphoneos16.0-arm64.xctestrun \
   impresario run --play plays/login.play --device iphone --app stub
 ```
 
-Endpoint resolution for Apple devices (`AppleTransport`): a **simulator** is
-reached on loopback; an **iOS device** over USB gets an `iproxy` tunnel the
+Endpoint resolution for Apple devices (`AppleTransport`): an **iOS or tvOS
+simulator** is configured to use loopback (the UDID is a UUID; no
+`connection.endpoint`), but this branch is untested support and must not be
+cited as evidence; an **iOS device** over USB gets an `iproxy` tunnel the
 transport starts itself (port `50062` by default, `IMPRESARIO_AGENT_PORT`
-changes both sides); an iOS device or Apple TV over **WLAN** uses
+changes both sides); a physical iOS device or Apple TV over **WLAN** uses
 `connection.endpoint` — the address the runner logs at start
 (`impresario agent: addresses en0=…`). macOS only: without `xcodebuild`/
 `iproxy` the transport answers `DEVICE_UNAVAILABLE` (I-84). These host tools
-are a **recorded D-19 gap**; replacing them with the Rust `idevice` path is
-Phase 2/3 work.
+are a **recorded D-19 gap**; replacing them with the Rust `idevice` path
+remains open (I-149/HD-2).
 
 Clean state per test is a host-side uninstall + reinstall (`clear_data` +
 the app platform's `package`, I-84); the tool is chosen automatically
@@ -1164,7 +1132,7 @@ the app platform's `package`, I-84); the tool is chosen automatically
 `brew install libimobiledevice`). When none is available the option degrades to
 a cold start and one WARN line.
 
-First run after an install: iOS/tvOS ask for local-network permission. The
+First physical run after an install: iOS/tvOS ask for local-network permission. The
 runner declares the usage description and tries to dismiss the alert itself
 (interruption monitor + SpringBoard poll, `SystemAlerts`); if the buttons are
 not reachable it logs the labels it saw and one human tap on the device grants
@@ -1180,8 +1148,8 @@ labels while a play runs.
 ### Playback probes and the Apple hook
 
 The Xcode layer is **not compiled on this host** (no Xcode); the macOS GitHub
-Actions job compiles both the tvOS and iOS targets unsigned (run 40172103424),
-but it has never run on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver`
+Actions job compiles both the tvOS and iOS targets unsigned (run 40267731478
+at `4e44203`), but it has never run on a device. `ProbeCollector`, `HookReceiver`, `XCUIDriver`
 and the Swift `ImpresarioHook` product build/test only to the extent of
 `swift test` under WSL here; `XCUIDriver`/`HookReceiver` depend on XCTest and
 need macOS + a paired device to execute.

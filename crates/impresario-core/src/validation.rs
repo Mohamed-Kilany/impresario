@@ -7,11 +7,11 @@
 //! one [`DeviceRef`] per configured device. Results are deduplicated per
 //! platform, which is the granularity that actually drives these rules.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{
-    ActDecl, Action, ActionVerb, CheckCondition, Ident, PerformDecl, PlayFile, SceneBlock,
-    SceneFile, StageDecl, StageItem, Step, StepKind,
+    ActDecl, Action, ActionVerb, ActorFilter, CheckCondition, Ident, PerformDecl, PlayFile,
+    SceneBlock, SceneFile, StageDecl, StageItem, Step, StepKind,
 };
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
 use crate::platforms::{Platform, ScenePlatforms};
@@ -40,7 +40,19 @@ impl DeviceRef {
 /// Validate the whole workspace against the configured devices.
 #[must_use]
 pub fn validate(workspace: &Workspace, devices: &[DeviceRef]) -> Diagnostics {
+    validate_with_actors(workspace, devices, &BTreeMap::new())
+}
+
+/// Validate with the merged actor groups available for `Actors:` and
+/// `For`/`Except` resolution.
+#[must_use]
+pub fn validate_with_actors(
+    workspace: &Workspace,
+    devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
+) -> Diagnostics {
     let mut diagnostics = Diagnostics::new();
+    validate_tag_lints(workspace, &mut diagnostics);
     // Distinct platforms, in the order devices were configured; the first
     // device of a platform names it in messages.
     let mut platforms: Vec<(Platform, &str)> = Vec::new();
@@ -54,7 +66,14 @@ pub fn validate(workspace: &Workspace, devices: &[DeviceRef]) -> Diagnostics {
         check_scene_identity(scene, &mut diagnostics);
     }
     for play in &workspace.plays {
-        validate_play(play, workspace, &platforms, &mut diagnostics);
+        validate_play(
+            play,
+            workspace,
+            &platforms,
+            devices,
+            groups,
+            &mut diagnostics,
+        );
     }
     lint_workspace(workspace, &platforms, &mut diagnostics);
     diagnostics
@@ -136,12 +155,74 @@ pub fn to_upper_camel(name: &str) -> String {
     out
 }
 
+/// Warn about tags that differ only by case or by a `-`/`_` suffix, such as
+/// `smoke` and `smoke-test` (IMP-DSL-043).
+fn validate_tag_lints(workspace: &Workspace, diagnostics: &mut Diagnostics) {
+    let mut tags: Vec<(&str, &Span)> = Vec::new();
+    for play in &workspace.plays {
+        tags.extend(play.tags.iter().map(|tag| (tag.name.as_str(), &tag.span)));
+        for act in &play.acts {
+            tags.extend(act.tags.iter().map(|tag| (tag.name.as_str(), &tag.span)));
+        }
+    }
+    for theatre in &workspace.theatres {
+        tags.extend(
+            theatre
+                .tags
+                .iter()
+                .map(|tag| (tag.name.as_str(), &tag.span)),
+        );
+        for stage in &theatre.stages {
+            tags.extend(stage.tags.iter().map(|tag| (tag.name.as_str(), &tag.span)));
+        }
+    }
+    let mut warned: HashSet<(String, String)> = HashSet::new();
+    for (index, (tag, span)) in tags.iter().enumerate() {
+        let lower = tag.to_ascii_lowercase();
+        for (previous, previous_span) in tags.iter().take(index) {
+            let previous_lower = previous.to_ascii_lowercase();
+            if previous_lower == lower {
+                continue;
+            }
+            let near = lower.strip_prefix(&format!("{previous_lower}-")).is_some()
+                || lower.strip_prefix(&format!("{previous_lower}_")).is_some()
+                || previous_lower.strip_prefix(&format!("{lower}-")).is_some()
+                || previous_lower.strip_prefix(&format!("{lower}_")).is_some();
+            if !near {
+                continue;
+            }
+            let mut pair = [lower.clone(), previous_lower.clone()];
+            pair.sort();
+            let key = (pair[0].clone(), pair[1].clone());
+            if !warned.insert(key) {
+                continue;
+            }
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslLintNearDuplicateTag,
+                    format!("near-duplicate tags '{previous}' and '{tag}'"),
+                )
+                .with_span((*span).clone())
+                .with_help(format!(
+                    "'{}' is first declared at {}:{}; merge the tags or make the distinction clear",
+                    previous,
+                    previous_span.file.display(),
+                    previous_span.line
+                )),
+            );
+        }
+    }
+}
+
 fn validate_play(
     play: &PlayFile,
     workspace: &Workspace,
     platforms: &[(Platform, &str)],
+    devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
     diagnostics: &mut Diagnostics,
 ) {
+    validate_actors(play, workspace, devices, groups, diagnostics);
     let declared: Vec<&str> = play
         .var_decls
         .iter()
@@ -209,6 +290,292 @@ fn validate_play(
                 );
             }
         }
+    }
+}
+
+#[derive(Debug)]
+enum ActorLookupError {
+    Unknown(String),
+    Cycle(Vec<String>),
+}
+
+fn expand_actor_ref(
+    devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
+    reference: &str,
+    out: &mut BTreeSet<String>,
+    stack: &mut Vec<String>,
+) -> Result<(), ActorLookupError> {
+    if let Some(group) = reference.strip_prefix('@') {
+        if let Some(position) = stack.iter().position(|item| item == group) {
+            let mut cycle = stack.get(position..).unwrap_or(&[]).to_vec();
+            cycle.push(group.to_string());
+            return Err(ActorLookupError::Cycle(cycle));
+        }
+        let Some(members) = groups.get(group) else {
+            return Err(ActorLookupError::Unknown(reference.to_string()));
+        };
+        stack.push(group.to_string());
+        for member in members {
+            expand_actor_ref(devices, groups, member, out, stack)?;
+        }
+        stack.pop();
+        return Ok(());
+    }
+    if devices.iter().any(|device| device.name == reference) {
+        out.insert(reference.to_string());
+        Ok(())
+    } else {
+        Err(ActorLookupError::Unknown(reference.to_string()))
+    }
+}
+
+fn push_actor_lookup_error(
+    named: &crate::ast::Named,
+    error: &ActorLookupError,
+    seen: &mut HashSet<String>,
+    diagnostics: &mut Diagnostics,
+) {
+    let (code, message) = match error {
+        ActorLookupError::Unknown(name) => (
+            Code::DslUnknownActor,
+            format!(
+                "unknown actor or group '{name}'; it is not defined in the devices/groups configuration"
+            ),
+        ),
+        ActorLookupError::Cycle(path) => (
+            Code::DslGroupCycle,
+            format!("actor group cycle: {}", path.join(" -> ")),
+        ),
+    };
+    let key = format!("actor-error:{}:{}", code, named.span);
+    if seen.insert(key) {
+        diagnostics.push(
+            Diagnostic::error(code, message)
+                .with_span(named.span.clone())
+                .with_help("configure the actor in impresario.devices.config or fix the group"),
+        );
+    }
+}
+
+/// Resolve actors and validate `For`/`Except` plus audience coverage for every
+/// perform, including nested ones (TASK-3 sections 9.1/9.2).
+fn validate_actors(
+    play: &PlayFile,
+    workspace: &Workspace,
+    devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
+    diagnostics: &mut Diagnostics,
+) {
+    let mut seen: HashSet<String> = HashSet::new();
+    for act in &play.acts {
+        let references = play.effective_actors(act);
+        let mut configured: BTreeSet<String> = BTreeSet::new();
+        for named in references {
+            if let Err(error) = expand_actor_ref(
+                devices,
+                groups,
+                &named.name,
+                &mut configured,
+                &mut Vec::new(),
+            ) {
+                push_actor_lookup_error(named, &error, &mut seen, diagnostics);
+            }
+        }
+        let effective: BTreeSet<String> = if references.is_empty() {
+            devices.iter().map(|device| device.name.clone()).collect()
+        } else {
+            configured
+        };
+        let act_platforms: Vec<Platform> = act
+            .platforms
+            .iter()
+            .filter_map(|named| named.name.parse::<Platform>().ok())
+            .collect();
+        for perform in &act.performs {
+            validate_actor_coverage(
+                perform,
+                workspace,
+                play,
+                act,
+                devices,
+                groups,
+                &effective,
+                &act_platforms,
+                &mut seen,
+                &mut Vec::new(),
+                diagnostics,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_actor_coverage(
+    perform: &PerformDecl,
+    workspace: &Workspace,
+    play: &PlayFile,
+    act: &ActDecl,
+    devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
+    effective: &BTreeSet<String>,
+    act_platforms: &[Platform],
+    seen: &mut HashSet<String>,
+    stack: &mut Vec<String>,
+    diagnostics: &mut Diagnostics,
+) {
+    let mut active = effective.clone();
+    if let Some(filter) = &perform.filter {
+        let mut filtered: BTreeSet<String> = BTreeSet::new();
+        for named in &filter.actors {
+            if let Err(error) =
+                expand_actor_ref(devices, groups, &named.name, &mut filtered, &mut Vec::new())
+            {
+                push_actor_lookup_error(named, &error, seen, diagnostics);
+            }
+        }
+        for actor in &filtered {
+            if effective.contains(actor) {
+                continue;
+            }
+            let key = format!(
+                "filter:{}:{}:{actor}",
+                filter_kind_name(filter),
+                named_span(perform)
+            );
+            if seen.insert(key) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        Code::DslActorFilter,
+                        format!(
+                            "actor '{actor}' in Perform {} is not among the current effective actors",
+                            filter_kind_name(filter)
+                        ),
+                    )
+                    .with_span(perform.stage_span.clone())
+                    .with_help(
+                        "use an actor from the act's Actors: list, or remove it from the filter",
+                    ),
+                );
+            }
+        }
+        active = match filter.kind {
+            crate::ast::ActorFilterKind::For => active
+                .into_iter()
+                .filter(|actor| filtered.contains(actor))
+                .collect(),
+            crate::ast::ActorFilterKind::Except => active
+                .into_iter()
+                .filter(|actor| !filtered.contains(actor))
+                .collect(),
+        };
+    }
+
+    if workspace.stage(&perform.stage_name).is_none() {
+        return;
+    }
+    if stack.iter().any(|name| name == &perform.stage_name) {
+        return;
+    }
+    stack.push(perform.stage_name.clone());
+
+    for device in devices {
+        if !active.contains(&device.name) {
+            continue;
+        }
+        if !act_platforms.is_empty() && !act_platforms.contains(&device.platform) {
+            continue;
+        }
+        if workspace
+            .stage_for(&perform.stage_name, device.platform)
+            .is_some()
+        {
+            continue;
+        }
+        let key = format!("coverage:{}:{}", named_span(perform), device.name);
+        if seen.insert(key) {
+            diagnostics.push(
+                Diagnostic::error(
+                    Code::DslStageCoverage,
+                    format!(
+                        "stage '{}' has no implementation for actor '{}' on platform '{}' \
+                         (act '{}' in {})",
+                        perform.stage_name,
+                        device.name,
+                        device.platform,
+                        act.name,
+                        play.path.display()
+                    ),
+                )
+                .with_span(perform.stage_span.clone())
+                .with_help(format!(
+                    "implement the stage for audience '{}', remove '{}' from this Perform \
+                     (For/Except), or remove it from the act's Actors",
+                    device.platform, device.name
+                )),
+            );
+        }
+    }
+
+    // Nested performances run under the calling act's actors. Narrow by each
+    // implementation's audience so a web-only implementation is not checked
+    // for Android actors.
+    for (theatre, stage) in workspace.stage_instances(&perform.stage_name) {
+        let audience: BTreeSet<Platform> = theatre.stage_audience(stage).into_iter().collect();
+        let implementation_active: BTreeSet<String> = active
+            .iter()
+            .filter(|actor| {
+                devices.iter().any(|device| {
+                    &device.name == *actor
+                        && audience.contains(&device.platform)
+                        && (act_platforms.is_empty() || act_platforms.contains(&device.platform))
+                })
+            })
+            .cloned()
+            .collect();
+        if implementation_active.is_empty() {
+            continue;
+        }
+        let nested: Vec<PerformDecl> = stage
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                StageItem::Perform(perform) => Some(perform.clone()),
+                StageItem::Scene(_) => None,
+            })
+            .collect();
+        for nested_perform in &nested {
+            validate_actor_coverage(
+                nested_perform,
+                workspace,
+                play,
+                act,
+                devices,
+                groups,
+                &implementation_active,
+                act_platforms,
+                seen,
+                stack,
+                diagnostics,
+            );
+        }
+    }
+    stack.pop();
+}
+
+fn named_span(perform: &PerformDecl) -> String {
+    format!(
+        "{}:{}:{}",
+        perform.stage_span.file().display(),
+        perform.stage_span.line,
+        perform.stage_span.col
+    )
+}
+
+fn filter_kind_name(filter: &ActorFilter) -> &'static str {
+    match filter.kind {
+        crate::ast::ActorFilterKind::For => "For",
+        crate::ast::ActorFilterKind::Except => "Except",
     }
 }
 
@@ -1503,7 +1870,7 @@ mod tests {
         let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
         let codes = codes(&diagnostics);
         assert!(codes.contains(&"IMP-DSL-036"), "{codes:?}");
-        assert!(codes.contains(&"IMP-DSL-040"), "{codes:?}");
+        assert!(codes.contains(&"IMP-DSL-051"), "{codes:?}");
     }
 
     #[test]
@@ -1553,12 +1920,12 @@ mod tests {
         assert!(diagnostics.errors().next().is_none(), "{diagnostics:?}");
         let codes = codes(&diagnostics);
         for expected in [
-            "IMP-DSL-042",
-            "IMP-DSL-043",
-            "IMP-DSL-044",
-            "IMP-DSL-045",
-            "IMP-DSL-046",
-            "IMP-DSL-047",
+            "IMP-DSL-053",
+            "IMP-DSL-054",
+            "IMP-DSL-055",
+            "IMP-DSL-056",
+            "IMP-DSL-057",
+            "IMP-DSL-058",
         ] {
             assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
         }

@@ -1,8 +1,0 @@
-Play: Apple simulator smoke
-Description: Drive the Apple fixture through the real XCUITest agent in CI.
-App: stub
-
-Act: Drive the fixture
-Tags: smoke, apple
-Platforms: ios, tvos
-    Perform: Stub home

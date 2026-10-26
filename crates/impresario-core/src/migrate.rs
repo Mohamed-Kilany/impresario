@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::ast::{ActDecl, PlayFile, SceneFile, StageDecl};
+use crate::config::DeviceConfig;
 use crate::diag::Diagnostics;
 use crate::fmt;
 use crate::platforms::{Platform, ScenePlatforms};
@@ -45,7 +46,11 @@ impl DslMigration {
 /// Only legacy files change. Running the migration again is a no-op: tabular
 /// scenes and Acts with `Perform:` are left untouched.
 #[must_use]
-pub fn migrate(workspace: &Workspace, theatres_dir: &Path) -> DslMigration {
+pub fn migrate(
+    workspace: &Workspace,
+    theatres_dir: &Path,
+    devices: &[DeviceConfig],
+) -> DslMigration {
     let mut migration = DslMigration::default();
     let mut theatre_names: BTreeSet<String> = workspace
         .theatres
@@ -115,7 +120,7 @@ pub fn migrate(workspace: &Workspace, theatres_dir: &Path) -> DslMigration {
         let theatre_source = render_theatre(&theatre_name, &generated_stages);
         push_migrated_file(&mut migration, theatre_path, &theatre_source, true);
 
-        let play_source = render_play(play, &act_refs);
+        let play_source = render_play(play, &act_refs, devices);
         push_migrated_file(&mut migration, play.path.clone(), &play_source, false);
     }
 
@@ -292,7 +297,7 @@ fn render_theatre(name: &str, stages: &[(String, StageDecl)]) -> String {
     let mut out = String::new();
     out.push_str("Theatre: ");
     out.push_str(name);
-    out.push('\n');
+    out.push_str("\nAudience: cross-platform\n");
     for (assigned, stage) in stages {
         out.push('\n');
         out.push_str("Stage: ");
@@ -303,16 +308,18 @@ fn render_theatre(name: &str, stages: &[(String, StageDecl)]) -> String {
             out.push_str(description);
             out.push('\n');
         }
-        if !stage.platforms.is_empty() {
-            out.push_str("    Platforms: ");
-            out.push_str(
-                &stage
-                    .platforms
-                    .iter()
-                    .map(|platform| platform.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
+        if !stage.audience.is_empty() {
+            out.push_str("    Audience: ");
+            out.push_str(&list_names(&stage.audience));
+            out.push('\n');
+        } else if !stage.platforms.is_empty() {
+            out.push_str("    Audience: ");
+            out.push_str(&list_names(&stage.platforms));
+            out.push('\n');
+        }
+        if !stage.tags.is_empty() {
+            out.push_str("    Tags: ");
+            out.push_str(&list_names(&stage.tags));
             out.push('\n');
         }
         if let Some(timeout) = stage.timeout {
@@ -334,7 +341,7 @@ fn render_theatre(name: &str, stages: &[(String, StageDecl)]) -> String {
     out
 }
 
-fn render_play(play: &PlayFile, refs: &[Vec<String>]) -> String {
+fn render_play(play: &PlayFile, refs: &[Vec<String>], devices: &[DeviceConfig]) -> String {
     let mut out = String::new();
     out.push_str("Play: ");
     out.push_str(&play.name);
@@ -349,6 +356,16 @@ fn render_play(play: &PlayFile, refs: &[Vec<String>]) -> String {
         out.push_str(&app.name);
         out.push('\n');
     }
+    if !play.tags.is_empty() {
+        out.push_str("Tags: ");
+        out.push_str(&list_names(&play.tags));
+        out.push('\n');
+    }
+    if !play.actors.is_empty() {
+        out.push_str("Actors: ");
+        out.push_str(&list_names(&play.actors));
+        out.push('\n');
+    }
     for var in &play.var_decls {
         out.push_str("Var: ");
         out.push_str(&var.name);
@@ -358,35 +375,44 @@ fn render_play(play: &PlayFile, refs: &[Vec<String>]) -> String {
     }
     for (act, stage_refs) in play.acts.iter().zip(refs) {
         out.push('\n');
-        render_act(&mut out, act, stage_refs);
+        render_act(&mut out, act, stage_refs, devices);
     }
     out
 }
 
-fn render_act(out: &mut String, act: &ActDecl, stage_refs: &[String]) {
+fn render_act(out: &mut String, act: &ActDecl, stage_refs: &[String], devices: &[DeviceConfig]) {
     out.push_str("Act: ");
     out.push_str(&act.name);
     out.push('\n');
     if !act.tags.is_empty() {
         out.push_str("Tags: ");
-        out.push_str(
-            &act.tags
-                .iter()
-                .map(|tag| tag.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
+        out.push_str(&list_names(&act.tags));
         out.push('\n');
     }
-    if !act.platforms.is_empty() {
+    let actors: Vec<String> = if !act.actors.is_empty() {
+        act.actors.iter().map(|named| named.name.clone()).collect()
+    } else if !act.platforms.is_empty() {
+        devices
+            .iter()
+            .filter(|device| {
+                act.platforms
+                    .iter()
+                    .any(|named| named.name == device.platform.as_str())
+            })
+            .map(|device| device.name.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if !actors.is_empty() {
+        out.push_str("Actors: ");
+        out.push_str(&actors.join(", "));
+        out.push('\n');
+    } else if !act.platforms.is_empty() {
+        // No configured device matches these platforms. Keep the legacy
+        // selector rather than silently making the act unreachable.
         out.push_str("Platforms: ");
-        out.push_str(
-            &act.platforms
-                .iter()
-                .map(|platform| platform.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
+        out.push_str(&list_names(&act.platforms));
         out.push('\n');
     }
     for stage in stage_refs {
@@ -394,6 +420,14 @@ fn render_act(out: &mut String, act: &ActDecl, stage_refs: &[String]) {
         out.push_str(stage);
         out.push('\n');
     }
+}
+
+fn list_names(names: &[crate::ast::Named]) -> String {
+    names
+        .iter()
+        .map(|named| named.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn quote_string(text: &str) -> String {
@@ -449,7 +483,7 @@ mod tests {
                 "p.play",
             )],
         };
-        let migration = migrate(&workspace, Path::new("theatres"));
+        let migration = migrate(&workspace, Path::new("theatres"), &[]);
         assert!(!migration.errors.has_errors(), "{migration:?}");
         assert_eq!(migration.files.len(), 3, "{migration:?}");
         assert!(migration.warnings.iter().any(|w| w.contains("renamed")));
@@ -504,7 +538,7 @@ mod tests {
             theatres: Vec::new(),
             plays: vec![legacy_play],
         };
-        let first = migrate(&workspace, Path::new("theatres"));
+        let first = migrate(&workspace, Path::new("theatres"), &[]);
         assert!(!first.errors.has_errors(), "{first:?}");
         assert_eq!(first.files.len(), 3);
 
@@ -536,7 +570,7 @@ mod tests {
                 .ast
                 .expect("play")],
         };
-        let second = migrate(&second_workspace, Path::new("theatres"));
+        let second = migrate(&second_workspace, Path::new("theatres"), &[]);
         assert!(second.is_empty(), "{second:?}");
     }
 }

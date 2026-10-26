@@ -243,6 +243,8 @@ enum Stage {
     AndroidPairTarget,
     AndroidPairCode,
     AndroidAfterPair,
+    TvosUdid,
+    TvosEndpoint,
     WebMode,
     WebEndpoint,
     WebPageMatch,
@@ -553,6 +555,8 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                 Stage::AndroidPairTarget => self.android_pair_target(),
                 Stage::AndroidPairCode => self.android_pair_code(),
                 Stage::AndroidAfterPair => self.android_after_pair(),
+                Stage::TvosUdid => self.tvos_udid(),
+                Stage::TvosEndpoint => self.tvos_endpoint(),
                 Stage::WebMode => self.web_mode(),
                 Stage::WebEndpoint => self.web_endpoint(),
                 Stage::WebPageMatch => self.web_page_match(),
@@ -628,15 +632,17 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             "android" | "phone" => Ok(Platform::Android),
             "androidtv" | "android-tv" | "tv" => Ok(Platform::AndroidTv),
             "web" => Ok(Platform::Web),
-            "webos" | "tizen" | "ios" | "tvos" => Err(format!(
-                "'{text}' is phase 6/7 work; the phase 3 wizard covers android, androidtv and web"
+            "tvos" | "appletv" | "apple-tv" => Ok(Platform::Tvos),
+            "webos" | "tizen" | "ios" => Err(format!(
+                "'{text}' is not covered by this wizard yet; it covers android, androidtv, web and \
+                 physical tvos"
             )),
-            _ => Err("expected android, androidtv or web".to_string()),
+            _ => Err("expected android, androidtv, web or tvos".to_string()),
         };
         match self
             .ui
             .ask_value(
-                "Platform (android/androidtv/web)",
+                "Platform (android/androidtv/web/tvos)",
                 Some(&default),
                 parse,
                 |value| value.as_str().to_string(),
@@ -686,6 +692,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                     .ok_or_else(|| "platform was not selected".to_string())?;
                 Ok(Step::Next(match platform {
                     Platform::Android | Platform::AndroidTv => Stage::AndroidRoute,
+                    Platform::Tvos => Stage::TvosUdid,
                     Platform::Web => Stage::WebMode,
                     _ => Stage::Name,
                 }))
@@ -950,6 +957,59 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             Answer::Value(address) => {
                 self.answers.connection = address.connection();
                 Ok(Step::Next(Stage::AgentPort))
+            }
+            Answer::Back => Ok(Step::Back),
+            Answer::Cancel => Ok(self.cancel()),
+        }
+    }
+
+    fn tvos_udid(&mut self) -> Result<Step, String> {
+        let default = self.answers.connection.udid.clone();
+        let _ = self.ui.say(
+            "On the macOS host, pair the Apple TV in Xcode (Settings > Remotes and Devices > \
+             Remote App and Devices), then read the UDID with `xcrun devicectl list devices` \
+             or `xcrun xctrace list devices`.",
+        );
+        match self
+            .ui
+            .ask_value(
+                "Physical Apple TV UDID",
+                default.as_ref(),
+                parse_tvos_udid,
+                Clone::clone,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(udid) => {
+                self.answers.connection.udid = Some(udid);
+                Ok(Step::Next(Stage::TvosEndpoint))
+            }
+            Answer::Back => Ok(Step::Back),
+            Answer::Cancel => Ok(self.cancel()),
+        }
+    }
+
+    fn tvos_endpoint(&mut self) -> Result<Step, String> {
+        let default = self.answers.connection.endpoint.clone();
+        let _ = self.ui.say(
+            "Enter the XCUITest runner's LAN address, not the Apple TV's address. Start the \
+             signed runner on the macOS host and use the address it logs (`addresses en0=...`); \
+             pairing, signing, installation and runner startup are not possible from this host.",
+        );
+        match self
+            .ui
+            .ask_value(
+                "Runner endpoint (Mac LAN HOST:PORT, usually :50062)",
+                default.as_ref(),
+                parse_tvos_endpoint,
+                Clone::clone,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(endpoint) => {
+                self.answers.connection.transport = TransportKind::Network;
+                self.answers.connection.endpoint = Some(endpoint);
+                Ok(Step::Next(Stage::Labels))
             }
             Answer::Back => Ok(Step::Back),
             Answer::Cancel => Ok(self.cancel()),
@@ -1262,6 +1322,19 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                     }
                 }
             }
+            Platform::Tvos => {
+                let _ = self.ui.say(
+                    "tvOS check skipped: pairing, signing, installation and starting the \
+                     XCUITest runner require macOS/Xcode on the same LAN; this host cannot probe \
+                     the agent.",
+                );
+                if let Some(endpoint) = self.answers.connection.endpoint.as_deref() {
+                    let _ = self.ui.say(format!(
+                        "configured runner endpoint: {endpoint} (not the Apple TV address)"
+                    ));
+                }
+                Ok(Step::Next(Stage::Review))
+            }
             Platform::Web => {
                 let browser = tools::find_chromium();
                 let connector = impresario_clients::connector_binary();
@@ -1304,6 +1377,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
         );
         let preview = match serde_yaml_ng::to_string(&config::DevicesConfig {
             devices: vec![device.clone()],
+            groups: std::collections::BTreeMap::new(),
         }) {
             Ok(preview) => preview,
             Err(error) => {
@@ -1369,9 +1443,17 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                         device.name,
                         path.display()
                     ));
-                    let _ = self.ui.say(
-                        "next: bind an app with `impresario app add ...` and run `impresario device check`",
-                    );
+                    let next = match device.platform {
+                        Platform::Tvos => {
+                            "next: bind an app with `impresario app add ...`; pairing, signing, \
+                             runner startup and `impresario device check` require macOS/Xcode on the \
+                             LAN"
+                        }
+                        _ => {
+                            "next: bind an app with `impresario app add ...` and run `impresario device check`"
+                        }
+                    };
+                    let _ = self.ui.say(next);
                     Ok(Step::Done(EXIT_OK))
                 }
                 Err(error) => {
@@ -1409,6 +1491,8 @@ fn previous_stage(stage: Stage, answers: &Answers) -> Option<Stage> {
         Stage::AndroidPairTarget => Stage::AndroidRoute,
         Stage::AndroidPairCode => Stage::AndroidPairTarget,
         Stage::AndroidAfterPair => Stage::AndroidRoute,
+        Stage::TvosUdid => Stage::Name,
+        Stage::TvosEndpoint => Stage::TvosUdid,
         Stage::WebMode => Stage::Name,
         Stage::WebEndpoint => Stage::WebMode,
         Stage::WebPageMatch => {
@@ -1571,6 +1655,34 @@ fn parse_android_address(text: &str) -> Result<AndroidAddress, &'static str> {
     Err("expected HOST:PORT, a host (default port 5555), or usb:SERIAL")
 }
 
+fn parse_tvos_udid(text: &str) -> Result<String, String> {
+    let text = text.trim();
+    if config::simulator_udid(text) {
+        return Err(
+            "a simulator UUID is not a physical Apple TV; simulator execution is out of scope"
+                .to_string(),
+        );
+    }
+    if !config::valid_udid(text) {
+        return Err(
+            "expected the physical Apple TV UDID from `xcrun devicectl list devices` on macOS"
+                .to_string(),
+        );
+    }
+    Ok(text.to_string())
+}
+
+fn parse_tvos_endpoint(text: &str) -> Result<String, String> {
+    let text = text.trim();
+    if !is_host_port(text) {
+        return Err(
+            "expected the runner's HOST:PORT (the Mac's LAN address, not the Apple TV IP)"
+                .to_string(),
+        );
+    }
+    Ok(text.to_string())
+}
+
 fn manual_default(connection: &DeviceConnection) -> Option<String> {
     match connection.transport {
         TransportKind::Usb => connection
@@ -1595,6 +1707,7 @@ fn default_name(platform: Platform, edit: Option<&DeviceConfig>) -> String {
         Platform::Android => "android".to_string(),
         Platform::AndroidTv => "android_tv".to_string(),
         Platform::Web => "web".to_string(),
+        Platform::Tvos => "apple_tv".to_string(),
         _ => "device".to_string(),
     }
 }
@@ -1695,6 +1808,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_physical_tvos_udids_and_runner_endpoints() {
+        assert_eq!(
+            parse_tvos_udid("00008110-001B3456021E002F").expect("physical udid"),
+            "00008110-001B3456021E002F"
+        );
+        assert!(parse_tvos_udid("9E3C7A6D-0B4B-4F1A-9C7E-2A6D5B8F4E1C").is_err());
+        assert!(parse_tvos_udid("nope").is_err());
+        assert_eq!(
+            parse_tvos_endpoint("192.168.93.10:50062").expect("endpoint"),
+            "192.168.93.10:50062"
+        );
+        assert!(parse_tvos_endpoint("192.168.93.19").is_err());
+        assert!(parse_tvos_endpoint("host:0").is_err());
+    }
+
+    #[test]
     fn cancelling_does_not_write() {
         let (dir, home) = test_home();
         let workspace = dir.path().join("impresario.devices.config");
@@ -1726,6 +1855,27 @@ mod tests {
         assert!(source.contains("host: 10.0.0.5"));
         assert!(source.contains("port: 5555"));
         assert!(source.contains("transport: tcp"));
+    }
+
+    #[test]
+    fn scripted_tvos_add_writes_a_valid_definition() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\ntvos\napple_tv\n00008110-001B3456021E002F\n\
+                     192.168.93.10:50062\n-\ny\n";
+        let code = run_script(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        let source = std::fs::read_to_string(&workspace).expect("workspace devices");
+        assert!(source.contains("name: apple_tv"));
+        assert!(source.contains("platform: tvos"));
+        assert!(source.contains("udid: 00008110-001B3456021E002F"));
+        assert!(source.contains("transport: network"));
+        assert!(source.contains("endpoint: 192.168.93.10:50062"));
     }
 
     #[test]

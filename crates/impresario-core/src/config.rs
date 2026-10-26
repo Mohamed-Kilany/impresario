@@ -6,7 +6,7 @@
 //! file/line/column and a "did you mean" hint for near-miss keys; only when
 //! the tree is clean is it deserialized into the typed structs below.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -495,10 +495,128 @@ impl DeviceConfig {
 
 /// `impresario.devices.config` (workspace) and `~/.impresario/devices.yaml`
 /// (global), TASK-2 3.3/4.3.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DevicesConfig {
     pub devices: Vec<DeviceConfig>,
+    /// Named actor groups. Members are device names or `@group` references.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub groups: BTreeMap<String, Vec<String>>,
+}
+
+/// Failure while expanding an actor or `@group`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActorResolveError {
+    /// A bare name is neither a configured device nor (with `@`) a group.
+    Unknown(String),
+    /// A `@group` membership cycle; the path ends with the repeated group.
+    Cycle(Vec<String>),
+}
+
+impl DevicesConfig {
+    /// Look a device up by name.
+    #[must_use]
+    pub fn device(&self, name: &str) -> Option<&DeviceConfig> {
+        self.devices.iter().find(|device| device.name == name)
+    }
+
+    /// Expand one actor reference to device names. Plain names are devices;
+    /// `@name` is a group and expands recursively in deterministic order.
+    pub fn expand_actor(&self, reference: &str) -> Result<BTreeSet<String>, ActorResolveError> {
+        expand_actor_ref(&self.devices, &self.groups, reference)
+    }
+
+    /// Expand several actor references, de-duplicated.
+    pub fn expand_actors<'a>(
+        &self,
+        references: impl IntoIterator<Item = &'a str>,
+    ) -> Result<BTreeSet<String>, ActorResolveError> {
+        expand_actor_refs(&self.devices, &self.groups, references)
+    }
+
+    /// Diagnostic-free validation of group references and cycles. Used by the
+    /// merged loader; parse-time checks only cover YAML shape.
+    pub fn validate_groups(&self) -> Vec<(Code, String)> {
+        let mut errors = Vec::new();
+        for group in self.groups.keys() {
+            let reference = format!("@{group}");
+            match self.expand_actor(&reference) {
+                Ok(_) => {}
+                Err(ActorResolveError::Unknown(name)) => {
+                    errors.push((
+                        Code::CfgUnknownActor,
+                        format!("group '@{group}' references unknown actor '{name}'"),
+                    ));
+                }
+                Err(ActorResolveError::Cycle(path)) => {
+                    errors.push((
+                        Code::CfgGroupCycle,
+                        format!(
+                            "group '@{group}' has a membership cycle: {}",
+                            path.join(" -> ")
+                        ),
+                    ));
+                }
+            }
+        }
+        errors
+    }
+}
+
+/// Expand one actor reference against a merged device/group view.
+pub fn expand_actor_ref(
+    devices: &[DeviceConfig],
+    groups: &BTreeMap<String, Vec<String>>,
+    reference: &str,
+) -> Result<BTreeSet<String>, ActorResolveError> {
+    let mut out = BTreeSet::new();
+    expand_actor_into(devices, groups, reference, &mut out, &mut Vec::new())?;
+    Ok(out)
+}
+
+/// Expand several actor references, de-duplicated.
+pub fn expand_actor_refs<'a>(
+    devices: &[DeviceConfig],
+    groups: &BTreeMap<String, Vec<String>>,
+    references: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeSet<String>, ActorResolveError> {
+    let mut out = BTreeSet::new();
+    let mut stack = Vec::new();
+    for reference in references {
+        expand_actor_into(devices, groups, reference, &mut out, &mut stack)?;
+    }
+    Ok(out)
+}
+
+fn expand_actor_into(
+    devices: &[DeviceConfig],
+    groups: &BTreeMap<String, Vec<String>>,
+    reference: &str,
+    out: &mut BTreeSet<String>,
+    stack: &mut Vec<String>,
+) -> Result<(), ActorResolveError> {
+    if let Some(group) = reference.strip_prefix('@') {
+        if let Some(position) = stack.iter().position(|item| item == group) {
+            let mut cycle: Vec<String> = stack.get(position..).unwrap_or(&[]).to_vec();
+            cycle.push(group.to_string());
+            return Err(ActorResolveError::Cycle(cycle));
+        }
+        let Some(members) = groups.get(group) else {
+            return Err(ActorResolveError::Unknown(reference.to_string()));
+        };
+        stack.push(group.to_string());
+        for member in members {
+            expand_actor_into(devices, groups, member, out, stack)?;
+        }
+        stack.pop();
+        return Ok(());
+    }
+    if devices.iter().any(|device| device.name == reference) {
+        out.insert(reference.to_string());
+        Ok(())
+    } else {
+        Err(ActorResolveError::Unknown(reference.to_string()))
+    }
 }
 
 /// Result of loading one configuration file: the typed value is present only
@@ -1060,16 +1178,76 @@ pub fn parse_devices(source: &str, path: &Path) -> ConfigOutcome<DevicesConfig> 
         };
     };
     for key in map.keys().filter_map(Value::as_str) {
-        if key != "devices" {
+        if key != "devices" && key != "groups" {
             let mut diag = Diagnostic::error(Code::CfgUnknownKey, format!("unknown key '{key}'"))
                 .with_span(span_of_top(&lines, key, path))
-                .with_help("the devices file only has a top-level 'devices' list");
-            if let Some(hint) = suggest(key, &["devices"]) {
+                .with_help("the devices file has top-level 'devices' and optional 'groups' keys");
+            if let Some(hint) = suggest(key, &["devices", "groups"]) {
                 diag = diag.with_help(hint);
             }
             diagnostics.push(diag);
         }
     }
+    if let Some(groups_value) = map.get("groups") {
+        match groups_value.as_mapping() {
+            None => diagnostics.push(invalid_value(
+                &lines,
+                path,
+                "groups",
+                "expected a mapping of group name to actor list",
+            )),
+            Some(groups) => {
+                for (name, members) in groups {
+                    let Some(name) = name.as_str() else {
+                        diagnostics.push(invalid_value(
+                            &lines,
+                            path,
+                            "groups",
+                            "group names must be strings",
+                        ));
+                        continue;
+                    };
+                    if !valid_device_name(name) {
+                        diagnostics.push(invalid_value(
+                            &lines,
+                            path,
+                            "groups",
+                            format!("invalid group name '{name}'"),
+                        ));
+                    }
+                    let Some(members) = members.as_sequence() else {
+                        diagnostics.push(invalid_value(
+                            &lines,
+                            path,
+                            "groups",
+                            format!("group '{name}' needs a list of actor references"),
+                        ));
+                        continue;
+                    };
+                    for member in members {
+                        let Some(member) = member.as_str() else {
+                            diagnostics.push(invalid_value(
+                                &lines,
+                                path,
+                                "groups",
+                                format!("group '{name}' members must be strings"),
+                            ));
+                            continue;
+                        };
+                        if !valid_actor_ref(member) {
+                            diagnostics.push(invalid_value(
+                                &lines,
+                                path,
+                                "groups",
+                                format!("group '{name}' has invalid actor reference '{member}'"),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let Some(devices_value) = map.get("devices") else {
         diagnostics.push(
             Diagnostic::error(Code::CfgMissingField, "missing required key 'devices'")
@@ -1161,6 +1339,7 @@ pub fn load_devices(path: &Path) -> ConfigOutcome<DevicesConfig> {
 pub fn load_devices_merged(workspace_path: &Path) -> ConfigOutcome<DevicesConfig> {
     let mut diagnostics = Diagnostics::new();
     let mut merged: Vec<DeviceConfig> = Vec::new();
+    let mut merged_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let global_path = Home::resolve().ok().map(|home| home.devices_path());
     if let Some(path) = global_path.as_deref() {
         if let Some(source) = read_optional_layer(path, &mut diagnostics) {
@@ -1168,6 +1347,7 @@ pub fn load_devices_merged(workspace_path: &Path) -> ConfigOutcome<DevicesConfig
             diagnostics.extend(outcome.diagnostics);
             if let Some(config) = outcome.config {
                 merge_devices(&mut merged, &config.devices);
+                merge_groups(&mut merged_groups, config.groups);
             }
         }
     }
@@ -1176,12 +1356,32 @@ pub fn load_devices_merged(workspace_path: &Path) -> ConfigOutcome<DevicesConfig
         diagnostics.extend(outcome.diagnostics);
         if let Some(config) = outcome.config {
             merge_devices(&mut merged, &config.devices);
+            merge_groups(&mut merged_groups, config.groups);
         }
     }
-    let config = (!diagnostics.has_errors()).then_some(DevicesConfig { devices: merged });
+    let merged_config = DevicesConfig {
+        devices: merged,
+        groups: merged_groups,
+    };
+    if !diagnostics.has_errors() {
+        for (code, message) in merged_config.validate_groups() {
+            diagnostics.push(
+                Diagnostic::error(code, message).with_help(
+                    "groups may reference devices and '@groups' across both config layers",
+                ),
+            );
+        }
+    }
+    let config = (!diagnostics.has_errors()).then_some(merged_config);
     ConfigOutcome {
         config,
         diagnostics,
+    }
+}
+
+fn merge_groups(merged: &mut BTreeMap<String, Vec<String>>, layer: BTreeMap<String, Vec<String>>) {
+    for (name, members) in layer {
+        merged.insert(name, members);
     }
 }
 
@@ -1990,6 +2190,13 @@ fn endpoint_help(platform: Platform) -> &'static str {
         Platform::Android | Platform::AndroidTv => "expected an adb serial such as emulator-5554",
         Platform::Ios | Platform::Tvos => "expected a device UDID or a simulator UUID",
     }
+}
+
+/// An actor reference is a device/group name, optionally prefixed with `@`
+/// to mark a group explicitly.
+#[must_use]
+pub fn valid_actor_ref(name: &str) -> bool {
+    valid_device_name(name.strip_prefix('@').unwrap_or(name))
 }
 
 /// Device name rule: `^[a-z0-9][a-z0-9_-]{0,62}$`.

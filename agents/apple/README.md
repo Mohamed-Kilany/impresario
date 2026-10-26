@@ -40,47 +40,18 @@ Both run on Linux and macOS. `swift test` starts a real grpc-swift server on a
 loopback port and speaks the full protocol (handshake, commands, logs,
 screenshots, shutdown), so the wire layer is verified without any Apple device.
 
-### 1.1 The Xcode tests from Windows or Linux (no local Mac)
+### 1.1 Xcode execution is unverified; physical tvOS is P0
 
-Apple only ships the iOS/iPadOS/tvOS simulator and XCUITest runtime for macOS,
-so the test host is a **GitHub-hosted macOS runner**, not the developer's
-machine. Trigger it with `gh`; nothing is built or run locally except the
-download of the report:
-
-```powershell
-# Windows PowerShell
-pwsh scripts/apple-tests.ps1                 # iPhone + iPad + Apple TV
-pwsh scripts/apple-tests.ps1 -Platform tvos
-```
-
-```bash
-# Linux / macOS
-scripts/apple-tests.sh                       # iPhone + iPad + Apple TV
-scripts/apple-tests.sh ipados
-```
-
-The workflow is `.github/workflows/apple-simulator.yml` (manual dispatch input
-`platforms=all|ios|ipados|tvos`). For each family it:
-
-1. boots the newest available simulator (`scripts/apple-simulator.py`);
-2. builds `AgentTargetStub-*` and `AgentUITests-*` for that simulator;
-3. installs the fixture and runs `SimulatorSmokeTests` with the real
-   `XCUIDriver` (launch, accessibility, screenshot, touch on iOS/iPadOS and the
-   in-app hook media proof);
-4. builds the Rust master and runs `agents/apple/ci/plays/apple-smoke.play`
-   through `AgentRunnerTests/testServe` on the simulator, using the same
-   `AppleTransport` path a physical device uses;
-5. uploads `*-smoke.log`, `*-e2e.log`, `ci/reports/**` and the `.xcresult`.
-
-`scripts/apple-tests.ps1`/`.sh` watch the run, download the artifacts into
-`target/apple-simulator/` and print the end-to-end log. They need only GitHub
-CLI authentication; no Apple hardware, developer account or signing team.
-
-**Physical Apple TV is different.** Installing and running XCUITest on a real
-tvOS device still requires a Mac with Xcode on the same LAN (section 6); a
-GitHub-hosted runner cannot route to a home LAN and Apple provides no
-Windows/Linux device transport. Simulator coverage closes the code/test gap,
-not the HD-1 hardware item.
+Apple simulator testing is out of scope by user direction. The simulator
+workflow, helper scripts and smoke test were removed. `AgentCore`/`AgentService`
+remain unit-tested on Linux and the unsigned `Apple Xcode` CI job compiles the
+host/stub/UI-test targets, but nothing in this repository claims that XCUITest
+executed on a simulator or a device. The Apple TV at `192.168.93.19` is
+reachable, but no macOS/Xcode host is attached, AirPlay does not expose its
+UDID and no signed runner is installed. Physical tvOS still requires a Mac with
+Xcode on the same LAN (section 6) and remains HD-1; GitHub-hosted runners
+cannot route to a home LAN. The config wizard accepts `tvos` and writes the UDID
+plus the runner's LAN endpoint, but it skips the live check on non-macOS hosts.
 
 Dependencies are pinned (`Package.resolved` is committed):
 
@@ -123,9 +94,12 @@ runner selection:
 
 Do not rename the test bundle or `testServe`.
 
-Signing: device runs need a development team. Set it in Xcode
-(Signing & Capabilities) or add a `Local.xcconfig` — nothing in the repo
-hard-codes a team id.
+Signing: device runs need a development team. A free Apple ID personal team
+works, but its provisioning profile expires after 7 days and the apps must be
+reinstalled; the GitHub Actions artifact is unsigned. Set the team in Xcode
+(Signing & Capabilities) or add a `Local.xcconfig` - nothing in the repo
+hard-codes a team id. Sign in interactively on the macOS host; do not store or
+pass a plaintext Apple ID password.
 
 ## 3. Build the app under test (the fixture)
 
@@ -248,6 +222,18 @@ that the permission is remembered and runs need no human. `IMPRESARIO_NO_BONJOUR
 skips the advertisement if a network blocks Bonjour; the master can always
 connect to `agent_address`.
 
+### 6.1 Physical-tvOS sequence (not run on this host)
+
+On a macOS host with Xcode: pair the Apple TV (`Settings > Remotes and Devices
+> Remote App and Devices`), sign the host, stub and UI-test targets with a
+personal team (free Apple ID, 7-day profile), install them, and start
+`AgentRunnerTests/testServe`. Then run `impresario device wizard` on the master
+host, choose `tvos`, enter the UDID from `xcrun devicectl list devices` and the
+runner's LAN `HOST:PORT` (not the Apple TV's IP). The wizard writes
+`transport: network`; its live check is skipped on non-macOS hosts. The
+unsigned GitHub Actions artifact cannot be installed directly. This sequence
+has not been executed here.
+
 ## 7. Semantics worth knowing (details in TASK.md §5–6, docs/PARITY.md)
 
 * `scroll <dir>` reveals content in `<dir>` (one step = a drag across 80% of the
@@ -281,9 +267,8 @@ connect to `agent_address`.
 ## 9. Verification status
 
 `swift build`/`swift test` run on Linux (the `CI` workflow). The Xcode targets
-are compiled **and executed** on iOS, iPadOS and tvOS simulators by
-`Apple Simulator Tests`; see section 1.1. The workflow is triggerable from
-Windows/Linux and uploads the XCUITest and Impresario-play evidence. None of
-this is a real-device claim: physical Apple TV installation, local-network
-permission and the remote pairing path remain on the macOS/LAN checklist
-(`docs/STATUS.md` HD-1 and `docs/DEVICES.md` section 3.2).
+are compiled unsigned by `Apple Xcode`; they are **not executed** here or in
+CI, because simulator testing is out of scope and no macOS host is paired
+(section 1.1). Physical Apple TV installation, free-7-day signing,
+local-network permission and the remote pairing path remain on the macOS/LAN
+checklist (`docs/STATUS.md` HD-1 and `docs/DEVICES.md` section 3.3).

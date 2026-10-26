@@ -45,6 +45,8 @@ pub enum Code {
     CfgDuplicateDevice,
     CfgBadEndpoint,
     CfgDuplicateApp,
+    CfgUnknownActor,
+    CfgGroupCycle,
     // app binding (planner)
     AppUnknown,
     AppPlatformMissing,
@@ -84,6 +86,18 @@ pub enum Code {
     DslMissingStageArgument,
     DslDuplicateExampleColumn,
     DslExampleWidth,
+    // actor/audience/stage-interface family (TASK-3 section 13)
+    DslDuplicateStageImplementation,
+    DslStageSignatureMismatch,
+    DslStageCoverage,
+    DslLintNearDuplicateTag,
+    DslUnknownActor,
+    DslGroupCycle,
+    DslDuplicateAudience,
+    DslActorFilter,
+    DslDuplicateActor,
+    DslDuplicateTag,
+    // legacy codes kept after the interface renumbering
     DslUnknownExampleColumn,
     DslStageDepth,
     DslLintUnusedScene,
@@ -108,6 +122,8 @@ impl Code {
             Code::CfgDuplicateDevice => "IMP-CFG-004",
             Code::CfgBadEndpoint => "IMP-CFG-005",
             Code::CfgDuplicateApp => "IMP-CFG-006",
+            Code::CfgUnknownActor => "IMP-CFG-007",
+            Code::CfgGroupCycle => "IMP-CFG-008",
             Code::AppUnknown => "IMP-APP-001",
             Code::AppPlatformMissing => "IMP-APP-002",
             Code::AppPackageMissing => "IMP-APP-003",
@@ -144,17 +160,27 @@ impl Code {
             Code::DslMissingStageArgument => "IMP-DSL-037",
             Code::DslDuplicateExampleColumn => "IMP-DSL-038",
             Code::DslExampleWidth => "IMP-DSL-039",
-            Code::DslUnknownExampleColumn => "IMP-DSL-040",
-            Code::DslStageDepth => "IMP-DSL-041",
-            Code::DslLintUnusedScene => "IMP-DSL-042",
-            Code::DslLintUnusedPiece => "IMP-DSL-043",
-            Code::DslLintUnusedStage => "IMP-DSL-044",
-            Code::DslLintUnusedTheatre => "IMP-DSL-045",
-            Code::DslLintUnusedVar => "IMP-DSL-046",
-            Code::DslLintUnusedExampleColumn => "IMP-DSL-047",
-            Code::DslLintShadowedVar => "IMP-DSL-048",
-            Code::DslLintActPlatformCoverage => "IMP-DSL-049",
-            Code::DslLintRequiredParamNeverSupplied => "IMP-DSL-050",
+            Code::DslDuplicateStageImplementation => "IMP-DSL-040",
+            Code::DslStageSignatureMismatch => "IMP-DSL-041",
+            Code::DslStageCoverage => "IMP-DSL-042",
+            Code::DslLintNearDuplicateTag => "IMP-DSL-043",
+            Code::DslUnknownActor => "IMP-DSL-044",
+            Code::DslGroupCycle => "IMP-DSL-045",
+            Code::DslDuplicateAudience => "IMP-DSL-046",
+            Code::DslActorFilter => "IMP-DSL-047",
+            Code::DslDuplicateActor => "IMP-DSL-048",
+            Code::DslDuplicateTag => "IMP-DSL-049",
+            Code::DslUnknownExampleColumn => "IMP-DSL-051",
+            Code::DslStageDepth => "IMP-DSL-052",
+            Code::DslLintUnusedScene => "IMP-DSL-053",
+            Code::DslLintUnusedPiece => "IMP-DSL-054",
+            Code::DslLintUnusedStage => "IMP-DSL-055",
+            Code::DslLintUnusedTheatre => "IMP-DSL-056",
+            Code::DslLintUnusedVar => "IMP-DSL-057",
+            Code::DslLintUnusedExampleColumn => "IMP-DSL-058",
+            Code::DslLintShadowedVar => "IMP-DSL-059",
+            Code::DslLintActPlatformCoverage => "IMP-DSL-060",
+            Code::DslLintRequiredParamNeverSupplied => "IMP-DSL-061",
         }
     }
 
@@ -165,6 +191,7 @@ impl Code {
             Code::DslLintFixedWait
             | Code::DslLintNaming
             | Code::DslLintSceneFileMismatch
+            | Code::DslLintNearDuplicateTag
             | Code::DslLintUnusedScene
             | Code::DslLintUnusedPiece
             | Code::DslLintUnusedStage
