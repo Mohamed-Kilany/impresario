@@ -117,6 +117,22 @@ impl AppleTunnel {
         })
     }
 
+    /// Restart the device through the diagnostics relay. This is the clean
+    /// way to clear a wedged XCUITest/testmanagerd session; the tunnel drops
+    /// when the device reboots.
+    pub async fn restart(&mut self) -> Result<()> {
+        use idevice::services::diagnostics_relay::DiagnosticsRelayClient;
+        use idevice::RsdService as _;
+
+        let mut relay = DiagnosticsRelayClient::connect_rsd(&mut self.handle, &mut self.handshake)
+            .await
+            .map_err(|error| Error::Device(format!("diagnostics relay: {error}")))?;
+        relay
+            .restart()
+            .await
+            .map_err(|error| Error::Device(format!("restart: {error}")))
+    }
+
     /// A string property from the RSD handshake.
     #[must_use]
     pub fn property(&self, key: &str) -> Option<&str> {
