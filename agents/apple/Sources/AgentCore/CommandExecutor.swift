@@ -133,15 +133,11 @@ public final class CommandExecutor: @unchecked Sendable {
                 try await ensureFocused(spec, element)
                 try driver.remote(.select, repeat: 1, interval: 0.1)
             } catch let error as AgentError where error.code == .focusUnreachable {
-                // Fallback (I-86): some tvOS system surfaces (alerts, focus
-                // traps) cannot be reached by D-pad traversal. If XCTest
-                // reports the element hittable, tap it directly; otherwise
-                // keep the honest focus error.
-                if driver.isHittable(element) {
-                    try driver.tap(element)
-                } else {
-                    throw error
-                }
+                // tvOS has no touch input: `IMPXCUShim.tap` always reports
+                // "tap is unavailable on tvOS; use focus and Select". Keep the
+                // focus error (with its trail) instead of masking it with that
+                // dead-end tap.
+                throw error
             }
         } else {
             try driver.tap(element)
@@ -664,6 +660,11 @@ public final class CommandExecutor: @unchecked Sendable {
     }
 
     private func ensureFocused(_ spec: SelectorSpec, _ element: ElementRef) async throws {
+        // The previous action (often `back`) may still be applying the
+        // destination screen's focus reset. Let that animation settle before
+        // reading the focus frame; otherwise the navigator can chase a stale
+        // frame and overshoot the target.
+        try await sleep(450)
         let probe = ExecutorFocusProbe(driver: driver, element: element)
         let result = FocusNavigator(probe: probe, maxSteps: options.focusMaxSteps).ensureTargetFocused()
         switch result {
@@ -725,12 +726,22 @@ private final class ExecutorFocusProbe: FocusProbe {
     func currentFocusFrame() -> CGRect? { driver.focusedFrame() }
 
     func targetFrame() -> CGRect? {
-        driver.isVisible(element) ? driver.frame(element) : nil
+        // Keep the raw frame even when the element is outside the viewport:
+        // the focus engine scrolls a container as focus moves, so an
+        // off-screen row (for example the last home row on tvOS) is still a
+        // valid direction target. Returning nil here made every off-screen
+        // target an immediate "blocked" failure.
+        let frame = driver.frame(element)
+        return frame.isEmpty ? nil : frame
     }
 
     func press(_ direction: Direction) -> Bool {
         do {
             try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
+            // Focus movement and the following scroll are animated. Querying
+            // `hasFocus` immediately sees the pre-press focus and makes the
+            // navigator issue an extra step, which overshoots the last row.
+            Thread.sleep(forTimeInterval: 0.45)
             return true
         } catch {
             return false
