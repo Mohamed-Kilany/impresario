@@ -188,12 +188,44 @@ enum StubTheme {
     }
 }
 
+extension UIView {
+    /// The anchor the fixture measures its Android dp insets from. tvOS
+    /// reports an overscan safe area (40 pt per side on the 1080p panel), but
+    /// Android TV's 48 dp insets are measured from the screen edge. The
+    /// fixture therefore opts out of the safe area on tvOS only; iOS keeps it
+    /// for notches and the home indicator.
+    var fixtureLeadingAnchor: NSLayoutXAxisAnchor {
+        #if os(tvOS)
+        return leadingAnchor
+        #else
+        return safeAreaLayoutGuide.leadingAnchor
+        #endif
+    }
+
+    var fixtureTrailingAnchor: NSLayoutXAxisAnchor {
+        #if os(tvOS)
+        return trailingAnchor
+        #else
+        return safeAreaLayoutGuide.trailingAnchor
+        #endif
+    }
+
+    var fixtureBottomAnchor: NSLayoutYAxisAnchor {
+        #if os(tvOS)
+        return bottomAnchor
+        #else
+        return safeAreaLayoutGuide.bottomAnchor
+        #endif
+    }
+}
+
 #if os(tvOS)
 /// Android's platform action bar. Every stub Activity carries the app label in
 /// a black 48 dp bar above the #303030 content; the Apple mirror adds the same
 /// bar because the hidden-bar navigation controller has no system equivalent.
 final class StubAppBar: UIView {
     private let label = UILabel()
+    private let elevation = CAGradientLayer()
 
     init() {
         super.init(frame: .zero)
@@ -215,11 +247,31 @@ final class StubAppBar: UIView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        // Android draws a 14 px elevation gradient under the black bar.
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.35
-        layer.shadowRadius = StubTheme.dp(6)
-        layer.shadowOffset = CGSize(width: 0, height: StubTheme.dp(2))
+        // Android draws a 14 px elevation gradient under the black bar; its
+        // exact samples are 32..48 (of 48) over the 14 rows below the bar.
+        let alphas: [CGFloat] = [
+            16.0 / 48.0, 13.0 / 48.0, 10.0 / 48.0, 8.0 / 48.0,
+            7.0 / 48.0, 6.0 / 48.0, 5.0 / 48.0, 4.0 / 48.0,
+            3.0 / 48.0, 2.0 / 48.0, 2.0 / 48.0, 1.0 / 48.0,
+            1.0 / 48.0, 1.0 / 48.0, 0,
+        ]
+        elevation.colors = alphas.map { UIColor(white: 0, alpha: $0).cgColor }
+        elevation.locations = (0..<alphas.count).map {
+            NSNumber(value: Double($0) / Double(alphas.count - 1))
+        }
+        elevation.startPoint = CGPoint(x: 0.5, y: 0)
+        elevation.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.addSublayer(elevation)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        elevation.frame = CGRect(
+            x: 0,
+            y: bounds.height,
+            width: bounds.width,
+            height: StubTheme.dp(7)
+        )
     }
 
     @available(*, unavailable)

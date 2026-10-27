@@ -36,11 +36,11 @@ class ScenarioViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: StubTheme.horizontalInset
             ),
             column.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -StubTheme.horizontalInset
             ),
             column.topAnchor.constraint(
@@ -48,7 +48,7 @@ class ScenarioViewController: UIViewController {
                 constant: StubTheme.verticalInset
             ),
             column.bottomAnchor.constraint(
-                lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor,
+                lessThanOrEqualTo: view.fixtureBottomAnchor,
                 constant: -StubTheme.verticalInset
             ),
         ])
@@ -294,11 +294,11 @@ final class ScrollScenarioViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: StubTheme.horizontalInset
             ),
             titleLabel.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -StubTheme.horizontalInset
             ),
             titleLabel.topAnchor.constraint(
@@ -307,11 +307,11 @@ final class ScrollScenarioViewController: UIViewController {
             ),
 
             scroller.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: StubTheme.horizontalInset
             ),
             scroller.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -StubTheme.horizontalInset
             ),
             scroller.topAnchor.constraint(
@@ -324,15 +324,15 @@ final class ScrollScenarioViewController: UIViewController {
             ),
 
             statusLabel.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: StubTheme.horizontalInset
             ),
             statusLabel.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -StubTheme.horizontalInset
             ),
             statusLabel.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                equalTo: view.fixtureBottomAnchor,
                 constant: -StubTheme.verticalInset
             ),
 
