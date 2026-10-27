@@ -25,8 +25,20 @@ enum StubTheme {
     static let appBarBackground = UIColor.black
     static let appBarForeground = UIColor.white
     static let foreground = UIColor(white: 193.0 / 255.0, alpha: 1)
-    static let buttonBackground = UIColor(white: 90.0 / 255.0, alpha: 1)
-    static let buttonFocusedBackground = UIColor(white: 100.0 / 255.0, alpha: 1)
+    // Exact pixels sampled from the Android TV reference screenshots. The
+    // platform Button is not neutral grey: the channels differ by one.
+    static let buttonBackground = UIColor(
+        red: 90.0 / 255.0,
+        green: 89.0 / 255.0,
+        blue: 91.0 / 255.0,
+        alpha: 1
+    )
+    static let buttonFocusedBackground = UIColor(
+        red: 100.0 / 255.0,
+        green: 99.0 / 255.0,
+        blue: 101.0 / 255.0,
+        alpha: 1
+    )
     static let buttonDisabledBackground = UIColor(white: 61.0 / 255.0, alpha: 1)
     /// Android's TV button label is pure white, unlike the #C1C1C1 text views.
     static let buttonTitle = UIColor.white
@@ -137,11 +149,6 @@ enum StubTheme {
         // left-aligned label because AlertDialog list items are not Buttons.
         button.contentHorizontalAlignment = .center
         button.backgroundColor = .clear
-        #if os(tvOS)
-        // Disable UIKit's white focus highlight; `didUpdateFocus` paints the
-        // Android #646365 focused bar instead.
-        button.focusEffect = nil
-        #endif
         return button
     }
 
