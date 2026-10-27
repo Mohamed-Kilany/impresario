@@ -298,19 +298,39 @@ public final class CommandExecutor: @unchecked Sendable {
         let deadline = now() + timeout
         var attempts = 0
         var scrollingUp = false
+        let screenHeight = CGFloat(driver.deviceInfo().screenHeightPx)
 
         while true {
             try Task.checkCancellation()
-            if let element = pick(spec, try driver.find(spec.lookup(), timeout: 0)), driver.isVisible(element) {
+            let found = pick(spec, try driver.find(spec.lookup(), timeout: 0))
+            if let element = found, driver.isVisible(element) {
                 return .ok()
             }
             if now() >= deadline || attempts >= options.scrollMaxAttempts {
                 break
             }
-            // No movement signal exists on the Apple platforms (I-86): run
-            // half the budget downwards, then reverse upwards (I-70).
-            let direction: Direction =
+            // The target frame is a direction signal when XCUITest can report
+            // it (I-86): compare it with the screen and the focused viewport.
+            // Without it, run half the budget downwards, then reverse (I-70).
+            let fallback: Direction =
                 (scrollingUp || attempts >= options.scrollMaxAttempts / 2) ? .up : .down
+            var direction = fallback
+            if let element = found {
+                let target = driver.frame(element)
+                if !target.isEmpty {
+                    if target.maxY <= 0 {
+                        direction = .up
+                    } else if screenHeight > 0, target.minY >= screenHeight {
+                        direction = .down
+                    } else if let focused = driver.focusedFrame(), !focused.isEmpty {
+                        if target.maxY <= focused.minY {
+                            direction = .up
+                        } else if target.minY >= focused.maxY {
+                            direction = .down
+                        }
+                    }
+                }
+            }
             scrollingUp = direction == .up
             if options.platform.isTv {
                 try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
