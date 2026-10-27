@@ -229,8 +229,8 @@ still state the limits, and no command reports success for an unverified path.
   `~/.impresario/keys/webos/192.168.93.116.pem`. `device check` stops at
   `webOS key passphrase: no passphrase in the OS keychain`; no SSH session,
   upload or launch has run.
-- **Apple TV** now at `10.102.93.222`; the 2026-10-25 address was
-  `192.168.93.19`. AirPlay `/info` identifies `AppleTV5,3` (Apple TV HD), name
+- **Apple TV** now at `192.168.93.19` (the 2026-10-27 P0 run; the 2026-10-26
+  run used `10.102.93.222`). AirPlay `/info` identifies `AppleTV5,3` (Apple TV HD), name
   `RAMA (4)`, device ID `B6:FD:1D:0C:99:3C`, build `23J582`; the developer
   record reports tvOS 26.1 and UDID
   `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. TCP 7000, 62078 and 49152 are

@@ -384,7 +384,8 @@ does not install, launch or sign.
   for the session and rerun (there is no CLI command that stores the secret).
   No install/launch/CDP is verified on this TV. The 2026-10-21 four-device run used the web connector
   path, not `WebOsTransport`.
-- **Apple TV** – now `10.102.93.222` (was `192.168.93.19` on 2026-10-25).
+- **Apple TV** – now `192.168.93.19` (the 2026-10-27 P0 run; the
+  2026-10-26 run used `10.102.93.222`).
   AirPlay `/info` reports `AppleTV5,3` (Apple TV HD), `RAMA (4)`, device ID
   `B6:FD:1D:0C:99:3C`, build `23J582`; the developer record reports UDID
   `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`. Impresario Agent, the stub and
