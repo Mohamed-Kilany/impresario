@@ -158,6 +158,7 @@ pub struct IdentityMaterial {
     pub reused_key: bool,
     p12: Zeroizing<Vec<u8>>,
     password: Zeroizing<String>,
+    leaf_certificate_der: Vec<u8>,
 }
 
 impl std::fmt::Debug for IdentityMaterial {
@@ -168,6 +169,7 @@ impl std::fmt::Debug for IdentityMaterial {
             .field("reused_certificate", &self.reused_certificate)
             .field("reused_key", &self.reused_key)
             .field("p12_bytes", &self.p12.len())
+            .field("certificate_bytes", &self.leaf_certificate_der.len())
             .finish_non_exhaustive()
     }
 }
@@ -265,6 +267,11 @@ pub enum ProvisionError {
     /// Apple returned an error or an unexpected response.
     #[error("{0}")]
     Apple(String),
+    /// The downloaded profile does not yet contain the signing certificate.
+    #[error(
+        "the profile for {0} does not include the signing certificate; download it again after the certificate is active"
+    )]
+    ProfileCertificateMissing(String),
     /// The account's development certificate limit is full. Revoke one of
     /// these serials and retry.
     #[error(
@@ -282,7 +289,10 @@ impl ProvisionError {
     pub fn certificates(&self) -> Option<&[CertificateSummary]> {
         match self {
             Self::CertificatesFull(certificates) => Some(certificates),
-            Self::Invalid(_) | Self::Apple(_) | Self::Local(_) => None,
+            Self::Invalid(_)
+            | Self::Apple(_)
+            | Self::ProfileCertificateMissing(_)
+            | Self::Local(_) => None,
         }
     }
 }
@@ -330,21 +340,30 @@ pub async fn provision(
 
     let identity = ensure_identity(session, team, request, existing, device_type.clone()).await?;
 
-    let mut bundles = Vec::with_capacity(request.bundle_ids.len());
-    let mut warnings = Vec::new();
-    for bundle_id in &request.bundle_ids {
-        let app_id = app_ids.get(bundle_id).ok_or_else(|| {
-            ProvisionError::Apple(format!("Apple did not return the App ID for {bundle_id}"))
-        })?;
-        let profile = download_profile(session, team, app_id, device_type.clone()).await?;
-        bundles.push(validate_profile(
-            request,
-            team,
-            bundle_id,
-            &profile,
-            &mut warnings,
-        )?);
-    }
+    let (bundles, warnings) = match download_bundles(
+        session,
+        team,
+        request,
+        &app_ids,
+        &identity,
+        device_type.clone(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            // A certificate that is not installed locally is useless. If a
+            // profile step fails after Apple issued a new certificate,
+            // release that slot instead of leaking it and forcing the next
+            // run to create yet another certificate.
+            return Err(
+                match revoke_failed_identity(session, team, &identity, device_type).await {
+                    Ok(()) => error,
+                    Err(cleanup) => ProvisionError::Apple(format!("{error}; {cleanup}")),
+                },
+            );
+        }
+    };
 
     Ok(ProvisionReport {
         team_id: team.team_id.clone(),
@@ -539,6 +558,72 @@ fn app_id_name(bundle_id: &str) -> String {
     normalized.chars().take(48).collect()
 }
 
+async fn download_bundles(
+    session: &mut DeveloperSession,
+    team: &DeveloperTeam,
+    request: &ProvisionRequest,
+    app_ids: &std::collections::BTreeMap<String, AppId>,
+    identity: &IdentityMaterial,
+    device_type: DeveloperDeviceType,
+) -> Result<(Vec<ProvisionedBundle>, Vec<String>), ProvisionError> {
+    let mut bundles = Vec::with_capacity(request.bundle_ids.len());
+    let mut warnings = Vec::new();
+    for bundle_id in &request.bundle_ids {
+        let app_id = app_ids.get(bundle_id).ok_or_else(|| {
+            ProvisionError::Apple(format!("Apple did not return the App ID for {bundle_id}"))
+        })?;
+        for attempt in 0..3 {
+            let profile = download_profile(session, team, app_id, device_type.clone()).await?;
+            let mut attempt_warnings = Vec::new();
+            match validate_profile(
+                request,
+                team,
+                bundle_id,
+                &profile,
+                &identity.leaf_certificate_der,
+                &mut attempt_warnings,
+            ) {
+                Ok(bundle) => {
+                    warnings.append(&mut attempt_warnings);
+                    bundles.push(bundle);
+                    break;
+                }
+                // Apple can return a just-generated profile before the new
+                // certificate appears in it. Retry instead of revoking a
+                // perfectly good certificate.
+                Err(ProvisionError::ProfileCertificateMissing(_)) if attempt < 2 => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok((bundles, warnings))
+}
+
+/// Release a certificate issued by this run when a later profile step fails.
+///
+/// A reused certificate is left alone because other signing sets may still
+/// use it, and its private key is already stored.
+async fn revoke_failed_identity(
+    session: &mut DeveloperSession,
+    team: &DeveloperTeam,
+    identity: &IdentityMaterial,
+    device_type: DeveloperDeviceType,
+) -> Result<(), String> {
+    if identity.reused_certificate {
+        return Ok(());
+    }
+    let serial = identity.certificate_serial.as_deref().ok_or_else(|| {
+        "the newly issued certificate has no serial, so it could not be revoked automatically"
+            .to_string()
+    })?;
+    session
+        .revoke_development_cert(team, serial, device_type)
+        .await
+        .map_err(|error| format!("could not revoke the unused certificate {serial}: {error}"))
+}
+
 async fn ensure_identity(
     session: &mut DeveloperSession,
     team: &DeveloperTeam,
@@ -599,6 +684,7 @@ async fn ensure_identity(
             reused_key: reuse_key,
             p12,
             password,
+            leaf_certificate_der: certificate_der,
         });
     }
 
@@ -632,13 +718,9 @@ async fn ensure_identity(
                     "could not list certificates after submitting the CSR: {error}"
                 ))
             })?;
-        issued = certificates
-            .iter()
-            .find(|certificate| {
-                certificate.certificate_id.as_deref() == Some(cert_request.cert_request_id.as_str())
-                    || certificate_matches_key(certificate, &private_key)
-            })
-            .cloned();
+        issued =
+            select_issued_certificate(&certificates, &cert_request.cert_request_id, &private_key)
+                .cloned();
         if issued.is_some() {
             break;
         }
@@ -662,6 +744,7 @@ async fn ensure_identity(
         reused_key: reuse_key,
         p12,
         password,
+        leaf_certificate_der: certificate_der,
     })
 }
 
@@ -701,6 +784,7 @@ fn validate_profile(
     team: &DeveloperTeam,
     bundle_id: &str,
     profile: &ApiProfile,
+    signing_certificate: &[u8],
     warnings: &mut Vec<String>,
 ) -> Result<ProvisionedBundle, ProvisionError> {
     if profile.encoded_profile.as_ref().is_empty() {
@@ -779,6 +863,12 @@ fn validate_profile(
             "the profile for {bundle_id} does not include device {}",
             request.udid
         )));
+    }
+
+    if !profile_has_certificate(dictionary, signing_certificate) {
+        return Err(ProvisionError::ProfileCertificateMissing(
+            bundle_id.to_string(),
+        ));
     }
 
     let platforms = string_array(dictionary, "Platform");
@@ -872,6 +962,19 @@ fn string_array(dictionary: &Dictionary, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Whether a development profile embeds the certificate that will sign it.
+fn profile_has_certificate(dictionary: &Dictionary, certificate_der: &[u8]) -> bool {
+    dictionary
+        .get("DeveloperCertificates")
+        .and_then(Value::as_array)
+        .is_some_and(|certificates| {
+            certificates
+                .iter()
+                .filter_map(Value::as_data)
+                .any(|certificate| certificate == certificate_der)
+        })
+}
+
 fn certificate_der(certificate: &DevelopmentCertificate) -> Result<Vec<u8>, ProvisionError> {
     certificate
         .cert_content
@@ -903,6 +1006,26 @@ fn certificate_der_matches_key(der: &[u8], key: &RsaPrivateKey) -> bool {
         return false;
     };
     certificate.public_key_data().as_ref() == public_key.as_bytes()
+}
+
+/// Pick the certificate Apple issued for this request.
+///
+/// The request id is authoritative. Some list responses omit it, so fall back
+/// to a key match, but only for an active certificate: an expired or revoked
+/// certificate for the same key must never be selected.
+fn select_issued_certificate<'a>(
+    certificates: &'a [DevelopmentCertificate],
+    request_id: &str,
+    key: &RsaPrivateKey,
+) -> Option<&'a DevelopmentCertificate> {
+    certificates
+        .iter()
+        .find(|certificate| certificate.certificate_id.as_deref() == Some(request_id))
+        .or_else(|| {
+            certificates.iter().find(|certificate| {
+                certificate_is_active(certificate) && certificate_matches_key(certificate, key)
+            })
+        })
 }
 
 fn certificate_is_active(certificate: &DevelopmentCertificate) -> bool {
@@ -1061,5 +1184,63 @@ mod tests {
         let params = CertificateParams::new(Vec::<String>::new()).unwrap();
         let certificate = params.self_signed(&key_pair).unwrap();
         assert!(certificate_der_matches_key(certificate.der(), &key));
+    }
+
+    #[test]
+    fn profile_certificate_check_requires_the_exact_leaf() {
+        let mut profile = Dictionary::new();
+        profile.insert(
+            "DeveloperCertificates".to_string(),
+            Value::Array(vec![Value::Data(vec![1, 2, 3])]),
+        );
+        assert!(profile_has_certificate(&profile, &[1, 2, 3]));
+        assert!(!profile_has_certificate(&profile, &[1, 2, 4]));
+        assert!(!profile_has_certificate(&Dictionary::new(), &[1, 2, 3]));
+    }
+
+    #[test]
+    fn issued_certificate_selection_prefers_the_request_id() {
+        let key = generate_key().unwrap();
+        let old = test_certificate(test_certificate_der(&key), "old", Some("revoked"));
+        let requested = test_certificate(Vec::new(), "requested", None);
+        let certificates = vec![old, requested];
+        let selected = select_issued_certificate(&certificates, "requested", &key).unwrap();
+        assert_eq!(selected.certificate_id.as_deref(), Some("requested"));
+    }
+
+    #[test]
+    fn issued_certificate_selection_skips_an_inactive_key_match() {
+        let key = generate_key().unwrap();
+        let der = test_certificate_der(&key);
+        let revoked = test_certificate(der.clone(), "revoked", Some("revoked"));
+        let active = test_certificate(der, "active", None);
+        let certificates = vec![revoked, active];
+        let selected = select_issued_certificate(&certificates, "missing", &key).unwrap();
+        assert_eq!(selected.certificate_id.as_deref(), Some("active"));
+    }
+
+    fn test_certificate_der(key: &RsaPrivateKey) -> Vec<u8> {
+        let key_pair = {
+            let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
+            KeyPair::from_pkcs8_pem_and_sign_algo(&pem, &PKCS_RSA_SHA256).unwrap()
+        };
+        let params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.self_signed(&key_pair).unwrap().der().to_vec()
+    }
+
+    fn test_certificate(der: Vec<u8>, id: &str, status: Option<&str>) -> DevelopmentCertificate {
+        DevelopmentCertificate {
+            name: None,
+            certificate_id: Some(id.to_string()),
+            serial_number: Some(id.to_string()),
+            machine_id: None,
+            machine_name: None,
+            cert_content: (!der.is_empty()).then(|| plist::Data::new(der)),
+            certificate_platform: None,
+            certificate_type: None,
+            status: status.map(str::to_string),
+            status_code: None,
+            expiration_date: None,
+        }
     }
 }
