@@ -737,14 +737,40 @@ private final class ExecutorFocusProbe: FocusProbe {
 
     func press(_ direction: Direction) -> Bool {
         do {
+            let before = driver.focusedFrame()
             try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
             // Focus movement and the following scroll are animated. Querying
             // `hasFocus` immediately sees the pre-press focus and makes the
             // navigator issue an extra step, which overshoots the last row.
             Thread.sleep(forTimeInterval: 0.45)
+
+            // A scrollable focus container consumes the first press to scroll
+            // an off-screen row into view. When the focus frame did not move
+            // but the target is still that way, repeat once so the focus
+            // engine can actually land on the now-visible row. Without this,
+            // the last home row (Playback) was visible after the scroll but
+            // never focused, and the navigator tried a perpendicular axis.
+            if let before,
+               let after = driver.focusedFrame(),
+               after == before,
+               targetIsInDirection(direction, from: before) {
+                try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
+                Thread.sleep(forTimeInterval: 0.45)
+            }
             return true
         } catch {
             return false
+        }
+    }
+
+    private func targetIsInDirection(_ direction: Direction, from current: CGRect) -> Bool {
+        let target = driver.frame(element)
+        guard !target.isEmpty else { return false }
+        switch direction {
+        case .up: return target.midY < current.midY
+        case .down: return target.midY > current.midY
+        case .left: return target.midX < current.midX
+        case .right: return target.midX > current.midX
         }
     }
 
