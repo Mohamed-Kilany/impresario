@@ -129,6 +129,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var crashAfterLaunch = false
     var pressBackResult = false
     var longPressSelectResult = false
+    var keyboardShown = false
     var ignoreTypeText = false
     var findError: Error?
     var screenshotError: Error?
@@ -307,6 +308,8 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     }
 
     func targetCrashed(appId: String) -> Bool { crashed }
+
+    func keyboardVisible() -> Bool { keyboardShown }
 
     func longPressSelect(duration: TimeInterval) throws -> Bool {
         if let longPressError { throw longPressError }

@@ -163,10 +163,14 @@ public final class CommandExecutor: @unchecked Sendable {
         let currentText = driver.text(element)
 
         // Focus: tap on iOS; D-pad focus then Select (opens the keyboard) on
-        // tvOS (spec 12.3).
+        // tvOS (spec 12.3). Once the keyboard is open it owns D-pad focus, so
+        // append/clear must keep that editing session instead of traversing
+        // back to the field (which is blocked by the keyboard).
         if options.platform.isTv {
-            try await ensureFocused(spec, element)
-            try driver.remote(.select, repeat: 1, interval: 0.1)
+            if extras?.keyboardVisible() != true {
+                try await ensureFocused(spec, element)
+                try driver.remote(.select, repeat: 1, interval: 0.1)
+            }
         } else {
             try driver.tap(element)
         }

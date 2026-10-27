@@ -500,6 +500,16 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
         }
     }
 
+    func keyboardVisible() -> Bool {
+        onQueue {
+            guard let app = try? application() else {
+                return false
+            }
+            let keyboard = app.keyboards.firstMatch
+            return keyboard.exists && !keyboard.frame.isEmpty
+        }
+    }
+
     func longPressSelect(duration: TimeInterval) throws -> Bool {
         #if os(tvOS)
         try onQueue {
