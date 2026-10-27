@@ -184,15 +184,17 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(driver.remotes.map(\.button), [.right, .select])
     }
 
-    func testTvClickFallsBackToTapWhenFocusIsUnreachableButHittable() async {
+    func testTvClickReportsFocusErrorInsteadOfTapping() async {
         addButton("play", hittable: true)
-        // No focused element and no frame: the navigator reports `blocked`.
+        // tvOS has no tap primitive: an unreachable focus target must fail
+        // honestly instead of pretending the click happened.
         let result = await execute(
             .runAction(RunActionSpec(kind: .click, selector: select(.accessibilityId, "play"))),
             platform: .tvos
         )
-        XCTAssertTrue(result.ok, result.error?.message ?? "")
-        XCTAssertEqual(driver.taps, ["play"])
+        assertError(result, .focusUnreachable)
+        XCTAssertTrue(result.error?.message.contains("D-pad") == true)
+        XCTAssertTrue(driver.taps.isEmpty)
     }
 
     func testTvClickKeepsFocusErrorWhenNotHittable() async {
