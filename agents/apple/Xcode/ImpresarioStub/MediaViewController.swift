@@ -72,11 +72,11 @@ final class MediaViewController: UIViewController {
         let inset = StubTheme.mediaHorizontalInset
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: inset
             ),
             titleLabel.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -inset
             ),
             titleLabel.topAnchor.constraint(
@@ -85,7 +85,7 @@ final class MediaViewController: UIViewController {
             ),
 
             videoContainer.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: inset
             ),
             // Android VideoView shrinks its MATCH_PARENT width to the 4:3
@@ -101,7 +101,7 @@ final class MediaViewController: UIViewController {
             videoContainer.heightAnchor.constraint(equalToConstant: StubTheme.dp(220)),
 
             imageView.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: inset
             ),
             imageView.topAnchor.constraint(
@@ -112,7 +112,7 @@ final class MediaViewController: UIViewController {
             imageView.heightAnchor.constraint(equalToConstant: StubTheme.dp(120)),
 
             brokenView.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: inset
             ),
             brokenView.topAnchor.constraint(
@@ -123,11 +123,11 @@ final class MediaViewController: UIViewController {
             brokenView.heightAnchor.constraint(equalToConstant: StubTheme.dp(60)),
 
             statusLabel.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                equalTo: view.fixtureLeadingAnchor,
                 constant: inset
             ),
             statusLabel.trailingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                equalTo: view.fixtureTrailingAnchor,
                 constant: -inset
             ),
             // Android adds 12 dp of top padding to the status TextView and has
