@@ -1056,8 +1056,13 @@ session comes from `impresario account login` and never from Python or
 path (D-19). Unit tests cover the signing store, product import, IPA
 inspection, DDI state, pairing normalization and the agent-port launch
 environment; the physical `device check` above is the integration evidence.
-The new provisioning flow, live Apple ID login/2FA and `updateDevice` have not
-yet run against Apple's live services.
+On 2026-10-27 a long-id signing set with only host/runner/nested profiles
+signed the product set without a stub (`signing verify` exit 0), while
+`--with-stub` failed with the expected missing-profile error. The main
+`doctor --plain` probe reported `RAMA (4)` `READY` and listed the missing
+optional stub profile as a device detail. These checks still used imported
+long-id profiles; the new provisioning flow, live Apple ID login/2FA and
+`updateDevice` have not yet run against Apple's live services.
 
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,

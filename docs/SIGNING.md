@@ -293,12 +293,19 @@ hiding an installed app.
 ### Verification state
 
 Pure-Rust provisioning, PKCS#12/CSR creation, profile validation, stub
-opt-in and teardown have unit/offline tests. The physical P0 run
-`20261027-063121-00d6` used the **long** tvOS bundle ids and profiles created
-outside this new flow; it is the 105-step behaviour/visual evidence. The
-short-id `master` bundles, live Apple ID login/2FA, `updateDevice` renaming and
-fresh short-id profiles have not yet run against Apple/hardware. Existing
-profiles expire `2026-11-02`. No simulator evidence is claimed.
+opt-in and teardown have unit/offline tests. On 2026-10-27 a signing set
+containing only the long-id host, runner and nested profiles signed the
+product set without the stub (`signing verify` exit 0); adding `--with-stub`
+failed with the expected missing-profile error. The main `doctor --plain`
+probe then reported the physical Apple TV `READY` while listing the missing
+optional stub profile as a device detail, not a degradation.
+
+The physical P0 run `20261027-063121-00d6` used the **long** tvOS bundle ids
+and profiles created outside this new flow; it is the 105-step
+behaviour/visual evidence. The short-id `master` bundles, live Apple ID
+login/2FA, `updateDevice` renaming and fresh short-id profiles have not yet
+run against Apple/hardware. Existing profiles expire `2026-11-02`. No
+simulator evidence is claimed.
 
 ## Error codes
 

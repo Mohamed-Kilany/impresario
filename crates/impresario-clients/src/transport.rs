@@ -1390,9 +1390,11 @@ impl DeviceTransport for AppleTransport {
         let signing = SigningSet::load(&paths.signing_dir(), &signing_name).map_err(|error| {
             TransportError::DeviceUnavailable(format!(
                 "Apple signing set '{}' is not usable: {error}; run \
-                 `impresario apple signing provision --name {} --platform tvos` or import an \
+                 `impresario apple signing provision --name {} --platform {}` or import an \
                  existing signing tree",
-                signing_name, signing_name
+                signing_name,
+                signing_name,
+                device.platform.as_str()
             ))
         })?;
         let product_name = apple_env("IMPRESARIO_APPLE_PRODUCTS", "current");
@@ -1400,8 +1402,14 @@ impl DeviceTransport for AppleTransport {
             ProductSet::load(&paths.product_set_dir(&product_name)).map_err(|error| {
                 TransportError::DeviceUnavailable(format!(
                     "Apple product set '{}' is not usable: {error}; run \
-                     `impresario apple products import <Debug-appletvos> --name {}`",
-                    product_name, product_name
+                     `impresario apple products import <Debug-{}> --name {}`",
+                    product_name,
+                    if device.platform == Platform::Ios {
+                        "iphoneos"
+                    } else {
+                        "appletvos"
+                    },
+                    product_name
                 ))
             })?;
         let ddi = match std::env::var_os("IMPRESARIO_APPLE_DDI") {
