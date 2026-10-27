@@ -35,6 +35,11 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
     private var animationsDisabled = false
     private var hasLaunched = false
     private var app: XCUIApplication?
+    /// Set after a successful type: tvOS owns D-pad focus while its keyboard
+    /// session is up. `XCUIApplication.keyboards` is the preferred probe, but
+    /// the full-screen tvOS keyboard is not guaranteed to appear in the app's
+    /// accessibility tree, so remember that we opened a session.
+    private var typedIntoField = false
 
     // ------------------------------------------------------------------
     // plumbing
@@ -225,6 +230,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 guard IMPXCUShim.type(t, into: element, error: &error) else {
                     throw AgentError.notInteractable("typing failed: \(message(error))")
                 }
+                typedIntoField = true
             }
         }
     }
@@ -250,6 +256,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 guard IMPXCUShim.type(deletes, into: element, error: &error) else {
                     throw AgentError.notInteractable("clearing the field failed: \(message(error))")
                 }
+                typedIntoField = true
             }
         }
     }
@@ -344,8 +351,13 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
             case .left: button = .left
             case .right: button = .right
             case .select: button = .select
-            case .menu: button = .menu
-            case .home: button = .home
+            case .menu:
+                button = .menu
+                // Menu dismisses the tvOS keyboard before it reaches the app.
+                typedIntoField = false
+            case .home:
+                button = .home
+                typedIntoField = false
             case .playPause: button = .playPause
             case .pageUp: button = .pageUp
             case .pageDown: button = .pageDown
@@ -367,6 +379,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
     func pressHome() throws {
         onQueue {
             XCUIDevice.shared.press(.home)
+            typedIntoField = false
         }
     }
 
@@ -416,6 +429,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 )
             }
             hasLaunched = true
+            typedIntoField = false
         }
     }
 
@@ -433,6 +447,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 )
             }
             hasLaunched = false
+            typedIntoField = false
         }
     }
 
@@ -450,6 +465,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
                 )
             }
             hasLaunched = true
+            typedIntoField = false
         }
     }
 
@@ -502,6 +518,11 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
 
     func keyboardVisible() -> Bool {
         onQueue {
+            // A completed type proves the keyboard session exists even when
+            // `app.keyboards` cannot see tvOS's full-screen keyboard.
+            if typedIntoField {
+                return true
+            }
             guard let app = try? application() else {
                 return false
             }
