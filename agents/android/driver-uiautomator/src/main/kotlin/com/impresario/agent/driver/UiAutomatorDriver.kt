@@ -1,7 +1,6 @@
 package com.impresario.agent.driver
 
 import android.app.Instrumentation
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
@@ -183,10 +182,19 @@ class UiAutomatorDriver(
         val intent = context.packageManager.getLaunchIntentForPackage(appId)
             ?: (if (tv) context.packageManager.getLeanbackLaunchIntentForPackage(appId) else null)
             ?: throw AgentException.internal("no launcher activity for package '$appId'")
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
-        )
-        context.startActivity(intent)
+        val component = intent.component
+            ?: throw AgentException.internal("launcher intent for '$appId' has no component")
+        // Start through `am` instead of `context.startActivity`. The agent
+        // instrumentation is a background process, so Android 10+ background
+        // activity-launch restrictions can silently drop the latter; TCL's
+        // freezer can also leave the previous task suspended. The shell start
+        // is what the device's own launcher uses and is not subject to either
+        // restriction. `-W` waits for the activity manager to finish the
+        // launch so the foreground poll starts from a settled state.
+        val start = device.executeShellCommand("am start -W -n ${component.flattenToShortString()}")
+        if (start.contains("Error") || start.contains("Exception")) {
+            throw AgentException.internal("could not launch '$appId': ${start.trim()}")
+        }
         lastLaunchedPackage = appId
         wasLaunched = true
         val deadline = SystemClock.uptimeMillis() + LAUNCH_TIMEOUT_MS
