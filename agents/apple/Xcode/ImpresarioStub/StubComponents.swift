@@ -255,7 +255,7 @@ final class StubAppBar: UIView {
             3.0 / 48.0, 2.0 / 48.0, 2.0 / 48.0, 1.0 / 48.0,
             1.0 / 48.0, 1.0 / 48.0, 0,
         ]
-        elevation.colors = alphas.map { UIColor(white: 0, alpha: $0).cgColor }
+        elevation.colors = alphas.map { UIColor(white: 0, alpha: $0).cgColor as Any }
         elevation.locations = (0..<alphas.count).map {
             NSNumber(value: Double($0) / Double(alphas.count - 1))
         }
