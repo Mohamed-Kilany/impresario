@@ -13,11 +13,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use impresario_apple_device::ddi::DdiAssets;
+use impresario_apple_device::ddi::{self, DdiAssets, DdiState};
 use impresario_apple_device::pairing::ApplePaths;
 use impresario_apple_device::products::ProductSet;
 use impresario_apple_device::session::{self, PreparedDevice, SessionOptions};
 use impresario_apple_device::signing_set::SigningSet;
+use impresario_apple_device::tunnel::AppleTunnel;
 use impresario_apple_device::RunnerOptions;
 use impresario_core::apps::AppConfig;
 use impresario_core::command::{WireError, WireErrorCode};
@@ -1082,10 +1083,272 @@ impl AppleTransport {
         });
         Ok(ResetOutcome::Reset)
     }
+
+    /// Inspect an Apple device without mounting a DDI or installing anything.
+    ///
+    /// The probe verifies pairing, opens the RSD tunnel, checks the configured
+    /// UDID and DDI state, and reports missing signing products as warnings.
+    /// It never starts XCUITest, so it is safe for `doctor` and `devices check`.
+    async fn probe_apple(&mut self, device: &DeviceConfig) -> Result<NativeProbe, TransportError> {
+        if !matches!(device.platform, Platform::Ios | Platform::Tvos) {
+            return Err(TransportError::Transport(format!(
+                "the Apple transport cannot probe platform {}",
+                device.platform
+            )));
+        }
+        let udid = device.connection.udid.as_deref().ok_or_else(|| {
+            TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' has no connection.udid",
+                device.name
+            ))
+        })?;
+        if is_simulator_udid(udid) {
+            return Err(TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' is a simulator; the native transport only drives physical \
+                 devices",
+                device.name
+            )));
+        }
+        let (host, _agent_port) = apple_host_port(device)?;
+        let home = Home::resolve().map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "could not resolve the Impresario home directory for Apple setup: {error}"
+            ))
+        })?;
+        let paths = ApplePaths::new(home.root());
+        let pairing = paths.load_pairing_for(Some(udid), &host).map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "no pairing for Apple device {udid}: {error}; run `impresario apple pair --host \
+                 {host}`"
+            ))
+        })?;
+
+        let signing_name = apple_env("IMPRESARIO_APPLE_SIGNING", "default");
+        let product_name = apple_env("IMPRESARIO_APPLE_PRODUCTS", "current");
+        let mut warnings = Vec::new();
+        let mut details = Vec::new();
+
+        let signing = match SigningSet::load(&paths.signing_dir(), &signing_name) {
+            Ok(set) => {
+                details.push(format!(
+                    "signing: {} (team {}, {})",
+                    set.name(),
+                    set.team_id(),
+                    set.root().display()
+                ));
+                if let Err(error) = set.identity() {
+                    warnings.push(format!("signing identity is not usable: {error}"));
+                }
+                Some(set)
+            }
+            Err(error) => {
+                warnings.push(format!(
+                    "signing set '{signing_name}' is not usable: {error}; run `impresario apple \
+                     signing provision --name {signing_name} --platform {}`",
+                    if device.platform == Platform::Tvos {
+                        "tvos"
+                    } else {
+                        "ios"
+                    }
+                ));
+                None
+            }
+        };
+        let products = match ProductSet::load(&paths.product_set_dir(&product_name)) {
+            Ok(set) => {
+                details.push(format!("products: {}", set.root().display()));
+                Some(set)
+            }
+            Err(error) => {
+                warnings.push(format!(
+                    "product set '{product_name}' is not usable: {error}; run `impresario apple \
+                     products import <Debug-appletvos> --name {product_name}`"
+                ));
+                None
+            }
+        };
+        if let (Some(signing), Some(products)) = (&signing, &products) {
+            for (bundle_id, required) in apple_probe_bundle_ids(products) {
+                let materials = match signing.require(&bundle_id) {
+                    Ok(materials) => materials,
+                    Err(error) if !required => {
+                        // The fixture stub is optional. Its absence must not
+                        // degrade a normal actual-app setup, but keep the fact
+                        // visible in the device detail for stub-play debugging.
+                        details.push(format!(
+                            "fixture stub profile (optional): not provisioned ({error}); stub \
+                             plays need `--with-stub`"
+                        ));
+                        continue;
+                    }
+                    Err(error) => {
+                        warnings.push(error.to_string());
+                        continue;
+                    }
+                };
+                let mut issues = Vec::new();
+                if !materials.info.allows_bundle(&bundle_id) {
+                    issues.push("does not cover that bundle id".to_string());
+                }
+                if !materials.info.allows_device(udid) {
+                    issues.push(format!(
+                        "does not list device {udid}; re-provision it or add the device to the team"
+                    ));
+                }
+                if materials.info.get_task_allow != Some(true) {
+                    issues.push("is not marked get-task-allow".to_string());
+                }
+                if !materials.info.platforms.is_empty()
+                    && !materials.info.platforms.iter().any(|platform| {
+                        platform.eq_ignore_ascii_case(match device.platform {
+                            Platform::Ios => "iOS",
+                            _ => "tvOS",
+                        })
+                    })
+                {
+                    issues.push(format!(
+                        "is for {}, expected {}",
+                        materials.info.platforms.join(", "),
+                        if device.platform == Platform::Ios {
+                            "iOS"
+                        } else {
+                            "tvOS"
+                        }
+                    ));
+                }
+                if required {
+                    for issue in issues {
+                        warnings.push(format!("profile for {bundle_id} {issue}"));
+                    }
+                } else if issues.is_empty() {
+                    details.push(format!(
+                        "fixture stub profile (optional): provisioned for {bundle_id}"
+                    ));
+                } else {
+                    details.push(format!(
+                        "fixture stub profile (optional): {}",
+                        issues
+                            .into_iter()
+                            .map(|issue| format!("{bundle_id} {issue}"))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ));
+                }
+            }
+        }
+
+        let mut tunnel = AppleTunnel::connect(&host, &pairing)
+            .await
+            .map_err(|error| {
+                TransportError::DeviceUnavailable(format!(
+                    "connect to Apple device '{}' at {host}: {error}",
+                    device.name
+                ))
+            })?;
+        let actual_udid = tunnel.udid().map(str::to_string);
+        if let Some(actual) = actual_udid.as_deref() {
+            if !actual.eq_ignore_ascii_case(udid) {
+                return Err(TransportError::DeviceUnavailable(format!(
+                    "Apple device '{}' at {host} reports UDID {actual}, but the configuration \
+                     expects {udid}",
+                    device.name
+                )));
+            }
+        } else {
+            warnings.push("RSD did not report UniqueDeviceID".to_string());
+        }
+        let product_type = tunnel.product_type().unwrap_or("unknown").to_string();
+        let product_version = tunnel.product_version().unwrap_or("unknown").to_string();
+        let build = tunnel.build_version().map(str::to_string);
+        let state = ddi::query(&mut tunnel).await.map_err(|error| {
+            TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' is reachable but its developer image service failed: {error}",
+                device.name
+            ))
+        })?;
+        details.push(format!("remote pairing: {}", tunnel.summary()));
+        if let Some(actual) = actual_udid {
+            details.push(format!("UDID: {actual}"));
+        }
+        if let Some(build) = build.as_deref() {
+            details.push(format!("build: {build}"));
+        }
+        details.push(format!(
+            "developer image: {}",
+            match state {
+                DdiState::Mounted => "mounted at /System/Developer",
+                DdiState::NotMounted => "not mounted (prepare mounts it automatically)",
+            }
+        ));
+        let ddi_assets = match std::env::var_os("IMPRESARIO_APPLE_DDI") {
+            Some(dir) if !dir.is_empty() => {
+                let dir = PathBuf::from(dir);
+                Some((DdiAssets::from_dir(&dir), dir))
+            }
+            _ => build.as_deref().map(|build| {
+                (
+                    DdiAssets::from_dir(&paths.ddi_build_dir(build)),
+                    paths.ddi_build_dir(build),
+                )
+            }),
+        };
+        match ddi_assets {
+            Some((Ok(_), dir)) => details.push(format!("DDI assets: {}", dir.display())),
+            Some((Err(error), dir)) => warnings.push(format!(
+                "developer image assets are missing from {}: {error}",
+                dir.display()
+            )),
+            None => warnings.push(
+                "RSD did not report BuildVersion; cannot locate the personalized developer image"
+                    .to_string(),
+            ),
+        }
+
+        Ok(NativeProbe {
+            info: DeviceInfo {
+                model: product_type,
+                os_name: match device.platform {
+                    Platform::Ios => "iOS".to_string(),
+                    _ => "tvOS".to_string(),
+                },
+                os_version: product_version,
+                screen_width_px: 0,
+                screen_height_px: 0,
+                pixel_ratio: 1.0,
+                runtime: "XCUITest (native RemotePairing)".to_string(),
+            },
+            details,
+            warnings,
+        })
+    }
+}
+
+fn apple_probe_bundle_ids(products: &ProductSet) -> Vec<(String, bool)> {
+    let mut ids = Vec::new();
+    if let Ok(id) = products.host_bundle_id() {
+        ids.push((id, true));
+    }
+    if let Ok(Some(id)) = products.stub_bundle_id() {
+        ids.push((id, false));
+    }
+    if let Ok(id) = products.runner_bundle_id() {
+        ids.push((id, true));
+    }
+    if let Ok(Some(id)) = products.nested_bundle_id() {
+        ids.push((id, true));
+    }
+    ids
 }
 
 #[async_trait]
 impl DeviceTransport for AppleTransport {
+    async fn probe(
+        &mut self,
+        device: &DeviceConfig,
+    ) -> Result<Option<NativeProbe>, TransportError> {
+        self.probe_apple(device).await.map(Some)
+    }
+
     async fn prepare(
         &mut self,
         device: &DeviceConfig,
@@ -1117,7 +1380,7 @@ impl DeviceTransport for AppleTransport {
             ))
         })?;
         let paths = ApplePaths::new(home.root());
-        let pairing = paths.load_pairing(udid).map_err(|error| {
+        let pairing = paths.load_pairing_for(Some(udid), &host).map_err(|error| {
             TransportError::DeviceUnavailable(format!(
                 "no pairing for Apple device {udid}: {error}; run `impresario apple import-pair` \
                  or `impresario apple pair --host {host}`"
@@ -1127,7 +1390,8 @@ impl DeviceTransport for AppleTransport {
         let signing = SigningSet::load(&paths.signing_dir(), &signing_name).map_err(|error| {
             TransportError::DeviceUnavailable(format!(
                 "Apple signing set '{}' is not usable: {error}; run \
-                 `impresario apple signing import <dir> --name {}`",
+                 `impresario apple signing provision --name {} --platform tvos` or import an \
+                 existing signing tree",
                 signing_name, signing_name
             ))
         })?;
@@ -1153,6 +1417,15 @@ impl DeviceTransport for AppleTransport {
             _ => None,
         };
         let (app_path, app_bundle_id) = apple_app_options(app, device.platform);
+        // The fixture stub is a normal product only when a play targets its
+        // bundle id without supplying a package. Any packaged app is installed
+        // from its package instead, and ordinary sessions never see the stub.
+        let stub_bundle_id = products.stub_bundle_id().ok().flatten();
+        let install_stub = apple_install_stub(
+            stub_bundle_id.as_deref(),
+            app_path.as_deref(),
+            app_bundle_id.as_deref(),
+        );
         let options = SessionOptions {
             host: host.clone(),
             pairing,
@@ -1162,6 +1435,7 @@ impl DeviceTransport for AppleTransport {
             ddi,
             app: app_path,
             app_bundle_id,
+            install_stub,
             expected_udid: Some(udid.to_string()),
             runner: RunnerOptions {
                 agent_port,
@@ -1205,7 +1479,7 @@ impl DeviceTransport for AppleTransport {
 
     async fn teardown(&mut self) -> Result<(), TransportError> {
         if let Some(mut session) = self.session.take() {
-            session.abort();
+            session.cleanup().await;
         }
         self.endpoint = None;
         Ok(())
@@ -1248,12 +1522,26 @@ fn apple_app_options(
     )
 }
 
+/// Whether the fixture stub should be signed and installed for this session.
+///
+/// Only an implicit target (the app id is the product stub and the app has no
+/// package) enables it. A packaged app, including an explicitly supplied stub
+/// build, is installed from that package and never silently replaced by the
+/// product stub.
+fn apple_install_stub(
+    stub_bundle_id: Option<&str>,
+    app_path: Option<&Path>,
+    app_bundle_id: Option<&str>,
+) -> bool {
+    app_path.is_none() && app_bundle_id.is_some_and(|id| stub_bundle_id == Some(id))
+}
+
 /// Resolve the Apple TV's LAN host and agent port from the device config.
 ///
 /// `connection.host` wins; otherwise the host part of `connection.endpoint`
 /// (the usual tvOS form, `HOST:50062`) is used. The port can also come from
 /// `options.agent_port`, with 50062 as the final default.
-fn apple_host_port(device: &DeviceConfig) -> Result<(String, u16), TransportError> {
+pub fn apple_host_port(device: &DeviceConfig) -> Result<(String, u16), TransportError> {
     let configured = device
         .connection
         .host
@@ -1485,6 +1773,32 @@ mod tests {
         let (package, bundle_id) = apple_app_options(None, Platform::Tvos);
         assert!(package.is_none());
         assert!(bundle_id.is_none());
+    }
+
+    #[test]
+    fn apple_stub_install_is_opt_in_and_never_replaces_a_package() {
+        let stub_id = Some("com.impresario.stub");
+        assert!(apple_install_stub(
+            stub_id,
+            None,
+            Some("com.impresario.stub")
+        ));
+        assert!(!apple_install_stub(
+            stub_id,
+            None,
+            Some("com.example.release")
+        ));
+        assert!(!apple_install_stub(stub_id, None, None));
+        assert!(!apple_install_stub(
+            stub_id,
+            Some(Path::new("build/ImpresarioStub.app")),
+            Some("com.impresario.stub")
+        ));
+        assert!(!apple_install_stub(
+            Some("com.other.stub"),
+            None,
+            Some("com.impresario.stub")
+        ));
     }
 
     #[tokio::test]

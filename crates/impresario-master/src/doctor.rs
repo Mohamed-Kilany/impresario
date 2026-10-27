@@ -182,8 +182,8 @@ async fn collect(home: &Home, base: &Path, devices: &[DeviceConfig]) -> Report {
     platforms.push(web);
     platforms.push(collect_webos(home, devices).await);
     platforms.push(collect_tizen(home, devices).await);
-    platforms.push(collect_planned(Platform::Ios, devices));
-    platforms.push(collect_planned(Platform::Tvos, devices));
+    platforms.push(collect_apple(home, devices, Platform::Ios).await);
+    platforms.push(collect_apple(home, devices, Platform::Tvos).await);
 
     let tools_report = collect_tools(home);
     let ok = platforms
@@ -632,39 +632,92 @@ async fn collect_tizen(home: &Home, devices: &[DeviceConfig]) -> PlatformReport 
     report
 }
 
-fn collect_planned(platform: Platform, devices: &[DeviceConfig]) -> PlatformReport {
+async fn collect_apple(
+    _home: &Home,
+    devices: &[DeviceConfig],
+    platform: Platform,
+) -> PlatformReport {
     let mut report = PlatformReport::new(platform);
-    report.rung = "not selected yet: TASK-2 phase 6/7 replaces this transport".to_string();
+    report.rung = "rung 1: pure-Rust RemotePairing/RSD, DDI, signing and XCUITest".to_string();
     report.needed = vec![
-        "native transport without ssh/sdb/xcodebuild (D-19)".to_string(),
-        "device pairing and signing flow".to_string(),
+        "stored RemotePairing record for the device UDID".to_string(),
+        "usable Apple signing set (identity, profiles and entitlements)".to_string(),
+        "imported host/runner Apple agent products".to_string(),
+        "personalized Developer Disk Image matching the device build".to_string(),
     ];
+    report.found.push(
+        "no xcrun, xcodebuild, devicectl or simulator is used; configured devices are probed \
+         without installing anything"
+            .to_string(),
+    );
+
     let configured: Vec<_> = devices
         .iter()
         .filter(|device| device.platform == platform)
         .collect();
     if configured.is_empty() {
-        report.status = Status::Planned;
         report.found.push(
-            "no device of this platform configured; the native transport lands in phase 6/7"
+            "no device of this platform configured; the native Apple transport is compiled in"
                 .to_string(),
         );
         return report;
     }
-    report.status = Status::Unavailable;
+
     for device in configured {
-        report.devices.push(DeviceReport {
-            name: device.name.clone(),
-            status: Status::Unavailable,
-            detail: "configured, but the tool-free transport is not implemented in phase 3"
-                .to_string(),
-        });
+        let mut transport = transport_for(platform);
+        let result = transport.probe(device).await;
+        let _ = transport.teardown().await;
+        match result {
+            Ok(Some(probe)) => {
+                let mut detail = format!(
+                    "{} {} · {} · {}",
+                    probe.info.model, probe.info.os_name, probe.info.os_version, probe.info.runtime
+                );
+                if !probe.details.is_empty() {
+                    detail.push_str(" · ");
+                    detail.push_str(&probe.details.join(" · "));
+                }
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: if probe.warnings.is_empty() {
+                        Status::Ready
+                    } else {
+                        Status::Degraded
+                    },
+                    detail,
+                });
+                if !probe.warnings.is_empty() {
+                    report.degrade();
+                    for warning in probe.warnings {
+                        report
+                            .fixes
+                            .push(format!("device '{}': {warning}", device.name));
+                    }
+                }
+            }
+            Ok(None) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: "the Apple transport did not provide a native probe".to_string(),
+                });
+                report.fail();
+            }
+            Err(error) => {
+                report.devices.push(DeviceReport {
+                    name: device.name.clone(),
+                    status: Status::Unavailable,
+                    detail: error.to_string(),
+                });
+                report.fail();
+                report.fixes.push(format!(
+                    "device '{}': check connection.host/udid, pair it with `impresario apple pair \
+                     --host <host>`, then run `impresario apple doctor --host <host>`",
+                    device.name
+                ));
+            }
+        }
     }
-    report.fixes.push(
-        "this platform is configured but its D-19 transport is phase 6/7 work; impresario will \
-         not silently fall back to ssh/sdb/xcodebuild"
-            .to_string(),
-    );
     report
 }
 

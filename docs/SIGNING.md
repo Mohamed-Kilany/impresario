@@ -19,6 +19,14 @@ passphrase is missing. None of the hardware steps below is claimed as
 hardware-verified; the pending checks are `HD-3`, `HD-4` and `HD-7` in
 `docs/STATUS.md`.
 
+The Apple path is now pure Rust too: RemotePairing/RSD, DDI mounting, bundle
+re-signing, installation, XCUITest startup, Apple ID authentication and
+development provisioning all run in-process. Apple development provisioning is
+offline/fixture-tested but has not completed a live Apple ID login/2FA against
+Apple's services. The long bundle ids passed the physical tvOS P0 run
+`20261027-063121-00d6`; the short ids on `master` still need fresh profiles and
+a hardware re-run. See the Apple section below and `docs/DEVICES.md` A3.
+
 ## Tizen
 
 ### Signing profiles
@@ -174,12 +182,123 @@ only (`HD-3`).
 
 ## Apple
 
-Apple identity management, entitlement-aware re-signing and provisioning are
-**Phase 7** work (TASK-2 §7.1/§7.2). There is no `impresario sign identity`
-command in this build; `AppleTransport` still uses the macOS tools documented
-in `docs/STATUS.md` gap 10. The final signing document will be extended when
-that phase lands. The current decision records remain I-95/I-96 (`idevice`,
-`apple-codesign`, optional App Store Connect / free-Apple-ID sources).
+The Apple path is pure Rust. It never starts `xcrun`, `xcodebuild`, `simctl`,
+`devicectl`, `openssl`, Python or a helper binary. Re-signing uses the
+`apple-codesign`/`p12-keystore` libraries; provisioning uses Apple's developer
+services HTTP APIs directly (I-152/I-153).
+
+### One global Apple ID session
+
+```powershell
+impresario account login          # Apple ID, password, team, 2FA
+impresario account status --check
+impresario account logout
+```
+
+The login is global, not workspace-scoped, and writes one encrypted session
+under `~/.impresario/apple/`. The password is entered interactively with
+`rpassword`, zeroized, and never stored or logged. The session and anisette
+state are AES-256-GCM blobs; the 32-byte key lives in the OS credential store
+under service `impresario.apple`.
+
+2FA accepts either a trusted-device code or an SMS code. The console prompt
+offers both; `--two-factor device|sms|ask` and `--two-factor-number <id>`
+select a method/number non-interactively. SMS delivery lists the trusted phone
+numbers Apple returns and can resend, go back or cancel. Offline tests cover
+the state machine and SMS number selection; a live Apple login/2FA has not
+been exercised yet.
+
+### Pairing and developer-device name
+
+The host presents itself as **`impresario`** to RemotePairing, and the same
+name is used when the device is registered with the Apple Developer portal
+(`IMPRESARIO_DEVICE_NAME`). It is deliberately not the computer name, the
+Apple TV/iPhone name, or a legacy `pyatv` value.
+
+```powershell
+impresario apple pair --host <apple-tv-host>
+# or import an existing record:
+impresario apple import-pair <pair.plist> --save <udid>
+```
+
+The pair record is machine-global under `~/.impresario/apple/pairing/`. A
+record created earlier by another tool keeps its old host identity; re-pair to
+change the name the device displays. Provisioning also renames an existing
+developer-portal device record to `impresario`; `--device-name` overrides that
+for a deliberate exception.
+
+### Provisioning a signing set
+
+```powershell
+# Generate host + runner + nested test profiles (no stub):
+impresario apple signing provision --name default --platform tvos
+
+# Add the fixture stub for explicit stub plays:
+impresario apple signing provision --name default --platform tvos --with-stub
+
+# Inspect or revoke development certificates:
+impresario apple signing certificates --platform tvos
+impresario apple signing provision --name default --platform tvos --revoke <serial>
+```
+
+Provisioning registers the UDID and App IDs, creates/reuses an RSA-2048 key
+and development certificate, builds the PKCS#12 identity, downloads one
+development profile per requested bundle, validates team/device/platform/
+`get-task-allow`/expiry, and installs a normal signing set at:
+
+```text
+~/.impresario/apple/signing/<name>/
+  team-id
+  identity.p12
+  bundles/<bundle-id>/profile.mobileprovision
+  bundles/<bundle-id>/entitlements.plist
+```
+
+By default the requested bundles are the agent host, the XCUITest runner and
+its nested `.xctest`; the fixture stub is **not** provisioned or required. The
+existing signing set's identity and key are reused when they still have an
+active certificate; `--new-identity` starts over and `--identity <p12>` reuses
+a specific identity. When Apple's certificate limit is full, the command lists
+the team certificates and prompts for a serial to revoke (or accepts
+`--revoke`). The PKCS#12 password is generated locally and stored in the OS
+credential store under `impresario.apple`/`signing:<name>`; the
+`IMPRESARIO_APPLE_P12_PASSWORD` environment variable is only for headless
+sessions. Passwords and private keys are never printed.
+
+The legacy import path remains available for an existing identity and
+profiles:
+
+```powershell
+impresario apple signing import ./signing-source --name default
+impresario apple signing verify --name default --products current
+```
+
+### Actual apps and the opt-in stub
+
+`AppleTransport` always signs/installs the agent host and the XCUITest runner.
+It signs/installs the fixture stub only when either:
+
+- `impresario apple session --with-stub` (or `signing verify --with-stub`) asks
+  for it, or
+- an app play targets the product stub's bundle id and supplies **no package**.
+
+An actual/release app is installed from its configured `package` and never
+needs a stub profile. A package supplied for the stub id also wins over the
+product stub, so an explicitly packaged app is never silently replaced.
+During clean teardown the runner and any session-installed stub are uninstalled
+through InstallationProxy; the agent host stays installed. The runner is
+visible in the Apple TV drawer while it runs; tvOS has no supported API for
+hiding an installed app.
+
+### Verification state
+
+Pure-Rust provisioning, PKCS#12/CSR creation, profile validation, stub
+opt-in and teardown have unit/offline tests. The physical P0 run
+`20261027-063121-00d6` used the **long** tvOS bundle ids and profiles created
+outside this new flow; it is the 105-step behaviour/visual evidence. The
+short-id `master` bundles, live Apple ID login/2FA, `updateDevice` renaming and
+fresh short-id profiles have not yet run against Apple/hardware. Existing
+profiles expire `2026-11-02`. No simulator evidence is claimed.
 
 ## Error codes
 

@@ -25,6 +25,10 @@ pub mod util;
 /// Apple's public root certificate, used by the GrandSlam HTTP client.
 pub const APPLE_ROOT: &[u8] = include_bytes!("assets/apple_root.cer");
 
+/// Apple Worldwide Developer Relations intermediate certificate (G3), used to
+/// build a complete development-signing chain in a generated PKCS#12.
+pub const APPLE_WWDR_G3: &[u8] = include_bytes!("assets/AppleWWDRCAG3.cer");
+
 #[derive(Debug, thiserror::Error)]
 pub enum SideloadError {
     #[error("Auth error {0}: {1}")]

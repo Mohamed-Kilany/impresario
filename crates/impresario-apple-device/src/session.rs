@@ -4,7 +4,8 @@
 //!
 //! 1. pair-verify and open the outer RSD tunnel;
 //! 2. mount the personalized Developer Disk Image;
-//! 3. sign the host/stub/runner with the machine-global signing set;
+//! 3. sign the host/runner (and optionally the fixture stub) with the
+//!    machine-global signing set;
 //! 4. install the signed IPAs through AFC + InstallationProxy;
 //! 5. open a second RSD tunnel and start `ImpresarioAgentTests/testServe`;
 //! 6. wait until the agent's TCP port accepts.
@@ -14,6 +15,7 @@
 //! put the app under test back without killing XCUITest.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use uuid::Uuid;
 
@@ -46,6 +48,12 @@ pub struct SessionOptions {
     pub app: Option<PathBuf>,
     /// Expected app-under-test bundle id.
     pub app_bundle_id: Option<String>,
+    /// Install the fixture stub bundled with the agent products.
+    ///
+    /// This is deliberately opt-in: a normal agent run only needs the host and
+    /// the XCUITest runner. The Apple transport turns it on automatically when
+    /// the app under test is the product stub and no package was supplied.
+    pub install_stub: bool,
     /// UDID to cross-check against the RSD handshake.
     pub expected_udid: Option<String>,
     /// Runner bundle id, agent port and startup timeout.
@@ -61,6 +69,7 @@ impl std::fmt::Debug for SessionOptions {
             .field("ddi", &self.ddi)
             .field("app", &self.app)
             .field("app_bundle_id", &self.app_bundle_id)
+            .field("install_stub", &self.install_stub)
             .field("expected_udid", &self.expected_udid)
             .field("runner", &self.runner)
             .finish_non_exhaustive()
@@ -73,6 +82,8 @@ pub struct PreparedDevice {
     control: AppleTunnel,
     runner: RunnerSession,
     installs: Vec<InstallReport>,
+    /// Apps installed only for this session and removed during cleanup.
+    transient: Vec<String>,
 }
 
 impl std::fmt::Debug for PreparedDevice {
@@ -82,6 +93,7 @@ impl std::fmt::Debug for PreparedDevice {
             .field("control", &self.control)
             .field("runner", &self.runner)
             .field("installs", &self.installs)
+            .field("transient", &self.transient)
             .finish_non_exhaustive()
     }
 }
@@ -121,9 +133,34 @@ impl PreparedDevice {
         self.runner.abort();
     }
 
-    /// Wait for the runner to finish (usually after a master sends `Shutdown`).
+    /// Stop XCUITest and remove session-only apps from the device.
+    ///
+    /// The agent host stays installed; the XCUITest runner and the fixture stub
+    /// are transient products. tvOS has no supported way to hide an installed
+    /// app, so removing them at the end of a session is the only way to leave
+    /// the home screen with just the agent.
+    pub async fn cleanup(&mut self) {
+        self.runner.abort();
+        // Give testmanagerd a moment to release the runner container before
+        // asking InstallationProxy to remove it.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        for bundle_id in std::mem::take(&mut self.transient) {
+            if let Err(error) = install::uninstall_bundle(&mut self.control, &bundle_id).await {
+                tracing::warn!(
+                    %error,
+                    %bundle_id,
+                    "could not remove a transient Apple app"
+                );
+            }
+        }
+    }
+
+    /// Wait for the runner to finish (usually after a master sends `Shutdown`),
+    /// then remove the session-only runner and stub.
     pub async fn wait(&mut self) -> Result<()> {
-        self.runner.wait().await
+        let result = self.runner.wait().await;
+        self.cleanup().await;
+        result
     }
 }
 
@@ -168,11 +205,13 @@ pub async fn prepare(options: SessionOptions) -> Result<PreparedDevice> {
     let products = options.products.clone();
     let products_for_sign = products.clone();
     let signing = options.signing.clone();
+    let install_stub = options.install_stub;
     let output = signed_root.clone();
-    let signed =
-        tokio::task::spawn_blocking(move || sign_products(&products_for_sign, &signing, &output))
-            .await
-            .map_err(|error| Error::Signing(format!("signing task failed: {error}")))??;
+    let signed = tokio::task::spawn_blocking(move || {
+        sign_products(&products_for_sign, &signing, &output, install_stub)
+    })
+    .await
+    .map_err(|error| Error::Signing(format!("signing task failed: {error}")))??;
 
     let mut installs = Vec::new();
     installs.push(
@@ -190,20 +229,42 @@ pub async fn prepare(options: SessionOptions) -> Result<PreparedDevice> {
         install::install_bundle(&mut control, &signed.runner, Some(&signed.runner_bundle_id))
             .await?,
     );
+    let transient =
+        transient_bundle_ids(&signed.runner_bundle_id, signed.stub_bundle_id.as_deref());
     drop(signed_guard);
 
-    let runner_tunnel = AppleTunnel::connect(&options.host, &options.pairing)
-        .await
-        .map_err(|error| {
-            Error::Device(format!(
-                "open the XCUITest tunnel to {} after installing: {error}",
-                options.host
-            ))
-        })?;
-    let mut runner_options = options.runner;
-    runner_options.runner_bundle_id = products.runner_bundle_id()?;
-    runner_options.target_bundle_id = products.host_bundle_id()?;
-    let runner = runner::start(runner_tunnel, runner_options).await?;
+    let start = async {
+        let runner_tunnel = AppleTunnel::connect(&options.host, &options.pairing)
+            .await
+            .map_err(|error| {
+                Error::Device(format!(
+                    "open the XCUITest tunnel to {} after installing: {error}",
+                    options.host
+                ))
+            })?;
+        let mut runner_options = options.runner;
+        runner_options.runner_bundle_id = products.runner_bundle_id()?;
+        runner_options.target_bundle_id = products.host_bundle_id()?;
+        runner::start(runner_tunnel, runner_options).await
+    }
+    .await;
+    let runner = match start {
+        Ok(runner) => runner,
+        Err(error) => {
+            // The host stays installed, but a signed runner/stub must not be
+            // left behind when startup fails after installation.
+            for bundle_id in &transient {
+                if let Err(cleanup) = install::uninstall_bundle(&mut control, bundle_id).await {
+                    tracing::warn!(
+                        %cleanup,
+                        %bundle_id,
+                        "could not roll back a transient Apple app after startup failure"
+                    );
+                }
+            }
+            return Err(error);
+        }
+    };
     let endpoint = runner.endpoint().to_string();
     tracing::info!(
         endpoint = %endpoint,
@@ -215,18 +276,35 @@ pub async fn prepare(options: SessionOptions) -> Result<PreparedDevice> {
         control,
         runner,
         installs,
+        transient,
     })
 }
 
-/// Sign the imported host, stub and nested test bundles into `output`.
+/// The session-only bundle ids that [`PreparedDevice::cleanup`] removes.
 ///
-/// No device is contacted. The three destination bundles are named `host.app`,
-/// `stub.app` and `runner.app`, regardless of Xcode's original names, and the
-/// nested `.xctest` path inside the runner is preserved.
+/// The agent host is intentionally absent: it is the installed product. The
+/// XCUITest runner is always transient, and the fixture stub is transient only
+/// when this session requested it.
+fn transient_bundle_ids(runner_bundle_id: &str, stub_bundle_id: Option<&str>) -> Vec<String> {
+    let mut ids = vec![runner_bundle_id.to_string()];
+    if let Some(stub_bundle_id) = stub_bundle_id {
+        ids.push(stub_bundle_id.to_string());
+    }
+    ids
+}
+
+/// Sign the imported host, runner and nested test bundles into `output`.
+///
+/// No device is contacted. The fixture stub is signed only when
+/// `include_stub` is set; normal runs do not install it. The destination
+/// bundles are named `host.app`, `stub.app` (when requested) and `runner.app`,
+/// regardless of Xcode's original names, and the nested `.xctest` path inside
+/// the runner is preserved.
 pub fn sign_products(
     products: &ProductSet,
     signing: &SigningSet,
     output: &Path,
+    include_stub: bool,
 ) -> Result<SignedProducts> {
     std::fs::create_dir_all(output)
         .map_err(|error| Error::io(format!("create {}", output.display()), error))?;
@@ -240,23 +318,25 @@ pub fn sign_products(
         &identity,
         None,
     )?;
-    let stub = products
-        .stub()
-        .map(|stub| {
-            let bundle_id = products
-                .stub_bundle_id()?
-                .ok_or_else(|| Error::Device("stub bundle id is missing".into()))?;
-            let signed = sign_one(
-                stub,
-                &output.join("stub.app"),
-                &bundle_id,
-                signing,
-                &identity,
-                None,
-            )?;
-            Ok::<_, Error>((signed, bundle_id))
-        })
-        .transpose()?;
+    let stub = if include_stub {
+        let stub = products.stub().ok_or_else(|| {
+            Error::Device("the fixture stub was requested but the product set has none".into())
+        })?;
+        let bundle_id = products
+            .stub_bundle_id()?
+            .ok_or_else(|| Error::Device("stub bundle id is missing".into()))?;
+        let signed = sign_one(
+            stub,
+            &output.join("stub.app"),
+            &bundle_id,
+            signing,
+            &identity,
+            None,
+        )?;
+        Some((signed, bundle_id))
+    } else {
+        None
+    };
     let runner_bundle_id = products.runner_bundle_id()?;
     let nested = match products.nested_relative_path() {
         Some(relative) => {
@@ -372,5 +452,22 @@ struct RemoveOnDrop(PathBuf);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transient_bundle_ids;
+
+    #[test]
+    fn transient_cleanup_removes_the_runner_and_installed_stub_only() {
+        assert_eq!(
+            transient_bundle_ids("com.impresario.agent.tests", None),
+            vec!["com.impresario.agent.tests"]
+        );
+        assert_eq!(
+            transient_bundle_ids("com.impresario.agent.tests", Some("com.impresario.stub")),
+            vec!["com.impresario.agent.tests", "com.impresario.stub"]
+        );
     }
 }

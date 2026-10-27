@@ -17,6 +17,13 @@ use crate::{Error, Result};
 
 /// The mDNS service type advertised while a device shows a pairing code.
 pub const MANUAL_PAIRING_SERVICE: &str = "_remotepairing-manual-pairing._tcp.local.";
+/// The stable host name Impresario presents to Apple devices.
+///
+/// This is the name shown by the device during pairing (and registered with
+/// the Apple Developer portal); it is deliberately not the machine name or a
+/// leftover `pyatv` identifier.
+pub const IMPRESARIO_DEVICE_NAME: &str = "impresario";
+
 /// The normal tvOS RemotePairing control service.
 pub const REMOTE_PAIRING_SERVICE: &str = "_remotepairing._tcp.local.";
 /// The tvOS RemotePairing control port, fixed by the platform.
@@ -197,7 +204,8 @@ where
         .await
         .map_err(|error| Error::io(format!("connect to {host}:{port}"), error))?;
     let socket = idevice::remote_pairing::RpPairingSocket::new(stream);
-    let mut client = idevice::remote_pairing::RemotePairingClient::new(socket, "Impresario");
+    let mut client =
+        idevice::remote_pairing::RemotePairingClient::new(socket, IMPRESARIO_DEVICE_NAME);
     let mut file = RpPairingFile::generate(&paths.host_identifier());
     file.identifier = paths.host_identifier();
 

@@ -148,7 +148,7 @@ fn string_array(dict: &plist::Dictionary, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn profile_plist_bytes(bytes: &[u8]) -> std::result::Result<Vec<u8>, String> {
+pub(crate) fn profile_plist_bytes(bytes: &[u8]) -> std::result::Result<Vec<u8>, String> {
     if bytes.starts_with(b"<?xml") || bytes.starts_with(b"bplist") {
         return Ok(bytes.to_vec());
     }
@@ -167,6 +167,15 @@ pub struct BundleMaterials {
     pub info: ProfileInfo,
 }
 
+/// The on-disk directory for a named signing set.
+///
+/// Names are normalized exactly like [`SigningSet::load`], so callers can
+/// check for an existing set without loading it.
+#[must_use]
+pub fn set_dir(signing_root: &Path, name: &str) -> PathBuf {
+    signing_root.join(safe_key(name))
+}
+
 /// One PKCS#12 identity plus per-bundle signing materials.
 #[derive(Debug, Clone)]
 pub struct SigningSet {
@@ -180,7 +189,7 @@ pub struct SigningSet {
 impl SigningSet {
     /// Load `signing_root/<safe name>`.
     pub fn load(signing_root: &Path, name: &str) -> Result<Self> {
-        Self::from_dir(&signing_root.join(safe_key(name)), name)
+        Self::from_dir(&set_dir(signing_root, name), name)
     }
 
     /// Load an explicit signing-set directory.
@@ -304,6 +313,12 @@ impl SigningSet {
     #[must_use]
     pub fn team_id(&self) -> &str {
         &self.team_id
+    }
+
+    /// The PKCS#12 identity path.
+    #[must_use]
+    pub fn identity_p12(&self) -> &Path {
+        &self.identity_p12
     }
 
     /// All bundle ids with materials.

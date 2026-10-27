@@ -6,7 +6,7 @@
 
 use std::io::{self, Write};
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use impresario_apple_auth::account::{
     authenticate, choose_team, masked_number, verify, AnisetteConfig, AppleCredentials, AppleStore,
     AuthError, CredentialStore, LoginSession, TwoFactorPrompt, DEFAULT_ANISETTE_URL,
@@ -56,6 +56,24 @@ pub struct LoginArgs {
     /// Developer team id when the Apple ID belongs to several teams.
     #[arg(long)]
     pub team: Option<String>,
+    /// Preferred two-factor method. `ask` shows the trusted-device/SMS menu.
+    #[arg(long, value_enum, default_value = "ask")]
+    pub two_factor: TwoFactorChoice,
+    /// Trusted SMS number id to use with `--two-factor sms` (see the printed
+    /// number list; defaults to the first trusted number).
+    #[arg(long)]
+    pub two_factor_number: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TwoFactorChoice {
+    /// Show the trusted-device/SMS menu.
+    Ask,
+    /// Prefer a trusted device; fall back to SMS if sending fails.
+    Device,
+    /// Prefer one trusted SMS number; fall back to a trusted device if sending
+    /// fails.
+    Sms,
 }
 
 #[derive(Debug, Args)]
@@ -193,12 +211,20 @@ fn run_login(args: &LoginArgs, store: &AppleStore) -> i32 {
 
     println!("Signing in to Apple ID {email}...");
     println!("Apple may send a 6-digit code to a trusted device or a trusted SMS number.");
+    if args.two_factor == TwoFactorChoice::Sms {
+        println!("Preferred 2FA method: SMS.");
+    } else if args.two_factor == TwoFactorChoice::Device {
+        println!("Preferred 2FA method: trusted device.");
+    }
     let login = runtime.block_on(authenticate(
         &email,
         &password,
         anisette,
         store.anisette_storage(),
-        ConsoleTwoFactorPrompt,
+        ConsoleTwoFactorPrompt {
+            choice: args.two_factor,
+            number: args.two_factor_number,
+        },
     ));
     password.zeroize();
 
@@ -485,8 +511,12 @@ fn confirm(prompt: &str, default: bool) -> io::Result<bool> {
 }
 
 /// Console 2FA. Apple can require a code from a trusted device, or let the
-/// user choose one of the trusted SMS numbers. This prompt covers both.
-struct ConsoleTwoFactorPrompt;
+/// user choose one of the trusted SMS numbers. `--two-factor` can make the
+/// choice up front; interactive fallbacks remain available.
+struct ConsoleTwoFactorPrompt {
+    choice: TwoFactorChoice,
+    number: Option<u32>,
+}
 
 impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
     fn ask(
@@ -498,25 +528,63 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
         }
 
         if params.unknown {
-            println!("Apple needs a verification method.");
-            println!("  1) Send a code to my trusted devices");
-            println!("  2) Send a code by SMS to a trusted number");
-            println!("  q) Cancel");
-            loop {
-                let input = read_line("Choose [1/2/q]: ")?;
-                match input.as_str() {
-                    "1" | "d" => return Ok(TwoFactorCallbackResponse::SendToDevices),
-                    "2" | "s" => match choose_number(&params.numbers)? {
-                        Some(id) => return Ok(TwoFactorCallbackResponse::SendSms(id)),
-                        None => println!("Choose a trusted device instead."),
-                    },
-                    "q" | "quit" => return Err(AuthError::TwoFactorCancelled),
-                    _ => println!("Enter 1, 2 or q."),
+            // If a forced method just failed, try the other method once before
+            // asking again. This keeps `--two-factor device|sms` usable even
+            // when Apple refuses the preferred method.
+            if self.choice == TwoFactorChoice::Device
+                && params
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("Could not send a trusted-device"))
+            {
+                if let Ok(id) = choose_number_auto(&params.numbers, self.number) {
+                    return Ok(TwoFactorCallbackResponse::SendSms(id));
+                }
+            }
+            if self.choice == TwoFactorChoice::Sms
+                && params
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("Could not send an SMS"))
+            {
+                return Ok(TwoFactorCallbackResponse::SendToDevices);
+            }
+
+            match self.choice {
+                TwoFactorChoice::Device => {
+                    return Ok(TwoFactorCallbackResponse::SendToDevices);
+                }
+                TwoFactorChoice::Sms => {
+                    return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
+                        &params.numbers,
+                        self.number,
+                    )?));
+                }
+                TwoFactorChoice::Ask => {
+                    println!("Apple needs a verification method.");
+                    println!("  1) Send a code to my trusted devices");
+                    println!("  2) Send a code by SMS to a trusted number");
+                    println!("  q) Cancel");
+                    loop {
+                        let input = read_line("Choose [1/2/q]: ")?;
+                        match input.as_str() {
+                            "1" | "d" => return Ok(TwoFactorCallbackResponse::SendToDevices),
+                            "2" | "s" => match choose_number(&params.numbers)? {
+                                Some(id) => return Ok(TwoFactorCallbackResponse::SendSms(id)),
+                                None => println!("Choose a trusted device instead."),
+                            },
+                            "q" | "quit" => return Err(AuthError::TwoFactorCancelled),
+                            _ => println!("Enter 1, 2 or q."),
+                        }
+                    }
                 }
             }
         }
 
         if params.sms {
+            if self.choice == TwoFactorChoice::Device {
+                return Ok(TwoFactorCallbackResponse::SendToDevices);
+            }
             if let Some(number) = params
                 .selected_number_id
                 .and_then(|id| params.numbers.iter().find(|number| number.id == id))
@@ -545,6 +613,13 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
             }
         }
 
+        if self.choice == TwoFactorChoice::Sms {
+            return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
+                &params.numbers,
+                self.number,
+            )?));
+        }
+
         println!("Apple sent a code to your trusted devices.");
         if !params.numbers.is_empty() {
             println!("You can switch to SMS with `s`.");
@@ -566,6 +641,37 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
             }
         }
     }
+}
+
+/// Select a trusted SMS number without prompting. `requested` is an Apple
+/// phone-number id; when omitted, the first advertised number is used.
+fn choose_number_auto(numbers: &[TrustedNumber], requested: Option<u32>) -> Result<u32, AuthError> {
+    if numbers.is_empty() {
+        return Err(AuthError::Prompt(
+            "Apple did not advertise a trusted SMS number; use a trusted device or add an SMS number to the Apple ID"
+                .to_string(),
+        ));
+    }
+    let number = match requested {
+        Some(id) => numbers
+            .iter()
+            .find(|number| number.id == id)
+            .ok_or_else(|| {
+                let available = numbers
+                    .iter()
+                    .map(|number| format!("{} (id {})", masked_number(number), number.id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                AuthError::Prompt(format!(
+                    "trusted SMS number id {id} is not on this Apple ID; available: {available}"
+                ))
+            })?,
+        None => numbers
+            .first()
+            .ok_or_else(|| AuthError::Prompt("no trusted SMS number is available".to_string()))?,
+    };
+    println!("Using SMS number {}.", masked_number(number));
+    Ok(number.id)
 }
 
 fn choose_number(numbers: &[TrustedNumber]) -> Result<Option<u32>, AuthError> {
@@ -617,4 +723,32 @@ fn read_line(prompt: &str) -> Result<String, AuthError> {
 fn is_code(value: &str) -> bool {
     let length = value.len();
     (4..=8).contains(&length) && value.chars().all(|character| character.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn number(id: u32, last_two_digits: &str) -> TrustedNumber {
+        TrustedNumber {
+            number_with_dial_code: "+1 555 0100".to_string(),
+            last_two_digits: last_two_digits.to_string(),
+            push_mode: "sms".to_string(),
+            id,
+        }
+    }
+
+    #[test]
+    fn auto_sms_prefers_the_requested_apple_number_id() {
+        let numbers = vec![number(3, "03"), number(7, "07")];
+        assert_eq!(choose_number_auto(&numbers, Some(7)).unwrap(), 7);
+        assert_eq!(choose_number_auto(&numbers, None).unwrap(), 3);
+    }
+
+    #[test]
+    fn auto_sms_rejects_an_unknown_or_missing_number() {
+        let numbers = vec![number(3, "03")];
+        assert!(choose_number_auto(&numbers, Some(9)).is_err());
+        assert!(choose_number_auto(&[], None).is_err());
+    }
 }

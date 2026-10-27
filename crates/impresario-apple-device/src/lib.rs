@@ -11,6 +11,7 @@ pub mod error;
 pub mod install;
 pub mod pairing;
 pub mod products;
+pub mod provision;
 pub mod runner;
 pub mod session;
 pub mod sign;
@@ -21,6 +22,10 @@ pub use ddi::DdiAssets;
 pub use error::{Error, Result};
 pub use pairing::{ApplePaths, PairingSummary, RpPairingFile};
 pub use products::ProductSet;
+pub use provision::{
+    install, provision, CertificateSummary, ExistingIdentity, IdentityMaterial, ProvisionError,
+    ProvisionPlatform, ProvisionReport, ProvisionRequest, ProvisionedBundle,
+};
 pub use runner::{RunnerOptions, RunnerSession};
 pub use session::{prepare, sign_products, PreparedDevice, SessionOptions, SignedProducts};
 pub use signing_set::{ProfileInfo, SigningSet};

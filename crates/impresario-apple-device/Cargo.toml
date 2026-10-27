@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 apple-codesign.workspace = true
 cryptographic-message-syntax.workspace = true
+impresario-apple-auth = { path = "../impresario-apple-auth" }
 idevice = { workspace = true, features = [
     "afc",
     "crashreportcopymobile",
@@ -28,6 +29,10 @@ keyring.workspace = true
 mdns-sd.workspace = true
 p12-keystore.workspace = true
 plist = "1.8"
+rand = "0.8.5"
+rcgen = "=0.14.10"
+rootcause = "0.12.0"
+rsa.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

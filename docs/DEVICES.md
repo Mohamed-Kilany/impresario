@@ -1048,42 +1048,62 @@ that the short tvOS ids are signed.
 
 The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
-direct-RSD XCUITest start. `AppleTransport` spawns no host tool:
-`xcodebuild`, `iproxy`, `simctl`, `devicectl` and `ideviceinstaller` are gone
-from the Apple path (D-19). Unit tests cover the signing store, product import,
-IPA inspection, DDI state, pairing normalization and the agent-port launch
+direct-RSD XCUITest start. Development provisioning (device registration,
+App IDs, RSA CSR/certificate, PKCS#12, profiles) is also native; the Apple ID
+session comes from `impresario account login` and never from Python or
+`openssl` (I-153). `AppleTransport` spawns no host tool: `xcodebuild`,
+`iproxy`, `simctl`, `devicectl` and `ideviceinstaller` are gone from the Apple
+path (D-19). Unit tests cover the signing store, product import, IPA
+inspection, DDI state, pairing normalization and the agent-port launch
 environment; the physical `device check` above is the integration evidence.
+The new provisioning flow, live Apple ID login/2FA and `updateDevice` have not
+yet run against Apple's live services.
 
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,
 `com.impresario.stub`). The 2026-10-26/27 tvOS hardware evidence used temporary
 legacy explicit-App-ID bundles because the existing free-team tvOS profiles
 are tied to them; the P0 evidence build (tag `p0-tvos-evidence`) kept those
-ids. The product line (now `master`) uses the short ids for tvOS as well, but
-those bundles need fresh profiles before a hardware install; no pure-Rust
-profile generation exists yet. The current profiles expire `2026-11-02`. Use separate
-signing-set names for iOS and tvOS if the profiles are platform-specific; both
-can map the same bundle ids.
+ids. The product line (now `master`) uses the short ids for tvOS as well.
+Pure-Rust development provisioning now exists (I-153), so fresh short-id
+profiles can be created without Xcode/openssl; those profiles and the short-id
+bundles have **not** yet run on the physical Apple TV. The old profiles expire
+`2026-11-02`. Use separate signing-set names for iOS and tvOS if the profiles
+are platform-specific; both can map the same bundle ids.
 
 Machine-global setup (the project holds no pairing secrets or certificates):
 
 ```bash
+# One global Apple ID session (encrypted; supports device or SMS 2FA):
+impresario account login
+impresario account status --check
+
 impresario apple status
 impresario apple pair --host <apple-tv-host>
 # or: impresario apple import-pair <pair.plist> --save <udid>
 
-impresario apple signing import ./signing-source --name default
+# Pure-Rust development provisioning (host + runner + nested; no stub):
+impresario apple signing provision --name default --platform tvos
+# Add the fixture stub profile only when stub plays are wanted:
+impresario apple signing provision --name default --platform tvos --with-stub
+
 impresario apple products import ./build-tvos/Build/Products/Debug-appletvos --name current
 impresario apple ddi import ./ddi-source --build <build>
 impresario apple doctor --host <apple-tv-host> --signing default --products current
 ```
 
-Signing source layout: `identity.p12` at the root or beside any profile, and one
-directory per bundle containing `profile.mobileprovision` plus
-`entitlements.plist`. The PKCS#12 password is prompted for and stored in the OS
-credential store; `IMPRESARIO_APPLE_P12_PASSWORD` is for headless runs only.
+Provisioning registers the device under the name **`impresario`** (not the
+computer name, Apple TV name or `pyatv`) and renames an existing developer
+portal record to match. `--device-name` overrides this deliberately.
+
+The older import path is still supported: `identity.p12` at the root or beside
+any profile, and one directory per bundle containing
+`profile.mobileprovision` plus `entitlements.plist`, then
+`impresario apple signing import ./signing-source --name default`. The PKCS#12
+password is prompted for and stored in the OS credential store;
+`IMPRESARIO_APPLE_P12_PASSWORD` is for headless runs only.
 `impresario apple signing verify` signs a product set offline.
-See `agents/apple/README.md` for the full commands.
+See `docs/SIGNING.md` and `agents/apple/README.md` for the full commands.
 
 Building the payload on a Mac (optional; CI produces the same unsigned apps):
 
@@ -1134,15 +1154,36 @@ apps:
     platforms:
       tvos:
         id: com.impresario.stub
-        package: /abs/path/build-tvos/Build/Products/Debug-appletvos/ImpresarioStub.app
+    options:
+      clear_data: true
+
+  - name: actual
+    platforms:
+      tvos:
+        id: com.example.release
+        package: /abs/path/Release-tvos/Example.app
     options:
       clear_data: true
 ```
 
 ```bash
 impresario device check rama --plain
+impresario doctor
 impresario run --play plays/login.play --device rama --app stub
+impresario run --play plays/login.play --device rama --app actual
 ```
+
+The stub entry deliberately has **no `package`**: the transport signs and
+installs the product stub only when the selected app id is the product stub and
+no package is supplied. A normal/release app (`actual` above) installs its
+package and never requires or installs the stub profile. Supplying a package
+for the stub id also wins over the product stub, so an explicitly packaged
+build is never silently replaced.
+
+`impresario doctor` probes every configured `ios`/`tvos` device by its
+configured name: pairing, RSD/UDID, DDI state/assets, signing identity and the
+host/runner/nested profiles. It never mounts a DDI or installs anything. Use
+`impresario apple doctor --host <host>` for the Apple-specific report.
 
 Endpoint resolution: `connection.udid` is required. The host comes from
 `connection.host`, else the host part of `connection.endpoint`; the port comes
@@ -1168,6 +1209,13 @@ RemotePairing control tunnel (`clear_data` + the app platform's signed
 `package`/`id`, I-84). It needs no `simctl`, `devicectl` or
 `ideviceinstaller`. If the package is not configured, the agent cold-starts the
 app and logs that the clean reinstall was unavailable.
+
+Session cleanup uninstalls the XCUITest runner and, when it was installed, the
+fixture stub; the agent host stays installed. The runner is visible in the
+Apple TV drawer while a play runs. tvOS has no supported API for hiding an
+installed app, so Impresario removes transient apps at teardown rather than
+claiming a hidden runner. An actual app installed from its package is left in
+place.
 
 First physical run after an install: iOS/tvOS ask for local-network permission.
 The host app and test bundle declare the usage description and Bonjour service.

@@ -65,8 +65,34 @@ pub trait DevicesApi {
         Ok(device)
     }
 
+    /// Rename a registered development device.
+    async fn update_device(
+        &mut self,
+        team: &DeveloperTeam,
+        device_id: &str,
+        name: &str,
+        device_type: impl Into<Option<DeveloperDeviceType>> + Send,
+    ) -> Result<DeveloperDevice, Report> {
+        let body = plist!(dict {
+            "teamId": &team.team_id,
+            "deviceId": device_id,
+            "name": name,
+        });
+
+        let device: DeveloperDevice = self
+            .developer_session()
+            .send_dev_request(&dev_url("updateDevice", device_type), body, "device")
+            .await
+            .context("Failed to update developer device")?;
+
+        Ok(device)
+    }
+
     // TODO: This can be skipped if we know the device is already registered
-    /// Check if the device is a development device, and add it if not
+    /// Check if the device is a development device, and add it if not.
+    ///
+    /// An existing device is renamed to `name` when Apple still has an older
+    /// name (Xcode, pyatv and earlier Impresario builds used other values).
     async fn ensure_device_registered(
         &mut self,
         team: &DeveloperTeam,
@@ -77,8 +103,16 @@ pub trait DevicesApi {
         let device_type = device_type.into();
         let devices = self.list_devices(team, device_type.clone()).await?;
 
-        if devices.iter().any(|d| d.device_number == udid) {
+        if let Some(device) = devices.iter().find(|d| d.device_number == udid) {
             info!("Device is a development device");
+            if device.name.as_deref() != Some(name) {
+                let device_id = device.device_id.as_deref().ok_or_else(|| {
+                    report!("registered device {udid} has no deviceId; cannot rename it")
+                })?;
+                info!(old = ?device.name, new = name, "Renaming development device");
+                self.update_device(team, device_id, name, device_type)
+                    .await?;
+            }
             return Ok(());
         }
 

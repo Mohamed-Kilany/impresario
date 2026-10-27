@@ -14,7 +14,7 @@ use idevice::services::rsd::RsdHandshake;
 use idevice::tcp::adapter::Adapter;
 use idevice::tcp::handle::AdapterHandle;
 
-use crate::pairing::{RpPairingFile as PairingFile, REMOTE_PAIRING_PORT};
+use crate::pairing::{RpPairingFile as PairingFile, IMPRESARIO_DEVICE_NAME, REMOTE_PAIRING_PORT};
 use crate::{Error, Result};
 
 /// A live RSD tunnel to an Apple device.
@@ -53,7 +53,8 @@ impl AppleTunnel {
         .await
         .map_err(|_| Error::Device(format!("timed out connecting to {host}:{port}")))?
         .map_err(|error| Error::io(format!("connect to {host}:{port}"), error))?;
-        let mut control = RemotePairingClient::new(RpPairingSocket::new(stream), "Impresario");
+        let mut control =
+            RemotePairingClient::new(RpPairingSocket::new(stream), IMPRESARIO_DEVICE_NAME);
         let mut verify = pairing.clone();
         control
             .attempt_pair_verify()

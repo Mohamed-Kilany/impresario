@@ -39,7 +39,7 @@ pub struct AppleAccount {
     err_429_retries: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginState {
     LoggedIn,
     NeedsDevice2FA,
@@ -80,14 +80,14 @@ pub enum TwoFactorCallbackResponse {
     Abort,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SMSTwoFactorError {
     pub code: String,
     pub title: String,
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum SmsSendOutcome {
     Sent,
     ActiveChallenge,
@@ -114,6 +114,21 @@ struct SmsSecurityCode {
     too_many_codes_validated: bool,
     security_code_locked: bool,
     security_code_cooldown: bool,
+}
+
+/// Map Apple's `au` field to the next login state.
+///
+/// `secondaryAuth` does not identify a phone number. Treat it like an unknown
+/// method so the prompt can show trusted-device and SMS choices instead of
+/// inventing phone-number id `1`.
+fn secondary_auth_state(value: &str) -> LoginState {
+    match value {
+        "trustedDeviceSecondaryAuth" => LoginState::NeedsDevice2FA,
+        "secondaryAuth" => LoginState::NeedsUnknown2FA,
+        // "repair" means the account does not have 2FA configured.
+        "repair" => LoginState::LoggedIn,
+        unknown => LoginState::NeedsExtraStep(unknown.to_string()),
+    }
 }
 
 /// Extracts the resync SIM (base64 `X-Apple-I-MD-DATA`) from a GSA response that
@@ -224,10 +239,15 @@ impl AppleAccount {
                 }
                 LoginState::NeedsDevice2FA => {
                     self.update_trusted_numbers().await;
-                    self.send_trusted_device_2fa()
-                        .await
-                        .context("Failed to complete trusted device 2FA")?;
-                    self.login_state = LoginState::NeedsDevice2FAVerification;
+                    if let Err(error) = self.send_trusted_device_2fa().await {
+                        warn!("Could not send a trusted-device code: {error}");
+                        self.last_error = Some(format!(
+                            "Could not send a trusted-device code: {error}. Choose SMS or try again."
+                        ));
+                        self.login_state = LoginState::NeedsUnknown2FA;
+                    } else {
+                        self.login_state = LoginState::NeedsDevice2FAVerification;
+                    }
                 }
                 LoginState::NeedsDevice2FAVerification => {
                     let response = two_factor_callback(TwoFactorCallbackParams {
@@ -261,10 +281,16 @@ impl AppleAccount {
                 LoginState::NeedsSMS2FA(id) => {
                     self.update_trusted_numbers().await;
                     info!("SMS 2FA required");
-                    self.login_state = self
-                        .send_sms_2fa(id)
-                        .await
-                        .context("Failed to complete SMS 2FA")?;
+                    match self.send_sms_2fa(id).await {
+                        Ok(state) => self.login_state = state,
+                        Err(error) => {
+                            warn!("Could not send an SMS code: {error}");
+                            self.last_error = Some(format!(
+                                "Could not send an SMS code: {error}. Choose a trusted device or another number."
+                            ));
+                            self.login_state = LoginState::NeedsUnknown2FA;
+                        }
+                    }
                 }
                 LoginState::NeedsSMS2FAVerification(id) => {
                     let response = two_factor_callback(TwoFactorCallbackParams {
@@ -281,7 +307,7 @@ impl AppleAccount {
                             self.login_state = self
                                 .verify_sms_2fa(code, id)
                                 .await
-                                .context("Failed to verify trusted device 2FA")?;
+                                .context("Failed to verify SMS 2FA")?;
                         }
                         TwoFactorCallbackResponse::SendSms(selected_number_id) => {
                             self.login_state = self.select_number(selected_number_id)?;
@@ -313,8 +339,12 @@ impl AppleAccount {
                 }
                 LoginState::NeedsUnknown2FA => {
                     info!(
-                        "The most recently attempted 2FA Method failed, please try a different method."
+                        "The most recently attempted 2FA method failed; choose a method or try again."
                     );
+                    // Apple may not have told us which numbers exist yet, or a
+                    // previous request may have failed. Fetch them again before
+                    // offering SMS so the menu is never placeholder data.
+                    self.update_trusted_numbers_force().await;
                     let response = two_factor_callback(TwoFactorCallbackParams {
                         unknown: true,
                         last_error: self.last_error.clone(),
@@ -654,12 +684,21 @@ impl AppleAccount {
         if self.trusted_phone_numbers.is_some() {
             return;
         }
+        self.update_trusted_numbers_force().await;
+    }
+
+    async fn update_trusted_numbers_force(&mut self) {
         match self.get_trusted_numbers().await {
             Ok(numbers) => {
                 self.trusted_phone_numbers = Some(numbers);
             }
             Err(report) => {
-                // Doesn't need to be a fatal error for users who have trusted devices
+                // Doesn't need to be a fatal error for users who have trusted devices.
+                // Keep a previously fetched list instead of replacing it with an
+                // empty placeholder.
+                if self.trusted_phone_numbers.is_none() {
+                    self.trusted_phone_numbers = Some(Vec::new());
+                }
                 error!("Failed to retrieve trusted phone numbers:\n{}", report);
             }
         };
@@ -882,14 +921,7 @@ impl AppleAccount {
         debug!("Login step 2 completed");
 
         if let Some(plist::Value::String(s)) = status.get("au") {
-            return Ok(match s.as_str() {
-                "trustedDeviceSecondaryAuth" => LoginState::NeedsDevice2FA,
-                "secondaryAuth" => LoginState::NeedsSMS2FA(
-                    1, /* Just start by trying 1, user can correct after */
-                ),
-                "repair" => LoginState::LoggedIn, // Just means that you don't have 2FA set up
-                unknown => LoginState::NeedsExtraStep(unknown.to_string()),
-            });
+            return Ok(secondary_auth_state(s));
         }
 
         if let Some(plist::Value::Integer(hsc)) = status.get("hsc") {
@@ -1145,5 +1177,94 @@ fn censor_email(email: &str) -> String {
         }
     } else {
         "***".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sms_challenge(number_id: u32) -> String {
+        serde_json::json!({
+            "mode": "sms",
+            "type": "verification",
+            "authenticationType": "hsa2",
+            "trustedPhoneNumbers": [{
+                "numberWithDialCode": "+1 555 0100",
+                "lastTwoDigits": "67",
+                "pushMode": "sms",
+                "id": number_id
+            }],
+            "trustedPhoneNumber": {
+                "numberWithDialCode": "+1 555 0100",
+                "lastTwoDigits": "67",
+                "pushMode": "sms",
+                "id": number_id
+            },
+            "securityCode": {
+                "length": 6,
+                "tooManyCodesSent": false,
+                "tooManyCodesValidated": false,
+                "securityCodeLocked": false,
+                "securityCodeCooldown": false
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn secondary_auth_without_a_number_asks_for_a_method() {
+        assert_eq!(
+            secondary_auth_state("secondaryAuth"),
+            LoginState::NeedsUnknown2FA
+        );
+        assert_eq!(
+            secondary_auth_state("trustedDeviceSecondaryAuth"),
+            LoginState::NeedsDevice2FA
+        );
+        assert_eq!(secondary_auth_state("repair"), LoginState::LoggedIn);
+        assert_eq!(
+            secondary_auth_state("new-step"),
+            LoginState::NeedsExtraStep("new-step".to_string())
+        );
+    }
+
+    #[test]
+    fn sms_send_accepts_success_and_an_active_matching_challenge() {
+        assert_eq!(
+            AppleAccount::classify_sms_send_response(200, "", 7).unwrap(),
+            SmsSendOutcome::Sent
+        );
+        assert_eq!(
+            AppleAccount::classify_sms_send_response(412, &sms_challenge(7), 7).unwrap(),
+            SmsSendOutcome::ActiveChallenge
+        );
+    }
+
+    #[test]
+    fn sms_send_rejects_a_challenge_for_another_number() {
+        let error =
+            AppleAccount::classify_sms_send_response(412, &sms_challenge(7), 8).unwrap_err();
+        assert!(error.to_string().contains("412"));
+    }
+
+    #[test]
+    fn sms_service_errors_are_preserved_for_fallback() {
+        let body = serde_json::json!({
+            "serviceErrors": [{
+                "code": "-28248",
+                "title": "Too Many Codes Sent",
+                "message": "Try again later."
+            }]
+        })
+        .to_string();
+        assert_eq!(
+            AppleAccount::classify_sms_send_response(400, &body, 7).unwrap(),
+            SmsSendOutcome::ServiceError(SMSTwoFactorError {
+                code: "-28248".to_string(),
+                title: "Too Many Codes Sent".to_string(),
+                message: "Try again later.".to_string(),
+            })
+        );
     }
 }

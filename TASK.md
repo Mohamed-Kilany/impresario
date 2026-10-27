@@ -2337,18 +2337,23 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
   `Impresario`, reached certificate validation, and rejected the chain
   (`[118, -12] Invalid certificate chain`), so a Samsung-issued profile is
   still required. The LG key server was fetched but SSH authentication lacks
-  the Developer Mode passphrase; Apple identity is readable over AirPlay
-  (`AppleTV5,3`, build `23J582`). No app has been installed, launched or
-  played, and no probe has run on these TVs. The HD ledger (`HD-1`...`HD-8`,
-  `I-133`) stays deferred until it does, and reachability alone is never
-  reported as hardware verification.
+  the Developer Mode passphrase. Those Tizen/LG app installs have not run. The
+  Apple TV (`AppleTV5,3`, tvOS 26.1 `23J582`) was subsequently paired and
+  installed over pure-Rust RemotePairing/RSD from Windows; its full 105-step
+  stub play passed on 2026-10-27 with the long bundle ids (`20261027-063121-00d6`,
+  `docs/STATUS.md` HD-1). The short-id `master` build and the deeper media
+  probes remain open. The HD ledger (`HD-1`...`HD-8`, `I-133`) stays deferred
+  for the unproven rows, and reachability alone is never reported as hardware
+  verification.
 - No local macOS/Xcode host is attached. Apple simulator execution is out of
-  scope by user direction; physical tvOS is the active P0 path. The simulator
-  workflow and helper scripts were removed, and no simulator or hardware-tested
-  claim is made. Xcode targets are compiled by the unsigned `Apple Xcode` CI
-  job only. WSL Swift builds cover the `AgentCore`/`AgentService` package on
-  Linux. Physical tvOS pairing, free-Apple-ID signing, install, local-network
-  permission and the remote focus path remain open (HD-1/I-149).
+  scope by user direction; physical tvOS is the active P0 path and no simulator
+  evidence is claimed. The Windows host now drives the physical Apple TV with
+  pure-Rust RemotePairing/RSD, DDI, signing, installation, XCUITest and Apple
+  developer provisioning. The full 105-step stub play passed on 2026-10-27
+  (`20261027-063121-00d6`, long tvOS ids). The short-id `master` bundles, fresh
+  provisioned profiles, live Apple ID login/2FA and the deeper media probes
+  remain open (HD-1/I-150...I-153). WSL Swift builds and the unsigned `Apple
+  Xcode` CI job remain build/unit-test evidence only.
 
 ---
 
@@ -2434,17 +2439,42 @@ actors/audience/interface DSL migration, LSP/TUI/MCP parity, and all
 hardware-gated acceptance. Phase 6's native webOS/Tizen transports, packaging
 and signing remain intact. See `docs/STATUS.md` for evidence and limits.
 
-## Apple execution scope (2026-10-26 user direction)
+## Apple execution scope (2026-10-26 user direction; updated 2026-10-27)
 
-The user rejected Apple simulator testing; physical tvOS is now the active P0
+The user rejected Apple simulator testing; physical tvOS is the active P0
 path. The simulator workflow, helper scripts, smoke test and CI job were
-removed, and no Apple simulator or hardware execution is claimed. The tvOS
-simulator loopback branch in config/`AppleTransport` remains as untested
-support; it is not evidence. The Apple TV at `192.168.93.19` is reachable over
-AirPlay, but this Windows host has no macOS/Xcode, Apple Mobile Device Support,
-paired UDID or signed runner. Pairing, the free-7-day Apple ID signing flow,
-install and the remote focus path still require a macOS host on the LAN and
-remain HD-1/deferred. The unsigned `Apple Xcode` compile job and the Linux
-Swift package tests remain valid build/unit-test evidence. The
-actors/groups/audience Phase 2 work is parked, not abandoned, on
-`master` (merged 2026-10-27).
+removed, and no Apple simulator evidence is claimed. The tvOS simulator
+loopback branch in config/`AppleTransport` remains untouched support; it is not
+evidence.
+
+The 2026-10-26 statement that a macOS host was still required is superseded.
+The Windows host pairs with the Apple TV, opens RemotePairing/RSD, mounts the
+personalized DDI, re-signs and installs the agent/runner (and the stub only on
+request), starts the XCUITest over the direct outer-RSD path, and drives the
+gRPC agent. On 2026-10-27 the full 105-step stub play `20261027-063121-00d6`
+passed 105/105 in 6m37s on `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 `23J582`),
+including Home, Basic, Text, Scroll, Selection, Flags, Keys, Info, LongPress and
+Media (`Player => Video Playing`), with 13 screenshots. This is the P0
+behaviour/visual evidence and it used the **long** tvOS bundle ids.
+
+`master` uses the short ids `com.impresario.agent`,
+`com.impresario.agent.tests`, `com.impresario.agent.tests.xctrunner` and
+`com.impresario.stub`. Pure-Rust provisioning now exists:
+`impresario account login` (device or SMS 2FA) feeds
+`impresario apple signing provision`, which registers the UDID/App IDs,
+creates/reuses an RSA identity, downloads/validates profiles and installs the
+signing set. Provisioning defaults to host/runner/nested; `--with-stub` adds the
+fixture stub, so ordinary actual-app runs never require it. RemotePairing and
+the developer portal use the name **`impresario`** (not the machine name, TV
+name or `pyatv`); an existing portal device is renamed through
+`DevicesApi::update_device`. `AppleTransport` probes configured iOS/tvOS devices
+by name for `doctor` without mounting or installing, and teardown removes the
+runner and any session-installed stub while leaving the host.
+
+Still open: live Apple ID login/2FA, live `updateDevice`, fresh short-id tvOS
+profiles and a short-id hardware run, hardware-proven pure-Rust pairing
+creation, physical iOS, the one-time local-network prompt, the deeper media
+probes (`Showing`/decoder/DRM/position hook), and hiding the runner in the
+drawer (no supported tvOS API found). The old profiles expire 2026-11-02. The
+actors/groups/audience Phase 2 work is parked, not abandoned, on `master`
+(merged 2026-10-27).

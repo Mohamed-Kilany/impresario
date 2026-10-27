@@ -5,15 +5,26 @@
 //! machine-global under `~/.impresario/apple/`, so a project only names the
 //! device host and never carries certificates or pair secrets.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
+use impresario_apple_auth::account::{choose_team, load_session, AppleStore, CredentialStore};
+use impresario_apple_auth::dev::developer_session::DeveloperSession;
+use impresario_apple_auth::dev::teams::{DeveloperTeam, TeamsApi};
 use impresario_apple_device::ddi::{self, DdiAssets, DdiState};
-use impresario_apple_device::pairing::{pair_device, ApplePaths, PairingSummary};
+use impresario_apple_device::pairing::{
+    pair_device, ApplePaths, PairingSummary, IMPRESARIO_DEVICE_NAME,
+};
 use impresario_apple_device::products::ProductSet;
+use impresario_apple_device::provision::{
+    self, CertificateSummary, ExistingIdentity, ProvisionError, ProvisionPlatform, ProvisionRequest,
+};
 use impresario_apple_device::session::{self, SessionOptions};
-use impresario_apple_device::signing_set::{SigningSet, DEFAULT_SIGNING_SET, PASSWORD_ENV};
+use impresario_apple_device::signing_set::{
+    self as signing_store, SigningSet, DEFAULT_SIGNING_SET, PASSWORD_ENV,
+};
 use impresario_apple_device::tunnel::AppleTunnel;
 use impresario_apple_device::{Error, RunnerOptions};
 use impresario_core::home::Home;
@@ -128,12 +139,19 @@ pub enum SigningCommand {
         #[arg(long, default_value = DEFAULT_SIGNING_SET)]
         name: String,
     },
+    /// Create or refresh development certificates and profiles through Apple.
+    Provision(ProvisionArgs),
+    /// List the team's development certificates without changing them.
+    Certificates(CertificatesArgs),
     /// Sign an imported product set into a directory (no device is contacted).
     Verify {
         #[arg(long, default_value = DEFAULT_SIGNING_SET)]
         name: String,
         #[arg(long, default_value = "current")]
         products: String,
+        /// Also sign and include the fixture stub.
+        #[arg(long)]
+        with_stub: bool,
         /// Keep the signed bundles here; omit for a temporary directory.
         #[arg(long)]
         output: Option<PathBuf>,
@@ -148,6 +166,77 @@ pub enum SigningCommand {
         #[arg(long, default_value = DEFAULT_SIGNING_SET)]
         name: String,
     },
+}
+
+/// Apple platform for certificate and profile operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ApplePlatform {
+    Ios,
+    Tvos,
+}
+
+impl ApplePlatform {
+    fn provision(self) -> ProvisionPlatform {
+        match self {
+            Self::Ios => ProvisionPlatform::Ios,
+            Self::Tvos => ProvisionPlatform::Tvos,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ios => "iOS",
+            Self::Tvos => "tvOS",
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct ProvisionArgs {
+    /// Signing set name under `apple/signing/`.
+    #[arg(long, default_value = DEFAULT_SIGNING_SET)]
+    pub name: String,
+    /// Product set whose host, runner and nested bundles are provisioned.
+    #[arg(long, default_value = "current")]
+    pub products: String,
+    /// Also create the App ID and profile for the fixture stub.
+    #[arg(long)]
+    pub with_stub: bool,
+    /// Ignore the target signing set's PKCS#12 and generate a new RSA key.
+    #[arg(long, conflicts_with = "identity")]
+    pub new_identity: bool,
+    /// Reuse a specific PKCS#12 identity instead of the target signing set's.
+    #[arg(long, conflicts_with = "new_identity")]
+    pub identity: Option<PathBuf>,
+    /// Device UDID; defaults to the only stored pairing key.
+    #[arg(long)]
+    pub udid: Option<String>,
+    /// Device name shown in the Apple Developer portal.
+    #[arg(long)]
+    pub device_name: Option<String>,
+    /// Certificate machine name; defaults to this computer's name.
+    #[arg(long)]
+    pub machine_name: Option<String>,
+    /// Developer team id; defaults to the team stored by `account login`.
+    #[arg(long)]
+    pub team: Option<String>,
+    /// Platform for the development certificate and profiles.
+    #[arg(long, value_enum, default_value = "tvos")]
+    pub platform: ApplePlatform,
+    /// Revoke this certificate serial before asking Apple for a new identity
+    /// (repeatable; useful when the certificate limit is full).
+    #[arg(long = "revoke", value_name = "SERIAL")]
+    pub revoke: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CertificatesArgs {
+    /// Developer team id; defaults to the team stored by `account login`.
+    #[arg(long)]
+    pub team: Option<String>,
+    /// Platform whose development certificates should be listed.
+    #[arg(long, value_enum, default_value = "tvos")]
+    pub platform: ApplePlatform,
 }
 
 #[derive(Debug, Subcommand)]
@@ -187,6 +276,9 @@ pub struct SessionArgs {
     /// Expected bundle id of `--app`.
     #[arg(long)]
     pub app_bundle_id: Option<String>,
+    /// Also install the fixture stub from the product set.
+    #[arg(long)]
+    pub with_stub: bool,
     /// Port the agent listens on inside the Apple TV.
     #[arg(long, default_value_t = 50062)]
     pub agent_port: u16,
@@ -205,7 +297,7 @@ pub fn run(args: &AppleArgs, home: &Home) -> i32 {
         AppleCommand::Status => run_status(&paths),
         AppleCommand::Doctor(args) => run_doctor(args, &paths),
         AppleCommand::Products { command } => run_products(command, &paths),
-        AppleCommand::Signing { command } => run_signing(command, &paths),
+        AppleCommand::Signing { command } => run_signing(command, &paths, home),
         AppleCommand::Ddi { command } => run_ddi(command, &paths),
         AppleCommand::Session(args) => run_session(args, &paths),
     }
@@ -345,7 +437,7 @@ fn run_doctor(args: &DoctorArgs, paths: &ApplePaths) -> i32 {
             signing.bundle_ids().collect::<Vec<_>>().join(", ")
         );
         if let Some(products) = &products {
-            for bundle_id in product_bundle_ids(products) {
+            for (bundle_id, required) in product_bundle_ids(products) {
                 match signing.require(&bundle_id) {
                     Ok(materials) => {
                         let info = &materials.info;
@@ -365,6 +457,9 @@ fn run_doctor(args: &DoctorArgs, paths: &ApplePaths) -> i32 {
                             ));
                         }
                     }
+                    Err(error) if !required => warnings.push(format!(
+                        "fixture stub is not provisioned; stub plays need `--with-stub`: {error}"
+                    )),
                     Err(error) => errors.push(error.to_string()),
                 }
             }
@@ -476,8 +571,10 @@ fn run_products(command: &ProductsCommand, paths: &ApplePaths) -> i32 {
     }
 }
 
-fn run_signing(command: &SigningCommand, paths: &ApplePaths) -> i32 {
+fn run_signing(command: &SigningCommand, paths: &ApplePaths, home: &Home) -> i32 {
     match command {
+        SigningCommand::Provision(args) => run_provision(args, paths, home),
+        SigningCommand::Certificates(args) => run_certificates(args, home),
         SigningCommand::Import { source, name } => {
             let password = match read_password(true) {
                 Ok(password) => password,
@@ -511,6 +608,7 @@ fn run_signing(command: &SigningCommand, paths: &ApplePaths) -> i32 {
         SigningCommand::Verify {
             name,
             products,
+            with_stub,
             output,
         } => {
             let signing = match SigningSet::load(&paths.signing_dir(), name) {
@@ -533,7 +631,7 @@ fn run_signing(command: &SigningCommand, paths: &ApplePaths) -> i32 {
                     .tmp_dir()
                     .join(format!("sign-verify-{}", uuid::Uuid::new_v4()))
             });
-            let result = session::sign_products(&products, &signing, &destination);
+            let result = session::sign_products(&products, &signing, &destination, *with_stub);
             match result {
                 Ok(signed) => {
                     println!("Signed products into {}", destination.display());
@@ -607,6 +705,393 @@ fn run_signing(command: &SigningCommand, paths: &ApplePaths) -> i32 {
             }
         }
     }
+}
+
+fn run_certificates(args: &CertificatesArgs, home: &Home) -> i32 {
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+    let result = runtime.block_on(async {
+        let (mut session, team) = load_developer(home, args.team.as_deref()).await?;
+        let certificates =
+            provision::list_certificates(&mut session, &team, args.platform.provision())
+                .await
+                .map_err(|error| error.to_string())?;
+        Ok::<_, String>((team, certificates))
+    });
+    match result {
+        Ok((team, certificates)) => {
+            println!(
+                "Team: {} ({})",
+                team.name.as_deref().unwrap_or("unnamed"),
+                team.team_id
+            );
+            if certificates.is_empty() {
+                println!("No {} development certificates.", args.platform.label());
+            } else {
+                println!("{} development certificates:", args.platform.label());
+                for certificate in certificates {
+                    println!(
+                        "  {}  status {}  expires {}  machine {}  name {}",
+                        certificate.serial_number,
+                        certificate.status.as_deref().unwrap_or("unknown"),
+                        certificate.expiration.as_deref().unwrap_or("unknown"),
+                        certificate.machine_name.as_deref().unwrap_or("unknown"),
+                        certificate.name.as_deref().unwrap_or("unnamed")
+                    );
+                }
+            }
+            EXIT_OK
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            EXIT_FAILURE
+        }
+    }
+}
+
+fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
+    let products = match ProductSet::load(&paths.product_set_dir(&args.products)) {
+        Ok(products) => products,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let bundle_ids = match provision_bundle_ids(&products, args.with_stub) {
+        Ok(bundle_ids) => bundle_ids,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let device_key = match resolve_pairing_key(paths, args.udid.as_deref()) {
+        Ok(key) => key,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    // The Apple Developer portal shows this name, not the Apple TV/iOS device
+    // name and not the legacy pyatv host name.
+    let device_name = provision_device_name(args.device_name.as_deref());
+    let machine_name = args
+        .machine_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or_else(default_machine_name, str::to_string);
+    let existing = match load_existing_identity(args, paths) {
+        Ok(identity) => identity,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let request = ProvisionRequest {
+        platform: args.platform.provision(),
+        machine_name,
+        device_name,
+        udid: device_key,
+        bundle_ids,
+        revoke_serials: args.revoke.clone(),
+    };
+
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+    let result = runtime.block_on(async {
+        let (mut session, team) = load_developer(home, args.team.as_deref())
+            .await
+            .map_err(ProvisionError::Apple)?;
+        let mut revoke = args.revoke.clone();
+        let mut prompts = 0;
+        loop {
+            let request = ProvisionRequest {
+                revoke_serials: revoke.clone(),
+                ..request.clone()
+            };
+            match provision::provision(&mut session, &team, &request, existing.as_ref()).await {
+                Ok(report) => return Ok::<_, ProvisionError>((team, report)),
+                Err(ProvisionError::CertificatesFull(certificates)) => {
+                    if prompts >= 2 {
+                        return Err(ProvisionError::CertificatesFull(certificates));
+                    }
+                    revoke = prompt_revocation(&certificates).map_err(ProvisionError::Invalid)?;
+                    prompts += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    });
+    let (team, report) = match result {
+        Ok(result) => result,
+        Err(ProvisionError::CertificatesFull(certificates)) => {
+            print_certificates(&certificates);
+            eprintln!(
+                "error: the Apple development certificate limit is still full; revoke a listed \
+                 serial with --revoke or in the Apple Developer account"
+            );
+            return EXIT_FAILURE;
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+
+    let installed = match provision::install(&report, &paths.signing_dir(), &args.name) {
+        Ok(installed) => installed,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+
+    println!(
+        "Team: {} ({})",
+        team.name.as_deref().unwrap_or("unnamed"),
+        report.team_id
+    );
+    println!("Device: {} ({})", report.device_name, report.device_udid);
+    if !report.app_ids_created.is_empty() {
+        println!("App IDs created: {}", report.app_ids_created.join(", "));
+    }
+    if !report.app_ids_existing.is_empty() {
+        println!("App IDs reused: {}", report.app_ids_existing.join(", "));
+    }
+    println!(
+        "Identity: certificate {} ({}, key {})",
+        report
+            .identity
+            .certificate_serial
+            .as_deref()
+            .unwrap_or("unknown"),
+        if report.identity.reused_certificate {
+            "reused"
+        } else {
+            "new"
+        },
+        if report.identity.reused_key {
+            "reused"
+        } else {
+            "new"
+        }
+    );
+    for bundle in &report.bundles {
+        println!(
+            "Profile {}: {} ({}) expires {}",
+            bundle.bundle_id,
+            bundle.profile_name,
+            bundle.profile_uuid,
+            bundle.expiration.as_deref().unwrap_or("unknown")
+        );
+    }
+    for warning in &report.warnings {
+        println!("warning: {warning}");
+    }
+    println!(
+        "Signing set '{}' installed at {}",
+        installed.name,
+        installed.root.display()
+    );
+    println!("Bundles: {}", installed.bundles.join(", "));
+    if let Some(warning) = &installed.warning {
+        println!("warning: {warning}");
+    } else if installed.password_stored {
+        println!("The PKCS#12 password is stored in the OS credential store.");
+    }
+    EXIT_OK
+}
+
+async fn load_developer(
+    home: &Home,
+    team_id: Option<&str>,
+) -> Result<(DeveloperSession, DeveloperTeam), String> {
+    let store = AppleStore::new(home.root().join("apple"));
+    let mut credentials = store
+        .load()
+        .map_err(|error| format!("could not read the global Apple account: {error}"))?
+        .ok_or_else(|| {
+            "no Apple account is stored; run `impresario account login` first".to_string()
+        })?;
+    let mut session = load_session(&mut credentials, &store, store.anisette_storage())
+        .await
+        .map_err(|error| {
+            format!(
+                "could not use the stored Apple session: {error}; run \
+                 `impresario account login --force` if Apple invalidated it"
+            )
+        })?;
+    let teams = session
+        .list_teams()
+        .await
+        .map_err(|error| format!("could not list developer teams: {error}"))?;
+    let selected = team_id.unwrap_or(&credentials.team_id);
+    let team = choose_team(&teams, Some(selected)).map_err(|error| error.to_string())?;
+    Ok((session, team))
+}
+
+fn load_existing_identity(
+    args: &ProvisionArgs,
+    paths: &ApplePaths,
+) -> Result<Option<ExistingIdentity>, String> {
+    if args.new_identity {
+        return Ok(None);
+    }
+    if let Some(path) = &args.identity {
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("read PKCS#12 {}: {error}", path.display()))?;
+        let password = read_password(false)?;
+        return ExistingIdentity::from_pkcs12(bytes, password)
+            .map(Some)
+            .map_err(|error| error.to_string());
+    }
+    let directory = signing_store::set_dir(&paths.signing_dir(), &args.name);
+    if !directory.is_dir() {
+        return Ok(None);
+    }
+    let set = SigningSet::load(&paths.signing_dir(), &args.name)
+        .map_err(|error| format!("load signing set '{}': {error}", args.name))?;
+    let bytes = std::fs::read(set.identity_p12()).map_err(|error| {
+        format!(
+            "read existing identity {}: {error}",
+            set.identity_p12().display()
+        )
+    })?;
+    let password = set.password().map_err(|error| error.to_string())?;
+    ExistingIdentity::from_pkcs12(bytes, password)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn provision_device_name(explicit: Option<&str>) -> String {
+    explicit
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| IMPRESARIO_DEVICE_NAME.to_string(), str::to_string)
+}
+
+fn provision_bundle_ids(products: &ProductSet, with_stub: bool) -> Result<Vec<String>, String> {
+    let host = products
+        .host_bundle_id()
+        .map_err(|error| error.to_string())?;
+    let stub = if with_stub {
+        Some(
+            products
+                .stub_bundle_id()
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "the product set has no stub app; import an agent build with a stub or drop \
+                     --with-stub"
+                        .to_string()
+                })?,
+        )
+    } else {
+        None
+    };
+    let runner = products
+        .runner_bundle_id()
+        .map_err(|error| error.to_string())?;
+    let nested = if products.nested_relative_path().is_some() {
+        Some(
+            products
+                .nested_bundle_id()
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "the runner has a nested .xctest without a bundle id".to_string())?,
+        )
+    } else {
+        None
+    };
+    Ok(selected_provision_bundle_ids(
+        &host,
+        stub.as_deref(),
+        &runner,
+        nested.as_deref(),
+        with_stub,
+    ))
+}
+
+fn selected_provision_bundle_ids(
+    host: &str,
+    stub: Option<&str>,
+    runner: &str,
+    nested: Option<&str>,
+    with_stub: bool,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for id in [Some(host), stub.filter(|_| with_stub), Some(runner), nested]
+        .into_iter()
+        .flatten()
+    {
+        if !ids.iter().any(|existing| existing == id) {
+            ids.push(id.to_string());
+        }
+    }
+    ids
+}
+
+fn prompt_revocation(certificates: &[CertificateSummary]) -> Result<Vec<String>, String> {
+    print_certificates(certificates);
+    print!("Serial(s) to revoke (comma-separated), or Enter to cancel: ");
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("could not write the prompt: {error}"))?;
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| format!("could not read the certificate serial: {error}"))?;
+    let selected = line
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err(
+            "no certificate was selected; pass --revoke <serial> when running non-interactively"
+                .to_string(),
+        );
+    }
+    for serial in &selected {
+        if !certificates
+            .iter()
+            .any(|certificate| certificate.serial_number == *serial)
+        {
+            return Err(format!(
+                "{serial} is not one of the listed development certificates"
+            ));
+        }
+    }
+    Ok(selected)
+}
+
+fn print_certificates(certificates: &[CertificateSummary]) {
+    println!("Development certificates:");
+    for certificate in certificates {
+        println!(
+            "  {}  status {}  expires {}  machine {}  name {}",
+            certificate.serial_number,
+            certificate.status.as_deref().unwrap_or("unknown"),
+            certificate.expiration.as_deref().unwrap_or("unknown"),
+            certificate.machine_name.as_deref().unwrap_or("unknown"),
+            certificate.name.as_deref().unwrap_or("unnamed")
+        );
+    }
+}
+
+fn default_machine_name() -> String {
+    for key in ["COMPUTERNAME", "HOSTNAME"] {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return value.to_string();
+            }
+        }
+    }
+    "impresario".to_string()
 }
 
 fn run_ddi(command: &DdiCommand, paths: &ApplePaths) -> i32 {
@@ -688,6 +1173,7 @@ fn run_session(args: &SessionArgs, paths: &ApplePaths) -> i32 {
         ddi,
         app: args.app.clone(),
         app_bundle_id: args.app_bundle_id.clone(),
+        install_stub: args.with_stub,
         expected_udid: args.udid.clone(),
         runner: RunnerOptions {
             agent_port: args.agent_port,
@@ -808,19 +1294,18 @@ fn print_products(set: &ProductSet) {
     }
 }
 
-fn product_bundle_ids(products: &ProductSet) -> Vec<String> {
-    let mut ids = Vec::new();
-    for id in [
-        products.host_bundle_id().ok(),
-        products.stub_bundle_id().ok().flatten(),
-        products.runner_bundle_id().ok(),
-        products.nested_bundle_id().ok().flatten(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !ids.contains(&id) {
-            ids.push(id);
+fn product_bundle_ids(products: &ProductSet) -> Vec<(String, bool)> {
+    let mut ids: Vec<(String, bool)> = Vec::new();
+    for (id, required) in [
+        (products.host_bundle_id().ok(), true),
+        (products.stub_bundle_id().ok().flatten(), false),
+        (products.runner_bundle_id().ok(), true),
+        (products.nested_bundle_id().ok().flatten(), true),
+    ] {
+        if let Some(id) = id {
+            if !ids.iter().any(|(existing, _)| *existing == id) {
+                ids.push((id, required));
+            }
         }
     }
     ids
@@ -831,6 +1316,27 @@ fn move_pairing(paths: &ApplePaths, from: &str, to: &str) -> Result<(), Error> {
     paths.save_pairing(to, &file)?;
     let _ = std::fs::remove_file(paths.pairing_path(from));
     Ok(())
+}
+
+fn resolve_pairing_key(paths: &ApplePaths, udid: Option<&str>) -> Result<String, String> {
+    if let Some(udid) = udid.map(str::trim).filter(|value| !value.is_empty()) {
+        paths
+            .load_pairing(udid)
+            .map_err(|error| format!("no pairing stored under {udid}: {error}"))?;
+        return Ok(udid.to_string());
+    }
+    let keys = pairing_keys(paths).map_err(|error| error.to_string())?;
+    match keys.as_slice() {
+        [] => Err(
+            "no Apple pairing is stored; run `impresario apple pair --host <host>` first"
+                .to_string(),
+        ),
+        [key] => Ok(key.clone()),
+        _ => Err(format!(
+            "several Apple pairings are stored ({}); pass --udid",
+            keys.join(", ")
+        )),
+    }
 }
 
 fn load_pairing(
@@ -947,5 +1453,42 @@ mod tests {
             Some(value) => std::env::set_var(key, value),
             None => std::env::remove_var(key),
         }
+    }
+
+    #[test]
+    fn provisioning_defaults_to_the_impresario_device_name() {
+        assert_eq!(provision_device_name(None), "impresario");
+        assert_eq!(provision_device_name(Some("  ")), "impresario");
+        assert_eq!(provision_device_name(Some("  stage-tv  ")), "stage-tv");
+    }
+
+    #[test]
+    fn provisioning_excludes_the_stub_unless_requested() {
+        let host = "com.impresario.agent";
+        let stub = "com.impresario.stub";
+        let runner = "com.impresario.agent.tests";
+        let nested = "com.impresario.agent.tests.xctrunner";
+        assert_eq!(
+            selected_provision_bundle_ids(host, Some(stub), runner, Some(nested), false),
+            vec![host, runner, nested]
+        );
+        assert_eq!(
+            selected_provision_bundle_ids(host, Some(stub), runner, Some(nested), true),
+            vec![host, stub, runner, nested]
+        );
+    }
+
+    #[test]
+    fn provisioning_bundle_ids_are_deduplicated() {
+        assert_eq!(
+            selected_provision_bundle_ids(
+                "com.impresario.agent",
+                Some("com.impresario.agent"),
+                "com.impresario.agent.tests",
+                None,
+                true,
+            ),
+            vec!["com.impresario.agent", "com.impresario.agent.tests"]
+        );
     }
 }
