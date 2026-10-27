@@ -366,6 +366,21 @@ impl SigningSet {
             })
     }
 
+    /// Verify that the OS credential store can store and remove a secret.
+    ///
+    /// Provisioning generates a PKCS#12 password that is never shown, so it
+    /// must not start Apple work unless the password can be stored.
+    pub fn probe_credential_store() -> Result<()> {
+        let entry = entry(&format!("probe-{}", Uuid::new_v4()))?;
+        entry.set_secret(b"probe").map_err(|error| {
+            Error::Signing(format!(
+                "could not write to the OS credential store: {error}"
+            ))
+        })?;
+        let _ = entry.delete_credential();
+        Ok(())
+    }
+
     /// Remove the stored PKCS#12 password, if any.
     pub fn clear_password(&self) -> Result<()> {
         match entry(&self.name)?.delete_credential() {

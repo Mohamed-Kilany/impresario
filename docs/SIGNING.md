@@ -263,10 +263,12 @@ the team certificates and prompts for a serial to revoke (or accepts
 `--revoke`). The PKCS#12 password is generated locally and stored in the OS
 credential store under `impresario.apple`/`signing:<name>`; the
 `IMPRESARIO_APPLE_P12_PASSWORD` environment variable is only for headless
-sessions. Passwords and private keys are never printed. If a profile download
-or validation fails after Apple issued a new certificate, provisioning
-revokes that unused certificate instead of leaking a slot; a reused
-certificate is left in place.
+sessions; a newly generated identity uses it when set. Otherwise provisioning
+verifies that the OS credential store can accept the generated password
+before contacting Apple. Password and private key values are never printed.
+If a profile download or validation fails after Apple issued a new
+certificate, provisioning revokes that unused certificate instead of leaking
+a slot; a reused certificate is left in place.
 
 The legacy import path remains available for an existing identity and
 profiles:

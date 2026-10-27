@@ -789,6 +789,19 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
             return EXIT_FAILURE;
         }
     };
+    // A fresh identity gets a randomly generated PKCS#12 password that is
+    // never printed. Do not create an Apple certificate unless that password
+    // can actually be stored, unless the caller supplied one through the
+    // headless environment override.
+    if existing.is_none() && std::env::var_os(PASSWORD_ENV).is_none() {
+        if let Err(error) = signing_store::SigningSet::probe_credential_store() {
+            eprintln!(
+                "error: {error}; provisioning needs the OS credential store, or set \
+                 {PASSWORD_ENV} for a headless run"
+            );
+            return EXIT_FAILURE;
+        }
+    }
     let request = ProvisionRequest {
         platform: args.platform.provision(),
         machine_name,

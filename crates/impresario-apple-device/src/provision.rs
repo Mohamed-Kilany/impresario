@@ -41,7 +41,7 @@ use uuid::Uuid;
 use x509_certificate::CapturedX509Certificate;
 use zeroize::Zeroizing;
 
-use crate::signing_set::{safe_key, SigningImportReport, SigningSet};
+use crate::signing_set::{safe_key, SigningImportReport, SigningSet, PASSWORD_ENV};
 
 /// Which Apple platform endpoint and profile platform to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -735,7 +735,14 @@ async fn ensure_identity(
         )
     })?;
     let certificate_der = certificate_der(&certificate)?;
-    let password = existing.map_or_else(new_password, |identity| identity.password.clone());
+    let password = existing.map_or_else(
+        || {
+            std::env::var(PASSWORD_ENV)
+                .map(Zeroizing::new)
+                .unwrap_or_else(|_| new_password())
+        },
+        |identity| identity.password.clone(),
+    );
     let (p12, password) = create_pkcs12(&private_key, &certificate_der, password)?;
     Ok(IdentityMaterial {
         certificate_serial: certificate.serial_number.clone(),
