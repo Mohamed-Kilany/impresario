@@ -20,6 +20,7 @@ final class StubViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let column = UIStackView()
     private var firstButton: StubButton?
+    private weak var lastFocusedButton: StubButton?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -107,10 +108,25 @@ final class StubViewController: UIViewController {
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        // The first row wins on launch. After that, UIKit should return focus
+        // to the row that opened the scenario (as MainActivity does); forcing
+        // the first row on every return made focus updates race the next
+        // click's D-pad traversal.
+        if let lastFocusedButton {
+            return [lastFocusedButton]
+        }
         if let firstButton {
             return [firstButton]
         }
         return super.preferredFocusEnvironments
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        if let button = context.nextFocusedView as? StubButton,
+           button.isDescendant(of: column) {
+            lastFocusedButton = button
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
