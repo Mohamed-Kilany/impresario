@@ -1027,7 +1027,10 @@ fn select_issued_certificate<'a>(
 ) -> Option<&'a DevelopmentCertificate> {
     certificates
         .iter()
-        .find(|certificate| certificate.certificate_id.as_deref() == Some(request_id))
+        .find(|certificate| {
+            certificate.certificate_id.as_deref() == Some(request_id)
+                && certificate.cert_content.is_some()
+        })
         .or_else(|| {
             certificates.iter().find(|certificate| {
                 certificate_is_active(certificate) && certificate_matches_key(certificate, key)
@@ -1209,10 +1212,20 @@ mod tests {
     fn issued_certificate_selection_prefers_the_request_id() {
         let key = generate_key().unwrap();
         let old = test_certificate(test_certificate_der(&key), "old", Some("revoked"));
-        let requested = test_certificate(Vec::new(), "requested", None);
+        let requested = test_certificate(test_certificate_der(&key), "requested", None);
         let certificates = vec![old, requested];
         let selected = select_issued_certificate(&certificates, "requested", &key).unwrap();
         assert_eq!(selected.certificate_id.as_deref(), Some("requested"));
+    }
+
+    #[test]
+    fn issued_certificate_selection_waits_for_certificate_content() {
+        let key = generate_key().unwrap();
+        let pending = test_certificate(Vec::new(), "requested", None);
+        let ready = test_certificate(test_certificate_der(&key), "other", None);
+        let certificates = vec![pending, ready];
+        let selected = select_issued_certificate(&certificates, "requested", &key).unwrap();
+        assert_eq!(selected.certificate_id.as_deref(), Some("other"));
     }
 
     #[test]
