@@ -521,6 +521,20 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(result.error?.details["scroll_attempts"], "4")
     }
 
+    func testScrollToStartsUpWhenTheTargetIsAboveTheScreen() async {
+        addButton(
+            "target",
+            visible: false,
+            frame: CGRect(x: 0, y: -2000, width: 100, height: 40)
+        )
+        let result = await execute(
+            .runAction(RunActionSpec(kind: .scrollTo, selector: select(.accessibilityId, "target"))),
+            scrollMaxAttempts: 4
+        )
+        assertError(result, .elementNotFound)
+        XCTAssertEqual(driver.scrolls.map(\.direction), [.up, .up, .up, .up])
+    }
+
     func testTvScrollToPressesDpadBothWays() async {
         addButton("target", visible: false)
         let result = await execute(
