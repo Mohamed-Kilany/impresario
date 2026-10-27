@@ -949,8 +949,11 @@ assume):
 - A `Check: Showing => NoSuchPiece` is a FAIL (authoritative absence), while a
   present surface with missing media facts is UNVERIFIABLE, not FAIL.
 
-No playback probe has run on hardware in this repository; HD-5/HD-8 cover the
-acceptance pass. Android USB remains unverified.
+The Android TV reference run `20261027-040844-6a42` passed all 105 stub smoke
+steps, including the Media stage (`Video`, `Poster`, `Missing` and
+`Player => Video Playing`; `media-playing.png`). The deeper `Showing`/
+`DRM-disabled`/paused/position matrix and Android USB remain unverified
+(HD-5/HD-8).
 
 ---
 
@@ -963,12 +966,15 @@ Three layers, with different reachability:
 * the **Xcode targets** are compiled unsigned by the `Apple Xcode` GitHub
   Actions job. They are not executed in CI: the user rejected simulator tests
   on 2026-10-25 and the simulator workflow/scripts were removed (§3.2);
-* a **physical Apple TV** has now run the agent on hardware from Windows:
-  RemotePairing/RSD install, DDI mount and direct-RSD XCUITest startup, ending
-  in a real handshake and `Shutdown` (§3.3, I-150). iOS on hardware is still
-  unverified. GitHub-hosted runners cannot reach the LAN, so the device run is
-  local. Full tvOS actions, focus and playback remain open
-  (`docs/STATUS.md` HD-1).
+* a **physical Apple TV** has run the agent and the full 105-step stub smoke
+  from Windows: RemotePairing/RSD install, DDI mount, direct-RSD XCUITest
+  startup, then Home, Basic, Text, Scroll, Selection, Flags, Keys, Info,
+  LongPress and Media (including `Player => Video Playing`) with back
+  navigation (`run 20261027-063121-00d6`, §3.3, I-150). iOS on hardware is
+  still unverified. GitHub-hosted runners cannot reach the LAN, so the device
+  run is local. The run used the temporary legacy tvOS bundle ids; the
+  short-id product branch still needs fresh tvOS profiles before a hardware
+  install.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1023,6 +1029,23 @@ accepted a real gRPC `Handshake` on `50062` (session
 completed `Shutdown`. The same install/start/handshake path was then repeated
 through the product `AppleTransport` with `impresario device check`.
 
+**2026-10-27 — full stub smoke (P0).** The unsigned GitHub artifact from
+`Apple Xcode` run `40460826743` at `d3b60c8` was imported into product set
+`p0test-fix`; `impresario apple doctor` passed signing (team `GR2NDRW99B`,
+profiles expire `2026-11-02`) and the device/DDI checks. The physical play
+`20261027-063121-00d6` passed all **105 steps** in `6m37s` on `RAMA (4)`
+(`AppleTV5,3`, tvOS 26.1 build `23J582`, UDID
+`a4d6ff71e98403878ba98fe85cb77e8d98d622e5`), covering Home, Basic, Text
+(replace/append/clear), Scroll (`scrollto` Row29 and Row0), Selection
+(dialog/choice/back), Flags, Keys, Info, LongPress and Media. The media step
+passed `Player => Video Playing`; `media-playing.png` shows the local
+colour-bar video, poster and missing-piece slot. All 13 screenshots are in
+`reports/20261027-063121-00d6/screenshots/rama/` in the run workspace. This
+run used the temporary legacy tvOS ids (`com.impresario.agent.AgentHost-tvOS`,
+`...AgentUITests-tvOS`, `...AgentUITests-tvOS.xctrunner`,
+`...AgentTargetStub-tvOS`); it is the P0 behaviour/visual evidence, not proof
+that the short tvOS ids are signed.
+
 The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
 direct-RSD XCUITest start. `AppleTransport` spawns no host tool:
@@ -1031,13 +1054,16 @@ from the Apple path (D-19). Unit tests cover the signing store, product import,
 IPA inspection, DDI state, pairing normalization and the agent-port launch
 environment; the physical `device check` above is the integration evidence.
 
-**Not yet hardware-verified after the rename.** The 2026-10-26 evidence used
-the old bundle ids. The product rename to `com.impresario.agent`,
-`com.impresario.agent.tests` and `com.impresario.stub` is implemented in
-`agents/apple/project.yml`; those new bundles need new profiles, a fresh
-`Apple Xcode` build and a reinstall. The existing profiles expire
-`2026-11-02`. Use separate signing-set names for iOS and tvOS if the profiles
-are platform-specific; both can map the same bundle ids.
+**Bundle ids.** iOS already uses the agreed short ids
+(`com.impresario.agent`, `com.impresario.agent.tests`,
+`com.impresario.stub`). The 2026-10-26/27 tvOS hardware evidence used temporary
+legacy explicit-App-ID bundles because the existing free-team tvOS profiles
+are tied to them; the P0 evidence branch keeps those ids. The product branch
+(`wip/phase2-tvos-p0`) uses the short ids for tvOS as well, but those bundles
+need fresh profiles before a hardware install; no pure-Rust profile
+generation exists yet. The current profiles expire `2026-11-02`. Use separate
+signing-set names for iOS and tvOS if the profiles are platform-specific; both
+can map the same bundle ids.
 
 Machine-global setup (the project holds no pairing secrets or certificates):
 
@@ -1085,8 +1111,10 @@ interactively; Impresario never stores or passes a plaintext Apple ID password.
 The unsigned GitHub artifact cannot be installed directly.
 
 The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
-device ID `B6:FD:1D:0C:99:3C`, build `23J582`; it moved from `192.168.93.19`
-to `10.102.93.222`. Developer Mode is enabled and the device trusted the host.
+device ID `B6:FD:1D:0C:99:3C`, build `23J582`; its LAN address is dynamic (the
+2026-10-27 P0 run used `192.168.93.19`; an earlier run used
+`10.102.93.222`). Identify it by UDID in committed setup; do not pin the
+address. Developer Mode is enabled and the device trusted the host.
 The first start asks for local-network access; tvOS has no XCTest `tap`, so
 grant that one prompt with the remote. The permission is remembered after that.
 
@@ -1155,12 +1183,15 @@ in its `stub_key_log`/`stub_status` labels while a play runs.
 ### Playback probes and the Apple hook
 
 The Xcode layer is **not compiled on this host** (no Xcode); the macOS GitHub
-Actions job compiles both the tvOS and iOS targets unsigned (latest pre-rename
-run `40294832377` at `b96c7fd`). The agent UI test has run on the Apple TV, but
-the action matrix, `ProbeCollector`, `HookReceiver`, `XCUIDriver` interactions
-and the Swift `ImpresarioHook` product have not. In this host's WSL only
-`swift test` runs; `XCUIDriver`/`HookReceiver` depend on XCTest and need a real
-device to execute.
+Actions job compiles both the tvOS and iOS targets unsigned (run
+`40460826743` at `d3b60c8` built the P0 artifact). The physical 105-step run
+`20261027-063121-00d6` executed the full `XCUIDriver` action matrix (focus,
+click/Select, key, scroll, text/keyboard, long-press, media checks, back) and
+the media `Player => Video Playing` probe on the Apple TV. `ProbeCollector`,
+`HookReceiver` and the deeper decoder/DRM/position assertions were not
+independently exercised by that play. In this host's WSL only `swift test`
+runs; `XCUIDriver`/`HookReceiver` depend on XCTest and need a real device to
+execute.
 
 XCUITest cannot read another app's `AVPlayer`, decoder or FairPlay session.
 The stub `MediaViewController` therefore opens a local H.264/AAC video, a
@@ -1171,7 +1202,9 @@ snapshot. Without that listener `start()` is a no-op and the probe correctly
 stays UNVERIFIABLE. Run the media scenario from the stub home screen and
 exercise `Showing`, `Player` (playing/paused/position/resolution) and
 DRM-disabled; record whether the local-network permission allowed loopback.
-This is part of HD-1, not claimed as verified here.
+The stub media screen and the UI `Player => Video Playing` check are
+hardware-verified by `20261027-063121-00d6`; the hook/decoder/DRM/position
+probes remain HD-1 work.
 
 ---
 

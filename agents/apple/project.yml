@@ -19,8 +19,11 @@
 #                                    accessibility ids as the Android stub).
 #
 # The `-Runner` names and `.xctrunner` suffix below are Xcode artifacts, not a
-# product name. The installed agent is always Impresario Agent
-# (`com.impresario.agent`).
+# product name. Bundle ids: iOS uses the agreed short ids. The P0 evidence
+# branch keeps the legacy explicit-App-ID tvOS bundles because the existing
+# free-team tvOS profiles are tied to them; the product branch uses the short
+# tvOS ids but needs fresh profiles before a hardware install. See
+# docs/DEVICES.md §3.3.
 #
 # Usage on the host (see README.md):
 #   xcodebuild build-for-testing -scheme ImpresarioAgentTests-iOS \
