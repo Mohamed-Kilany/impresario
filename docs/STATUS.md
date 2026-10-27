@@ -50,10 +50,11 @@ pure-Rust pairing creation (as opposed to verification/tunnelling) remains
 open. The global Apple ID wizard is implemented and unit-tested offline, but no
 live Apple login/2FA has been exercised yet.
 
-The TASK-3 Phase 2 actors/groups/audience/stage-resolution work is parked on
-branch `wip/phase2-tvos-p0` (based on `4e44203`), with the Rust gates green.
-It is parked, not abandoned; resume it after the Apple product path is ported
-and the full tvOS play runs. The same branch carries the physical-tvOS work.
+The TASK-3 Phase 2 actors/groups/audience/stage-resolution work is now on
+`master` (merged from `wip/phase2-tvos-p0` on 2026-10-27), with the Rust gates
+green. It remains parked, not abandoned; resume the parked work now that the
+Apple product path is ported and the full tvOS play has run. The same history
+carries the physical-tvOS work.
 
 ## Environment constraints
 

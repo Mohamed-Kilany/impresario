@@ -20,10 +20,10 @@
 #
 # The `-Runner` names and `.xctrunner` suffix below are Xcode artifacts, not a
 # product name. Bundle ids: iOS uses the agreed short ids. The P0 evidence
-# branch keeps the legacy explicit-App-ID tvOS bundles because the existing
-# free-team tvOS profiles are tied to them; the product branch uses the short
-# tvOS ids but needs fresh profiles before a hardware install. See
-# docs/DEVICES.md §3.3.
+# build (tag `p0-tvos-evidence`) kept the legacy explicit-App-ID tvOS bundles
+# because the existing free-team tvOS profiles are tied to them; the product
+# line uses the short tvOS ids but needs fresh profiles before a hardware
+# install. See docs/DEVICES.md §3.3.
 #
 # Usage on the host (see README.md):
 #   xcodebuild build-for-testing -scheme ImpresarioAgentTests-iOS \

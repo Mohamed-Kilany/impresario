@@ -973,8 +973,8 @@ Three layers, with different reachability:
   navigation (`run 20261027-063121-00d6`, §3.3, I-150). iOS on hardware is
   still unverified. GitHub-hosted runners cannot reach the LAN, so the device
   run is local. The run used the temporary legacy tvOS bundle ids; the
-  short-id product branch still needs fresh tvOS profiles before a hardware
-  install.
+  short-id product line (now `master`) still needs fresh tvOS profiles before a
+  hardware install.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1058,10 +1058,10 @@ environment; the physical `device check` above is the integration evidence.
 (`com.impresario.agent`, `com.impresario.agent.tests`,
 `com.impresario.stub`). The 2026-10-26/27 tvOS hardware evidence used temporary
 legacy explicit-App-ID bundles because the existing free-team tvOS profiles
-are tied to them; the P0 evidence branch keeps those ids. The product branch
-(`wip/phase2-tvos-p0`) uses the short ids for tvOS as well, but those bundles
-need fresh profiles before a hardware install; no pure-Rust profile
-generation exists yet. The current profiles expire `2026-11-02`. Use separate
+are tied to them; the P0 evidence build (tag `p0-tvos-evidence`) kept those
+ids. The product line (now `master`) uses the short ids for tvOS as well, but
+those bundles need fresh profiles before a hardware install; no pure-Rust
+profile generation exists yet. The current profiles expire `2026-11-02`. Use separate
 signing-set names for iOS and tvOS if the profiles are platform-specific; both
 can map the same bundle ids.
 

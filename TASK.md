@@ -2447,4 +2447,4 @@ install and the remote focus path still require a macOS host on the LAN and
 remain HD-1/deferred. The unsigned `Apple Xcode` compile job and the Linux
 Swift package tests remain valid build/unit-test evidence. The
 actors/groups/audience Phase 2 work is parked, not abandoned, on
-`wip/phase2-tvos-p0`.
+`master` (merged 2026-10-27).
