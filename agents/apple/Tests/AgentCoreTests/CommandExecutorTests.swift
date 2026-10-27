@@ -269,6 +269,18 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(driver.remotes.map(\.button), [.select])
     }
 
+    func testTvAppendKeepsAnOpenKeyboardSession() async {
+        let field = addButton("input", text: "hello")
+        driver.keyboardShown = true
+        let result = await execute(
+            .runAction(RunActionSpec(kind: .append, selector: select(.accessibilityId, "input"), text: " world")),
+            platform: .tvos
+        )
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(field.textValue, "hello world")
+        XCTAssertTrue(driver.remotes.isEmpty)
+    }
+
     // MARK: - longpress
 
     func testLongPressUsesTheDuration() async {

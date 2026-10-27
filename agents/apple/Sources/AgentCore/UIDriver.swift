@@ -65,6 +65,11 @@ public protocol DriverExtras: AnyObject {
     /// launched through this driver (`APP_CRASHED` detection).
     func targetCrashed(appId: String) -> Bool
 
+    /// True while the on-screen keyboard is visible. tvOS keeps the keyboard
+    /// open between text commands and gives it D-pad focus, so the executor
+    /// must not traverse back to the field while this is true.
+    func keyboardVisible() -> Bool
+
     /// Long-press Select on the remote (tvOS). Returns `false` when the driver
     /// cannot do it.
     func longPressSelect(duration: TimeInterval) throws -> Bool
@@ -102,6 +107,7 @@ public protocol DriverExtras: AnyObject {
 public extension DriverExtras {
     func prepare(appId: String, animationsDisabled: Bool) {}
     func targetCrashed(appId: String) -> Bool { false }
+    func keyboardVisible() -> Bool { false }
     func longPressSelect(duration: TimeInterval) throws -> Bool { false }
     func pressBack() throws -> Bool { false }
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool { false }
