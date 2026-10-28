@@ -42,50 +42,23 @@ jobs:
       - name: Validate tvOS asset catalog
         working-directory: agents/apple
         run: |
-          set +e
-          run_actool() {
-            name="$1"; shift
-            out="/tmp/impresario-actool-$name"
-            mkdir -p "$out"
-            xcrun actool Xcode/Shared/Assets.xcassets \
-              --compile "$out" \
-              --output-format human-readable-text \
-              --notices --warnings \
-              --compress-pngs \
-              --enable-on-demand-resources YES \
-              --development-region en \
-              --target-device tv \
-              --minimum-deployment-target 16.0 \
-              --platform appletvos "$@" > "$out.log" 2>&1
-            status=$?
-            echo "=== actool $name: $status ==="
-            cat "$out.log"
-            return 0
-          }
-          run_actool partial --app-icon AppIcon \
-            --output-partial-info-plist /tmp/impresario-actool-partial.plist
-          run_actool partial-bundle --app-icon AppIcon \
-            --bundle-identifier com.impresario.stub \
-            --output-partial-info-plist /tmp/impresario-actool-partial-bundle.plist
-          PRODUCT_BUNDLE_IDENTIFIER=com.impresario.stub run_actool partial-env --app-icon AppIcon \
-            --output-partial-info-plist /tmp/impresario-actool-partial-env.plist
-          run_actool partial-in-output --app-icon AppIcon \
-            --output-partial-info-plist /tmp/impresario-actool-partial-in-output/info.plist
-          run_actool partial-no-icon \
-            --output-partial-info-plist /tmp/impresario-actool-partial-no-icon.plist
-          run_actool partial-launch --app-icon AppIcon --launch-image LaunchImage \
-            --output-partial-info-plist /tmp/impresario-actool-partial-launch.plist
-          run_actool partial-leaderboard --app-icon AppIcon \
+          mkdir -p /tmp/impresario-actool
+          xcrun actool Xcode/Shared/Assets.xcassets \
+            --compile /tmp/impresario-actool \
+            --output-format human-readable-text \
+            --notices --warnings \
+            --export-dependency-info /tmp/impresario-actool-deps \
+            --output-partial-info-plist /tmp/impresario-actool-info.plist \
+            --app-icon AppIcon \
+            --launch-image LaunchImage \
+            --compress-pngs \
+            --enable-on-demand-resources YES \
+            --development-region en \
             --leaderboard-identifier-prefix ImpresarioStub.game-center.leaderboard. \
             --leaderboard-set-identifier-prefix ImpresarioStub.game-center.leaderboard-set. \
-            --output-partial-info-plist /tmp/impresario-actool-partial-leaderboard.plist
-
-      - name: Collect actool diagnostics
-        if: always()
-        run: |
-          ls -la ~/Library/Logs/DiagnosticReports || true
-          find ~/Library/Logs/DiagnosticReports -maxdepth 1 -name 'actool*' -print -exec cat {} \; || true
-          log show --last 10m --predicate 'process == "actool"' --style compact || true
+            --target-device tv \
+            --minimum-deployment-target 16.0 \
+            --platform appletvos
 
       - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
