@@ -162,9 +162,9 @@ impl AppStoreConnectClient {
         key_id: impl Into<String>,
         path: &std::path::Path,
     ) -> Result<Self, Report> {
-        let pem = std::fs::read_to_string(path).map_err(|error| {
+        let pem = Zeroizing::new(std::fs::read_to_string(path).map_err(|error| {
             report!("read App Store Connect API key {}: {error}", path.display())
-        })?;
+        })?);
         Self::new(issuer_id, key_id, &pem)
     }
 
@@ -281,7 +281,15 @@ impl AppStoreConnectClient {
         while let Some(url) = next {
             let page: ListResponse<T> = self.request(Method::GET, &url, None).await?;
             values.extend(page.data);
-            next = page.links.and_then(|links| links.next);
+            next = page.links.and_then(|links| links.next).map(|next| {
+                if next.starts_with("https://") || next.starts_with('/') {
+                    next
+                } else if next.starts_with('?') {
+                    format!("{path}{next}")
+                } else {
+                    format!("/{next}")
+                }
+            });
         }
         Ok(values)
     }

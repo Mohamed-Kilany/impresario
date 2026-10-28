@@ -853,8 +853,9 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
     // A fresh identity gets a randomly generated PKCS#12 password that is
     // never printed. Do not create an Apple certificate unless that password
     // can actually be stored, unless the caller supplied one through the
-    // headless environment override.
-    if existing.is_none() && std::env::var_os(PASSWORD_ENV).is_none() {
+    // headless environment override. An existing identity can also need a new
+    // certificate (and therefore a new password), so probe unconditionally.
+    if std::env::var_os(PASSWORD_ENV).is_none() {
         if let Err(error) = signing_store::SigningSet::probe_credential_store() {
             eprintln!(
                 "error: {error}; provisioning needs the OS credential store, or set \
@@ -1085,8 +1086,8 @@ fn resolve_api_team_id(team: Option<&str>) -> Result<String, String> {
                 .filter(|team| !team.is_empty())
         })
         .ok_or_else(|| {
-            "an App Store Connect API key needs the Apple Developer team id; pass --team \
-             GR2NDRW99B or set IMPRESARIO_APPLE_TEAM_ID"
+            "an App Store Connect API key needs the Apple Developer team id; pass --team <TEAM_ID> \
+             or set IMPRESARIO_APPLE_TEAM_ID"
                 .to_string()
         })
 }

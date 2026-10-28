@@ -256,9 +256,11 @@ registers missing App IDs, reuses an existing identity when its certificate is
 still active, creates an Apple Development certificate otherwise, requests
 `TVOS_APP_DEVELOPMENT` (or `IOS_APP_DEVELOPMENT`) profiles with Apple's `IOS`
 device/bundle resource platform, validates them like the interactive path, and
-installs the same signing-set layout. If the certificate limit is full it lists
-the team certificates and prompts for a serial to revoke; `--revoke <serial>`
-does the same non-interactively. A certificate newly issued by a failed run is
+installs the same signing-set layout. A newly created PKCS#12 always gets a
+fresh random password, so a new certificate does not carry over an old (or
+exposed) signing-set password. If the certificate limit is full it lists the
+team certificates and prompts for a serial to revoke; `--revoke <serial>` does
+the same non-interactively. A certificate newly issued by a failed run is
 revoked rather than leaking a slot.
 
 ### Pairing and developer-device name

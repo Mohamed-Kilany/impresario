@@ -298,14 +298,13 @@ async fn ensure_identity(
             return Err(clean_up_new_certificate(client, &certificate, error).await);
         }
     };
-    let password = existing.map_or_else(
-        || {
-            std::env::var(PASSWORD_ENV)
-                .map(Zeroizing::new)
-                .unwrap_or_else(|_| new_password())
-        },
-        |identity| identity.password.clone(),
-    );
+    // The existing certificate was not reusable, so this is a new PKCS#12.
+    // Always give it a fresh password rather than carrying over the old one
+    // (which may have been exposed). The reused-certificate path above
+    // returns before reaching this point.
+    let password = std::env::var(PASSWORD_ENV)
+        .map(Zeroizing::new)
+        .unwrap_or_else(|_| new_password());
     let (p12, password) = match create_pkcs12(&private_key, &certificate_der, password) {
         Ok(pkcs12) => pkcs12,
         Err(error) => {
