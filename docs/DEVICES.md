@@ -976,9 +976,10 @@ Three layers, with different reachability:
   long-id set (`run 20261028-060832-b7cc`, 2/2 steps, 59.6 s,
   `agent-host.png`) and then with the `master` short ids and fresh profiles
   (`run 20261028-100103-b9ab`, 2/2 steps, 35.4 s, `agent-host-shortid.png`).
-  The full short-id 105-step stub play is still pending; the long-id run remains
-  the 105-step evidence. iOS on hardware is still unverified. GitHub-hosted
-  runners cannot reach the LAN, so the device run is local.
+  The full short-id 105-step stub play also passed
+  (`20261028-110828-b477`: 105/105, 5m51s, 13 screenshots). iOS on hardware is
+  still unverified. GitHub-hosted runners cannot reach the LAN, so the device
+  run is local.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1107,14 +1108,16 @@ bound app `agent` to `com.impresario.agent` with no package, and the new
 shows the Impresario Agent status screen, not the stub. No stub was selected or
 installed. This is the short-id actual-app/no-stub hardware path.
 
-A full short-id 105-step stub play was attempted after adding the stub profile,
-but it did not complete: a stale XCUITest/testmanagerd session from the
-aborted attempt blocked the next device prepare, so no short-id P0 report is
-claimed. The long-id run `20261027-063121-00d6` remains the 105-step
-behaviour/visual evidence. The stub profile is provisioned for future
-explicit stub sessions. If a killed run leaves a wedged XCUITest/testmanagerd
-session, `impresario apple restart --host <host>` reboots the TV through the
-pure-Rust diagnostics relay; wait for it to return before the next run.
+The full short-id 105-step stub play then passed
+(`20261028-110828-b477`: all 10 stages / 105 steps in 5m51s, 13 screenshots,
+0 failures). An earlier attempt hit a transient clear-readback
+race at step 24; the immediate rerun passed. A following ordinary no-stub run
+re-passed (`20261028-112028-80fd`, 2/2, 34.9 s), with app `agent` and no stub
+selected. The long-id run `20261027-063121-00d6` remains the earlier 105-step
+behaviour/visual evidence. If a killed run leaves a wedged
+XCUITest/testmanagerd session,
+`impresario apple restart --host <host>` reboots the TV through the pure-Rust
+diagnostics relay; wait for it to return before the next run.
 
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,
@@ -1124,10 +1127,11 @@ are tied to them; the P0 evidence build (tag `p0-tvos-evidence`) kept those
 ids. The product line (now `master`) uses the short ids for tvOS as well.
 Pure-Rust development provisioning now exists (I-153), and the fresh short-id
 tvOS profiles were created and used on the physical Apple TV on 2026-10-28
-(`default`, expiry `2026-11-04`). The ordinary host/no-stub run passed; the
-full short-id 105-step stub play is still pending. The old long-id profiles
-expire `2026-11-02`. Use separate signing-set names for iOS and tvOS if the
-profiles are platform-specific; both can map the same bundle ids.
+(`default`, expiry `2026-11-04`). The ordinary host/no-stub run passed, and
+the full short-id 105-step stub play passed (`20261028-110828-b477`,
+105/105). The old long-id profiles expire `2026-11-02`. Use separate
+signing-set names for iOS and tvOS if the profiles are platform-specific;
+both can map the same bundle ids.
 
 Machine-global setup (the project holds no pairing secrets or certificates):
 

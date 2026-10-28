@@ -25,9 +25,10 @@ development provisioning all run in-process. The live free-team Apple ID
 login/2FA completed on 2026-10-28, and short-ID tvOS profiles were provisioned
 for `master`. The short-ID ordinary host/no-stub run then passed
 (`20261028-100103-b9ab`, 2/2 steps). The long-ID run
-`20261027-063121-00d6` remains the 105-step P0 behaviour/visual evidence; the
-full short-ID 105-step stub run is still pending. See the Apple section below
-and `docs/DEVICES.md` A3.
+`20261027-063121-00d6` remains the earlier 105-step P0 behaviour/visual
+evidence; the full short-ID 105-step stub run then passed
+(`20261028-110828-b477`, 105/105, 5m51s, 13 screenshots). See the Apple section
+below and `docs/DEVICES.md` §3.3.
 
 ## Tizen
 
@@ -408,12 +409,16 @@ The short-ID ordinary no-stub path also ran on the physical Apple TV:
 installed no stub, drove the real `com.impresario.agent` host UI and passed
 2/2 steps in 35.4 s (`agent-host-shortid.png`). The selected app was the real
 host, not the stub, so this exercises the product's actual-app branch rather
-than the fixture. A full short-ID 105-step stub play was attempted but did not
-complete because a stale XCUITest/testmanagerd session blocked the next
-prepare; no short-ID P0 report is claimed.
+than the fixture. The full short-ID 105-step stub play then passed:
+`run 20261028-110828-b477` exercised all 10 stages / 105 steps in 5m51s with
+13 screenshots and 0 failures. An earlier attempt hit a transient
+clear-readback race at step 24; the immediate rerun passed. A following
+ordinary no-stub run re-passed (`20261028-112028-80fd`, 2/2, 34.9 s), with no
+stub selected, and the `impresario apple restart` recovery command is
+available if a killed run wedges testmanagerd.
 
 The physical P0 run `20261027-063121-00d6` used the **long** tvOS bundle ids
-and profiles created outside this new flow; it remains the 105-step
+and profiles created outside this new flow; it remains the earlier 105-step
 behaviour/visual evidence. The App Store Connect client and API-key
 provisioning path are implemented and unit-tested (ES256 JWT,
 device/bundle/certificate/profile calls, platform/profile-type mapping,

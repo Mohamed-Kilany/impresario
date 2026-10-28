@@ -288,8 +288,8 @@ InstallationProxy and starts the XCUITest bundle over the direct outer-RSD
 `simctl`, `devicectl` or `ideviceinstaller`. Simulator UDIDs are rejected and
 a USB-only iPhone is not supported yet. See `docs/DEVICES.md` §3.3 and
 `agents/apple/README.md`; the physical-tvOS path is proven (I-150/I-152), the
-short-id host/no-stub path is proven (I-156), and the full short-id 105-step
-stub play is still pending.
+short-id host/no-stub path and the full short-id 105-step stub play are
+proven (I-156).
 
 ## Profiles
 
