@@ -972,11 +972,13 @@ Three layers, with different reachability:
   startup, then Home, Basic, Text, Scroll, Selection, Flags, Keys, Info,
   LongPress and Media (including `Player => Video Playing`) with back
   navigation (`run 20261027-063121-00d6`, §3.3, I-150). On 2026-10-28 the real
-  agent host also ran without the fixture stub (`run 20261028-060832-b7cc`,
-  2/2 steps, 59.6 s, `agent-host.png`). iOS on hardware is still unverified.
-  GitHub-hosted runners cannot reach the LAN, so the device run is local. The
-  runs used the temporary legacy tvOS bundle ids; the short-id product line
-  (now `master`) still needs fresh tvOS profiles before a hardware install.
+  agent host also ran without the fixture stub, first with the temporary
+  long-id set (`run 20261028-060832-b7cc`, 2/2 steps, 59.6 s,
+  `agent-host.png`) and then with the `master` short ids and fresh profiles
+  (`run 20261028-100103-b9ab`, 2/2 steps, 35.4 s, `agent-host-shortid.png`).
+  The full short-id 105-step stub play is still pending; the long-id run remains
+  the 105-step evidence. iOS on hardware is still unverified. GitHub-hosted
+  runners cannot reach the LAN, so the device run is local.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1045,8 +1047,8 @@ colour-bar video, poster and missing-piece slot. All 13 screenshots are in
 `reports/20261027-063121-00d6/screenshots/rama/` in the run workspace. This
 run used the temporary legacy tvOS ids (`com.impresario.agent.AgentHost-tvOS`,
 `...AgentUITests-tvOS`, `...AgentUITests-tvOS.xctrunner`,
-`...AgentTargetStub-tvOS`); it is the P0 behaviour/visual evidence, not proof
-that the short tvOS ids are signed.
+`...AgentTargetStub-tvOS`); it is the P0 behaviour/visual evidence. The
+short-id signing/install path is proven separately below.
 
 **2026-10-28 — actual agent, no stub.** A scratch workspace bound app `agent`
 to the real host bundle `com.impresario.agent.AgentHost-tvOS` with no package
@@ -1057,9 +1059,9 @@ runner; no stub was selected or installed. The play checked
 2/2 steps in 59.6 s on tvOS 26.1 `23J582` (1920x1080); `agent-host.png` shows
 the Impresario Agent status screen, not the stub. A following
 `impresario apple doctor` with the same home and signing set reported `ready`
-with the DDI mounted. This is the ordinary actual-app/no-stub hardware path;
-it used the temporary long ids, so it does not close the short-id signing
-gate.
+with the DDI mounted. This is the ordinary actual-app/no-stub hardware path
+with the long ids; the short-id equivalent is recorded below. The long-id
+105-step P0 run remains the full-matrix evidence.
 
 The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
@@ -1077,21 +1079,42 @@ On 2026-10-27 a long-id signing set with only host/runner/nested profiles
 signed the product set without a stub (`signing verify` exit 0), while
 `--with-stub` failed with the expected missing-profile error. The main
 `doctor --plain` probe reported `RAMA (4)` `READY` and listed the missing
-optional stub profile as a device detail. These checks still used imported
-long-id profiles; live Apple ID login/2FA, live API-key provisioning and
-`updateDevice` have not yet run against Apple's live services. The App Store
-Connect client and API-key provisioning path are covered by offline tests
-(ES256 JWT, platform/profile-type mapping, certificate-limit detection).
+optional stub profile as a device detail. These checks used imported long-id
+profiles. On 2026-10-28 the free-team live Apple ID login/2FA, live tvOS
+provisioning and the `updateDevice` rename completed against Apple's services;
+the optional paid-team API-key path remains unexercised. The App Store Connect
+client and API-key provisioning path are covered by offline tests (ES256 JWT,
+platform/profile-type mapping, certificate-limit detection).
 
 On 2026-10-28 the current `master` short-id tvOS product set
 (`com.impresario.agent`, `com.impresario.agent.tests.xctrunner`,
 `com.impresario.agent.tests`, `com.impresario.stub`) was built by the Apple
 Xcode workflow and imported as the machine-global `products/current`. The
-existing pair record and tvOS 26.1 DDI were consolidated into
-`~/.impresario/apple`; `impresario apple doctor --host 192.168.93.19 --plain`
-reached `RAMA (4)` with the DDI mounted and listed the short ids, then stopped
-only because signing set `default` is absent. This is product/pairing
-readiness, not signing or install evidence.
+free-team Apple ID session from `account login` then drove
+`impresario apple signing provision --name default --platform tvos`: it
+registered the device and App IDs, reused active certificate
+`F71CFA59C1654F6F00B2AB7081FA8AA`, and installed host/runner/nested tvOS
+profiles expiring `2026-11-04`. `--with-stub` added the optional
+`com.impresario.stub` profile. The portal device record was renamed
+`impresario`. A following `impresario apple doctor --host 192.168.93.19
+--plain` reported `ready` with the DDI mounted and all four bundles covered.
+
+The short-id ordinary no-stub path then ran on `RAMA (4)`: a scratch workspace
+bound app `agent` to `com.impresario.agent` with no package, and the new
+`default` set signed/installed the host and XCUITest runner. The play checked
+`agent_host_status` and took a screenshot. `run 20261028-100103-b9ab` passed
+2/2 steps in 35.4 s on tvOS 26.1 `23J582` (1920x1080); `agent-host-shortid.png`
+shows the Impresario Agent status screen, not the stub. No stub was selected or
+installed. This is the short-id actual-app/no-stub hardware path.
+
+A full short-id 105-step stub play was attempted after adding the stub profile,
+but it did not complete: a stale XCUITest/testmanagerd session from the
+aborted attempt blocked the next device prepare, so no short-id P0 report is
+claimed. The long-id run `20261027-063121-00d6` remains the 105-step
+behaviour/visual evidence. The stub profile is provisioned for future
+explicit stub sessions. If a killed run leaves a wedged XCUITest/testmanagerd
+session, `impresario apple restart --host <host>` reboots the TV through the
+pure-Rust diagnostics relay; wait for it to return before the next run.
 
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,
@@ -1099,11 +1122,12 @@ readiness, not signing or install evidence.
 legacy explicit-App-ID bundles because the existing free-team tvOS profiles
 are tied to them; the P0 evidence build (tag `p0-tvos-evidence`) kept those
 ids. The product line (now `master`) uses the short ids for tvOS as well.
-Pure-Rust development provisioning now exists (I-153), so fresh short-id
-profiles can be created without Xcode/openssl; those profiles and the short-id
-bundles have **not** yet run on the physical Apple TV. The old profiles expire
-`2026-11-02`. Use separate signing-set names for iOS and tvOS if the profiles
-are platform-specific; both can map the same bundle ids.
+Pure-Rust development provisioning now exists (I-153), and the fresh short-id
+tvOS profiles were created and used on the physical Apple TV on 2026-10-28
+(`default`, expiry `2026-11-04`). The ordinary host/no-stub run passed; the
+full short-id 105-step stub play is still pending. The old long-id profiles
+expire `2026-11-02`. Use separate signing-set names for iOS and tvOS if the
+profiles are platform-specific; both can map the same bundle ids.
 
 Machine-global setup (the project holds no pairing secrets or certificates):
 

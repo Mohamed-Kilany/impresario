@@ -21,11 +21,13 @@ hardware-verified; the pending checks are `HD-3`, `HD-4` and `HD-7` in
 
 The Apple path is now pure Rust too: RemotePairing/RSD, DDI mounting, bundle
 re-signing, installation, XCUITest startup, Apple ID authentication and
-development provisioning all run in-process. Apple development provisioning is
-offline/fixture-tested but has not completed a live Apple ID login/2FA against
-Apple's services. The long bundle ids passed the physical tvOS P0 run
-`20261027-063121-00d6`; the short ids on `master` still need fresh profiles and
-a hardware re-run. See the Apple section below and `docs/DEVICES.md` A3.
+development provisioning all run in-process. The live free-team Apple ID
+login/2FA completed on 2026-10-28, and short-ID tvOS profiles were provisioned
+for `master`. The short-ID ordinary host/no-stub run then passed
+(`20261028-100103-b9ab`, 2/2 steps). The long-ID run
+`20261027-063121-00d6` remains the 105-step P0 behaviour/visual evidence; the
+full short-ID 105-step stub run is still pending. See the Apple section below
+and `docs/DEVICES.md` A3.
 
 ## Tizen
 
@@ -210,7 +212,7 @@ cancel. Voice-only numbers are not offered as SMS targets. Legacy `hsa` accounts
 SMS-capable device under `trustedDevices` instead of `trustedPhoneNumbers`, use
 Apple's per-device security-code endpoint and accept 4-digit codes. Offline
 tests cover the 2FA state machine, legacy-device detection and SMS number
-selection; a live Apple login/2FA still needs to be exercised.
+selection; the live free-team Apple ID login/2FA completed on 2026-10-28.
 
 Apple app-specific passwords are not a developer-portal login method. Apple
 scopes them to third-party apps that access iCloud data
@@ -320,6 +322,13 @@ impresario apple signing certificates --platform tvos
 impresario apple signing provision --name default --platform tvos --revoke <serial>
 ```
 
+Apple's developer-services API exposes one shared `ios/` resource path for
+iOS, tvOS and watchOS; there is no `tvos/` service path. tvOS profile requests
+include `subPlatform: "tvOS"` in the request body, while iOS requests omit it.
+The `tvos/listDevices.action` and `tvos/listAllDevelopmentCerts.action` URLs
+return 404; using `ios/` plus the tvOS profile field is the live-verified
+combination (I-156). Unit tests pin both the shared path and the profile body.
+
 Provisioning registers the UDID and App IDs, creates/reuses an RSA-2048 key
 and development certificate, builds the PKCS#12 identity, downloads one
 development profile per requested bundle, validates team/device/platform/
@@ -384,22 +393,34 @@ failed with the expected missing-profile error. The main `doctor --plain`
 probe then reported the physical Apple TV `READY` while listing the missing
 optional stub profile as a device detail, not a degradation.
 
-On 2026-10-28 the ordinary no-stub path also ran on the physical Apple TV:
-`run 20261028-060832-b7cc` used the long-id host/runner/nested profiles,
-installed no stub, drove the real `ImpresarioAgent` host UI and passed 2/2
-steps in 59.6 s (`agent-host.png`). The selected app was the real host, not the
-stub, so this exercises the product's actual-app branch rather than the fixture.
+On 2026-10-28 the free-team Apple ID login/2FA completed and live tvOS
+provisioning ran against Apple's services. `signing provision --name default
+--platform tvos` registered `com.impresario.agent`,
+`com.impresario.agent.tests.xctrunner` and `com.impresario.agent.tests`,
+reused active certificate `F71CFA59C1654F6F00B2AB7081FA8AA`, and installed
+profiles expiring `2026-11-04`; the portal device was renamed `impresario`.
+`--with-stub` then added the optional `com.impresario.stub` profile. A
+following `apple doctor` reported `ready` with the DDI mounted and all four
+bundles covered.
+
+The short-ID ordinary no-stub path also ran on the physical Apple TV:
+`run 20261028-100103-b9ab` used the new `default` host/runner/nested profiles,
+installed no stub, drove the real `com.impresario.agent` host UI and passed
+2/2 steps in 35.4 s (`agent-host-shortid.png`). The selected app was the real
+host, not the stub, so this exercises the product's actual-app branch rather
+than the fixture. A full short-ID 105-step stub play was attempted but did not
+complete because a stale XCUITest/testmanagerd session blocked the next
+prepare; no short-ID P0 report is claimed.
 
 The physical P0 run `20261027-063121-00d6` used the **long** tvOS bundle ids
-and profiles created outside this new flow; it is the 105-step
-behaviour/visual evidence. The short-id `master` bundles, live Apple ID
-login/2FA, live API-key provisioning, `updateDevice` renaming and fresh
-short-id profiles have not yet run against Apple/hardware. The App Store
-Connect client and API-key provisioning path are implemented and unit-tested
-(ES256 JWT, device/bundle/certificate/profile calls, platform/profile-type
-mapping, certificate-limit detection and cleanup), but they have not been
-exercised with a real team key. Existing profiles expire `2026-11-02`. No
-simulator evidence is claimed.
+and profiles created outside this new flow; it remains the 105-step
+behaviour/visual evidence. The App Store Connect client and API-key
+provisioning path are implemented and unit-tested (ES256 JWT,
+device/bundle/certificate/profile calls, platform/profile-type mapping,
+certificate-limit detection and cleanup), but they have not been exercised
+with a real paid-team key. The exposed legacy `p0test` signing set and its OS
+credential were removed after the short-ID `default` set worked. No simulator
+evidence is claimed.
 
 ## Error codes
 
