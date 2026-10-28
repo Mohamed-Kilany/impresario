@@ -42,6 +42,7 @@ jobs:
       - name: Validate tvOS asset catalog
         working-directory: agents/apple
         run: |
+          set +e
           run_actool() {
             name="$1"; shift
             out="/tmp/impresario-actool-$name"
@@ -60,7 +61,21 @@ jobs:
             return 0
           }
           run_actool base --app-icon AppIcon
-          run_actool launch --app-icon AppIcon --launch-image LaunchImage
+          run_actool partial --app-icon AppIcon \
+            --output-partial-info-plist /tmp/impresario-actool-partial-info.plist
+          run_actool partial-export --app-icon AppIcon \
+            --output-partial-info-plist /tmp/impresario-actool-partial-export-info.plist \
+            --export-dependency-info /tmp/impresario-actool-partial-export-deps
+          run_actool partial-on-demand --app-icon AppIcon \
+            --output-partial-info-plist /tmp/impresario-actool-partial-on-demand-info.plist \
+            --enable-on-demand-resources YES
+          run_actool partial-development --app-icon AppIcon \
+            --output-partial-info-plist /tmp/impresario-actool-partial-development-info.plist \
+            --development-region en
+          run_actool partial-leaderboard --app-icon AppIcon \
+            --output-partial-info-plist /tmp/impresario-actool-partial-leaderboard-info.plist \
+            --leaderboard-identifier-prefix ImpresarioStub.game-center.leaderboard. \
+            --leaderboard-set-identifier-prefix ImpresarioStub.game-center.leaderboard-set.
           run_actool full --app-icon AppIcon --launch-image LaunchImage \
             --export-dependency-info /tmp/impresario-actool-full-deps \
             --output-partial-info-plist /tmp/impresario-actool-full-info.plist \
