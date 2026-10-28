@@ -5,7 +5,7 @@
 //! machine-global under `~/.impresario/apple/`, so a project only names the
 //! device host and never carries certificates or pair secrets.
 
-use std::io::Write as _;
+use std::io::{BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -82,6 +82,13 @@ pub struct PairArgs {
     /// Save the pairing under this key instead of the device UDID.
     #[arg(long)]
     pub save: Option<String>,
+    /// Read the pairing code from stdin instead of prompting on the console.
+    ///
+    /// The code is consumed only after the Apple TV asks for it, so the
+    /// process can be started first and the code supplied when the TV shows
+    /// it. Useful for scripted pairing; the code is never written to disk.
+    #[arg(long)]
+    pub code_stdin: bool,
 }
 
 #[derive(Debug, Args)]
@@ -360,10 +367,23 @@ fn run_pair(args: &PairArgs, paths: &ApplePaths) -> i32 {
         args.host,
         paths.host_identifier()
     );
-    println!("Enter the code shown on the Apple TV when prompted.");
-    let pin = || async {
-        tokio::task::spawn_blocking(|| {
-            rpassword::prompt_password("Pairing code: ").unwrap_or_default()
+    if args.code_stdin {
+        println!("Waiting for the pairing code on stdin...");
+    } else {
+        println!("Enter the code shown on the Apple TV when prompted.");
+    }
+    let code_stdin = args.code_stdin;
+    let pin = move || async move {
+        tokio::task::spawn_blocking(move || {
+            if code_stdin {
+                let mut code = String::new();
+                std::io::stdin()
+                    .read_line(&mut code)
+                    .map(|_| code.trim().to_string())
+                    .unwrap_or_default()
+            } else {
+                rpassword::prompt_password("Pairing code: ").unwrap_or_default()
+            }
         })
         .await
         .unwrap_or_default()

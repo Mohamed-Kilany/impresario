@@ -22,6 +22,8 @@ agents/apple/
   Xcode/ImpresarioAgentTests/   XCUITest bundle: XCUIDriver, AgentEnvironment,
                                 ImpresarioAgentTests/testServe, ObjC shim
   Xcode/ImpresarioStub/         fixture app under test
+  Xcode/Shared/Assets.xcassets/ tvOS app icon (from logos/impresario-wide.png;
+                                letterboxed on black, not stretched)
   project.yml                   XcodeGen spec (the .xcodeproj is generated)
 ```
 

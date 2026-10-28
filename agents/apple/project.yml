@@ -99,10 +99,14 @@ targets:
     sources:
       - path: Xcode/ImpresarioAgent
         excludes: ["Info-*.plist"]
+      - path: Xcode/Shared/Assets.xcassets
     info:
       path: Xcode/ImpresarioAgent/Info-tvOS.plist
       properties:
         CFBundleDisplayName: Impresario Agent
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleIconName: App Icon
         NSLocalNetworkUsageDescription: >-
           Impresario Agent serves automated UI sessions over your local network.
           The agent must be reachable by the build machine to receive commands.
@@ -110,6 +114,7 @@ targets:
           - _impresario._tcp
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent
         PRODUCT_NAME: ImpresarioAgent
         GENERATE_INFOPLIST_FILE: NO
@@ -211,6 +216,7 @@ targets:
     sources:
       - path: Xcode/ImpresarioStub
         excludes: ["Info-*.plist"]
+      - path: Xcode/Shared/Assets.xcassets
     dependencies:
       - package: ImpresarioAgent
         product: ImpresarioHook
@@ -218,10 +224,14 @@ targets:
       path: Xcode/ImpresarioStub/Info-tvOS.plist
       properties:
         CFBundleDisplayName: Impresario Stub
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleIconName: App Icon
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:
       base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.impresario.stub
         PRODUCT_NAME: ImpresarioStub
         GENERATE_INFOPLIST_FILE: NO

@@ -238,6 +238,9 @@ impresario apple status
 impresario apple pair --host <apple-tv-host>
 impresario apple import-pair .\remote.plist --save <udid>
 
+# scripted pairing: start the command, then send the code shown by the TV
+impresario apple pair --host <apple-tv-host> --code-stdin
+
 # once per signing identity / Xcode build
 impresario apple signing import .\signing-source --name default
 impresario apple signing verify --name default --products current --output .\signed-check
