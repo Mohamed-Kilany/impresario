@@ -2341,10 +2341,11 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
   Apple TV (`AppleTV5,3`, tvOS 26.1 `23J582`) was subsequently paired and
   installed over pure-Rust RemotePairing/RSD from Windows; its full 105-step
   stub play passed on 2026-10-27 with the long bundle ids (`20261027-063121-00d6`,
-  `docs/STATUS.md` HD-1). The short-id `master` build and the deeper media
-  probes remain open. The HD ledger (`HD-1`...`HD-8`, `I-133`) stays deferred
-  for the unproven rows, and reachability alone is never reported as hardware
-  verification.
+  `docs/STATUS.md` HD-1); the ordinary actual-agent/no-stub path passed on
+  2026-10-28 (`20261028-060832-b7cc`, 2/2 steps, 59.6 s, `agent-host.png`). The
+  short-id `master` build and the deeper media probes remain open. The HD
+  ledger (`HD-1`...`HD-8`, `I-133`) stays deferred for the unproven rows, and
+  reachability alone is never reported as hardware verification.
 - No local macOS/Xcode host is attached. Apple simulator execution is out of
   scope by user direction; physical tvOS is the active P0 path and no simulator
   evidence is claimed. The Windows host now drives the physical Apple TV with
@@ -2455,7 +2456,10 @@ gRPC agent. On 2026-10-27 the full 105-step stub play `20261027-063121-00d6`
 passed 105/105 in 6m37s on `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 `23J582`),
 including Home, Basic, Text, Scroll, Selection, Flags, Keys, Info, LongPress and
 Media (`Player => Video Playing`), with 13 screenshots. This is the P0
-behaviour/visual evidence and it used the **long** tvOS bundle ids.
+behaviour/visual evidence and it used the **long** tvOS bundle ids. On
+2026-10-28 a second run drove the real `ImpresarioAgent` host with no stub
+installed (`20261028-060832-b7cc`, 2/2 steps, 59.6 s, `agent-host.png`), still
+with the long ids.
 
 `master` uses the short ids `com.impresario.agent`,
 `com.impresario.agent.tests`, `com.impresario.agent.tests.xctrunner` and

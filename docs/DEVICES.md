@@ -971,11 +971,12 @@ Three layers, with different reachability:
   from Windows: RemotePairing/RSD install, DDI mount, direct-RSD XCUITest
   startup, then Home, Basic, Text, Scroll, Selection, Flags, Keys, Info,
   LongPress and Media (including `Player => Video Playing`) with back
-  navigation (`run 20261027-063121-00d6`, §3.3, I-150). iOS on hardware is
-  still unverified. GitHub-hosted runners cannot reach the LAN, so the device
-  run is local. The run used the temporary legacy tvOS bundle ids; the
-  short-id product line (now `master`) still needs fresh tvOS profiles before a
-  hardware install.
+  navigation (`run 20261027-063121-00d6`, §3.3, I-150). On 2026-10-28 the real
+  agent host also ran without the fixture stub (`run 20261028-060832-b7cc`,
+  2/2 steps, 59.6 s, `agent-host.png`). iOS on hardware is still unverified.
+  GitHub-hosted runners cannot reach the LAN, so the device run is local. The
+  runs used the temporary legacy tvOS bundle ids; the short-id product line
+  (now `master`) still needs fresh tvOS profiles before a hardware install.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1047,6 +1048,19 @@ run used the temporary legacy tvOS ids (`com.impresario.agent.AgentHost-tvOS`,
 `...AgentTargetStub-tvOS`); it is the P0 behaviour/visual evidence, not proof
 that the short tvOS ids are signed.
 
+**2026-10-28 — actual agent, no stub.** A scratch workspace bound app `agent`
+to the real host bundle `com.impresario.agent.AgentHost-tvOS` with no package
+and pointed it at `RAMA (4)` on `192.168.93.19:50062`. The long-id signing set
+`p0test` and product set `p0test-fix` signed/installed the host and XCUITest
+runner; no stub was selected or installed. The play checked
+`agent_host_status` and took a screenshot. `run 20261028-060832-b7cc` passed
+2/2 steps in 59.6 s on tvOS 26.1 `23J582` (1920x1080); `agent-host.png` shows
+the Impresario Agent status screen, not the stub. A following
+`impresario apple doctor` with the same home and signing set reported `ready`
+with the DDI mounted. This is the ordinary actual-app/no-stub hardware path;
+it used the temporary long ids, so it does not close the short-id signing
+gate.
+
 The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
 direct-RSD XCUITest start. Development provisioning (device registration,
@@ -1095,7 +1109,7 @@ Machine-global setup (the project holds no pairing secrets or certificates):
 ```bash
 # One global Apple ID session (encrypted; supports device or SMS 2FA):
 impresario account login
-impresario account status --check
+impresario account status --online
 
 impresario apple status
 impresario apple pair --host <apple-tv-host>

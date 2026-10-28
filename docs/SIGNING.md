@@ -191,7 +191,7 @@ services HTTP APIs directly (I-152/I-153).
 
 ```powershell
 impresario account login          # Apple ID, password, team, 2FA
-impresario account status --check
+impresario account status --online
 impresario account logout
 ```
 
@@ -359,6 +359,12 @@ product set without the stub (`signing verify` exit 0); adding `--with-stub`
 failed with the expected missing-profile error. The main `doctor --plain`
 probe then reported the physical Apple TV `READY` while listing the missing
 optional stub profile as a device detail, not a degradation.
+
+On 2026-10-28 the ordinary no-stub path also ran on the physical Apple TV:
+`run 20261028-060832-b7cc` used the long-id host/runner/nested profiles,
+installed no stub, drove the real `ImpresarioAgent` host UI and passed 2/2
+steps in 59.6 s (`agent-host.png`). The selected app was the real host, not the
+stub, so this exercises the product's actual-app branch rather than the fixture.
 
 The physical P0 run `20261027-063121-00d6` used the **long** tvOS bundle ids
 and profiles created outside this new flow; it is the 105-step

@@ -201,7 +201,7 @@ an empty directory:
 ```powershell
 impresario account login                 # alias: impresario account wizard
 impresario account status                # offline view of the stored session
-impresario account status --check        # validate/refresh the developer token
+impresario account status --online       # validate/refresh the developer token
 impresario account logout
 ```
 
@@ -216,7 +216,7 @@ The session lives in `~/.impresario/apple/session.bin` and the anisette state
 in `anisette.bin`, both AES-256-GCM encrypted with a random 96-bit nonce. The
 32-byte key is in the OS credential store under service `impresario.apple`,
 user `session-key`. Apple's short-lived developer token is refreshed from the
-stored `spd` + anisette state with `status --check`; re-login is only needed if
+stored `spd` + anisette state with `status --online`; re-login is only needed if
 Apple invalidates the underlying session. `logout` removes both encrypted
 files and the key.
 
