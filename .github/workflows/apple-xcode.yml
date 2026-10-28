@@ -39,6 +39,20 @@ jobs:
         working-directory: agents/apple
         run: xcodegen generate
 
+      - name: Validate tvOS asset catalog
+        working-directory: agents/apple
+        run: |
+          mkdir -p /tmp/impresario-actool
+          xcrun actool Xcode/Shared/Assets.xcassets \
+            --compile /tmp/impresario-actool \
+            --platform appletvos \
+            --minimum-deployment-target 16.0 \
+            --target-device tv \
+            --app-icon AppIcon \
+            --compress-pngs \
+            --output-format human-readable-text \
+            --notices --warnings
+
       - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
         run: |
