@@ -91,11 +91,22 @@ remains valid evidence. The full short-ID 105-step stub play then passed:
 13 screenshots and 0 failures; an earlier attempt hit a transient
 clear-readback race at step 24 and the immediate rerun passed. A following
 ordinary no-stub run re-passed (`20261028-112028-80fd`, 2/2, 34.9 s), so the
-stub P0 teardown left the actual-app path working. The long-id run
+stub P0 teardown left the actual-app path working. On 2026-10-28 the Apple
+Xcode run `40692354201` at `e919f22` rebuilt the unsigned tvOS apps with the
+wide `logos/impresario-wide.png` icon (opaque black letterboxing, no
+stretching); that product set was imported into `products/current`. A short
+ordinary no-stub drawer run (`20261028-134722-2be7`, 2/2 steps, 36.3 s)
+showed **2** Impresario apps in the tvOS drawer (host + XCUITest runner); a
+stub-selected drawer run (`20261028-134812-0777`, 2/2 steps, 39.1 s) showed
+**3** (host + stub + runner). The host and stub render the wide logo on black;
+the runner keeps the default white XCUITest icon. The long-id run
 `20261027-063121-00d6` remains the earlier 105-step evidence. The pairing
-record used for the P0 evidence was created earlier by pymobiledevice3;
-pure-Rust pairing creation is implemented but not hardware-verified. The
-free-team live login/2FA and live provisioning/`updateDevice` are now verified;
+record used for the P0 evidence was created earlier by pymobiledevice3. On
+2026-10-28 pure-Rust pairing creation was hardware-verified on the same Apple
+TV: the manual-pairing client now performs the RPPairing handshake and a
+pair-verify attempt before pair-setup, the TV displayed the code, and the
+device-visible host name was exactly `impresario`. The free-team live login/2FA
+and live provisioning/`updateDevice` are now verified;
 the optional
 paid-team API-key path remains unit/offline-tested only. Legacy `hsa` accounts
 have a per-device SMS fallback with 4-digit-code retry, but it has not had a
@@ -235,7 +246,7 @@ not hardware.
 | ID | Technical debt | Evidence today | Planned |
 |---|---|---|---|
 | HD-1 | Apple iOS/tvOS Xcode deliverable and real-device path | The full 105-step stub play `20261027-063121-00d6` passed on `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 `23J582`, UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`) with the long tvOS ids: Home, Basic, Text, Scroll, Selection, Flags, Keys, Info, LongPress and Media (`Player => Video Playing`), 13 screenshots. The same device previously proved startup/serve, `device check`, DDI mount and direct-RSD XCUITest (I-150/I-152). On 2026-10-28 the ordinary actual-agent path also passed without the stub (`20261028-060832-b7cc`: real `ImpresarioAgent` host, 2/2 steps, 59.6 s, `agent-host.png`), again with the long ids. The short-id `master` bundles now have profiles (expiry 2026-11-04) and passed the ordinary host/no-stub run (`20261028-100103-b9ab`, 2/2), the full 105-step stub play (`20261028-110828-b477`, 105/105, 5m51s, 13 screenshots), and a post-P0 ordinary no-stub re-run (`20261028-112028-80fd`, 2/2, 34.9 s). The deeper media probes (`Showing`/decoder/DRM/position hook) and the one-time local-network prompt remain unverified; iOS hardware is unproven. | Exercise the media hook/probes; user grant for the local-network prompt if it appears |
-| HD-2 | Apple D-19, signing and account | `impresario-apple-device` owns pairing verification, RSD tunnels, DDI, signing, AFC/InstallationProxy and direct-RSD XCUITest. Development provisioning is now pure Rust too: the primary free-team route is `impresario account login` (trusted-device, SMS, or legacy `hsa` 4-digit SMS) feeding `impresario apple signing provision`; paid teams may instead use an optional App Store Connect Team API key. Provisioning registers the device/App IDs, creates/reuses the RSA identity, downloads and validates profiles, and installs the signing set (I-153). App-specific passwords cannot authenticate the developer portal, so the unattended route is an API key, not an app password. Live free-team Apple ID login/2FA, `updateDevice` and short-id provisioning are verified (2026-10-28; short-id profiles expire 2026-11-04); the optional paid-team API-key path remains unexercised. Pure-Rust pairing creation is implemented but not hardware-verified (the P0 pair record came from pymobiledevice3); DDI personalization/download is still user-supplied. No plaintext Apple ID password or API private key is stored by Impresario. | Exercise the paid-team API-key path and verify pure-Rust pairing creation |
+| HD-2 | Apple D-19, signing and account | `impresario-apple-device` owns pairing verification, RSD tunnels, DDI, signing, AFC/InstallationProxy and direct-RSD XCUITest. Development provisioning is now pure Rust too: the primary free-team route is `impresario account login` (trusted-device, SMS, or legacy `hsa` 4-digit SMS) feeding `impresario apple signing provision`; paid teams may instead use an optional App Store Connect Team API key. Provisioning registers the device/App IDs, creates/reuses the RSA identity, downloads and validates profiles, and installs the signing set (I-153). App-specific passwords cannot authenticate the developer portal, so the unattended route is an API key, not an app password. Live free-team Apple ID login/2FA, `updateDevice` and short-id provisioning are verified (2026-10-28; short-id profiles expire 2026-11-04); the optional paid-team API-key path remains unexercised. Pure-Rust pairing creation is now hardware-verified on the Apple TV (2026-10-28: the manual-pairing client performs the RPPairing handshake and pair-verify attempt before pair-setup, and the TV displayed `impresario`); the P0 pair record itself came from pymobiledevice3. DDI personalization/download is still user-supplied. No plaintext Apple ID password or API private key is stored by Impresario. | Exercise the paid-team API-key path; DDI personalization/download remains user-supplied |
 | HD-3 | webOS TV transport and install | The full native SSH/SFTP/luna transport, deterministic IPK packaging and install/launch/forward path are implemented and replay-tested. The LG TV at `192.168.93.116` exposes SSH 9922 and the key server 9991; its encrypted key was fetched to `keys/webos/192.168.93.116.pem`, but SSH authentication is blocked on the Developer Mode passphrase, so no IPK was uploaded and no install/launch ran (gap 4). The earlier 2026-10-21 four-device run used the connector/web path, not this native transport. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.3 |
 | HD-4 | Tizen TV transport, install and signing | The native SDB transport, version-gated re-signing, verified app-list install and forwarding are implemented and replay-tested. On 2026-10-25 the Samsung TV completed `device check` over SDB: the handshake finished without an AUTH challenge, then capabilities, DUID `P7CIFS3MU3C26`, 864 apps, Tizen 9.0, staging `/home/owner/share/tmp/sdk_tools`, and the signing-required warning. A temporary self-signed profile then exercised upload and install: the TV accepted the per-WRTE-acknowledged sync push and `0 vd_appinstall`, reached certificate validation, and rejected the chain with `[118, -12] Invalid certificate chain with certificate in signature`. No app was installed. A Samsung-issued, DUID-bound profile is still required, and Samsung-account certificate creation remains external (gap 4). | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §1.4 |
 | HD-5 | Android USB data and playback probes | The native `libadb`/nusb path is implemented, but this host exposed no ADB USB interface; all live phone/TV runs used TCP. Windows WinUSB setup and the USB session limits need a hardware pass (gap 15). The Android media stub and `logcat` hook path compile but have not run on hardware; exact decoder/DRM facts remain vendor-dependent. | Phase 6/7 hardware window; runbook `docs/DEVICES.md` §4.1 |
@@ -278,8 +289,9 @@ still state the limits, and no command reports success for an unverified path.
   2026-10-28 with the long ids (`20261028-060832-b7cc`, 2/2 steps, 59.6 s,
   `agent-host.png`) and again with the short ids and fresh `default` profiles
   (`20261028-100103-b9ab`, 2/2 steps, 35.4 s, `agent-host-shortid.png`). The
-  portal device record is `impresario`; the device-visible pairing name has not
-  been separately verified. The full short-id 105-step stub play passed
+  portal device record is `impresario`; the device-visible pairing name was
+  verified as exactly `impresario` during the 2026-10-28 pure-Rust re-pair.
+  The full short-id 105-step stub play passed
   (`20261028-110828-b477`, 105/105, 5m51s, 13 screenshots); an earlier attempt
   hit a transient clear-readback race and the rerun passed. The local-network
   prompt and the deeper media probes are still unverified.

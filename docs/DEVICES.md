@@ -1129,7 +1129,10 @@ Pure-Rust development provisioning now exists (I-153), and the fresh short-id
 tvOS profiles were created and used on the physical Apple TV on 2026-10-28
 (`default`, expiry `2026-11-04`). The ordinary host/no-stub run passed, and
 the full short-id 105-step stub play passed (`20261028-110828-b477`,
-105/105). The old long-id profiles expire `2026-11-02`. Use separate
+105/105). The 2026-10-28 icon rebuild (`Apple Xcode` `40692354201` at
+`e919f22`) kept those short ids and replaced only the app icon assets; that
+build was imported into `products/current`. The old long-id profiles expire
+`2026-11-02`. Use separate
 signing-set names for iOS and tvOS if the profiles are platform-specific;
 both can map the same bundle ids.
 
@@ -1173,6 +1176,14 @@ Provisioning registers the device under the name **`impresario`** (not the
 computer name, Apple TV name or `pyatv`) and renames an existing developer
 portal record to match. `--device-name` overrides this deliberately.
 
+Manual pairing follows the RPPairing protocol: the host performs the handshake
+and a pair-verify attempt before pair-setup. tvOS closes the socket if
+`setupManualPairing` is sent first. With `--code-stdin`, start the command, open
+Settings > Remotes and Devices > Remote App and Devices on the TV, and enter the
+code the TV shows after the host connects; the TV presents the host as
+**`impresario`**. On 2026-10-28 this path re-paired `RAMA (4)` and saved the
+record under UDID `a4d6ff71e98403878ba98fe85cb77e8d98d622e5`.
+
 The older import path is still supported: `identity.p12` at the root or beside
 any profile, and one directory per bundle containing
 `profile.mobileprovision` plus `entitlements.plist`, then
@@ -1214,7 +1225,9 @@ The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
 device ID `B6:FD:1D:0C:99:3C`, build `23J582`; its LAN address is dynamic (the
 2026-10-27 P0 run used `192.168.93.19`; an earlier run used
 `10.102.93.222`). Identify it by UDID in committed setup; do not pin the
-address. Developer Mode is enabled and the device trusted the host.
+address. Developer Mode is enabled and the device trusted the host. On
+2026-10-28 the pairing was recreated with the pure-Rust path and the TV
+displayed `impresario`; the wide-icon product set was imported and installed.
 The first start asks for local-network access; tvOS has no XCTest `tap`, so
 grant that one prompt with the remote. The permission is remembered after that.
 
@@ -1296,6 +1309,13 @@ Apple TV drawer while a play runs. tvOS has no supported API for hiding an
 installed app, so Impresario removes transient apps at teardown rather than
 claiming a hidden runner. An actual app installed from its package is left in
 place.
+
+The 2026-10-28 wide-icon build was checked in the drawer: an ordinary no-stub
+run (`20261028-134722-2be7`, 2/2 steps, 36.3 s) showed **2** Impresario apps
+(host + runner), and a stub-selected run (`20261028-134812-0777`, 2/2 steps,
+39.1 s) showed **3** (host + stub + runner). The host and stub icons show the
+wide `impresario` logo on black without stretching; the runner keeps the
+default white XCUITest icon.
 
 First physical run after an install: iOS/tvOS ask for local-network permission.
 The host app and test bundle declare the usage description and Bonjour service.

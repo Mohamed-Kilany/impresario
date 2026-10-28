@@ -259,6 +259,12 @@ impresario apple session --host <apple-tv-host> --udid <udid> --signing default 
 impresario apple restart --host <apple-tv-host> --udid <udid>
 ```
 
+`--code-stdin` opens the host connection first and reads the code only when the
+TV asks for it. Put the Apple TV on Settings > Remotes and Devices > Remote App
+and Devices, start the command, then enter the code the TV shows after the host
+connects. The TV presents the host as `impresario`. Manual pairing performs the
+RPPairing handshake and a pair-verify attempt before pair-setup.
+
 A signing source contains `identity.p12` and one directory per bundle with
 `profile.mobileprovision` + `entitlements.plist`. The PKCS#12 password is read
 interactively and stored in the OS credential store. For a headless import
