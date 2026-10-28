@@ -118,7 +118,8 @@ jobs:
 
   apple:
     name: "apple (Swift package: build, unit tests)"
-    runs-on: ubuntu-latest
+    # setup-swift v2 does not yet recognize Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: swift-actions/setup-swift@v2
