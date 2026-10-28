@@ -5,7 +5,7 @@
 //! machine-global under `~/.impresario/apple/`, so a project only names the
 //! device host and never carries certificates or pair secrets.
 
-use std::io::{BufRead as _, Write as _};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
