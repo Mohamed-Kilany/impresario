@@ -103,10 +103,9 @@ carries the physical-tvOS work.
   The signed copies were produced locally. Apple simulator testing was rejected by the
   user on 2026-10-25 and the simulator workflow/scripts were removed (I-148
   withdrawn), so no simulator execution is claimed. The Apple **agent
-  package** is built and unit-tested
-  here through WSL (Ubuntu 22.04, Swift 6.4.1): `swift build` and `swift test`
-  cover `AgentCore`/`AgentService`, including the full wire protocol over
-  loopback gRPC. Both halves are documented in `docs/DEVICES.md` §3; the
+  package** is built and unit-tested by the `CI` Linux Swift job: `swift build`
+  and `swift test` cover `AgentCore`/`AgentService`, including the full wire
+  protocol over loopback gRPC. Both halves are documented in `docs/DEVICES.md` §3; the
   physical-device checklist is in `agents/apple/README.md`.
 - Physical Apple TV execution no longer needs a local Mac for the UI test and
   install path used in the evidence run: a Windows Rust host performed the
@@ -326,9 +325,12 @@ marked, so the numbers used elsewhere remain stable.
    and the full 105-step play passed with the long ids on 2026-10-27; the
    actual host/no-stub path passed on 2026-10-28. The short-id bundles still
    need fresh provisioned profiles and a hardware re-run (HD-1/I-153). The
-   local gates are unchanged: Rust commands here, `gradlew test` on this host,
-   and the Apple package `swift package resolve`/`build`/`test` through WSL
-   (`docs/DEVICES.md` §3.1).
+   compile/test gates are now **GitHub CI only**: `CI` runs `cargo fmt --check`,
+   clippy, workspace tests, Android, editor, the Linux Swift package, and a
+   Windows release CLI build uploaded as `impresario-windows-x64`. This host
+   no longer runs cargo builds/tests because its disk was exhausted and the CPU
+   crashed repeatedly (I-155); only the lightweight `cargo fmt --check` is used
+   before a push. Hardware execution still happens on this host.
 8. **Stub spacing on TV — closed 2026-10-20 (I-120).** The phone keeps the
    I-81-verified 10 dp rhythm and Android TV selects 6 dp (I-109), as shown by
    the phone `stub_home.png` from run `20261020-134217-2dfe` and a fresh TV home
