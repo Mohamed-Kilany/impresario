@@ -56,8 +56,9 @@ pub struct LoginArgs {
     /// Developer team id when the Apple ID belongs to several teams.
     #[arg(long)]
     pub team: Option<String>,
-    /// Preferred two-factor method. `ask` shows the trusted-device/SMS menu.
-    #[arg(long, value_enum, default_value = "ask")]
+    /// Preferred two-factor method. `auto` tries SMS first, then a trusted
+    /// device; `ask` always shows the menu.
+    #[arg(long, value_enum, default_value = "auto")]
     pub two_factor: TwoFactorChoice,
     /// Trusted SMS number id to use with `--two-factor sms` (see the printed
     /// number list; defaults to the first trusted number).
@@ -65,8 +66,12 @@ pub struct LoginArgs {
     pub two_factor_number: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum TwoFactorChoice {
+    /// Try a trusted SMS number first, then a trusted device. This is the
+    /// default because device delivery can fail without an error from Apple.
+    #[default]
+    Auto,
     /// Show the trusted-device/SMS menu.
     Ask,
     /// Prefer a trusted device; fall back to SMS if sending fails.
@@ -163,7 +168,9 @@ fn run_login(args: &LoginArgs, store: &AppleStore) -> i32 {
         },
     };
 
-    let mut password = match rpassword::prompt_password("Apple ID password (not stored): ") {
+    let mut password = match rpassword::prompt_password(
+        "Apple ID password (not stored; app-specific passwords are not accepted here): ",
+    ) {
         Ok(password) => password,
         Err(error) => {
             eprintln!("error: could not read the Apple ID password: {error}");
@@ -211,11 +218,17 @@ fn run_login(args: &LoginArgs, store: &AppleStore) -> i32 {
 
     println!("Signing in to Apple ID {email}...");
     println!("Apple may send a 6-digit code to a trusted device or a trusted SMS number.");
-    if args.two_factor == TwoFactorChoice::Sms {
-        println!("Preferred 2FA method: SMS.");
-    } else if args.two_factor == TwoFactorChoice::Device {
-        println!("Preferred 2FA method: trusted device.");
+    match args.two_factor {
+        TwoFactorChoice::Auto => {
+            println!("Preferred 2FA method: SMS first, then a trusted device.");
+        }
+        TwoFactorChoice::Sms => println!("Preferred 2FA method: SMS."),
+        TwoFactorChoice::Device => println!("Preferred 2FA method: trusted device."),
+        TwoFactorChoice::Ask => println!("2FA method: ask each time."),
     }
+    println!(
+        "Use your Apple ID password. App-specific passwords cannot sign in to the developer portal."
+    );
     let login = runtime.block_on(authenticate(
         &email,
         &password,
@@ -224,6 +237,7 @@ fn run_login(args: &LoginArgs, store: &AppleStore) -> i32 {
         ConsoleTwoFactorPrompt {
             choice: args.two_factor,
             number: args.two_factor_number,
+            sms_attempted: false,
         },
     ));
     password.zeroize();
@@ -456,6 +470,10 @@ fn print_login_error(error: &AuthError) {
         AuthError::TwoFactorCancelled => {
             eprintln!("Apple sign-in was cancelled; no new session was saved.");
         }
+        AuthError::TwoFactorUnavailable(message) => {
+            eprintln!("{message}");
+            eprintln!("No new Apple session was saved.");
+        }
         AuthError::NoTeams => {
             eprintln!(
                 "Open https://developer.apple.com/account, accept any agreement, then retry."
@@ -516,6 +534,9 @@ fn confirm(prompt: &str, default: bool) -> io::Result<bool> {
 struct ConsoleTwoFactorPrompt {
     choice: TwoFactorChoice,
     number: Option<u32>,
+    /// Set after an automatic SMS attempt so a failed SMS does not loop back
+    /// into SMS from the trusted-device state.
+    sms_attempted: bool,
 }
 
 impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
@@ -528,39 +549,73 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
         }
 
         if params.unknown {
-            // If a forced method just failed, try the other method once before
-            // asking again. This keeps `--two-factor device|sms` usable even
-            // when Apple refuses the preferred method.
-            if self.choice == TwoFactorChoice::Device
-                && params
-                    .last_error
-                    .as_deref()
-                    .is_some_and(|error| error.starts_with("Could not send a trusted-device"))
-            {
-                if params.legacy_sms {
-                    return Ok(TwoFactorCallbackResponse::SendLegacySms);
-                }
-                if let Ok(id) = choose_number_auto(&params.numbers, self.number) {
-                    return Ok(TwoFactorCallbackResponse::SendSms(id));
-                }
-            }
-            if self.choice == TwoFactorChoice::Sms
-                && params
-                    .last_error
-                    .as_deref()
-                    .is_some_and(|error| error.starts_with("Could not send an SMS"))
-            {
-                return Ok(TwoFactorCallbackResponse::SendToDevices);
+            let device_failed = params
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Could not send a trusted-device"));
+            let sms_failed = params
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Could not send an SMS"));
+
+            if self.choice != TwoFactorChoice::Ask && self.sms_attempted && device_failed {
+                return Err(AuthError::TwoFactorUnavailable(
+                    "Apple refused the trusted-device code after an SMS attempt; retry with `--two-factor sms` or `--two-factor ask`."
+                        .to_string(),
+                ));
             }
 
+            // Try the other method once after a send failure, then stop instead
+            // of looping between two methods that Apple rejects.
             match self.choice {
+                TwoFactorChoice::Auto => {
+                    if device_failed {
+                        if params.legacy_sms {
+                            self.sms_attempted = true;
+                            return Ok(TwoFactorCallbackResponse::SendLegacySms);
+                        }
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
+                            &params.numbers,
+                            self.number,
+                        )?));
+                    }
+                    if sms_failed {
+                        return Ok(TwoFactorCallbackResponse::SendToDevices);
+                    }
+                    if params.legacy_sms {
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::SendLegacySms);
+                    }
+                    if let Ok(id) = choose_number_auto(&params.numbers, self.number) {
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::SendSms(id));
+                    }
+                    return Ok(TwoFactorCallbackResponse::SendToDevices);
+                }
                 TwoFactorChoice::Device => {
+                    if device_failed {
+                        if params.legacy_sms {
+                            self.sms_attempted = true;
+                            return Ok(TwoFactorCallbackResponse::SendLegacySms);
+                        }
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
+                            &params.numbers,
+                            self.number,
+                        )?));
+                    }
                     return Ok(TwoFactorCallbackResponse::SendToDevices);
                 }
                 TwoFactorChoice::Sms => {
+                    if sms_failed {
+                        return Ok(TwoFactorCallbackResponse::SendToDevices);
+                    }
                     if params.legacy_sms {
+                        self.sms_attempted = true;
                         return Ok(TwoFactorCallbackResponse::SendLegacySms);
                     }
+                    self.sms_attempted = true;
                     return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
                         &params.numbers,
                         self.number,
@@ -573,6 +628,9 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
                     println!("  1) Send a code to my trusted devices");
                     if sms_available {
                         println!("  2) Send a code by SMS to a trusted number");
+                        for number in params.numbers.iter().filter(|number| number.supports_sms()) {
+                            println!("       {} (id {})", masked_number(number), number.id);
+                        }
                     } else {
                         println!("  (No SMS-capable trusted number is listed.)");
                     }
@@ -582,10 +640,14 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
                         match input.as_str() {
                             "1" | "d" => return Ok(TwoFactorCallbackResponse::SendToDevices),
                             "2" | "s" if params.legacy_sms => {
+                                self.sms_attempted = true;
                                 return Ok(TwoFactorCallbackResponse::SendLegacySms);
                             }
                             "2" | "s" => match choose_number(&params.numbers)? {
-                                Some(id) => return Ok(TwoFactorCallbackResponse::SendSms(id)),
+                                Some(id) => {
+                                    self.sms_attempted = true;
+                                    return Ok(TwoFactorCallbackResponse::SendSms(id));
+                                }
                                 None => println!("Choose a trusted device instead."),
                             },
                             "q" | "quit" => return Err(AuthError::TwoFactorCancelled),
@@ -622,10 +684,16 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
                 }
                 match input.as_str() {
                     "s" if !params.legacy_sms => match choose_number(&params.numbers)? {
-                        Some(id) => return Ok(TwoFactorCallbackResponse::SendSms(id)),
+                        Some(id) => {
+                            self.sms_attempted = true;
+                            return Ok(TwoFactorCallbackResponse::SendSms(id));
+                        }
                         None => println!("Keeping the current SMS number."),
                     },
-                    "r" => return Ok(TwoFactorCallbackResponse::ResendCode),
+                    "r" => {
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::ResendCode);
+                    }
                     "d" => return Ok(TwoFactorCallbackResponse::SendToDevices),
                     "q" | "quit" => return Err(AuthError::TwoFactorCancelled),
                     _ => println!("Enter the numeric code, or one of the listed letters."),
@@ -633,19 +701,28 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
             }
         }
 
-        if self.choice == TwoFactorChoice::Sms {
+        if !self.sms_attempted
+            && matches!(self.choice, TwoFactorChoice::Auto | TwoFactorChoice::Sms)
+        {
             if params.legacy_sms {
+                self.sms_attempted = true;
                 return Ok(TwoFactorCallbackResponse::SendLegacySms);
             }
-            return Ok(TwoFactorCallbackResponse::SendSms(choose_number_auto(
-                &params.numbers,
-                self.number,
-            )?));
+            match choose_number_auto(&params.numbers, self.number) {
+                Ok(id) => {
+                    self.sms_attempted = true;
+                    return Ok(TwoFactorCallbackResponse::SendSms(id));
+                }
+                Err(error) if self.choice == TwoFactorChoice::Sms => return Err(error),
+                Err(_) => {}
+            }
         }
 
         println!("Apple sent a code to your trusted devices.");
         if params.legacy_sms || params.numbers.iter().any(TrustedNumber::supports_sms) {
-            println!("You can switch to SMS with `s`.");
+            println!("No code? Press `s` and Enter to switch to SMS, or `q` to cancel.");
+        } else {
+            println!("No code? Press `r` to resend, or `q` to cancel.");
         }
         loop {
             let input =
@@ -655,10 +732,14 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
             }
             match input.as_str() {
                 "s" if params.legacy_sms => {
+                    self.sms_attempted = true;
                     return Ok(TwoFactorCallbackResponse::SendLegacySms);
                 }
                 "s" => match choose_number(&params.numbers)? {
-                    Some(id) => return Ok(TwoFactorCallbackResponse::SendSms(id)),
+                    Some(id) => {
+                        self.sms_attempted = true;
+                        return Ok(TwoFactorCallbackResponse::SendSms(id));
+                    }
                     None => println!("No SMS number was selected."),
                 },
                 "r" => return Ok(TwoFactorCallbackResponse::ResendCode),
@@ -789,6 +870,11 @@ mod tests {
             push_mode: push_mode.to_string(),
             ..number(id, last_two_digits)
         }
+    }
+
+    #[test]
+    fn default_two_factor_is_auto_sms_first() {
+        assert_eq!(TwoFactorChoice::default(), TwoFactorChoice::Auto);
     }
 
     #[test]

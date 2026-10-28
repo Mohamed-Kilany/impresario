@@ -68,6 +68,8 @@ pub enum AuthError {
     Prompt(String),
     #[error("2FA was cancelled")]
     TwoFactorCancelled,
+    #[error("{0}")]
+    TwoFactorUnavailable(String),
     #[error("the stored Apple session expired; run `impresario account login --force`")]
     Expired,
 }

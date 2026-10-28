@@ -201,22 +201,38 @@ under `~/.impresario/apple/`. The password is entered interactively with
 state are AES-256-GCM blobs; the 32-byte key lives in the OS credential store
 under service `impresario.apple`.
 
-2FA accepts either a trusted-device code or an SMS code. The console prompt
-offers both; `--two-factor device|sms|ask` and `--two-factor-number <id>`
-select a method/number non-interactively. SMS delivery lists the trusted phone
-numbers Apple returns and can resend, go back or cancel. Voice-only numbers are
-not offered as SMS targets. Legacy `hsa` accounts, which list a single
+2FA accepts either a trusted-device code or an SMS code. The default is
+`--two-factor auto`, which tries an SMS-capable trusted number first and falls
+back to a trusted device; `--two-factor device|sms|ask` and
+`--two-factor-number <id>` select a method/number explicitly. SMS delivery
+lists the trusted phone numbers Apple returns and can resend, go back or
+cancel. Voice-only numbers are not offered as SMS targets. Legacy `hsa` accounts, which list a single
 SMS-capable device under `trustedDevices` instead of `trustedPhoneNumbers`, use
 Apple's per-device security-code endpoint and accept 4-digit codes. Offline
 tests cover the 2FA state machine, legacy-device detection and SMS number
 selection; a live Apple login/2FA still needs to be exercised.
 
-Apple app-specific passwords are not a developer-portal login method. Apple's
-legacy `clientDAW.cgi` endpoint is gone and the portal still requires 2FA, so
-Impresario does not offer an app-specific-password login path. The interactive
+Apple app-specific passwords are not a developer-portal login method. Apple
+scopes them to third-party apps that access iCloud data
+(<https://support.apple.com/en-us/102654>), and the legacy `clientDAW.cgi`
+endpoint is gone; the developer portal still requires 2FA, so Impresario does
+not offer an app-specific-password login path. The interactive
 Apple ID login above is the primary route, including for free personal teams.
 Free teams cannot create App Store Connect API keys; the API-key route below is
 an optional unattended path for paid developer-program teams only.
+
+If no code arrives, try the SMS path explicitly:
+
+```powershell
+impresario account login --force --two-factor sms -v
+```
+
+Then check the trusted phone number in the Apple ID settings. Voice-only
+numbers are not valid SMS targets, and Apple can refuse SMS with
+`423 / -24056`; use a trusted device in that case. If the account has no
+reachable trusted device or SMS number, use Apple's account-recovery flow or a
+different Apple ID. Accounts that use a security key instead of a code are not
+supported by this login.
 
 ### Optional unattended provisioning (paid teams)
 

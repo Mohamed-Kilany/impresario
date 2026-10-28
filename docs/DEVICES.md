@@ -1109,7 +1109,8 @@ Machine-global setup (the project holds no pairing secrets or certificates):
 
 ```bash
 # Primary free-team route: one global encrypted Apple ID session.
-# Supports trusted-device, SMS, and legacy hsa 4-digit SMS 2FA:
+# Supports trusted-device, SMS, and legacy hsa 4-digit SMS 2FA.
+# Default is SMS-first; add --two-factor device|sms|ask to override:
 impresario account login
 impresario account status --online
 
