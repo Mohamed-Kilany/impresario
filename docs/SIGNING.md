@@ -205,15 +205,20 @@ under service `impresario.apple`.
 offers both; `--two-factor device|sms|ask` and `--two-factor-number <id>`
 select a method/number non-interactively. SMS delivery lists the trusted phone
 numbers Apple returns and can resend, go back or cancel. Voice-only numbers are
-not offered as SMS targets. Offline tests cover the state machine and SMS
-number selection; a live Apple login/2FA has not been exercised yet.
+not offered as SMS targets. Legacy `hsa` accounts, which list a single
+SMS-capable device under `trustedDevices` instead of `trustedPhoneNumbers`, use
+Apple's per-device security-code endpoint and accept 4-digit codes. Offline
+tests cover the 2FA state machine, legacy-device detection and SMS number
+selection; a live Apple login/2FA still needs to be exercised.
 
 Apple app-specific passwords are not a developer-portal login method. Apple's
 legacy `clientDAW.cgi` endpoint is gone and the portal still requires 2FA, so
-Impresario does not offer an app-specific-password login path. Use an App Store
-Connect API key for unattended provisioning.
+Impresario does not offer an app-specific-password login path. The interactive
+Apple ID login above is the primary route, including for free personal teams.
+Free teams cannot create App Store Connect API keys; the API-key route below is
+an optional unattended path for paid developer-program teams only.
 
-### Unattended provisioning with an App Store Connect API key
+### Optional unattended provisioning (paid teams)
 
 A **Team Key** from App Store Connect is Apple's supported no-2FA route for
 certificates and profiles. Create it once in the browser:
@@ -283,6 +288,9 @@ developer-portal device record to `impresario`; `--device-name` overrides that
 for a deliberate exception.
 
 ### Provisioning a signing set
+
+The default provisioning route uses the stored Apple ID session from
+`account login`; no API-key flags are needed for a free personal team.
 
 ```powershell
 # Generate host + runner + nested test profiles (no stub):

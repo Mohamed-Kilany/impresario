@@ -33,6 +33,9 @@ pub struct AppleAccount {
     pub anisette_generator: AnisetteDataGenerator,
     pub grandslam_client: Arc<GrandSlam>,
     pub trusted_phone_numbers: Option<Vec<TrustedNumber>>,
+    /// Legacy (`hsa`) accounts list their SMS target under `trustedDevices`
+    /// instead of `trustedPhoneNumbers`; the id is a string.
+    hsa_sms_device_id: Option<String>,
     login_state: LoginState,
     debug: bool,
     last_error: Option<String>,
@@ -81,12 +84,16 @@ pub struct TwoFactorCallbackParams {
     pub sms: bool,
     pub numbers: Vec<TrustedNumber>,
     pub selected_number_id: Option<u32>,
+    /// Legacy `hsa` accounts have one SMS target but no `trustedPhoneNumbers`
+    /// list. The caller should offer SMS without a number picker.
+    pub legacy_sms: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TwoFactorCallbackResponse {
     SubmitCode(String),
     SendSms(u32),
+    SendLegacySms,
     SendToDevices,
     ResendCode,
     Abort,
@@ -156,6 +163,26 @@ fn secondary_auth_state(value: &str) -> LoginState {
     }
 }
 
+/// The SMS entry in a legacy (`hsa`) `/auth` reply, for example
+/// `{"trustedDevices":[{"id":"-123","type":"sms"}]}`. Legacy accounts have no
+/// `trustedPhoneNumbers` list; their trusted device id is a string.
+fn hsa_sms_device_id(json: &serde_json::Value) -> Option<String> {
+    let device = json
+        .get("trustedDevices")?
+        .as_array()?
+        .iter()
+        .find(|device| {
+            device
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("sms"))
+        })?;
+    let id = device.get("id")?;
+    id.as_str()
+        .map(str::to_string)
+        .or_else(|| id.as_i64().map(|value| value.to_string()))
+}
+
 /// Extracts the resync SIM (base64 `X-Apple-I-MD-DATA`) from a GSA response that
 /// demands an anisette resync (`Status.hsc == 434`); `None` otherwise.
 fn resync_sim(resp: &plist::Dictionary) -> Option<String> {
@@ -213,6 +240,7 @@ impl AppleAccount {
             debug,
             login_state: LoginState::NeedsLogin,
             trusted_phone_numbers: None,
+            hsa_sms_device_id: None,
             last_error: None,
             err_429_retries,
         })
@@ -278,6 +306,7 @@ impl AppleAccount {
                         sms: false,
                         numbers: self.trusted_phone_numbers.clone().unwrap_or_default(),
                         selected_number_id: None,
+                        legacy_sms: self.hsa_sms_device_id.is_some(),
                     })
                     .await?;
                     self.last_error = None;
@@ -290,6 +319,9 @@ impl AppleAccount {
                         }
                         TwoFactorCallbackResponse::SendSms(selected_number_id) => {
                             self.login_state = self.select_number(selected_number_id)?;
+                        }
+                        TwoFactorCallbackResponse::SendLegacySms => {
+                            self.login_state = self.legacy_sms_state()?;
                         }
                         TwoFactorCallbackResponse::SendToDevices
                         | TwoFactorCallbackResponse::ResendCode => {
@@ -321,6 +353,7 @@ impl AppleAccount {
                         sms: true,
                         numbers: self.trusted_phone_numbers.clone().unwrap_or_default(),
                         selected_number_id: Some(id),
+                        legacy_sms: self.hsa_sms_device_id.is_some(),
                     })
                     .await?;
                     self.last_error = None;
@@ -333,6 +366,9 @@ impl AppleAccount {
                         }
                         TwoFactorCallbackResponse::SendSms(selected_number_id) => {
                             self.login_state = self.select_number(selected_number_id)?;
+                        }
+                        TwoFactorCallbackResponse::SendLegacySms => {
+                            self.login_state = self.legacy_sms_state()?;
                         }
                         TwoFactorCallbackResponse::ResendCode => {
                             self.login_state = LoginState::NeedsSMS2FA(id);
@@ -373,6 +409,7 @@ impl AppleAccount {
                         sms: false,
                         numbers: self.trusted_phone_numbers.clone().unwrap_or_default(),
                         selected_number_id: None,
+                        legacy_sms: self.hsa_sms_device_id.is_some(),
                     })
                     .await?;
                     self.last_error = None;
@@ -382,6 +419,9 @@ impl AppleAccount {
                         }
                         TwoFactorCallbackResponse::SendSms(selected_number_id) => {
                             self.login_state = self.select_number(selected_number_id)?;
+                        }
+                        TwoFactorCallbackResponse::SendLegacySms => {
+                            self.login_state = self.legacy_sms_state()?;
                         }
                         TwoFactorCallbackResponse::SendToDevices => {
                             self.login_state = self.request_trusted_device_code().await;
@@ -517,6 +557,18 @@ impl AppleAccount {
     }
 
     async fn send_sms_2fa(&mut self, id: u32) -> Result<LoginState, Report> {
+        if id == 0 && self.hsa_sms_device_id.is_some() {
+            let device_id = self
+                .hsa_sms_device_id
+                .clone()
+                .ok_or_else(|| report!("Legacy SMS target is unavailable"))?;
+            if !self.hsa_security_code(&device_id, None).await? {
+                bail!("Apple rejected the legacy SMS request");
+            }
+            info!("SMS 2FA request sent to the legacy trusted device");
+            return Ok(LoginState::NeedsSMS2FAVerification(0));
+        }
+
         let anisette_data = self
             .anisette_generator
             .get_anisette_data(self.grandslam_client.clone())
@@ -610,6 +662,18 @@ impl AppleAccount {
     }
 
     async fn verify_sms_2fa(&mut self, code: String, id: u32) -> Result<LoginState, Report> {
+        if id == 0 && self.hsa_sms_device_id.is_some() {
+            let device_id = self
+                .hsa_sms_device_id
+                .clone()
+                .ok_or_else(|| report!("Legacy SMS target is unavailable"))?;
+            if self.hsa_security_code(&device_id, Some(&code)).await? {
+                debug!("Legacy SMS 2FA completed, need to login again");
+                return Ok(LoginState::NeedsLogin);
+            }
+            return Ok(LoginState::NeedsSMS2FAVerification(0));
+        }
+
         let anisette_data = self
             .anisette_generator
             .get_anisette_data(self.grandslam_client.clone())
@@ -735,6 +799,90 @@ impl AppleAccount {
         })
     }
 
+    /// Parse either the vendor JSON error or a GrandSlam plist error.
+    fn parse_apple_error(text: &str) -> Option<SMSTwoFactorError> {
+        if let Some(error) = Self::parse_sms_service_error(text) {
+            return Some(error);
+        }
+
+        let plist: Dictionary = plist::from_bytes(text.as_bytes()).ok()?;
+        let status = plist
+            .get("Status")
+            .and_then(plist::Value::as_dictionary)
+            .unwrap_or(&plist);
+        let code = status.get_signed_integer("ec").unwrap_or(0);
+        if code == 0 {
+            return None;
+        }
+        let message = status
+            .get_str("em")
+            .unwrap_or("Apple did not provide a reason");
+        Some(SMSTwoFactorError {
+            code: code.to_string(),
+            title: String::new(),
+            message: message.to_string(),
+        })
+    }
+
+    /// Legacy (`hsa`) accounts use a per-device security-code endpoint. The
+    /// response may be a vendor JSON error or a GrandSlam plist. Return `false`
+    /// only for a wrong code, so the caller can prompt again.
+    async fn hsa_security_code(
+        &mut self,
+        device_id: &str,
+        code: Option<&str>,
+    ) -> Result<bool, Report> {
+        let anisette_data = self
+            .anisette_generator
+            .get_anisette_data(self.grandslam_client.clone())
+            .await
+            .context("Failed to get anisette data for legacy 2FA")?;
+        let url = format!("https://gsa.apple.com/auth/verify/device/{device_id}/securitycode");
+        let request = match code {
+            Some(code) => self
+                .grandslam_client
+                .post_sms(&url)?
+                .body(serde_json::json!({ "code": code }).to_string()),
+            None => self.grandslam_client.put_sms(&url)?,
+        };
+        let response = request
+            .headers(self.build_2fa_headers(&anisette_data).await?)
+            .send()
+            .await
+            .context("Failed to reach the legacy 2FA endpoint")?;
+        let status = response.status().as_u16();
+        let text = response
+            .text()
+            .await
+            .context("Failed to read the legacy 2FA response")?;
+
+        if let Some(error) = Self::parse_apple_error(&text) {
+            if error.code == "-21669" {
+                warn!("{}", error.detail());
+                self.last_error = Some(error.detail());
+                return Ok(false);
+            }
+            bail!(
+                "Legacy 2FA request failed (code {}): {}",
+                error.code,
+                error.detail()
+            );
+        }
+
+        if (200..300).contains(&status) {
+            Ok(true)
+        } else {
+            bail!("Legacy 2FA request failed with HTTP status {status}")
+        }
+    }
+
+    fn legacy_sms_state(&self) -> Result<LoginState, Report> {
+        if self.hsa_sms_device_id.is_none() {
+            bail!("Apple did not advertise a legacy SMS target");
+        }
+        Ok(LoginState::NeedsSMS2FA(0))
+    }
+
     async fn update_trusted_numbers(&mut self) {
         if self.trusted_phone_numbers.is_some() {
             return;
@@ -778,18 +926,29 @@ impl AppleAccount {
             .text()
             .await
             .context("Failed to read SMS 2FA error response text")?;
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-            && let Some(numbers) = json.get("trustedPhoneNumbers")
-        {
-            let numbers: Vec<TrustedNumber> = serde_json::from_value(numbers.clone())
-                .context("Failed to parse trusted phone numbers")?;
-            debug!(
-                "Retrieved {} trusted phone numbers (status {}): {:?}",
-                numbers.len(),
-                status,
-                numbers
-            );
-            return Ok(numbers);
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(numbers) = json.get("trustedPhoneNumbers") {
+                let numbers: Vec<TrustedNumber> = serde_json::from_value(numbers.clone())
+                    .context("Failed to parse trusted phone numbers")?;
+                if !numbers.is_empty() {
+                    debug!(
+                        "Retrieved {} trusted phone numbers (status {}): {:?}",
+                        numbers.len(),
+                        status,
+                        numbers
+                    );
+                    return Ok(numbers);
+                }
+            }
+
+            if let Some(device_id) = hsa_sms_device_id(&json) {
+                debug!(
+                    "Legacy hsa account: SMS goes to trusted device {}",
+                    device_id
+                );
+                self.hsa_sms_device_id = Some(device_id);
+                return Ok(Vec::new());
+            }
         }
 
         bail!(
@@ -1327,6 +1486,51 @@ mod tests {
                 message: "Try again later.".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn legacy_hsa_sms_device_ids_are_detected() {
+        let json = serde_json::json!({
+            "authType": "hsa",
+            "trustedDevices": [
+                { "id": "-1234567890", "type": "sms" }
+            ]
+        });
+        assert_eq!(hsa_sms_device_id(&json).as_deref(), Some("-1234567890"));
+
+        let numeric_id = serde_json::json!({
+            "trustedDevices": [
+                { "id": 42, "type": "sms" }
+            ]
+        });
+        assert_eq!(hsa_sms_device_id(&numeric_id).as_deref(), Some("42"));
+
+        let no_sms = serde_json::json!({
+            "trustedDevices": [
+                { "id": "-1", "type": "trustedDevice" }
+            ]
+        });
+        assert_eq!(hsa_sms_device_id(&no_sms), None);
+    }
+
+    #[test]
+    fn legacy_hsa_plist_errors_are_parsed() {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Status</key>
+  <dict>
+    <key>ec</key>
+    <integer>-21669</integer>
+    <key>em</key>
+    <string>Incorrect verification code.</string>
+  </dict>
+</dict>
+</plist>"#;
+        let error = AppleAccount::parse_apple_error(body).unwrap();
+        assert_eq!(error.code, "-21669");
+        assert_eq!(error.detail(), "Incorrect verification code.");
     }
 
     #[test]

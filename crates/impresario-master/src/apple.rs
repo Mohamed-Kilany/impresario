@@ -223,10 +223,11 @@ pub struct ProvisionArgs {
     /// Required with `--api-key` unless `IMPRESARIO_APPLE_TEAM_ID` is set.
     #[arg(long)]
     pub team: Option<String>,
-    /// App Store Connect API key (`.p8`) for unattended provisioning.
+    /// Optional App Store Connect API key (`.p8`) for unattended provisioning.
     ///
-    /// This bypasses Apple ID password and 2FA. Also accepts
-    /// `IMPRESARIO_APPLE_API_KEY` as a path.
+    /// Only paid developer-program teams can create these keys. Free Apple IDs
+    /// must use `impresario account login`. This bypasses Apple ID password and
+    /// 2FA. Also accepts `IMPRESARIO_APPLE_API_KEY` as a path.
     #[arg(
         long,
         value_name = "AUTH_KEY.p8",
@@ -253,7 +254,8 @@ pub struct CertificatesArgs {
     /// Developer team id; defaults to the team stored by `account login`.
     #[arg(long)]
     pub team: Option<String>,
-    /// App Store Connect API key (`.p8`) for unattended certificate listing.
+    /// Optional App Store Connect API key (`.p8`) for unattended certificate
+    /// listing; paid teams only. Free Apple IDs use `account login`.
     #[arg(
         long,
         value_name = "AUTH_KEY.p8",

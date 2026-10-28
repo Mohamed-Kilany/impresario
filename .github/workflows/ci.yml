@@ -36,6 +36,24 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
 
+  windows:
+    name: windows (release CLI artifact)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build CLI
+        run: cargo build --locked -p impresario-master --release
+      - name: Upload CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: impresario-windows-x64
+          path: target/release/impresario.exe
+          if-no-files-found: error
+          retention-days: 14
+
   editor:
     name: editor (TypeScript, WASM corpus, VS Code host)
     runs-on: ubuntu-latest
