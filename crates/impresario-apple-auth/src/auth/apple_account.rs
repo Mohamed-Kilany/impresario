@@ -60,6 +60,18 @@ pub struct TrustedNumber {
     pub id: u32,
 }
 
+impl TrustedNumber {
+    /// Whether Apple can deliver an SMS code to this number.
+    ///
+    /// Trusted numbers also include voice-only entries. Those must not be
+    /// offered as SMS targets: Apple rejects them with `-24056`. Treat an
+    /// unannotated entry as SMS-capable for compatibility with older replies.
+    #[must_use]
+    pub fn supports_sms(&self) -> bool {
+        self.push_mode.is_empty() || self.push_mode.eq_ignore_ascii_case("sms")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TwoFactorCallbackParams {
@@ -85,6 +97,19 @@ pub struct SMSTwoFactorError {
     pub code: String,
     pub title: String,
     pub message: String,
+}
+
+impl SMSTwoFactorError {
+    /// User-facing detail. Apple often omits `title` on SMS service errors;
+    /// don't print a placeholder such as "No title provided" in that case.
+    #[must_use]
+    pub fn detail(&self) -> String {
+        if self.title.trim().is_empty() {
+            self.message.clone()
+        } else {
+            format!("{} - {}", self.title, self.message)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -238,16 +263,13 @@ impl AppleAccount {
                     return Ok(());
                 }
                 LoginState::NeedsDevice2FA => {
+                    // Apple says a trusted device can satisfy 2FA, but it may
+                    // also accept an SMS. Do not trigger a device code yet:
+                    // an outstanding device code makes Apple refuse the SMS
+                    // endpoint with 423/-24056. Let the caller choose first.
                     self.update_trusted_numbers().await;
-                    if let Err(error) = self.send_trusted_device_2fa().await {
-                        warn!("Could not send a trusted-device code: {error}");
-                        self.last_error = Some(format!(
-                            "Could not send a trusted-device code: {error}. Choose SMS or try again."
-                        ));
-                        self.login_state = LoginState::NeedsUnknown2FA;
-                    } else {
-                        self.login_state = LoginState::NeedsDevice2FAVerification;
-                    }
+                    info!("Apple requires a second factor; choose a method");
+                    self.login_state = LoginState::NeedsUnknown2FA;
                 }
                 LoginState::NeedsDevice2FAVerification => {
                     let response = two_factor_callback(TwoFactorCallbackParams {
@@ -271,7 +293,7 @@ impl AppleAccount {
                         }
                         TwoFactorCallbackResponse::SendToDevices
                         | TwoFactorCallbackResponse::ResendCode => {
-                            self.login_state = LoginState::NeedsDevice2FA;
+                            self.login_state = self.request_trusted_device_code().await;
                         }
                         TwoFactorCallbackResponse::Abort => {
                             bail!("No 2FA code provided, aborting")
@@ -316,7 +338,7 @@ impl AppleAccount {
                             self.login_state = LoginState::NeedsSMS2FA(id);
                         }
                         TwoFactorCallbackResponse::SendToDevices => {
-                            self.login_state = LoginState::NeedsDevice2FA;
+                            self.login_state = self.request_trusted_device_code().await;
                         }
                         TwoFactorCallbackResponse::Abort => {
                             bail!("No 2FA code provided, aborting")
@@ -362,7 +384,7 @@ impl AppleAccount {
                             self.login_state = self.select_number(selected_number_id)?;
                         }
                         TwoFactorCallbackResponse::SendToDevices => {
-                            self.login_state = LoginState::NeedsDevice2FA;
+                            self.login_state = self.request_trusted_device_code().await;
                         }
                         TwoFactorCallbackResponse::ResendCode => {
                             bail!("Cannot resend code without knowing which method to use");
@@ -425,6 +447,24 @@ impl AppleAccount {
         info!("Trusted device 2FA request sent");
 
         Ok(())
+    }
+
+    /// Trigger a trusted-device code and move to verification. If Apple refuses
+    /// the push, return to the method menu instead of ending the login.
+    async fn request_trusted_device_code(&mut self) -> LoginState {
+        match self.send_trusted_device_2fa().await {
+            Ok(()) => {
+                self.last_error = None;
+                LoginState::NeedsDevice2FAVerification
+            }
+            Err(error) => {
+                warn!("Could not send a trusted-device code: {error}");
+                self.last_error = Some(format!(
+                    "Could not send a trusted-device code: {error}. Choose SMS or try again."
+                ));
+                LoginState::NeedsUnknown2FA
+            }
+        }
     }
 
     async fn verify_trusted_device_2fa(&mut self, code: String) -> Result<LoginState, Report> {
@@ -527,27 +567,42 @@ impl AppleAccount {
                 info!("SMS 2FA challenge already active, proceeding to verification");
             }
             SmsSendOutcome::ServiceError(error) => {
+                let detail = error.detail();
                 if error.code == "-28248" {
-                    warn!("{} - {}", error.title, error.message);
-                    self.last_error = format!("{} - {}", error.title, error.message).into();
+                    warn!("{detail}");
+                    self.last_error = Some(format!(
+                        "Could not send an SMS code: {detail}. Choose a trusted device or try again later."
+                    ));
                     return Ok(LoginState::NeedsUnknown2FA);
+                }
+
+                if error.code == "-24056" {
+                    // Apple refuses the text but expects a trusted-device code.
+                    // Get one and ask for it instead of looping on the SMS menu.
+                    warn!("Apple refused this SMS number: {detail}");
+                    let state = self.request_trusted_device_code().await;
+                    self.last_error = Some(if state == LoginState::NeedsDevice2FAVerification {
+                        format!(
+                            "Apple refused the SMS code: {detail} Enter the code sent to your trusted devices."
+                        )
+                    } else {
+                        format!(
+                            "Could not send an SMS code: {detail} Choose another verification method."
+                        )
+                    });
+                    return Ok(state);
                 }
 
                 if matches!(error.code.as_str(), "-22979" | "-22981") {
                     // Apple refused to send a new SMS, but the last code sent is
                     // still valid: keep the selected number and let the user
                     // enter it without triggering another send.
-                    warn!("{} - {}", error.title, error.message);
-                    self.last_error = format!("{} - {}", error.title, error.message).into();
+                    warn!("{detail}");
+                    self.last_error = Some(detail);
                     return Ok(LoginState::NeedsSMS2FAVerification(id));
                 }
 
-                bail!(
-                    "SMS 2FA request failed (code {}): {} - {}",
-                    error.code,
-                    error.title,
-                    error.message
-                );
+                bail!("SMS 2FA request failed (code {}): {}", error.code, detail);
             }
         }
 
@@ -591,16 +646,16 @@ impl AppleAccount {
 
             if error.code == "-21669" {
                 // Incorrect Verification Code, let the user try again
-                warn!("{} - {}", error.title, error.message);
-                self.last_error = format!("{} - {}", error.title, error.message).into();
+                let detail = error.detail();
+                warn!("{detail}");
+                self.last_error = Some(detail);
                 return Ok(LoginState::NeedsSMS2FAVerification(id));
             }
 
             bail!(
-                "SMS 2FA code submission failed (code {}): {} - {}",
+                "SMS 2FA code submission failed (code {}): {}",
                 error.code,
-                error.title,
-                error.message
+                error.detail()
             );
         };
 
@@ -657,11 +712,11 @@ impl AppleAccount {
         let title = first_error
             .get("title")
             .and_then(|t| t.as_str())
-            .unwrap_or("No title provided");
+            .unwrap_or("");
         let message = first_error
             .get("message")
             .and_then(|m| m.as_str())
-            .unwrap_or("No message provided");
+            .unwrap_or("Apple did not provide a reason");
 
         Some(SMSTwoFactorError {
             code: code.to_string(),
@@ -747,6 +802,12 @@ impl AppleAccount {
     fn select_number(&self, selected_number_id: u32) -> Result<LoginState, Report> {
         let numbers = self.trusted_phone_numbers.clone().unwrap_or_default();
         if let Some(number) = numbers.iter().find(|n| n.id == selected_number_id) {
+            if !number.supports_sms() {
+                bail!(
+                    "Trusted number ending in {} cannot receive SMS codes; use a trusted device or add an SMS-capable number",
+                    number.last_two_digits
+                );
+            }
             debug!("Selected trusted number: {}", number.number_with_dial_code);
             return Ok(LoginState::NeedsSMS2FA(number.id));
         }
@@ -1266,5 +1327,47 @@ mod tests {
                 message: "Try again later.".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn only_sms_trusted_numbers_are_offered_for_sms() {
+        let sms = TrustedNumber {
+            number_with_dial_code: "+1 555 0100".to_string(),
+            last_two_digits: "00".to_string(),
+            push_mode: "sms".to_string(),
+            id: 1,
+        };
+        assert!(sms.supports_sms());
+
+        let voice = TrustedNumber {
+            push_mode: "voice".to_string(),
+            ..sms.clone()
+        };
+        assert!(!voice.supports_sms());
+
+        let unannotated = TrustedNumber {
+            push_mode: String::new(),
+            ..sms
+        };
+        assert!(unannotated.supports_sms());
+    }
+
+    #[test]
+    fn sms_errors_without_a_title_do_not_print_a_placeholder() {
+        let body = serde_json::json!({
+            "serviceErrors": [{
+                "code": "-24056",
+                "message": "This phone number cannot be used at this time."
+            }]
+        })
+        .to_string();
+        let error = AppleAccount::parse_sms_service_error(&body).unwrap();
+        assert_eq!(error.code, "-24056");
+        assert_eq!(error.title, "");
+        assert_eq!(
+            error.detail(),
+            "This phone number cannot be used at this time."
+        );
+        assert!(!error.detail().contains("No title provided"));
     }
 }

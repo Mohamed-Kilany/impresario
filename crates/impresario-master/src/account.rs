@@ -561,9 +561,14 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
                     )?));
                 }
                 TwoFactorChoice::Ask => {
+                    let sms_available = params.numbers.iter().any(TrustedNumber::supports_sms);
                     println!("Apple needs a verification method.");
                     println!("  1) Send a code to my trusted devices");
-                    println!("  2) Send a code by SMS to a trusted number");
+                    if sms_available {
+                        println!("  2) Send a code by SMS to a trusted number");
+                    } else {
+                        println!("  (No SMS-capable trusted number is listed.)");
+                    }
                     println!("  q) Cancel");
                     loop {
                         let input = read_line("Choose [1/2/q]: ")?;
@@ -621,7 +626,7 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
         }
 
         println!("Apple sent a code to your trusted devices.");
-        if !params.numbers.is_empty() {
+        if params.numbers.iter().any(TrustedNumber::supports_sms) {
             println!("You can switch to SMS with `s`.");
         }
         loop {
@@ -644,30 +649,37 @@ impl TwoFactorPrompt for ConsoleTwoFactorPrompt {
 }
 
 /// Select a trusted SMS number without prompting. `requested` is an Apple
-/// phone-number id; when omitted, the first advertised number is used.
+/// phone-number id; when omitted, the first advertised SMS-capable number is
+/// used. Voice-only trusted numbers are not valid SMS targets.
 fn choose_number_auto(numbers: &[TrustedNumber], requested: Option<u32>) -> Result<u32, AuthError> {
-    if numbers.is_empty() {
+    let sms_numbers = numbers
+        .iter()
+        .filter(|number| number.supports_sms())
+        .collect::<Vec<_>>();
+    if sms_numbers.is_empty() {
         return Err(AuthError::Prompt(
-            "Apple did not advertise a trusted SMS number; use a trusted device or add an SMS number to the Apple ID"
+            "Apple did not advertise an SMS-capable trusted number; use a trusted device or add an SMS-capable number to the Apple ID"
                 .to_string(),
         ));
     }
     let number = match requested {
-        Some(id) => numbers
+        Some(id) => sms_numbers
             .iter()
             .find(|number| number.id == id)
+            .copied()
             .ok_or_else(|| {
-                let available = numbers
+                let available = sms_numbers
                     .iter()
                     .map(|number| format!("{} (id {})", masked_number(number), number.id))
                     .collect::<Vec<_>>()
                     .join(", ");
                 AuthError::Prompt(format!(
-                    "trusted SMS number id {id} is not on this Apple ID; available: {available}"
+                    "trusted SMS number id {id} is not available; SMS-capable numbers: {available}"
                 ))
             })?,
-        None => numbers
+        None => sms_numbers
             .first()
+            .copied()
             .ok_or_else(|| AuthError::Prompt("no trusted SMS number is available".to_string()))?,
     };
     println!("Using SMS number {}.", masked_number(number));
@@ -675,12 +687,22 @@ fn choose_number_auto(numbers: &[TrustedNumber], requested: Option<u32>) -> Resu
 }
 
 fn choose_number(numbers: &[TrustedNumber]) -> Result<Option<u32>, AuthError> {
-    if numbers.is_empty() {
-        println!("No trusted SMS numbers are available on this Apple ID.");
+    let sms_numbers = numbers
+        .iter()
+        .filter(|number| number.supports_sms())
+        .collect::<Vec<_>>();
+    if sms_numbers.is_empty() {
+        if numbers.is_empty() {
+            println!("No trusted SMS numbers are available on this Apple ID.");
+        } else {
+            println!(
+                "Apple lists no SMS-capable trusted number for this Apple ID. Use a trusted device instead."
+            );
+        }
         return Ok(None);
     }
     println!("Trusted SMS numbers:");
-    for (index, number) in numbers.iter().enumerate() {
+    for (index, number) in sms_numbers.iter().enumerate() {
         println!("  {}) {}", index.saturating_add(1), masked_number(number));
     }
     println!("  b) Back");
@@ -694,14 +716,17 @@ fn choose_number(numbers: &[TrustedNumber]) -> Result<Option<u32>, AuthError> {
             return Err(AuthError::TwoFactorCancelled);
         }
         if let Ok(choice) = input.parse::<usize>() {
-            if choice >= 1 && choice <= numbers.len() {
-                if let Some(number) = numbers.get(choice.saturating_sub(1)) {
+            if choice >= 1 && choice <= sms_numbers.len() {
+                if let Some(number) = sms_numbers.get(choice.saturating_sub(1)).copied() {
                     println!("Using {}.", masked_number(number));
                     return Ok(Some(number.id));
                 }
             }
         }
-        eprintln!("Enter a number between 1 and {}, b, or q.", numbers.len());
+        eprintln!(
+            "Enter a number between 1 and {}, b, or q.",
+            sms_numbers.len()
+        );
     }
 }
 
@@ -738,11 +763,31 @@ mod tests {
         }
     }
 
+    fn number_with_mode(id: u32, last_two_digits: &str, push_mode: &str) -> TrustedNumber {
+        TrustedNumber {
+            push_mode: push_mode.to_string(),
+            ..number(id, last_two_digits)
+        }
+    }
+
     #[test]
     fn auto_sms_prefers_the_requested_apple_number_id() {
         let numbers = vec![number(3, "03"), number(7, "07")];
         assert_eq!(choose_number_auto(&numbers, Some(7)).unwrap(), 7);
         assert_eq!(choose_number_auto(&numbers, None).unwrap(), 3);
+    }
+
+    #[test]
+    fn auto_sms_ignores_voice_only_trusted_numbers() {
+        let numbers = vec![
+            number_with_mode(3, "03", "voice"),
+            number_with_mode(7, "07", "sms"),
+        ];
+        assert!(choose_number_auto(&numbers, Some(3)).is_err());
+        assert_eq!(choose_number_auto(&numbers, None).unwrap(), 7);
+
+        let voice_only = vec![number_with_mode(9, "09", "voice")];
+        assert!(choose_number_auto(&voice_only, None).is_err());
     }
 
     #[test]
