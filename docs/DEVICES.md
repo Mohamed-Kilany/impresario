@@ -1068,6 +1068,16 @@ long-id profiles; live Apple ID login/2FA, live API-key provisioning and
 Connect client and API-key provisioning path are covered by offline tests
 (ES256 JWT, platform/profile-type mapping, certificate-limit detection).
 
+On 2026-10-28 the current `master` short-id tvOS product set
+(`com.impresario.agent`, `com.impresario.agent.tests.xctrunner`,
+`com.impresario.agent.tests`, `com.impresario.stub`) was built by the Apple
+Xcode workflow and imported as the machine-global `products/current`. The
+existing pair record and tvOS 26.1 DDI were consolidated into
+`~/.impresario/apple`; `impresario apple doctor --host 192.168.93.19 --plain`
+reached `RAMA (4)` with the DDI mounted and listed the short ids, then stopped
+only because signing set `default` is absent. This is product/pairing
+readiness, not signing or install evidence.
+
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,
 `com.impresario.stub`). The 2026-10-26/27 tvOS hardware evidence used temporary

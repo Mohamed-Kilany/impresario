@@ -62,13 +62,18 @@ passed through it on the same Apple TV with the pre-rename bundle ids (I-152).
 RSA certificate/PKCS#12 and download profiles without Python, `openssl` or
 2FA at run time (I-153). App-specific passwords cannot authenticate the
 developer portal; the unattended route is an App Store Connect Team API key.
-The product rename is implemented, but the new short tvOS bundle ids and
-freshly provisioned profiles have not yet been signed/installed on hardware.
-The pairing record used for the P0 evidence was created earlier by
-pymobiledevice3; pure-Rust pairing creation is implemented but not
-hardware-verified. The global Apple ID wizard, API-key client and provisioning
-are unit/offline-tested, but no live Apple login/2FA, live API-key
-provisioning or `updateDevice` call has been exercised yet.
+The product rename is implemented. On 2026-10-28 the current short-id tvOS
+product set was built by the Apple Xcode workflow and imported into the
+machine-global `products/current`; the existing pair record and DDI were
+consolidated into `~/.impresario/apple`. A plain doctor probe then reached
+`RAMA (4)` with the DDI mounted and listed the short ids, stopping only at the
+absent `default` signing set. The new short tvOS bundle ids and freshly
+provisioned profiles have not yet been signed or installed on hardware. The
+pairing record used for the P0 evidence was created earlier by pymobiledevice3;
+pure-Rust pairing creation is implemented but not hardware-verified. The global
+Apple ID wizard, API-key client and provisioning are unit/offline-tested, but
+no live Apple login/2FA, live API-key provisioning or `updateDevice` call has
+been exercised yet.
 
 The TASK-3 Phase 2 actors/groups/audience/stage-resolution work is now on
 `master` (merged from `wip/phase2-tvos-p0` on 2026-10-27), with the Rust gates
