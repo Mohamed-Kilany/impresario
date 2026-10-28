@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
 use impresario_apple_auth::account::{choose_team, load_session, AppleStore, CredentialStore};
+use impresario_apple_auth::dev::app_store_connect::AppStoreConnectClient;
 use impresario_apple_auth::dev::developer_session::DeveloperSession;
 use impresario_apple_auth::dev::teams::{DeveloperTeam, TeamsApi};
 use impresario_apple_device::ddi::{self, DdiAssets, DdiState};
@@ -218,8 +219,26 @@ pub struct ProvisionArgs {
     #[arg(long)]
     pub machine_name: Option<String>,
     /// Developer team id; defaults to the team stored by `account login`.
+    ///
+    /// Required with `--api-key` unless `IMPRESARIO_APPLE_TEAM_ID` is set.
     #[arg(long)]
     pub team: Option<String>,
+    /// App Store Connect API key (`.p8`) for unattended provisioning.
+    ///
+    /// This bypasses Apple ID password and 2FA. Also accepts
+    /// `IMPRESARIO_APPLE_API_KEY` as a path.
+    #[arg(
+        long,
+        value_name = "AUTH_KEY.p8",
+        requires_all = ["issuer_id", "key_id"]
+    )]
+    pub api_key: Option<PathBuf>,
+    /// App Store Connect API issuer id, shown above the key list.
+    #[arg(long, requires = "api_key")]
+    pub issuer_id: Option<String>,
+    /// App Store Connect API key id, the `KEYID` in `AuthKey_KEYID.p8`.
+    #[arg(long, requires = "api_key")]
+    pub key_id: Option<String>,
     /// Platform for the development certificate and profiles.
     #[arg(long, value_enum, default_value = "tvos")]
     pub platform: ApplePlatform,
@@ -234,6 +253,19 @@ pub struct CertificatesArgs {
     /// Developer team id; defaults to the team stored by `account login`.
     #[arg(long)]
     pub team: Option<String>,
+    /// App Store Connect API key (`.p8`) for unattended certificate listing.
+    #[arg(
+        long,
+        value_name = "AUTH_KEY.p8",
+        requires_all = ["issuer_id", "key_id"]
+    )]
+    pub api_key: Option<PathBuf>,
+    /// App Store Connect API issuer id.
+    #[arg(long, requires = "api_key")]
+    pub issuer_id: Option<String>,
+    /// App Store Connect API key id.
+    #[arg(long, requires = "api_key")]
+    pub key_id: Option<String>,
     /// Platform whose development certificates should be listed.
     #[arg(long, value_enum, default_value = "tvos")]
     pub platform: ApplePlatform,
@@ -708,25 +740,54 @@ fn run_signing(command: &SigningCommand, paths: &ApplePaths, home: &Home) -> i32
 }
 
 fn run_certificates(args: &CertificatesArgs, home: &Home) -> i32 {
+    let api_key = match resolve_api_key(
+        args.api_key.as_deref(),
+        args.issuer_id.as_deref(),
+        args.key_id.as_deref(),
+    ) {
+        Ok(api_key) => api_key,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
     let runtime = match runtime() {
         Ok(runtime) => runtime,
         Err(code) => return code,
     };
     let result = runtime.block_on(async {
+        if let Some(client) = api_key.as_ref() {
+            let certificates = provision::list_certificates_api(client)
+                .await
+                .map_err(|error| error.to_string())?;
+            let label = args
+                .team
+                .as_deref()
+                .map(str::trim)
+                .filter(|team| !team.is_empty())
+                .map_or_else(
+                    || "App Store Connect API key".to_string(),
+                    |team| team.to_string(),
+                );
+            return Ok::<_, String>((label, certificates));
+        }
         let (mut session, team) = load_developer(home, args.team.as_deref()).await?;
         let certificates =
             provision::list_certificates(&mut session, &team, args.platform.provision())
                 .await
                 .map_err(|error| error.to_string())?;
-        Ok::<_, String>((team, certificates))
-    });
-    match result {
-        Ok((team, certificates)) => {
-            println!(
-                "Team: {} ({})",
+        Ok((
+            format!(
+                "{} ({})",
                 team.name.as_deref().unwrap_or("unnamed"),
                 team.team_id
-            );
+            ),
+            certificates,
+        ))
+    });
+    match result {
+        Ok((team_label, certificates)) => {
+            println!("Team: {team_label}");
             if certificates.is_empty() {
                 println!("No {} development certificates.", args.platform.label());
             } else {
@@ -802,6 +863,32 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
             return EXIT_FAILURE;
         }
     }
+    let api_key = match resolve_api_key(
+        args.api_key.as_deref(),
+        args.issuer_id.as_deref(),
+        args.key_id.as_deref(),
+    ) {
+        Ok(api_key) => api_key,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let api_team_id = if api_key.is_some() {
+        match resolve_api_team_id(args.team.as_deref()) {
+            Ok(team_id) => Some(team_id),
+            Err(error) => {
+                eprintln!("error: {error}");
+                return EXIT_FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+    if api_key.is_some() {
+        println!("Using an App Store Connect API key; no Apple ID session or 2FA is needed.");
+    }
+
     let request = ProvisionRequest {
         platform: args.platform.provision(),
         machine_name,
@@ -816,9 +903,51 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
         Err(code) => return code,
     };
     let result = runtime.block_on(async {
+        if let Some(client) = api_key.as_ref() {
+            let team_id = api_team_id.as_deref().ok_or_else(|| {
+                ProvisionError::Invalid(
+                    "an App Store Connect API key needs --team or IMPRESARIO_APPLE_TEAM_ID"
+                        .to_string(),
+                )
+            })?;
+            let mut revoke = args.revoke.clone();
+            let mut prompts = 0;
+            loop {
+                let request = ProvisionRequest {
+                    revoke_serials: revoke.clone(),
+                    ..request.clone()
+                };
+                match provision::provision_with_api_key(
+                    client,
+                    team_id,
+                    &request,
+                    existing.as_ref(),
+                )
+                .await
+                {
+                    Ok(report) => {
+                        return Ok::<_, ProvisionError>((
+                            "App Store Connect API key".to_string(),
+                            report,
+                        ));
+                    }
+                    Err(ProvisionError::CertificatesFull(certificates)) => {
+                        if prompts >= 2 {
+                            return Err(ProvisionError::CertificatesFull(certificates));
+                        }
+                        revoke =
+                            prompt_revocation(&certificates).map_err(ProvisionError::Invalid)?;
+                        prompts += 1;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+
         let (mut session, team) = load_developer(home, args.team.as_deref())
             .await
             .map_err(ProvisionError::Apple)?;
+        let team_label = team.name.clone().unwrap_or_else(|| "unnamed".to_string());
         let mut revoke = args.revoke.clone();
         let mut prompts = 0;
         loop {
@@ -827,7 +956,7 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
                 ..request.clone()
             };
             match provision::provision(&mut session, &team, &request, existing.as_ref()).await {
-                Ok(report) => return Ok::<_, ProvisionError>((team, report)),
+                Ok(report) => return Ok((team_label, report)),
                 Err(ProvisionError::CertificatesFull(certificates)) => {
                     if prompts >= 2 {
                         return Err(ProvisionError::CertificatesFull(certificates));
@@ -839,7 +968,7 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
             }
         }
     });
-    let (team, report) = match result {
+    let (team_label, report) = match result {
         Ok(result) => result,
         Err(ProvisionError::CertificatesFull(certificates)) => {
             print_certificates(&certificates);
@@ -863,11 +992,7 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
         }
     };
 
-    println!(
-        "Team: {} ({})",
-        team.name.as_deref().unwrap_or("unnamed"),
-        report.team_id
-    );
+    println!("Team: {} ({})", team_label, report.team_id);
     println!("Device: {} ({})", report.device_name, report.device_udid);
     if !report.app_ids_created.is_empty() {
         println!("App IDs created: {}", report.app_ids_created.join(", "));
@@ -917,6 +1042,53 @@ fn run_provision(args: &ProvisionArgs, paths: &ApplePaths, home: &Home) -> i32 {
         println!("The PKCS#12 password is stored in the OS credential store.");
     }
     EXIT_OK
+}
+
+fn resolve_api_key(
+    path: Option<&Path>,
+    issuer_id: Option<&str>,
+    key_id: Option<&str>,
+) -> Result<Option<AppStoreConnectClient>, String> {
+    let path = path
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("IMPRESARIO_APPLE_API_KEY").map(PathBuf::from));
+    let issuer_id = issuer_id
+        .map(str::to_string)
+        .or_else(|| std::env::var("IMPRESARIO_APPLE_API_ISSUER_ID").ok());
+    let key_id = key_id
+        .map(str::to_string)
+        .or_else(|| std::env::var("IMPRESARIO_APPLE_API_KEY_ID").ok());
+    match (path, issuer_id, key_id) {
+        (None, None, None) => Ok(None),
+        (Some(path), Some(issuer_id), Some(key_id)) => {
+            AppStoreConnectClient::from_file(issuer_id, key_id, &path)
+                .map(Some)
+                .map_err(|error| error.to_string())
+        }
+        _ => Err(
+            "an App Store Connect API key needs --api-key, --issuer-id and --key-id \
+             (or IMPRESARIO_APPLE_API_KEY, IMPRESARIO_APPLE_API_ISSUER_ID and \
+             IMPRESARIO_APPLE_API_KEY_ID)"
+                .to_string(),
+        ),
+    }
+}
+
+fn resolve_api_team_id(team: Option<&str>) -> Result<String, String> {
+    team.map(str::trim)
+        .filter(|team| !team.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("IMPRESARIO_APPLE_TEAM_ID")
+                .ok()
+                .map(|team| team.trim().to_string())
+                .filter(|team| !team.is_empty())
+        })
+        .ok_or_else(|| {
+            "an App Store Connect API key needs the Apple Developer team id; pass --team \
+             GR2NDRW99B or set IMPRESARIO_APPLE_TEAM_ID"
+                .to_string()
+        })
 }
 
 async fn load_developer(

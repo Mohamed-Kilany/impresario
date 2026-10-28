@@ -3283,6 +3283,7 @@ dependencies = [
  "hmac 0.13.0",
  "http",
  "keyring",
+ "p256 0.13.2",
  "pbkdf2",
  "plist",
  "plist-macro",
@@ -3304,6 +3305,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "web-time",
+ "zeroize",
 ]
 
 [[package]]

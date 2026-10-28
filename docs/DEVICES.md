@@ -1050,9 +1050,10 @@ that the short tvOS ids are signed.
 The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
 direct-RSD XCUITest start. Development provisioning (device registration,
-App IDs, RSA CSR/certificate, PKCS#12, profiles) is also native; the Apple ID
-session comes from `impresario account login` and never from Python or
-`openssl` (I-153). `AppleTransport` spawns no host tool: `xcodebuild`,
+App IDs, RSA CSR/certificate, PKCS#12, profiles) is also native; it authenticates
+with `impresario account login` or an App Store Connect Team API key and never
+with Python, `openssl` or an app-specific password (I-153). `AppleTransport`
+spawns no host tool: `xcodebuild`,
 `iproxy`, `simctl`, `devicectl` and `ideviceinstaller` are gone from the Apple
 path (D-19). Unit tests cover the signing store, product import, IPA
 inspection, DDI state, pairing normalization and the agent-port launch
@@ -1062,8 +1063,10 @@ signed the product set without a stub (`signing verify` exit 0), while
 `--with-stub` failed with the expected missing-profile error. The main
 `doctor --plain` probe reported `RAMA (4)` `READY` and listed the missing
 optional stub profile as a device detail. These checks still used imported
-long-id profiles; the new provisioning flow, live Apple ID login/2FA and
-`updateDevice` have not yet run against Apple's live services.
+long-id profiles; live Apple ID login/2FA, live API-key provisioning and
+`updateDevice` have not yet run against Apple's live services. The App Store
+Connect client and API-key provisioning path are covered by offline tests
+(ES256 JWT, platform/profile-type mapping, certificate-limit detection).
 
 **Bundle ids.** iOS already uses the agreed short ids
 (`com.impresario.agent`, `com.impresario.agent.tests`,
@@ -1092,6 +1095,18 @@ impresario apple pair --host <apple-tv-host>
 impresario apple signing provision --name default --platform tvos
 # Add the fixture stub profile only when stub plays are wanted:
 impresario apple signing provision --name default --platform tvos --with-stub
+
+# Unattended alternative: an App Store Connect Team API key (no 2FA at run time).
+# Create the Team Key with the Admin role once in the browser, keep the .p8 out
+# of the repository, and pass the issuer id, key id and your team id:
+impresario apple signing provision --name default --platform tvos `
+  --team GR2NDRW99B `
+  --api-key "$env:USERPROFILE\.impresario\apple\AuthKey_<KEYID>.p8" `
+  --issuer-id "<issuer-id>" --key-id "<key-id>"
+# The same values can come from IMPRESARIO_APPLE_API_KEY,
+# IMPRESARIO_APPLE_API_ISSUER_ID, IMPRESARIO_APPLE_API_KEY_ID and
+# IMPRESARIO_APPLE_TEAM_ID. App-specific passwords do not authenticate the
+# developer portal and are not supported.
 
 impresario apple products import ./build-tvos/Build/Products/Debug-appletvos --name current
 impresario apple ddi import ./ddi-source --build <build>
@@ -1133,8 +1148,11 @@ xcodebuild -project ImpresarioAgent.xcodeproj \
 Use the `-iOS` schemes for iPhone/iPad. Physical builds need a development
 team (set it in Xcode or a local xcconfig; the repo pins none). A free Apple ID
 personal team works but its profile expires after seven days. Sign in
-interactively; Impresario never stores or passes a plaintext Apple ID password.
-The unsigned GitHub artifact cannot be installed directly.
+interactively, or use an App Store Connect Team API key for unattended
+provisioning; app-specific passwords do not authenticate the developer portal.
+Impresario never stores or passes a plaintext Apple ID password, and it never
+writes the API private key into a signing set. The unsigned GitHub artifact
+cannot be installed directly.
 
 The attached Apple TV is `AppleTV5,3` (Apple TV HD), name `RAMA (4)`, AirPlay
 device ID `B6:FD:1D:0C:99:3C`, build `23J582`; its LAN address is dynamic (the

@@ -204,9 +204,62 @@ under service `impresario.apple`.
 2FA accepts either a trusted-device code or an SMS code. The console prompt
 offers both; `--two-factor device|sms|ask` and `--two-factor-number <id>`
 select a method/number non-interactively. SMS delivery lists the trusted phone
-numbers Apple returns and can resend, go back or cancel. Offline tests cover
-the state machine and SMS number selection; a live Apple login/2FA has not
-been exercised yet.
+numbers Apple returns and can resend, go back or cancel. Voice-only numbers are
+not offered as SMS targets. Offline tests cover the state machine and SMS
+number selection; a live Apple login/2FA has not been exercised yet.
+
+Apple app-specific passwords are not a developer-portal login method. Apple's
+legacy `clientDAW.cgi` endpoint is gone and the portal still requires 2FA, so
+Impresario does not offer an app-specific-password login path. Use an App Store
+Connect API key for unattended provisioning.
+
+### Unattended provisioning with an App Store Connect API key
+
+A **Team Key** from App Store Connect is Apple's supported no-2FA route for
+certificates and profiles. Create it once in the browser:
+
+1. Sign in to [App Store Connect](https://appstoreconnect.apple.com) and open
+   **Users and Access > Integrations > App Store Connect API > Team Keys**.
+2. Add a key with the **Admin** role (certificate/profile management is not
+   reliably available to lower roles).
+3. Download `AuthKey_<KEYID>.p8` and keep it outside this repository. The file
+   cannot be downloaded again. Note the **Issuer ID** and **Key ID**.
+
+Then provision with flags:
+
+```powershell
+impresario apple signing provision --name default --platform tvos `
+  --team GR2NDRW99B `
+  --api-key "$env:USERPROFILE\.impresario\apple\AuthKey_<KEYID>.p8" `
+  --issuer-id "<issuer-id>" --key-id "<key-id>"
+```
+
+or keep the values in the environment for subsequent runs:
+
+```powershell
+$env:IMPRESARIO_APPLE_API_KEY = "$env:USERPROFILE\.impresario\apple\AuthKey_<KEYID>.p8"
+$env:IMPRESARIO_APPLE_API_ISSUER_ID = "<issuer-id>"
+$env:IMPRESARIO_APPLE_API_KEY_ID = "<key-id>"
+$env:IMPRESARIO_APPLE_TEAM_ID = "GR2NDRW99B"
+impresario apple signing provision --name default --platform tvos
+impresario apple signing certificates
+```
+
+The private key is read locally and used only to sign a short-lived ES256 JWT
+(`aud=appstoreconnect-v1`, 20-minute maximum); it is never printed or stored
+in the signing set, and only the JWT is sent to Apple's API. The API does not
+expose the team identifier, so `--team` (or `IMPRESARIO_APPLE_TEAM_ID`) is
+required for profile validation.
+
+The API-key path renames the existing portal device record to `impresario`,
+registers missing App IDs, reuses an existing identity when its certificate is
+still active, creates an Apple Development certificate otherwise, requests
+`TVOS_APP_DEVELOPMENT` (or `IOS_APP_DEVELOPMENT`) profiles with Apple's `IOS`
+device/bundle resource platform, validates them like the interactive path, and
+installs the same signing-set layout. If the certificate limit is full it lists
+the team certificates and prompts for a serial to revoke; `--revoke <serial>`
+does the same non-interactively. A certificate newly issued by a failed run is
+revoked rather than leaking a slot.
 
 ### Pairing and developer-device name
 
@@ -308,8 +361,12 @@ optional stub profile as a device detail, not a degradation.
 The physical P0 run `20261027-063121-00d6` used the **long** tvOS bundle ids
 and profiles created outside this new flow; it is the 105-step
 behaviour/visual evidence. The short-id `master` bundles, live Apple ID
-login/2FA, `updateDevice` renaming and fresh short-id profiles have not yet
-run against Apple/hardware. Existing profiles expire `2026-11-02`. No
+login/2FA, live API-key provisioning, `updateDevice` renaming and fresh
+short-id profiles have not yet run against Apple/hardware. The App Store
+Connect client and API-key provisioning path are implemented and unit-tested
+(ES256 JWT, device/bundle/certificate/profile calls, platform/profile-type
+mapping, certificate-limit detection and cleanup), but they have not been
+exercised with a real team key. Existing profiles expire `2026-11-02`. No
 simulator evidence is claimed.
 
 ## Error codes

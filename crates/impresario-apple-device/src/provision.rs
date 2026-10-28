@@ -43,6 +43,10 @@ use zeroize::Zeroizing;
 
 use crate::signing_set::{safe_key, SigningImportReport, SigningSet, PASSWORD_ENV};
 
+mod api_key;
+
+pub use api_key::{list_certificates_api, provision_with_api_key};
+
 /// Which Apple platform endpoint and profile platform to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProvisionPlatform {
