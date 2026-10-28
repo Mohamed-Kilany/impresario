@@ -1065,8 +1065,9 @@ The `impresario-apple-device` crate now owns pairing verification, tunnels,
 DDI, signing, product classification, AFC + InstallationProxy install and the
 direct-RSD XCUITest start. Development provisioning (device registration,
 App IDs, RSA CSR/certificate, PKCS#12, profiles) is also native; it authenticates
-with `impresario account login` or an App Store Connect Team API key and never
-with Python, `openssl` or an app-specific password (I-153). `AppleTransport`
+with the primary free-team `impresario account login`, or (for paid teams) an
+App Store Connect Team API key, and never with Python, `openssl` or an
+app-specific password (I-153/I-155). `AppleTransport`
 spawns no host tool: `xcodebuild`,
 `iproxy`, `simctl`, `devicectl` and `ideviceinstaller` are gone from the Apple
 path (D-19). Unit tests cover the signing store, product import, IPA
@@ -1107,7 +1108,8 @@ are platform-specific; both can map the same bundle ids.
 Machine-global setup (the project holds no pairing secrets or certificates):
 
 ```bash
-# One global Apple ID session (encrypted; supports device or SMS 2FA):
+# Primary free-team route: one global encrypted Apple ID session.
+# Supports trusted-device, SMS, and legacy hsa 4-digit SMS 2FA:
 impresario account login
 impresario account status --online
 
@@ -1120,7 +1122,8 @@ impresario apple signing provision --name default --platform tvos
 # Add the fixture stub profile only when stub plays are wanted:
 impresario apple signing provision --name default --platform tvos --with-stub
 
-# Unattended alternative: an App Store Connect Team API key (no 2FA at run time).
+# Optional paid-team alternative: an App Store Connect Team API key.
+# Free personal teams cannot create these keys; use `account login` above.
 # Create the Team Key with the Admin role once in the browser, keep the .p8 out
 # of the repository, and pass the issuer id, key id and your team id:
 impresario apple signing provision --name default --platform tvos `
