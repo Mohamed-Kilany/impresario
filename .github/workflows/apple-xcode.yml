@@ -60,6 +60,13 @@ jobs:
             --minimum-deployment-target 16.0 \
             --platform appletvos
 
+      - name: Collect actool diagnostics
+        if: always()
+        run: |
+          ls -la ~/Library/Logs/DiagnosticReports || true
+          find ~/Library/Logs/DiagnosticReports -maxdepth 1 -name 'actool*' -print -exec cat {} \; || true
+          log show --last 10m --predicate 'process == "actool"' --style compact || true
+
       - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
         run: |
