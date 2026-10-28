@@ -67,6 +67,8 @@ pub enum AppleCommand {
     },
     /// Start the XCUITest agent and keep it alive until interrupted.
     Session(SessionArgs),
+    /// Restart the Apple TV through the pure-Rust diagnostics relay.
+    Restart(RestartArgs),
 }
 
 #[derive(Debug, Args)]
@@ -288,6 +290,16 @@ pub enum DdiCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct RestartArgs {
+    /// Apple TV IP address or hostname.
+    #[arg(long)]
+    pub host: String,
+    /// Pairing key/device UDID; omit when exactly one pairing is stored.
+    #[arg(long)]
+    pub udid: Option<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct SessionArgs {
     /// Apple TV IP address or hostname.
     #[arg(long)]
@@ -334,6 +346,7 @@ pub fn run(args: &AppleArgs, home: &Home) -> i32 {
         AppleCommand::Signing { command } => run_signing(command, &paths, home),
         AppleCommand::Ddi { command } => run_ddi(command, &paths),
         AppleCommand::Session(args) => run_session(args, &paths),
+        AppleCommand::Restart(args) => run_restart(args, &paths),
     }
 }
 
@@ -1316,6 +1329,37 @@ fn run_ddi(command: &DdiCommand, paths: &ApplePaths) -> i32 {
                 }
             }
             EXIT_OK
+        }
+    }
+}
+
+fn run_restart(args: &RestartArgs, paths: &ApplePaths) -> i32 {
+    let pairing = match load_pairing(paths, args.udid.as_deref()) {
+        Ok(pairing) => pairing,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+    println!("Connecting to {}...", args.host);
+    let result = runtime.block_on(async {
+        let mut tunnel = AppleTunnel::connect(&args.host, &pairing).await?;
+        println!("Restarting {}.", tunnel.summary());
+        tunnel.restart().await?;
+        Ok::<(), Error>(())
+    });
+    match result {
+        Ok(()) => {
+            println!("Restart requested; the tunnel closed.");
+            EXIT_OK
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            EXIT_FAILURE
         }
     }
 }
