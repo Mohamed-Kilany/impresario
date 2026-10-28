@@ -209,8 +209,11 @@ where
     let mut file = RpPairingFile::generate(&paths.host_identifier());
     file.identifier = paths.host_identifier();
 
+    // The device's manual-pairing service expects the RPPairing handshake and a
+    // pair-verify attempt before pair-setup. Without them tvOS closes the
+    // socket as soon as it receives `setupManualPairing`.
     client
-        .pair(&mut file, pin)
+        .connect(&mut file, pin)
         .await
         .map_err(|error| Error::Device(format!("pairing failed: {error}")))?;
 
