@@ -52,6 +52,24 @@ pub struct Profile {
     pub is_free_provisioning_profile: Option<bool>,
 }
 
+fn provisioning_profile_body(
+    team: &DeveloperTeam,
+    app_id: &AppId,
+    device_type: Option<&DeveloperDeviceType>,
+) -> Dictionary {
+    let mut body = plist!(dict {
+        "teamId": &team.team_id,
+        "appIdId": &app_id.app_id_id,
+    });
+    if let Some(sub_platform) = device_type.and_then(DeveloperDeviceType::profile_sub_platform) {
+        body.insert(
+            "subPlatform".to_string(),
+            Value::String(sub_platform.to_string()),
+        );
+    }
+    body
+}
+
 #[cfg_attr(feature = "wasm", async_trait::async_trait(?Send))]
 #[cfg_attr(not(feature = "wasm"), async_trait::async_trait)]
 pub trait AppIdsApi {
@@ -157,10 +175,8 @@ pub trait AppIdsApi {
         app_id: &AppId,
         device_type: impl Into<Option<DeveloperDeviceType>> + Send,
     ) -> Result<Profile, Report> {
-        let body = plist!(dict {
-            "teamId": &team.team_id,
-            "appIdId": &app_id.app_id_id,
-        });
+        let device_type = device_type.into();
+        let body = provisioning_profile_body(team, app_id, device_type.as_ref());
 
         let response: Profile = self
             .developer_session()
@@ -240,5 +256,44 @@ impl AppId {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn team() -> DeveloperTeam {
+        DeveloperTeam {
+            name: Some("Test Team".to_string()),
+            team_id: "TEAM123456".to_string(),
+            r#type: None,
+            status: None,
+        }
+    }
+
+    fn app_id() -> AppId {
+        AppId {
+            app_id_id: "APP123456".to_string(),
+            identifier: "com.example.app".to_string(),
+            name: "Example".to_string(),
+            features: Dictionary::new(),
+            expiration_date: None,
+        }
+    }
+
+    #[test]
+    fn tvos_profile_requests_include_the_tvos_sub_platform() {
+        let body = provisioning_profile_body(&team(), &app_id(), Some(&DeveloperDeviceType::Tvos));
+        assert_eq!(
+            body.get("subPlatform").and_then(Value::as_string),
+            Some("tvOS")
+        );
+    }
+
+    #[test]
+    fn ios_profile_requests_omit_the_sub_platform() {
+        let body = provisioning_profile_body(&team(), &app_id(), Some(&DeveloperDeviceType::Ios));
+        assert!(body.get("subPlatform").is_none());
     }
 }
