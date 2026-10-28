@@ -115,6 +115,10 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The catalog contains only tvOS brand assets; there are no named
+        # images/colors to expose as Swift symbols.
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.impresario.agent
         PRODUCT_NAME: ImpresarioAgent
         GENERATE_INFOPLIST_FILE: NO
@@ -232,6 +236,8 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.impresario.stub
         PRODUCT_NAME: ImpresarioStub
         GENERATE_INFOPLIST_FILE: NO
