@@ -43,15 +43,26 @@ jobs:
         working-directory: agents/apple
         run: |
           mkdir -p /tmp/impresario-actool
+          set +e
           xcrun actool Xcode/Shared/Assets.xcassets \
             --compile /tmp/impresario-actool \
-            --platform appletvos \
-            --minimum-deployment-target 16.0 \
-            --target-device tv \
-            --app-icon AppIcon \
-            --compress-pngs \
             --output-format human-readable-text \
-            --notices --warnings
+            --notices --warnings \
+            --export-dependency-info /tmp/impresario-actool-deps \
+            --output-partial-info-plist /tmp/impresario-actool-info.plist \
+            --app-icon AppIcon \
+            --launch-image LaunchImage \
+            --compress-pngs \
+            --enable-on-demand-resources YES \
+            --development-region en \
+            --leaderboard-identifier-prefix ImpresarioStub.game-center.leaderboard. \
+            --leaderboard-set-identifier-prefix ImpresarioStub.game-center.leaderboard-set. \
+            --target-device tv \
+            --minimum-deployment-target 16.0 \
+            --platform appletvos 2>&1 | tee /tmp/impresario-actool.log
+          status=${PIPESTATUS[0]}
+          echo "actool status: $status"
+          exit "$status"
 
       - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
