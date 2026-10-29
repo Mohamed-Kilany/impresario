@@ -58,18 +58,42 @@ resolved per key in table 6.2 below.
 | `down` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✅ |
 | `left` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✅ |
 | `right` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✅ |
-| `home` | ✖ | ✖ | ✖ | ✅ | ✅ | ✅ | ✅ |
-| `menu` | ✖ | ✖ | ✖ | ✅ | ✅ | ✖ | ✖ |
-| `play` | ✖ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
-| `pause` | ✖ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
-| `playpause` | ✖ | ✖ | ✖ | ✅ | ✅ | ✖ | ✅ |
-| `rewind` | ✖ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
-| `fastforward` | ✖ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
-| `red` | ✖ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
-| `green` | ✖ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
-| `yellow` | ✖ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
-| `blue` | ✖ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
+| `home` | ✅ | ✖ | ✖ | ✅ | ✅ | ✅ | ✅ |
+| `menu` | ✅ | ✖ | ✖ | ✅ | ✅ | ✖ | ✖ |
+| `play` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `pause` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `playpause` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✅ |
+| `rewind` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `fastforward` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `red` | ✅ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
+| `green` | ✅ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
+| `yellow` | ✅ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
+| `blue` | ✅ | ✅ | ✅ | ✖ | ✅ | ✖ | ✖ |
 | `backspace` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num0` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num1` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num2` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num3` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num4` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num5` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num6` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num7` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num8` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `num9` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `volumeup` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `volumedown` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `mute` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `channelup` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `channeldown` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `stop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `record` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `info` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `guide` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `exit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `subtitle` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `audio` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `search` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
+| `settings` | ✅ | ✅ | ✅ | ✅ | ✅ | ✖ | ✖ |
 
 Dispatch codes/constants per platform are in spec 6.2 and in each executor's
 key table (`KeyTable.kt`, `keys.rs`); the planner enforces exactly this ✅/✖ split.
@@ -193,12 +217,12 @@ piece remains authoritative evidence that no media exists there. There is no
 | Platform | Matrix verification | Real hardware |
 |---|---|---|
 | `web` | live E2E `impresario run` → connector → headless Chrome (8/8 steps, exit 0) plus the connector fixture suite covering click/type/append/clear/longpress/select/focus/key/back/scroll/scrollto/checks/screenshots/logs/TV D-pad | desktop Chrome/Chromium (headless), not a TV browser |
-| `webos` | unit and loopback-mock tests only | ✖ none available |
-| `tizen` | unit and loopback-mock tests only | ✖ none available |
+| `webos` | unit and loopback-mock tests plus the 105-step stub play through SSH-forwarded CDP | ✅ LG webOS TV, install/update/launch/CDP (I-157) |
+| `tizen` | unit and loopback-mock tests plus the 105-step stub play through SDB-forwarded CDP and the player probe | ✅ Samsung Tizen 9.0 TV, native install/launch/signing (I-157) |
 | `android` | live E2E on a real phone (`run 20261018-103702-ee29`: 86 steps, 0 failed) incl. touch `scroll`/`swipe`, text entry, keys, app lifecycle | ✅ Galaxy A51, Android 13 (Wi-Fi) |
 | `androidtv` | live E2E on a real TV (`run 20261018-104405-4f10`: 89 steps, 0 failed, D-pad `scrollto`, key hold, app lifecycle) + the on-device driver/wire test classes (26/26, 2/2) | ✅ TCL Android TV, Android 11 (Wi-Fi) |
 | `ios` | `AgentCore`/`AgentService` are exercised by `swift test` on Linux (executor + dispatcher + focus navigator against fakes; the full wire protocol over loopback gRPC); the XCUITest layer (`XCUIDriver`, `ImpresarioAgentTests`) is compiled unsigned by `Apple Xcode` but its actions have not run on iOS hardware | none: no iOS hardware evidence |
-| `tvos` | executor/session behavior under `swift test`; the XCUITest agent start, real gRPC `Handshake` and `Shutdown` passed on the physical Apple TV (pre-rename bundle ids); the full action/check matrix is unverified | partial: agent start/handshake/shutdown only |
+| `tvos` | executor/session behavior under `swift test`; the short-id 105-step stub play passed on the physical Apple TV (`20261028-110828-b477`), and the actual-agent no-stub path passed (`20261028-112028-80fd`); deeper media probes remain limited by the optional app hook | ✅ Apple TV, 105-step stub play and actual-agent run (I-156) |
 
 Hardware details, run ids and case-by-case evidence: `docs/DEVICES.md` and
 `docs/STATUS.md`.

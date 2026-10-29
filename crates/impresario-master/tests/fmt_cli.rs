@@ -34,7 +34,7 @@ fn fmt_check_reports_then_rewrites_idempotently() {
     let scenes = workspace.join("scenes");
     std::fs::create_dir_all(&scenes).expect("scenes");
     let path = scenes.join("LoginScreen.scene");
-    let unformatted = "Scene: LoginScreen\nPlatform: cross-platform\n\n| Piece | web | android |\n|---|---|---|\n| Title | h1 | id:title |\n| Missing | #m | - |\n";
+    let unformatted = "Scene: LoginScreen\nPlatforms: cross-platform\n\n| Piece | web | android |\n|---|---|---|\n| Title | h1 | id:title |\n| Missing | #m | - |\n";
     std::fs::write(&path, unformatted).expect("scene");
 
     let (code, stdout, stderr) = run(&home, &workspace, &["fmt", "--check"]);

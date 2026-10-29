@@ -190,11 +190,11 @@ diagnostics (exit 2). Ctrl-C stops the run with exit 130.
 
 ## 7. How the executor endpoint is reached
 
-| Family | Default endpoint | Path |
+| Family | Executor endpoint | Path |
 |---|---|---|
-| connector (`web`, `webos`, `tizen`) | `127.0.0.1:50051` | `options.connector_address` if set; a live listener is dialed directly, otherwise the master spawns `impresario-connector serve --listen <addr>` |
-| adb (`android`, `androidtv`) | `127.0.0.1:<auto forwarded>` | network dial first: `connection.endpoint` → the serial's host (`adb` `ip route` learns the Wi-Fi IP) → `adb forward` fallback; then install the APKs in order and start `am instrument` (I-62) |
-| apple (`ios`, `tvos`) | tvOS: `connection.endpoint` required | `iproxy` + `xcodebuild test-without-building` runner (spec 9.3; the macOS path is a recorded D-19 gap) |
+| connector (`web`, `webos`, `tizen`) | fresh `127.0.0.1:<ephemeral>` | the master spawns `impresario-connector serve --listen <ephemeral>`; a local web device launches Chromium, a remote web device attaches to CDP on `ip:9222`, and TV devices receive the SSH/SDB-forwarded inspector endpoint |
+| adb (`android`, `androidtv`) | agent `ip:<ephemeral>` | the ADB target is `ip:5555`; the master installs the APKs, starts `am instrument` with a dynamically allocated agent port, and dials the agent over the network, falling back to a native `tcp:` forward (I-62) |
+| apple (`ios`, `tvos`) | agent `ip:<ephemeral>` | pairing is looked up by host, the UDID comes from the RSD tunnel, and the XCUITest runner port is allocated dynamically |
 
 Dialing retries with exponential backoff (200 ms → 2 s) until
 `agent_start_timeout_ms`. `device check` (alias `devices check`) runs prepare +

@@ -50,10 +50,20 @@ const REMOTE_STAGING_FALLBACK: &str = "/home/owner/share/tmp/sdk_tools/tmp";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(20);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// Tizen signing profile selection. Device files no longer carry a profile;
+/// the Samsung-issued DUID-bound profile is the default, with an environment
+/// override for other teams.
+fn tizen_profile_name() -> String {
+    std::env::var("IMPRESARIO_TIZEN_PROFILE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "samsung".to_string())
+}
+
 /// SDB/Tizen failures.
 #[derive(Debug, thiserror::Error)]
 pub enum TizenError {
-    #[error("Tizen host is not configured (connection.host)")]
+    #[error("Tizen device has no IP")]
     NoHost,
     #[error("Tizen app is required for a native run")]
     NoApp,
@@ -928,23 +938,14 @@ impl TizenTransport {
                 device.platform
             )));
         }
-        let host = device
-            .connection
-            .host
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .ok_or(TizenError::NoHost)?
-            .to_string();
+        let host = device.host().to_string();
         let home = Home::resolve().map_err(|error| {
             TizenError::Protocol(format!("cannot resolve IMPRESARIO home: {error}"))
         })?;
         home.ensure_dirs()
             .map_err(|error| TizenError::Protocol(format!("cannot initialise home: {error}")))?;
         self.host = Some(host);
-        self.port = device
-            .connection
-            .port_or_default(Platform::Tizen)
-            .unwrap_or(DEFAULT_SDB_PORT);
+        self.port = device.protocol_port().unwrap_or(DEFAULT_SDB_PORT);
         self.home = Some(home.clone());
         self.explicit_endpoint = device.connection.endpoint.clone();
 
@@ -980,45 +981,41 @@ impl TizenTransport {
             }
             Err(error) => warnings.push(format!("app list unavailable: {error}")),
         }
-        if let Some(profile_name) = device
-            .auth
-            .profile
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            match crate::tizen_sign::show_profile(&home, profile_name) {
-                Ok(record) => {
-                    details.push(format!(
-                        "profile '{profile_name}' valid until {}",
-                        record.distributor_not_after
+        let profile_name = tizen_profile_name();
+        match crate::tizen_sign::show_profile(&home, &profile_name) {
+            Ok(record) => {
+                details.push(format!(
+                    "profile '{profile_name}' valid until {}",
+                    record.distributor_not_after
+                ));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs() as i64)
+                    .unwrap_or(0);
+                if record.author_not_after_unix <= now || record.distributor_not_after_unix <= now {
+                    warnings.push(format!(
+                        "profile '{profile_name}' has an expired certificate"
                     ));
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|duration| duration.as_secs() as i64)
-                        .unwrap_or(0);
-                    if record.author_not_after_unix <= now
-                        || record.distributor_not_after_unix <= now
-                    {
+                }
+                if let Some(duid) = duid.as_deref() {
+                    if !record.duids.iter().any(|candidate| candidate == duid) {
                         warnings.push(format!(
-                            "profile '{profile_name}' has an expired certificate"
+                            "profile '{profile_name}' does not cover DUID {duid}"
                         ));
-                    }
-                    if let Some(duid) = duid.as_deref() {
-                        if !record.duids.iter().any(|candidate| candidate == duid) {
-                            warnings.push(format!(
-                                "profile '{profile_name}' does not cover DUID {duid}"
-                            ));
-                        } else {
-                            details.push(format!("profile covers DUID {duid}"));
-                        }
+                    } else {
+                        details.push(format!("profile covers DUID {duid}"));
                     }
                 }
-                Err(error) => warnings.push(error.to_string()),
             }
-        } else if capabilities.requires_signing() {
-            warnings.push(
-                "Tizen 7.0+ needs a signing profile (device auth.profile is empty)".to_string(),
-            );
+            Err(error) => {
+                warnings.push(error.to_string());
+                if capabilities.requires_signing() {
+                    warnings.push(format!(
+                        "Tizen 7.0+ needs signing profile '{profile_name}'; import one with \
+                         `impresario sign tizen profile add` or set IMPRESARIO_TIZEN_PROFILE"
+                    ));
+                }
+            }
         }
 
         let info = DeviceInfo {
@@ -1128,13 +1125,7 @@ impl DeviceTransport for TizenTransport {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| TransportError::from(TizenError::NoAppId))?
             .to_string();
-        let host = device
-            .connection
-            .host
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| TransportError::from(TizenError::NoHost))?
-            .to_string();
+        let host = device.host().to_string();
         let home = Home::resolve().map_err(|error| {
             TransportError::Transport(format!("cannot resolve IMPRESARIO home: {error}"))
         })?;
@@ -1142,10 +1133,7 @@ impl DeviceTransport for TizenTransport {
             TransportError::Transport(format!("cannot initialise IMPRESARIO home: {error}"))
         })?;
         self.host = Some(host.clone());
-        self.port = device
-            .connection
-            .port_or_default(Platform::Tizen)
-            .unwrap_or(DEFAULT_SDB_PORT);
+        self.port = device.protocol_port().unwrap_or(DEFAULT_SDB_PORT);
         self.home = Some(home.clone());
         self.app_id = Some(app_id.clone());
         self.explicit_endpoint = device.connection.endpoint.clone();
@@ -1188,19 +1176,7 @@ impl DeviceTransport for TizenTransport {
                 .package;
             self.push_log(LogLevel::Info, format!("package id {package_id}"));
             if requires_signing {
-                let profile = device
-                    .auth
-                    .profile
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        TransportError::from(TizenError::Signing(format!(
-                            "device '{}' runs Tizen {platform_version} and needs a signing profile; \
-                             set device auth.profile and import one with \
-                             `impresario sign tizen profile add`",
-                            device.name
-                        )))
-                    })?;
+                let profile = tizen_profile_name();
                 // The profile check needs the TV's DUID; failure here is a
                 // real device/signing failure, not a reason to install an
                 // unsigned artifact.
@@ -1210,7 +1186,7 @@ impl DeviceTransport for TizenTransport {
                 })?;
                 self.push_log(LogLevel::Info, format!("DUID {duid}"));
                 let signed =
-                    crate::tizen_sign::sign_package_for_device(&home, profile, package, &duid)
+                    crate::tizen_sign::sign_package_for_device(&home, &profile, package, &duid)
                         .map_err(|error| {
                             self.push_log(LogLevel::Error, error.to_string());
                             TransportError::Transport(error.to_string())

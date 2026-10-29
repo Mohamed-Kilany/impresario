@@ -29,7 +29,7 @@ fn params() -> HandshakeParams {
         "flagship_android",
         Platform::Android,
         "emulator-5554",
-        "0.1.0-test",
+        "1.0.0-test",
     );
     params.app_id = Some("com.example.shop".to_string());
     params

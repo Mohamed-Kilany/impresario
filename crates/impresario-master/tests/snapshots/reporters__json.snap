@@ -17,7 +17,7 @@ expression: text
         "model": "Pixel 8",
         "os_name": "Android",
         "os_version": "14",
-        "runtime": "MockAgent 0.1.0",
+        "runtime": "MockAgent 1.0.0",
         "screen_width_px": 1080,
         "screen_height_px": 2400,
         "pixel_ratio": 2.625

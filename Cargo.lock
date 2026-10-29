@@ -3271,7 +3271,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-apple-auth"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes 0.9.3",
  "aes-gcm 0.11.1",
@@ -3310,7 +3310,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-apple-device"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "apple-codesign",
  "cryptographic-message-syntax",
@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-clients"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes 0.8.4",
  "ar",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-connector"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3415,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "insta",
  "miette",
@@ -3433,7 +3433,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-language"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "impresario-core",
  "serde",
@@ -3443,7 +3443,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-language-wasm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "impresario-core",
  "impresario-language",
@@ -3453,7 +3453,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-master"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "assert_cmd",
  "async-trait",
@@ -3503,7 +3503,7 @@ dependencies = [
 
 [[package]]
 name = "impresario-proto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "prost",
  "protoc-bin-vendored",

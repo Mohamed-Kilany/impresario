@@ -18,7 +18,7 @@ use impresario_core::config::{
     self, DeviceAuth, DeviceConfig, DeviceConnection, DeviceOptions, TransportKind,
 };
 use impresario_core::home::Home;
-use impresario_core::platforms::Platform;
+use impresario_core::platforms::{DeviceType, Platform};
 use impresario_core::tools;
 use serde::Serialize;
 
@@ -238,6 +238,7 @@ enum Stage {
     Scope,
     Platform,
     Name,
+    Ip,
     AndroidRoute,
     AndroidManual,
     AndroidPairTarget,
@@ -368,6 +369,7 @@ struct Answers {
     scope_workspace: bool,
     platform: Option<Platform>,
     name: String,
+    ip: String,
     connection: DeviceConnection,
     auth: DeviceAuth,
     labels: Vec<String>,
@@ -381,6 +383,7 @@ impl Answers {
             scope_workspace: false,
             platform: Some(device.platform),
             name: device.name.clone(),
+            ip: device.ip.clone(),
             connection: device.connection.clone(),
             auth: device.auth.clone(),
             labels: device.labels.clone(),
@@ -398,10 +401,17 @@ impl Answers {
     }
 
     fn device(&self) -> Option<DeviceConfig> {
+        let platform = self.platform?;
+        let mut connection = self.connection.clone();
+        if connection.host.is_none() {
+            connection.host = Some(self.ip.clone());
+        }
         Some(DeviceConfig {
             name: self.name.clone(),
-            platform: self.platform?,
-            connection: self.connection.clone(),
+            device_type: DeviceType::from_platform(platform),
+            ip: self.ip.clone(),
+            platform,
+            connection,
             auth: self.auth.clone(),
             labels: self.labels.clone(),
             options: self.options.clone(),
@@ -506,6 +516,7 @@ fn run_wizard_io<R: BufRead, W: Write>(
             scope_workspace: args.workspace,
             platform: None,
             name: String::new(),
+            ip: String::new(),
             connection: DeviceConnection::default(),
             auth: DeviceAuth::default(),
             labels: Vec::new(),
@@ -550,6 +561,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                 Stage::Scope => self.scope(),
                 Stage::Platform => self.platform(),
                 Stage::Name => self.name(),
+                Stage::Ip => self.ip(),
                 Stage::AndroidRoute => self.android_route(),
                 Stage::AndroidManual => self.android_manual(),
                 Stage::AndroidPairTarget => self.android_pair_target(),
@@ -628,24 +640,21 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
 
     fn platform(&mut self) -> Result<Step, String> {
         let default = self.answers.platform.unwrap_or(Platform::Android);
-        let parse = |text: &str| match text.to_ascii_lowercase().as_str() {
-            "android" | "phone" => Ok(Platform::Android),
-            "androidtv" | "android-tv" | "tv" => Ok(Platform::AndroidTv),
-            "web" => Ok(Platform::Web),
-            "tvos" | "appletv" | "apple-tv" => Ok(Platform::Tvos),
-            "webos" | "tizen" | "ios" => Err(format!(
-                "'{text}' is not covered by this wizard yet; it covers android, androidtv, web and \
-                 physical tvos"
-            )),
-            _ => Err("expected android, androidtv, web or tvos".to_string()),
+        let parse = |text: &str| {
+            text.parse::<DeviceType>()
+                .map(DeviceType::platform)
+                .map_err(|()| {
+                    "expected one of: web, webOS, tizenOS, android, androidtv, iOS, tvOS"
+                        .to_string()
+                })
         };
         match self
             .ui
             .ask_value(
-                "Platform (android/androidtv/web/tvos)",
+                "Device type (web/webOS/tizenOS/android/androidtv/iOS/tvOS)",
                 Some(&default),
                 parse,
-                |value| value.as_str().to_string(),
+                |value| DeviceType::from_platform(*value).as_str().to_string(),
             )
             .map_err(|error| error.to_string())?
         {
@@ -686,15 +695,36 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
         {
             Answer::Value(name) => {
                 self.answers.name = name;
-                let platform = self
-                    .answers
-                    .platform
-                    .ok_or_else(|| "platform was not selected".to_string())?;
-                Ok(Step::Next(match platform {
-                    Platform::Android | Platform::AndroidTv => Stage::AndroidRoute,
-                    Platform::Tvos => Stage::TvosUdid,
-                    Platform::Web => Stage::WebMode,
-                    _ => Stage::Name,
+                Ok(Step::Next(Stage::Ip))
+            }
+            Answer::Back => Ok(Step::Back),
+            Answer::Cancel => Ok(self.cancel()),
+        }
+    }
+
+    fn ip(&mut self) -> Result<Step, String> {
+        let default = if self.answers.ip.is_empty() {
+            None
+        } else {
+            Some(self.answers.ip.clone())
+        };
+        let parse = |text: &str| {
+            text.trim()
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.to_string())
+                .map_err(|_| "expected an IPv4 or IPv6 address".to_string())
+        };
+        match self
+            .ui
+            .ask_value("Device IP", default.as_ref(), parse, Clone::clone)
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(ip) => {
+                self.answers.ip = ip;
+                Ok(Step::Next(if self.args.no_check {
+                    Stage::Review
+                } else {
+                    Stage::Check
                 }))
             }
             Answer::Back => Ok(Step::Back),
@@ -1314,7 +1344,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                             .map_err(|error| error.to_string())?
                         {
                             Answer::Value(true) => Ok(Step::Next(Stage::Review)),
-                            Answer::Value(false) => Ok(Step::Next(Stage::AndroidRoute)),
+                            Answer::Value(false) => Ok(Step::Next(Stage::Ip)),
                             Answer::Back => Ok(Step::Back),
                             Answer::Cancel => Ok(self.cancel()),
                         }
@@ -1328,11 +1358,6 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                      run `impresario device check <name>`; it signs, installs and starts the \
                      agent over the pure-Rust path.",
                 );
-                if let Some(endpoint) = self.answers.connection.endpoint.as_deref() {
-                    let _ = self
-                        .ui
-                        .say(format!("configured agent endpoint: {endpoint}"));
-                }
                 Ok(Step::Next(Stage::Review))
             }
             Platform::Web => {
@@ -1368,7 +1393,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
 
     fn review(&mut self) -> Result<Step, String> {
         let Some(device) = self.answers.device() else {
-            return Ok(Step::Next(Stage::Name));
+            return Ok(Step::Next(Stage::Ip));
         };
         let path = definitions::device_layer_path(
             self.home,
@@ -1382,7 +1407,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             Ok(preview) => preview,
             Err(error) => {
                 let _ = self.ui.say(format!("cannot render the preview: {error}"));
-                return Ok(Step::Next(Stage::Labels));
+                return Ok(Step::Next(Stage::Ip));
             }
         };
         let outcome = config::parse_devices(&preview, &path);
@@ -1391,7 +1416,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             for diagnostic in outcome.diagnostics.iter() {
                 let _ = self.ui.say(format!("  {diagnostic}"));
             }
-            return Ok(Step::Next(Stage::Labels));
+            return Ok(Step::Next(Stage::Ip));
         }
         for diagnostic in outcome.diagnostics.iter() {
             let _ = self.ui.say(format!("warning: {diagnostic}"));
@@ -1457,7 +1482,7 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                 }
                 Err(error) => {
                     let _ = self.ui.say(format!("not written: {error}"));
-                    Ok(Step::Next(Stage::Name))
+                    Ok(Step::Next(Stage::Ip))
                 }
             },
             Answer::Value(false) => Ok(self.cancel()),
@@ -1485,6 +1510,7 @@ fn previous_stage(stage: Stage, answers: &Answers) -> Option<Stage> {
         Stage::Scope => return None,
         Stage::Platform => Stage::Scope,
         Stage::Name => Stage::Platform,
+        Stage::Ip => Stage::Name,
         Stage::AndroidRoute => Stage::Name,
         Stage::AndroidManual => Stage::AndroidRoute,
         Stage::AndroidPairTarget => Stage::AndroidRoute,
@@ -1507,8 +1533,8 @@ fn previous_stage(stage: Stage, answers: &Answers) -> Option<Stage> {
             _ => Stage::AndroidRoute,
         },
         Stage::Labels => Stage::AgentPort,
-        Stage::Check => Stage::Labels,
-        Stage::Review => Stage::Labels,
+        Stage::Check => Stage::Ip,
+        Stage::Review => Stage::Ip,
     })
 }
 
@@ -1846,14 +1872,14 @@ mod tests {
             workspace: true,
             no_check: true,
         };
-        let input = "workspace\nandroid\nphone\nm\n10.0.0.5:5555\n-\n-\ny\n";
+        let input = "workspace\nandroid\nphone\n10.0.0.5\ny\n";
         let code = run_script(&args, &home, &workspace, input);
         assert_eq!(code, EXIT_OK);
         let source = std::fs::read_to_string(&workspace).expect("workspace devices");
         assert!(source.contains("name: phone"));
-        assert!(source.contains("host: 10.0.0.5"));
-        assert!(source.contains("port: 5555"));
-        assert!(source.contains("transport: tcp"));
+        assert!(source.contains("type: android"));
+        assert!(source.contains("ip: 10.0.0.5"));
+        assert!(!source.contains("transport:"));
     }
 
     #[test]
@@ -1865,16 +1891,14 @@ mod tests {
             workspace: true,
             no_check: true,
         };
-        let input = "workspace\ntvos\napple_tv\n00008110-001B3456021E002F\n\
-                     192.168.93.10:50062\n-\ny\n";
+        let input = "workspace\ntvOS\napple_tv\n192.168.93.10\ny\n";
         let code = run_script(&args, &home, &workspace, input);
         assert_eq!(code, EXIT_OK);
         let source = std::fs::read_to_string(&workspace).expect("workspace devices");
         assert!(source.contains("name: apple_tv"));
-        assert!(source.contains("platform: tvos"));
-        assert!(source.contains("udid: 00008110-001B3456021E002F"));
-        assert!(source.contains("transport: network"));
-        assert!(source.contains("endpoint: 192.168.93.10:50062"));
+        assert!(source.contains("type: tvOS"));
+        assert!(source.contains("ip: 192.168.93.10"));
+        assert!(!source.contains("udid:"));
     }
 
     #[test]
@@ -1886,13 +1910,14 @@ mod tests {
             workspace: true,
             no_check: true,
         };
-        // Name -> back to platform; switch to web and finish.
-        let input = "workspace\nandroid\nb\nweb\nweb\nlaunch\n-\n-\n-\n-\ny\n";
+        // Name -> back to type; switch to web and finish.
+        let input = "workspace\nandroid\nb\nweb\nweb\n127.0.0.1\ny\n";
         let code = run_script(&args, &home, &workspace, input);
         assert_eq!(code, EXIT_OK);
         let source = std::fs::read_to_string(&workspace).expect("workspace devices");
         assert!(source.contains("name: web"));
-        assert!(!source.contains("platform: android"));
+        assert!(source.contains("type: web"));
+        assert!(!source.contains("type: android"));
     }
 
     #[test]
@@ -1901,7 +1926,7 @@ mod tests {
         let workspace = dir.path().join("impresario.devices.config");
         std::fs::write(
             &workspace,
-            "devices:\n- name: phone\n  platform: android\n  connection:\n    transport: usb\n    serial: OLD\n",
+            "devices:\n- name: phone\n  type: android\n  ip: 10.0.0.1\n",
         )
         .expect("seed workspace");
         let args = WizardArgs {
@@ -1909,13 +1934,13 @@ mod tests {
             workspace: false,
             no_check: true,
         };
-        let input = "\n\n\nm\n10.0.0.9:5555\n-\n-\ny\n";
+        let input = "\n\n\n10.0.0.9\ny\n";
         let code = run_script(&args, &home, &workspace, input);
         assert_eq!(code, EXIT_OK);
         let source = std::fs::read_to_string(&workspace).expect("workspace devices");
         assert_eq!(source.matches("name: phone").count(), 1);
-        assert!(source.contains("host: 10.0.0.9"));
-        assert!(!source.contains("serial: OLD"));
+        assert!(source.contains("ip: 10.0.0.9"));
+        assert!(!source.contains("10.0.0.1"));
     }
 
     #[test]
@@ -1927,12 +1952,12 @@ mod tests {
             workspace: false,
             no_check: true,
         };
-        let input = "global\nweb\nweb\nlaunch\n-\n-\n-\n-\ny\n";
+        let input = "global\nweb\nweb\n127.0.0.1\ny\n";
         let code = run_script(&args, &home, &workspace, input);
         assert_eq!(code, EXIT_OK);
         let source = std::fs::read_to_string(home.devices_path()).expect("global devices");
         assert!(source.contains("name: web"));
-        assert!(source.contains("platform: web"));
-        assert!(source.contains("transport: launch"));
+        assert!(source.contains("type: web"));
+        assert!(source.contains("ip: 127.0.0.1"));
     }
 }

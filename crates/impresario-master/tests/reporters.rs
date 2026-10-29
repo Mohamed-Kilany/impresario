@@ -147,7 +147,7 @@ fn report() -> RunReport {
                 model: "Pixel 8".to_string(),
                 os_name: "Android".to_string(),
                 os_version: "14".to_string(),
-                runtime: "MockAgent 0.1.0".to_string(),
+                runtime: "MockAgent 1.0.0".to_string(),
                 screen_width_px: 1080,
                 screen_height_px: 2400,
                 pixel_ratio: 2.625,

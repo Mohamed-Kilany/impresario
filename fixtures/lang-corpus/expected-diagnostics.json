@@ -71,13 +71,13 @@
     {
       "code": "IMP-DSL-007",
       "severity": "error",
-      "line": 5,
-      "col": 5,
+      "line": 6,
+      "col": 3,
       "message": "duplicate scene:Ghost pieces 'LoginButton' (2 occurrences)",
       "related": [
         {
-          "line": 5,
-          "col": 5,
+          "line": 6,
+          "col": 3,
           "message": "'LoginButton' also declared here"
         }
       ]
@@ -109,13 +109,13 @@
     {
       "code": "IMP-DSL-007",
       "severity": "error",
-      "line": 5,
-      "col": 5,
+      "line": 6,
+      "col": 3,
       "message": "duplicate scene:Ghost pieces 'LoginButton' (2 occurrences)",
       "related": [
         {
-          "line": 5,
-          "col": 5,
+          "line": 6,
+          "col": 3,
           "message": "'LoginButton' also declared here"
         }
       ]
@@ -126,7 +126,7 @@
       "code": "IMP-DSL-054",
       "severity": "warning",
       "line": 6,
-      "col": 2,
+      "col": 3,
       "message": "piece 'LoginButton' in scene 'LoginScreen' is never used by a step",
       "related": []
     }

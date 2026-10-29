@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn computes_depth_from_first_indent() {
-        let src = "Scene: A\nPlatform: web\nPieces:\n    One: web=\"#a\"\n";
+        let src = "Scene: A\nPlatform: web\n    One: web=\"#a\"\n";
         let scanned = scan(src, file());
         assert_eq!(scanned.indent_unit, 4);
         assert_eq!(
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn tab_indentation_is_an_error() {
-        let src = "Scene: A\n\tPieces:\n";
+        let src = "Scene: A\n\tIndented: value\n";
         let scanned = scan(src, file());
         assert_eq!(scanned.diagnostics.len(), 1);
         assert_eq!(
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn inconsistent_indent_is_an_error() {
-        let src = "Scene: A\n    Pieces:\n  Bad: web=\"#a\"\n";
+        let src = "Scene: A\n    Indented: value\n  Bad: value\n";
         let scanned = scan(src, file());
         assert_eq!(
             scanned.diagnostics.first().map(|d| d.code),

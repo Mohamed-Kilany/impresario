@@ -469,7 +469,6 @@ impl Language {
                 "Perform",
                 "Action",
                 "Check",
-                "Pieces",
                 "is",
                 "text",
                 "textContains",

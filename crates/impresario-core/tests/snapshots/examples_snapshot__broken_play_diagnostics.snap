@@ -1,6 +1,6 @@
 ---
 source: crates/impresario-core/tests/examples_snapshot.rs
-expression: "outcome.diagnostics.iter().cloned().collect::<Vec<_>>()"
+expression: "diagnostics.iter().cloned().collect::<Vec<_>>()"
 ---
 - code: DslUnterminatedString
   severity: error
@@ -10,12 +10,20 @@ expression: "outcome.diagnostics.iter().cloned().collect::<Vec<_>>()"
     line: 2
     col: 14
     len: 1
+- code: DslUnknownKeyword
+  severity: error
+  message: "unknown keyword 'Descrption' outside an Act; did you mean 'Description'?"
+  span:
+    file: examples/plays/broken.play
+    line: 6
+    col: 1
+    len: 16
 - code: DslInvalidDuration
   severity: error
   message: "duration '0ms' is out of range"
   span:
-    file: examples/plays/broken.play
-    line: 7
+    file: examples/theatres/broken.theatre
+    line: 3
     col: 14
     len: 3
   help: durations are between 1ms and 10m
@@ -23,15 +31,15 @@ expression: "outcome.diagnostics.iter().cloned().collect::<Vec<_>>()"
   severity: error
   message: "unknown action 'tap'; did you mean 'type'?"
   span:
-    file: examples/plays/broken.play
-    line: 9
+    file: examples/theatres/broken.theatre
+    line: 5
     col: 17
     len: 3
 - code: DslUnterminatedString
   severity: error
   message: text needs a quoted string (unterminated string literal)
   span:
-    file: examples/plays/broken.play
-    line: 10
+    file: examples/theatres/broken.theatre
+    line: 6
     col: 26
     len: 1

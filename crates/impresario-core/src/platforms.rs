@@ -5,6 +5,121 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+/// The exact `type:` spelling accepted in a devices file.
+///
+/// The DSL keeps its historical lowercase platform keys (selectors, scene
+/// columns), but device configuration uses the product names below and only
+/// these spellings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DeviceType {
+    #[serde(rename = "web")]
+    Web,
+    #[serde(rename = "webOS")]
+    WebOs,
+    #[serde(rename = "tizenOS")]
+    Tizen,
+    #[serde(rename = "android")]
+    Android,
+    #[serde(rename = "androidtv")]
+    AndroidTv,
+    #[serde(rename = "iOS")]
+    Ios,
+    #[serde(rename = "tvOS")]
+    Tvos,
+}
+
+impl DeviceType {
+    /// All device types in declaration order.
+    pub const ALL: [DeviceType; 7] = [
+        DeviceType::Web,
+        DeviceType::WebOs,
+        DeviceType::Tizen,
+        DeviceType::Android,
+        DeviceType::AndroidTv,
+        DeviceType::Ios,
+        DeviceType::Tvos,
+    ];
+
+    /// The exact config spelling.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceType::Web => "web",
+            DeviceType::WebOs => "webOS",
+            DeviceType::Tizen => "tizenOS",
+            DeviceType::Android => "android",
+            DeviceType::AndroidTv => "androidtv",
+            DeviceType::Ios => "iOS",
+            DeviceType::Tvos => "tvOS",
+        }
+    }
+
+    /// Map the config type to the internal platform family.
+    #[must_use]
+    pub fn platform(self) -> Platform {
+        match self {
+            DeviceType::Web => Platform::Web,
+            DeviceType::WebOs => Platform::WebOs,
+            DeviceType::Tizen => Platform::Tizen,
+            DeviceType::Android => Platform::Android,
+            DeviceType::AndroidTv => Platform::AndroidTv,
+            DeviceType::Ios => Platform::Ios,
+            DeviceType::Tvos => Platform::Tvos,
+        }
+    }
+
+    /// The config type for an internal platform.
+    #[must_use]
+    pub fn from_platform(platform: Platform) -> Self {
+        match platform {
+            Platform::Web => DeviceType::Web,
+            Platform::WebOs => DeviceType::WebOs,
+            Platform::Tizen => DeviceType::Tizen,
+            Platform::Android => DeviceType::Android,
+            Platform::AndroidTv => DeviceType::AndroidTv,
+            Platform::Ios => DeviceType::Ios,
+            Platform::Tvos => DeviceType::Tvos,
+        }
+    }
+
+    /// A short, lowercase slug used to derive a default device name.
+    #[must_use]
+    pub fn slug(self) -> &'static str {
+        match self {
+            DeviceType::Web => "web",
+            DeviceType::WebOs => "webos",
+            DeviceType::Tizen => "tizen",
+            DeviceType::Android => "android",
+            DeviceType::AndroidTv => "androidtv",
+            DeviceType::Ios => "ios",
+            DeviceType::Tvos => "tvos",
+        }
+    }
+}
+
+impl fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for DeviceType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "web" => Ok(DeviceType::Web),
+            "webOS" => Ok(DeviceType::WebOs),
+            "tizenOS" => Ok(DeviceType::Tizen),
+            "android" => Ok(DeviceType::Android),
+            "androidtv" => Ok(DeviceType::AndroidTv),
+            "iOS" => Ok(DeviceType::Ios),
+            "tvOS" => Ok(DeviceType::Tvos),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Every device platform the system knows (spec section 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

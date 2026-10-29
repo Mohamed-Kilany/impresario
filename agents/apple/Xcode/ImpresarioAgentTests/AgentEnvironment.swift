@@ -27,7 +27,7 @@ enum AgentEnvironment {
 
     /// `IMPRESARIO_NO_BONJOUR=1` disables the `_impresario._tcp` advertisement —
     /// the escape hatch when a device's local-network permission cannot be
-    /// granted and the master connects to a fixed `agent_address` instead
+    /// granted and the master connects to the dynamically allocated port instead
     /// (README "Troubleshooting").
     static func advertisesBonjour(
         _ environment: [String: String] = ProcessInfo.processInfo.environment
@@ -69,7 +69,7 @@ enum AgentEnvironment {
             "impresario agent: platform=\(platform.rawValue) port=\(port) "
                 + "bonjour=\(bonjour ? "on" : "off") token=\(token ? "required" : "off")",
             "impresario agent: reachable at http://<device-ip>:\(port) (grpc) — "
-                + "pass agent_address=<device-ip>:\(port) to the master for WLAN runs",
+                + "the master learns <device-ip>:\(port) from the RSD tunnel for WLAN runs",
             "impresario agent: addresses \(localAddresses().joined(separator: ", "))",
         ]
         return lines.joined(separator: "\n")

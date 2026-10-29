@@ -8,7 +8,7 @@ import Foundation
 /// restarting the agent app (spec 9.2/D-18).
 public final class AgentState: @unchecked Sendable {
     public static let protocolVersion = "1.0.0"
-    public static let agentVersion = "0.1.0"
+    public static let agentVersion = "1.0.0"
 
     /// What the service should do with a `Session` stream.
     public enum StreamDecision {

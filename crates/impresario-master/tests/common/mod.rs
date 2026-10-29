@@ -17,7 +17,7 @@ use std::time::Duration;
 use impresario_clients::agent_client::SessionOptions;
 use impresario_clients::testing::{MockAgentBuilder, MockState};
 use impresario_core::config::{AppReset, DeviceConfig, DeviceOptions, ImpresarioConfig};
-use impresario_core::parser::{parse_play, parse_scene};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::platforms::Platform;
 use impresario_core::workspace::Workspace;
 use impresario_master::exec::ExecOptions;
@@ -26,62 +26,97 @@ use tokio_util::sync::CancellationToken;
 
 /// A scene every test play can reference.
 pub const SCENE: &str = r##"Scene: TestScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    A: web="#a", android="id:a", ios="accessibilityId:a"
-    B: web="#b", android="id:b", ios="accessibilityId:b"
-    Input: web="#input", android="id:input", ios="accessibilityId:input"
+| Piece | web | android | ios |
+|---|---|---|---|
+| A | #a | id:a | accessibilityId:a |
+| B | #b | id:b | accessibilityId:b |
+| Input | #input | id:input | accessibilityId:input |
 "##;
 
-/// One act, three wire steps: validate_check, run_action, run_action.
-pub const PLAY_BASIC: &str = r#"Play: Basic
-
-Act: Pass
-
-Stage: S
+/// The stage library performed by the test plays.
+pub const THEATRE: &str = r#"Theatre: Test
+Stage: Basic
     Scene: TestScreen
         Check: A
         Action: click => B
         Action: type 'x' => Input
+
+Stage: First
+    Scene: TestScreen
+        Check: A
+        Action: click => B
+
+Stage: Second
+    Scene: TestScreen
+        Check: A
+
+Stage: Hang
+    Scene: TestScreen
+        Action: click => A timeout 400ms
+
+Stage: Shot
+    Scene: TestScreen
+        Action: screenshot 'shot1'
+        Check: A
+
+Stage: Smoky
+    Scene: TestScreen
+        Check: A
+
+Stage: Plain
+    Scene: TestScreen
+        Check: A
+        Action: click => B
+
+Stage: ReconnectFirst
+    Scene: TestScreen
+        Check: A
+        Action: wait 300ms
+
+Stage: ReconnectSecond
+    Scene: TestScreen
+        Check: A
+
+Stage: Leak
+    Scene: TestScreen
+        Check: A text '${env.IMPRESARIO_TEST_SECRET}'
+
+Stage: LongHang
+    Scene: TestScreen
+        Action: click => A timeout 30s
+"#;
+
+/// One act performing the three-step basic stage.
+pub const PLAY_BASIC: &str = r#"Play: Basic
+
+Act: Pass
+    Perform: Basic
 "#;
 
 /// Two single-stage acts for reconnect/fail-fast scenarios.
 pub const PLAY_TWO_ACTS: &str = r#"Play: Two Acts
 
 Act: First
-
-Stage: S
-    Scene: TestScreen
-        Check: A
-        Action: click => B
+    Perform: First
 
 Act: Second
-
-Stage: S
-    Scene: TestScreen
-        Check: A
+    Perform: Second
 "#;
 
 /// A single hanging step with a short effective timeout.
 pub const PLAY_HANG: &str = r#"Play: Hang
 
 Act: Hang
-
-Stage: S
-    Scene: TestScreen
-        Action: click => A timeout 400ms
+    Perform: Hang
 "#;
 
 /// A screenshot step plus a check (both cross the wire).
 pub const PLAY_SHOT: &str = r#"Play: Shot
 
 Act: Capture
-
-Stage: S
-    Scene: TestScreen
-        Action: screenshot 'shot1'
-        Check: A
+    Perform: Shot
 "#;
 
 /// Two acts with distinct tags for `--tag` / `--act` filtering.
@@ -89,17 +124,10 @@ pub const PLAY_TAGGED: &str = r#"Play: Tagged
 
 Act: Smoky
 Tags: smoke
-
-Stage: S
-    Scene: TestScreen
-        Check: A
+    Perform: Smoky
 
 Act: Plain
-
-Stage: S
-    Scene: TestScreen
-        Check: A
-        Action: click => B
+    Perform: Plain
 "#;
 
 /// Two acts where the first ends with a long-enough host-side wait that a
@@ -108,27 +136,17 @@ Stage: S
 pub const PLAY_RECONNECT: &str = r#"Play: Reconnect
 
 Act: First
-
-Stage: S
-    Scene: TestScreen
-        Check: A
-        Action: wait 300ms
+    Perform: ReconnectFirst
 
 Act: Second
-
-Stage: S
-    Scene: TestScreen
-        Check: A
+    Perform: ReconnectSecond
 "#;
 
 /// A check whose expected text is a secret (`${env.*}`).
 pub const PLAY_SECRET: &str = r#"Play: Secret
 
 Act: Leak
-
-Stage: S
-    Scene: TestScreen
-        Check: A text '${env.IMPRESARIO_TEST_SECRET}'
+    Perform: Leak
 "#;
 
 /// A `MockAgent` served from its own OS thread and runtime.
@@ -181,17 +199,12 @@ impl Drop for TestAgent {
 /// A `web` device pointed directly at a mock address (loopback + open port,
 /// so `ConnectorTransport` connects without spawning anything).
 pub fn device(name: &str, agent_address: &str) -> DeviceConfig {
-    DeviceConfig {
-        name: name.to_string(),
-        platform: Platform::Web,
-        connection: impresario_core::config::DeviceConnection::default(),
-        auth: Default::default(),
-        labels: Vec::new(),
-        options: DeviceOptions {
-            connector_address: Some(agent_address.to_string()),
-            ..DeviceOptions::default()
-        },
-    }
+    let mut device = DeviceConfig::new(name, Platform::Web, "127.0.0.1");
+    device.options = DeviceOptions {
+        connector_address: Some(agent_address.to_string()),
+        ..DeviceOptions::default()
+    };
+    device
 }
 
 /// Parse an `ImpresarioConfig` from YAML with test-friendly timings.
@@ -236,7 +249,7 @@ pub fn exec_options(
         fail_fast: false,
         token: None,
         shutdown: CancellationToken::new(),
-        master_version: "0.1.0-test".to_string(),
+        master_version: "1.0.0-test".to_string(),
         session_options: test_session_options(),
         events: None,
     }
@@ -261,12 +274,15 @@ pub fn build_test_plan_with(
     let scene = parse_scene(SCENE, Path::new("scenes/TestScreen.scene"))
         .ast
         .expect("test scene parses");
+    let theatre = parse_theatre(THEATRE, Path::new("theatres/test.theatre"))
+        .ast
+        .expect("test theatre parses");
     let play = parse_play(play_source, Path::new("plays/test.play"))
         .ast
         .expect("test play parses");
     let workspace = Workspace {
         scenes: vec![scene],
-        theatres: Vec::new(),
+        theatres: vec![theatre],
         plays: vec![play.clone()],
     };
     plan::build_plan(&PlanInput {
@@ -304,6 +320,7 @@ pub fn test_home() -> &'static Path {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).expect("create test home");
         std::env::set_var("IMPRESARIO_HOME", &home);
+        std::env::set_var("IMPRESARIO_TEST_DEVICE_OPTIONS", "1");
         home
     })
 }
@@ -318,6 +335,7 @@ pub fn write_workspace(
 ) {
     test_home();
     std::fs::create_dir_all(dir.join("scenes")).expect("mkdir scenes");
+    std::fs::create_dir_all(dir.join("theatres")).expect("mkdir theatres");
     std::fs::create_dir_all(dir.join("plays")).expect("mkdir plays");
     let config = format!(
         "project: tests\n\
@@ -331,13 +349,24 @@ pub fn write_workspace(
     );
     std::fs::write(dir.join("impresario.config"), config).expect("write config");
     let mut yaml = String::from("devices:\n");
+    let mut options = String::new();
     for (name, address) in devices {
         yaml.push_str(&format!(
-            "  - name: {name}\n    platform: web\n    connection:\n      transport: launch\n    options:\n      connector_address: {address}\n"
+            "  - name: {name}\n    type: web\n    ip: 127.0.0.1\n"
         ));
+        options.push_str(&format!("  {name}:\n    connector_address: {address}\n"));
     }
     std::fs::write(dir.join("impresario.devices.config"), yaml).expect("write devices");
+    // Test-only sidecar: the public devices schema deliberately has no
+    // transport/port knobs. The CLI reads this only when the test opt-in
+    // environment variable is present.
+    std::fs::write(
+        dir.join("impresario.devices.test-options.yaml"),
+        format!("devices:\n{options}"),
+    )
+    .expect("write test device options");
     std::fs::write(dir.join("scenes/TestScreen.scene"), SCENE).expect("write scene");
+    std::fs::write(dir.join("theatres/test.theatre"), THEATRE).expect("write theatre");
     for (file, source) in plays {
         std::fs::write(dir.join("plays").join(file), source).expect("write play");
     }

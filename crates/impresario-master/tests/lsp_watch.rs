@@ -17,11 +17,12 @@ fn runtime() -> tokio::runtime::Runtime {
 /// The same scene as `common::lsp::SCENE`, but with an unknown selector key
 /// (so the file itself carries a diagnostic after the external edit).
 const BROKEN_SCENE: &str = r##"Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginButton: android="id:login_button", bada="x"
-    UsernameInput: android="id:username", ios="accessibilityId:username", web="#username"
+| Piece | android | bada | ios | web |
+|---|---|---|---|---|
+| LoginButton | id:login_button | x | - | - |
+| UsernameInput | id:username | - | accessibilityId:username | #username |
 "##;
 
 #[test]
@@ -47,17 +48,18 @@ fn external_scene_edits_are_republished() {
             .into_iter()
             .next()
             .expect("diagnostic");
-        // The bad key sits after `    LoginButton: android="id:login_button", `.
-        assert_eq!(lsp::range_start(&diagnostic), (4, 44));
+        // The bad column sits in the table header.
+        assert_eq!(lsp::range_start(&diagnostic), (3, 20));
     });
 }
 
 /// A scene with an unknown selector key on its only piece line.
 const LATE_SCENE: &str = r##"Scene: Late
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LateButton: bada="x"
+| Piece | bada |
+|---|---|
+| LateButton | x |
 "##;
 
 #[test]

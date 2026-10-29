@@ -9,7 +9,8 @@ target* (or next to it) instead of shelling out screen taps from the host.
   `*.play` files bind Acts with `Perform:` and optional `Examples:` tables.
   The planner expands a play per device and rejects anything the target cannot
   do before hardware is touched (`IMP-DSL-013`). `impresario fmt` canonicalises
-  all three file kinds; `impresario migrate` converts old workspaces.
+  all three file kinds. The pre-release schema accepts only the canonical
+  table/theatre forms; older workspaces are rejected with a diagnostic.
 - **Everything is gRPC to an executor.** The Android/TV agent, the Apple
   agent (see `docs/STATUS.md`) and the web connector all speak the
   same `Agent` service (`proto/impresario/v1/impresario.proto`). Android uses
@@ -97,59 +98,45 @@ impresario doctor      # what each platform needs, what was found, and the fix
 impresario fmt --check # canonical table/stage formatting
 ```
 
-### 3. Smoke-run without hardware
+### 3. Plan a run without hardware
 
-`impresario mock-agent` (decision I-77) serves a scripted executor on
-loopback so the full pipeline can be exercised on any machine. It always
-reports success — it is a plumbing check, not a simulator.
-
-Terminal A:
-
-```sh
-impresario mock-agent --port 50071
-# impresario: mock device listening on 127.0.0.1:50071
-```
-
-Append this device to `impresario.devices.config` (the example play runs on
-the web platform as well, so the generated workspace works against it
-unchanged):
-
-```yaml
-  - name: mock_device
-    platform: web
-    connection:
-      transport: launch
-    options:
-      connector_address: 127.0.0.1:50071
-```
-
-The generated `impresario.apps.config` defines `shop`, and
-`plays/login.play` binds it with `App: shop` (the example play uses the webOS
-platform entry). `--app NAME` overrides the header; a run never mixes two
-apps.
-
-Terminal B — the example play interpolates `${env.TEST_PASSWORD}`, so set it
-first:
+The planner expands every Act for the selected device and reports what would
+run, without opening a transport. The example play interpolates
+`${env.TEST_PASSWORD}`, so set it first:
 
 ```sh
 export TEST_PASSWORD=impresario
-impresario run --play plays/login.play --device mock_device
-echo $?                                    # 0 = passed
+impresario run --play plays/login.play --device living_room_tv --dry-run
 ```
 
-PowerShell instead of bash: `$env:TEST_PASSWORD = "impresario"`, then check
-`$LASTEXITCODE` after the run.
+PowerShell instead of bash: `$env:TEST_PASSWORD = "impresario"`.
 
-You get the console tree on stdout and `reports/<run-id>/report.json` +
-`junit.xml` next to it. This is exactly what
-`cargo test -p impresario-master --test mock_cli` automates.
+A configured device is only a name, an exact `type` and an `ip`; transport,
+ports, pairing and signing details are derived during planning. The shipped
+example file is:
+
+```yaml
+devices:
+  - name: living_room_tv
+    type: webOS
+    ip: 192.168.1.50
+```
+
+The generated `impresario.apps.config` defines `shop`, and
+`plays/login.play` binds it with `App: shop`. `--app NAME` overrides the
+header; a run never mixes two apps.
+
+`impresario mock-agent` (decision I-77) remains available for the automated
+suite, but it is a test harness: production devices always use the normal
+per-platform transport, and connector/agent ports are allocated dynamically.
 
 ### 4. Run on a real target (optional)
 
 - **web** — uncomment the `local_chrome` device in
   `impresario.devices.config` (or point the app's `platforms.web.url` at your
   page) and run with `--device local_chrome`; the connector starts headless
-  Chrome or attaches to a running one (`docs/DEVICES.md` §1).
+  Chrome. A remote browser is the same device type with its host IP and must
+  expose CDP on port `9222` (`docs/DEVICES.md` §1).
 - **android / androidtv** — build/install the agent and run over Wi-Fi:
   `docs/DEVICES.md` §2.2–2.7 record the exact commands (verified on a
   Galaxy A51 and a TCL Android TV).

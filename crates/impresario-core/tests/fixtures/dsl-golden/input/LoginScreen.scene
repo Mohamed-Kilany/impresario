@@ -1,7 +1,0 @@
-Scene: LoginScreen
-Platform: web, android
-
-Pieces:
-    LoginTitle: web="h1.title", android="id:login_title"
-    SubmitButton: web="button[type='submit']", android="id:submit"
-    PromoBanner: web=".promo", index=2

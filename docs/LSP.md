@@ -42,7 +42,7 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 
 | Context (line prefix) | Suggestions |
 |---|---|
-| file headers | keywords valid for the file kind (`Play:`/`Theatre:`/`Scene:`, `Act:`, `Stage:`, `Description:`, `Tags:`, `Platform(s):`, `App:`, `Var:`, `Examples:`, `Timeout:`, `Perform:`, `Action:`, `Check:`, `Pieces:`) |
+| file headers | keywords valid for the file kind (`Play:`/`Theatre:`/`Scene:`, `Act:`, `Stage:`, `Description:`, `Tags:`, `Platforms:`, `App:`, `Var:`, `Examples:`, `Timeout:`, `Perform:`, `Action:`, `Check:`) |
 | `Scene: ` inside a Stage | scene names with their platforms in `detail` |
 | `Perform: ` (play or theatre) | stage names, with signature/theatre in `detail` |
 | `Perform: Stage(` before `)` | that stage's parameters, with default or `required` in `detail`; qualified `Theatre.Stage` names resolve too |
@@ -52,10 +52,9 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 | `Check: ` | pieces; then `is visible/hidden/enabled/disabled/focused`, `text`, `textContains`, `count`, `timeout`; durations where a timeout is accepted |
 | `key ` | key names, filtered to the configured devices' platforms when known |
 | `Tags: ` | tags already used in the workspace |
-| `Platforms: ` / `Platform: ` | platform names (plus `cross-platform` in scenes), with configured device names in `detail` |
+| `Platforms: ` | platform names (plus `cross-platform` in scenes), with configured device names in `detail` |
 | `App:` in a play/theatre | app names from `impresario.apps.config` |
 | table scenes | `Piece` and platform header cells, known piece names in body rows, then selector prefixes for the column's platform |
-| legacy `Pieces:` entries | platform keys (`web=`, `android=`, ...) and valid selector prefixes |
 | inside strings | `${var.` / `${param.` / `${env.` / `${example.` namespaces and the visible names |
 
 ### Settings
@@ -99,7 +98,7 @@ npm run build:wasm                              # Rust wasm32 target
 npm run build                                   # esbuild -> out/
 code --extensionDevelopmentPath="$PWD"
 # optional, for a permanent install:
-npm run package && code --install-extension impresario-0.1.0.vsix
+npm run package && code --install-extension impresario-1.0.0.vsix
 ```
 
 Settings (`settings.json`):

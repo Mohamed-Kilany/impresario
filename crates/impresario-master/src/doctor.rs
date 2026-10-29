@@ -403,7 +403,7 @@ async fn collect_webos(home: &Home, devices: &[DeviceConfig]) -> PlatformReport 
     report.needed = vec![
         "impresario-connector executable".to_string(),
         "webOS Developer Mode with SSH (port 9922) and the accepted developer key".to_string(),
-        "pinned host key in auth.identity, or TOFU in keys/webos_known_hosts".to_string(),
+        "host key trusted in keys/webos_known_hosts (the first connection records it)".to_string(),
     ];
     if impresario_clients::connector_binary().is_some() {
         report
@@ -711,7 +711,7 @@ async fn collect_apple(
                 });
                 report.fail();
                 report.fixes.push(format!(
-                    "device '{}': check connection.host/udid, pair it with `impresario apple pair \
+                    "device '{}': check the configured IP, pair it with `impresario apple pair \
                      --host <host>`, then run `impresario apple doctor --host <host>`",
                     device.name
                 ));

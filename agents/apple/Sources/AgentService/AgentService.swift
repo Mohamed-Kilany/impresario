@@ -6,10 +6,9 @@ import NIO
 
 /// Configuration of the in-app agent (spec 12.1).
 ///
-/// The master expects the agent on `agent_port` (the Apple default is 50062,
-/// see `crates/impresario-clients/src/transport.rs`); the test bundle reads
-/// `IMPRESARIO_AGENT_PORT` from its launch environment when a different port
-/// is wanted, so both sides must agree.
+/// The master allocates the agent port dynamically and passes it to the test
+/// bundle as `IMPRESARIO_AGENT_PORT`; `50062` is only the standalone fallback
+/// when no port is supplied, so both sides always agree.
 public struct AgentServiceConfig: Sendable {
     /// The default port the master connects to (`APPLE_AGENT_PORT`).
     public static let defaultPort = 50062

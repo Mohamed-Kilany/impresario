@@ -344,7 +344,7 @@ final class AgentHarness {
     ) async throws -> Impresario_V1_HandshakeResponse {
         var request = Impresario_V1_HandshakeRequest()
         request.protocolVersion = protocolVersion
-        request.masterVersion = "0.1.0"
+        request.masterVersion = "1.0.0"
         request.platform = ProtoConversion.platform(platform ?? self.platform)
         request.appID = appId
         request.authToken = token

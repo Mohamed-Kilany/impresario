@@ -56,7 +56,7 @@ final class AgentServiceLoopbackTests: XCTestCase {
         XCTAssertTrue(response.accepted, response.error.message)
         XCTAssertFalse(response.sessionID.isEmpty)
         XCTAssertEqual(response.protocolVersion, "1.0.0")
-        XCTAssertEqual(response.agentVersion, "0.1.0")
+        XCTAssertEqual(response.agentVersion, "1.0.0")
         XCTAssertEqual(
             Set(response.capabilities),
             [

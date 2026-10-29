@@ -429,7 +429,8 @@ fn create_samsung_profile(
                 record.distributor_not_after
             );
             println!(
-                "next: set auth.profile: {} on the Tizen device, then run the app check or play",
+                "next: select it with IMPRESARIO_TIZEN_PROFILE={} (default: samsung), then run the \
+                 app check or play",
                 record.name
             );
             EXIT_OK

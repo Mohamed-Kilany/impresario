@@ -64,7 +64,7 @@ fn login_theatre_parses_clean_and_snapshots() {
 }
 
 #[test]
-fn examples_are_migrated_already_and_formatted() {
+fn examples_are_formatted() {
     let root = examples_dir();
     let loaded = impresario_core::workspace::load_dirs(
         &root.join("scenes"),
@@ -72,10 +72,6 @@ fn examples_are_migrated_already_and_formatted() {
         &root.join("plays"),
     );
     assert!(!loaded.diagnostics.has_errors(), "{:?}", loaded.diagnostics);
-    let migrated =
-        impresario_core::migrate::migrate(&loaded.workspace, &root.join("theatres"), &[]);
-    assert!(!migrated.errors.has_errors(), "{migrated:?}");
-    assert!(migrated.is_empty(), "{migrated:?}");
 
     for path in loaded
         .workspace
@@ -101,24 +97,33 @@ fn examples_are_migrated_already_and_formatted() {
 
 #[test]
 fn broken_play_diagnostics_snapshot() {
-    // One file exercising the scanner and several parser codes at once; the
-    // snapshot pins the documented codes, messages, spans and hints.
-    let source = "\
+    // One play and one theatre exercising the scanner and several parser codes
+    // at once; the snapshot pins the documented codes, messages, spans and hints.
+    let play_source = "\
 Play: Broken Example
 Var: TOKEN = '${env.TEST_TOKEN}
 
 Act: First
-
+    Perform: Missing
+Descrption: late
+";
+    let theatre_source = "\
+Theatre: Broken
 Stage: One
     Timeout: 0ms
     Scene: MissingScene
         Action: tap 'x'
         Check: Nope text 'unterminated
 ";
-    let outcome = parse_play(source, Path::new("examples/plays/broken.play"));
-    assert!(outcome.diagnostics.has_errors());
-    let codes: Vec<String> = outcome
-        .diagnostics
+    let play = parse_play(play_source, Path::new("examples/plays/broken.play"));
+    let theatre = parse_theatre(
+        theatre_source,
+        Path::new("examples/theatres/broken.theatre"),
+    );
+    let mut diagnostics = play.diagnostics;
+    diagnostics.extend(theatre.diagnostics);
+    assert!(diagnostics.has_errors());
+    let codes: Vec<String> = diagnostics
         .iter()
         .map(|diagnostic| diagnostic.code.as_str().to_string())
         .collect();
@@ -126,15 +131,16 @@ Stage: One
         codes,
         vec![
             "IMP-DSL-003", // unterminated Var value
+            "IMP-DSL-004", // unknown keyword 'Descrption'
             "IMP-DSL-015", // Timeout: 0ms
             "IMP-DSL-010", // unknown action 'tap'
             "IMP-DSL-003", // unterminated Check text
         ],
         "{:?}",
-        outcome.diagnostics
+        diagnostics
     );
     insta::assert_yaml_snapshot!(
         "broken_play_diagnostics",
-        outcome.diagnostics.iter().cloned().collect::<Vec<_>>()
+        diagnostics.iter().cloned().collect::<Vec<_>>()
     );
 }

@@ -156,14 +156,6 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn quoted_dq(&mut self) -> Result<ParsedString, String> {
-        self.skip_ws();
-        if !self.rest.starts_with('"') {
-            return Err("selectors are double-quoted strings".to_string());
-        }
-        self.quoted()
-    }
-
     /// A direction word via the winnow grammar.
     fn direction(&mut self) -> Result<Direction, String> {
         self.skip_ws();
@@ -232,184 +224,11 @@ fn diag_at(code: Code, message: impl Into<String>, span: Span) -> Diagnostic {
 // Scene files
 // ---------------------------------------------------------------------------
 
-/// Parse a `.scene` file. The tabular form is the canonical one; the legacy
-/// `Platform:`/`Pieces:` form is still accepted for `migrate` (I-110).
+/// Parse a `.scene` file. Only the tabular form is accepted; the pre-Phase-2
+/// `Platform:`/`Pieces:` form was removed and is reported as an error.
 #[must_use]
 pub fn parse_scene(source: &str, path: &Path) -> ParseOutcome<SceneFile> {
-    let scanned = crate::scanner::scan(source, path);
-    let mut rest = scanned.lines.iter().skip(1);
-    let second = rest.next();
-    let tabular = match second {
-        Some(line)
-            if line.depth == 0
-                && (line.content.starts_with("Platforms:")
-                    || line.content.starts_with("Platform:")) =>
-        {
-            rest.next()
-                .is_some_and(|next| next.depth == 0 && next.content.starts_with('|'))
-        }
-        Some(line) => line.depth == 0 && line.content.starts_with('|'),
-        None => false,
-    };
-    if tabular {
-        return parse_scene_table(source, path);
-    }
-    parse_scene_legacy(source, path)
-}
-
-fn parse_scene_legacy(source: &str, path: &Path) -> ParseOutcome<SceneFile> {
-    let scanned = crate::scanner::scan(source, path);
-    let mut diagnostics = Diagnostics::new();
-    diagnostics.extend(scanned.diagnostics);
-    let lines = scanned.lines;
-
-    let mut iter = lines.iter().enumerate();
-    let mut name = None;
-    let mut name_span = None;
-    let mut platforms = None;
-    let mut platforms_span = None;
-
-    // Header line 1: Scene:
-    match iter.next() {
-        Some((_, line)) if line.depth == 0 && line.content.starts_with("Scene:") => {
-            let body_col = line.col + "Scene:".chars().count();
-            let body = line.content.get("Scene:".len()..).unwrap_or("").trim();
-            let mut cursor =
-                Cursor::new(body, path, line.line, body_col + leading_ws(line, "Scene:"));
-            match cursor.ident() {
-                Ok(ident) => {
-                    if !cursor.at_end() {
-                        diagnostics.push(diag_at(
-                            Code::DslUnknownKeyword,
-                            "unexpected input after the scene name",
-                            cursor.span(cursor.col(), 1),
-                        ));
-                    }
-                    name = Some(ident.name);
-                    name_span = Some(ident.span);
-                }
-                Err(reason) => diagnostics.push(diag_at(
-                    Code::DslMissingHeader,
-                    format!("Scene: needs a name ({reason})"),
-                    line.span(path),
-                )),
-            }
-        }
-        Some((_, line)) => diagnostics.push(diag_at(
-            Code::DslMissingHeader,
-            "a scene file must start with 'Scene: <Name>'",
-            line.span(path),
-        )),
-        None => {
-            diagnostics.push(Diagnostic::error(
-                Code::DslMissingHeader,
-                "a scene file must start with 'Scene: <Name>'",
-            ));
-            return ParseOutcome {
-                ast: None,
-                diagnostics,
-            };
-        }
-    }
-
-    // Header line 2: Platform:
-    match iter.next() {
-        Some((_, line)) if line.depth == 0 && line.content.starts_with("Platform:") => {
-            let body_col = line.col + "Platform:".chars().count();
-            let body = line.content.get("Platform:".len()..).unwrap_or("").trim();
-            let body_col = body_col + leading_ws(line, "Platform:");
-            let span = Span::new(path, line.line, body_col, body.chars().count());
-            match parse_platform_list(body) {
-                Ok(list) => {
-                    platforms = Some(list);
-                    platforms_span = Some(span);
-                }
-                Err(reason) => diagnostics.push(diag_at(Code::DslUnknownKeyword, reason, span)),
-            }
-        }
-        Some((_, line)) => diagnostics.push(diag_at(
-            Code::DslMissingHeader,
-            "a scene file needs 'Platform: ...' on its second line",
-            line.span(path),
-        )),
-        None => diagnostics.push(Diagnostic::error(
-            Code::DslMissingHeader,
-            "a scene file needs 'Platform: ...' on its second line",
-        )),
-    }
-
-    // Header line 3: Pieces:
-    match iter.next() {
-        Some((_, line)) if line.depth == 0 && line.content.trim() == "Pieces:" => {}
-        Some((_, line)) => diagnostics.push(diag_at(
-            Code::DslMissingHeader,
-            "expected 'Pieces:' after the Platform line",
-            line.span(path),
-        )),
-        None => diagnostics.push(Diagnostic::error(
-            Code::DslMissingHeader,
-            "expected 'Pieces:' with at least one piece",
-        )),
-    }
-
-    let mut pieces: Vec<PieceDecl> = Vec::new();
-    for (_, line) in iter {
-        if line.depth != 1 {
-            let code = if line.depth == 0 {
-                Code::DslUnknownKeyword
-            } else {
-                Code::DslMissingHeader
-            };
-            diagnostics.push(diag_at(
-                code,
-                "piece declarations must be indented one level under 'Pieces:'",
-                line.span(path),
-            ));
-            continue;
-        }
-        match parse_piece_line(line, path) {
-            Ok(piece) => {
-                if let Some(previous) = pieces.iter().find(|p| p.name == piece.name) {
-                    diagnostics.push(
-                        Diagnostic::error(
-                            Code::DslDuplicatePiece,
-                            format!("piece '{}' is declared twice", piece.name),
-                        )
-                        .with_span(piece.name_span.clone())
-                        .with_help(format!(
-                            "first declared at line {}",
-                            previous.name_span.line
-                        )),
-                    );
-                    continue;
-                }
-                pieces.push(piece);
-            }
-            Err(diag) => diagnostics.push(diag),
-        }
-    }
-
-    if pieces.is_empty() && diagnostics.errors().count() == 0 {
-        diagnostics.push(Diagnostic::error(
-            Code::DslMissingHeader,
-            "a scene needs at least one piece",
-        ));
-    }
-
-    let ast = match (name, name_span, platforms, platforms_span) {
-        (Some(name), Some(name_span), Some(platforms), Some(platforms_span)) => Some(SceneFile {
-            path: PathBuf::from(path),
-            name,
-            name_span,
-            platforms,
-            platforms_span,
-            columns: Vec::new(),
-            pieces,
-        }),
-        _ => None,
-    };
-
-    ParseOutcome { ast, diagnostics }
+    parse_scene_table(source, path)
 }
 
 fn parse_scene_table(source: &str, path: &Path) -> ParseOutcome<SceneFile> {
@@ -461,14 +280,8 @@ fn parse_scene_table(source: &str, path: &Path) -> ParseOutcome<SceneFile> {
     let mut platforms: Option<ScenePlatforms> = None;
     let mut platforms_span: Option<Span> = None;
     if let Some(line) = lines.get(i) {
-        if line.depth == 0
-            && (line.content.starts_with("Platforms:") || line.content.starts_with("Platform:"))
-        {
-            let keyword = if line.content.starts_with("Platforms:") {
-                "Platforms:"
-            } else {
-                "Platform:"
-            };
+        if line.depth == 0 && line.content.starts_with("Platforms:") {
+            let keyword = "Platforms:";
             let body_col = line.col + keyword.len();
             let body = line.content.get(keyword.len()..).unwrap_or("").trim();
             let span = Span::new(
@@ -781,7 +594,9 @@ fn parse_platform_list(body: &str) -> Result<ScenePlatforms, String> {
                 let hint = suggest(word, &names)
                     .map(|h| format!("; {h}"))
                     .unwrap_or_default();
-                return Err(format!("unknown platform '{word}' in Platform: list{hint}"));
+                return Err(format!(
+                    "unknown platform '{word}' in Platforms: list{hint}"
+                ));
             }
         }
         rest = rest.trim_start();
@@ -794,137 +609,9 @@ fn parse_platform_list(body: &str) -> Result<ScenePlatforms, String> {
         }
     }
     if list.is_empty() {
-        return Err("Platform: needs 'cross-platform' or a platform list".to_string());
+        return Err("Platforms: needs 'cross-platform' or a platform list".to_string());
     }
     Ok(ScenePlatforms::List(list))
-}
-
-fn parse_piece_line(
-    line: &crate::scanner::LogicalLine,
-    path: &Path,
-) -> Result<PieceDecl, Diagnostic> {
-    let mut cursor = Cursor::new(&line.content, path, line.line, line.col);
-    let name = cursor.ident().map_err(|reason| {
-        diag_at(
-            Code::DslUnknownKeyword,
-            format!("piece line must start with a name ({reason})"),
-            line.span(path),
-        )
-    })?;
-    cursor.expect_lit(":").map_err(|_| {
-        diag_at(
-            Code::DslUnknownKeyword,
-            "expected ':' after the piece name",
-            name.span.clone(),
-        )
-    })?;
-
-    let mut selectors: Vec<PieceSelector> = Vec::new();
-    let mut index = 0u32;
-    let mut index_seen = false;
-
-    loop {
-        cursor.skip_ws();
-        let mut probe = cursor;
-        if probe.try_lit("index") && probe.try_lit("=") {
-            let col = probe.col();
-            let value = probe.uint().map_err(|_| {
-                diag_at(
-                    Code::DslInvalidSelector,
-                    "index must be a non-negative integer",
-                    probe.span(col, 1),
-                )
-            })?;
-            if index_seen {
-                return Err(diag_at(
-                    Code::DslInvalidSelector,
-                    "index is given twice in one piece",
-                    cursor.span(col, 5),
-                ));
-            }
-            index = value;
-            index_seen = true;
-            cursor = probe;
-        } else {
-            let (word, span) = cursor.word().map_err(|_| {
-                diag_at(
-                    Code::DslInvalidSelector,
-                    "expected 'platform=\"selector\"'",
-                    cursor.span(cursor.col(), 1),
-                )
-            })?;
-            let key = word.parse::<Platform>().map_err(|()| {
-                let names: Vec<&str> = Platform::ALL.iter().map(|p| p.as_str()).collect();
-                let hint = suggest(word, &names)
-                    .map(|h| format!("; {h}"))
-                    .unwrap_or_default();
-                diag_at(
-                    Code::DslInvalidSelector,
-                    format!("unknown selector key '{word}'{hint}"),
-                    span.clone(),
-                )
-            })?;
-            if selectors.iter().any(|s| s.key == key) {
-                return Err(diag_at(
-                    Code::DslInvalidSelector,
-                    format!("selector key '{key}' is given twice"),
-                    span,
-                ));
-            }
-            cursor.expect_lit("=").map_err(|_| {
-                diag_at(
-                    Code::DslInvalidSelector,
-                    format!("expected '=' after selector key '{key}'"),
-                    cursor.span(cursor.col(), 1),
-                )
-            })?;
-            let literal_col = cursor.col();
-            let parsed = cursor.quoted_dq().map_err(|reason| {
-                diag_at(
-                    Code::DslInvalidSelector,
-                    format!("selector for '{key}' must be a double-quoted string ({reason})"),
-                    cursor.span(literal_col, 1),
-                )
-            })?;
-            selectors.push(PieceSelector {
-                key,
-                raw: parsed.raw,
-                span: parsed.span,
-            });
-        }
-
-        cursor.skip_ws();
-        if cursor.try_lit(",") {
-            continue;
-        }
-        break;
-    }
-
-    if !cursor.at_end() {
-        return Err(diag_at(
-            Code::DslInvalidSelector,
-            format!(
-                "unexpected trailing input '{}' in piece line",
-                cursor.rest.trim()
-            ),
-            cursor.span(cursor.col(), cursor.rest.trim().chars().count().max(1)),
-        ));
-    }
-    if selectors.is_empty() {
-        return Err(diag_at(
-            Code::DslInvalidSelector,
-            format!("piece '{}' needs at least one selector", name.name),
-            name.span.clone(),
-        ));
-    }
-
-    Ok(PieceDecl {
-        name: name.name,
-        name_span: name.span,
-        span: line.span(path),
-        selectors,
-        index,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -943,381 +630,16 @@ const PLAY_KEYWORDS: &[&str] = &[
     "Platforms",
     "Perform",
     "Examples",
-    "Stage",
-    "Timeout",
-    "Scene",
-    "Action",
-    "Check",
-    "Pieces",
-    "Platform",
 ];
 
-/// Parse a `.play` file. A play that uses `Perform:`/`Examples:` is parsed
-/// with the theatrical grammar; the legacy inline-`Stage:` form is still
-/// accepted until `migrate` rewrites it (I-110).
+/// Parse a `.play` file. Only the theatrical grammar (`Act:` with `Perform:`
+/// and optional `Examples:`) is accepted; the pre-Phase-2 inline-`Stage:` form
+/// was removed and is reported as an error.
 #[must_use]
 pub fn parse_play(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
-    let scanned = crate::scanner::scan(source, path);
-    let theatrical = scanned.lines.iter().any(|line| {
-        (line.depth == 1
-            && (is_perform_line(&line.content) || line.content.starts_with("Examples:")))
-            || (line.depth == 0 && line.content.starts_with("Act:") && line.content.contains('('))
-    });
-    if theatrical {
-        return parse_play_theatrical(source, path);
-    }
-    parse_play_legacy(source, path)
+    parse_play_theatrical(source, path)
 }
 
-fn parse_play_legacy(source: &str, path: &Path) -> ParseOutcome<PlayFile> {
-    let scanned = crate::scanner::scan(source, path);
-    let mut diagnostics = Diagnostics::new();
-    diagnostics.extend(scanned.diagnostics);
-    let lines = scanned.lines;
-
-    let mut name: Option<String> = None;
-    let mut name_span: Option<Span> = None;
-    let mut description: Option<String> = None;
-    let mut app: Option<Named> = None;
-    let mut tags: Vec<Named> = Vec::new();
-    let mut actors: Vec<Named> = Vec::new();
-    let mut var_decls: Vec<VarDecl> = Vec::new();
-    let mut acts: Vec<ActDecl> = Vec::new();
-    let mut i = 0usize;
-
-    // Play:
-    match lines.first() {
-        Some(line) if line.depth == 0 && line.content.starts_with("Play:") => {
-            match header_text(line, "Play", path) {
-                Ok((text, span)) => {
-                    if strings::free_text_ok(&text) {
-                        name = Some(text);
-                        name_span = Some(span);
-                    } else {
-                        diagnostics.push(diag_at(
-                            Code::DslMissingHeader,
-                            "Play: name must be 1..=200 characters",
-                            span,
-                        ));
-                    }
-                }
-                Err(diag) => diagnostics.push(diag),
-            }
-            i = 1;
-        }
-        Some(line) => diagnostics.push(diag_at(
-            Code::DslMissingHeader,
-            "a play file must start with 'Play: <name>'",
-            line.span(path),
-        )),
-        None => {
-            diagnostics.push(Diagnostic::error(
-                Code::DslMissingHeader,
-                "a play file must start with 'Play: <name>'",
-            ));
-            return ParseOutcome {
-                ast: None,
-                diagnostics,
-            };
-        }
-    }
-
-    // Optional Description (directly after Play).
-    if let Some(line) = lines.get(i) {
-        if line.depth == 0 && line.content.starts_with("Description:") {
-            match header_text(line, "Description", path) {
-                Ok((text, _)) => {
-                    if strings::free_text_ok(&text) {
-                        description = Some(text);
-                    } else {
-                        diagnostics.push(diag_at(
-                            Code::DslMissingHeader,
-                            "Description must be 1..=200 characters",
-                            line.span(path),
-                        ));
-                    }
-                }
-                Err(diag) => diagnostics.push(diag),
-            }
-            i += 1;
-        }
-    }
-
-    // Optional App (directly after Play or Description).
-    if let Some(line) = lines.get(i) {
-        if line.depth == 0 && line.content.starts_with("App:") {
-            match header_text(line, "App", path) {
-                Ok((text, span)) => {
-                    if strings::free_text_ok(&text) && !text.contains(char::is_whitespace) {
-                        app = Some(Named { name: text, span });
-                    } else {
-                        diagnostics.push(diag_at(
-                            Code::DslMissingHeader,
-                            "App must name an app definition (no spaces), e.g. 'App: shop'",
-                            line.span(path),
-                        ));
-                    }
-                }
-                Err(diag) => diagnostics.push(diag),
-            }
-            i += 1;
-        }
-    }
-
-    // Optional play-wide Tags / Actors, in either order.
-    let mut saw_tags = false;
-    let mut saw_actors = false;
-    while let Some(line) = lines.get(i) {
-        if line.depth != 0 {
-            break;
-        }
-        if !saw_tags && line.content.starts_with("Tags:") {
-            match parse_tags_line(line, path) {
-                Ok(list) => tags = list,
-                Err(diag) => diagnostics.push(diag),
-            }
-            saw_tags = true;
-            i += 1;
-        } else if !saw_actors && line.content.starts_with("Actors:") {
-            match parse_actors_line(line, path) {
-                Ok(list) => actors = list,
-                Err(diag) => diagnostics.push(diag),
-            }
-            saw_actors = true;
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    // Var declarations.
-    while let Some(line) = lines.get(i) {
-        if line.depth == 0 && line.content.starts_with("Var:") {
-            match parse_var_line(line, path) {
-                Ok(var) => {
-                    // Last declaration wins (documented in DECISIONS.md).
-                    if let Some(existing) = var_decls.iter_mut().find(|v| v.name == var.name) {
-                        let span = var.name_span.clone();
-                        diagnostics.push(
-                            Diagnostic::warning(
-                                Code::DslLintShadowedVar,
-                                format!("variable '{}' is declared more than once", var.name),
-                            )
-                            .with_span(span)
-                            .with_help("the last declaration wins; rename or remove one"),
-                        );
-                        *existing = var;
-                    } else {
-                        var_decls.push(var);
-                    }
-                }
-                Err(diag) => diagnostics.push(diag),
-            }
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    // Acts.
-    while i < lines.len() {
-        let Some(line) = lines.get(i) else { break };
-        if line.depth != 0 {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "this line is indented but no Stage or Scene block is open",
-                line.span(path),
-            ));
-            i += 1;
-            continue;
-        }
-        if line.content.starts_with("Var:") {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "Var: declarations belong before the first Act",
-                line.span(path),
-            ));
-            i += 1;
-            continue;
-        }
-        if line.content.starts_with("Description:") {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "Description: must directly follow the Play: line",
-                line.span(path),
-            ));
-            i += 1;
-            continue;
-        }
-        if !line.content.starts_with("Act:") {
-            let keyword = line.content.split(':').next().unwrap_or("").trim();
-            if PLAY_KEYWORDS.contains(&keyword) {
-                diagnostics.push(diag_at(
-                    Code::DslMissingHeader,
-                    format!("'{keyword}:' is not valid here"),
-                    line.span(path),
-                ));
-            } else {
-                let hint = suggest(keyword, PLAY_KEYWORDS)
-                    .map(|h| format!("; {h}"))
-                    .unwrap_or_default();
-                diagnostics.push(diag_at(
-                    Code::DslUnknownKeyword,
-                    format!("unknown keyword '{keyword}'{hint}"),
-                    line.span(path),
-                ));
-            }
-            i += 1;
-            continue;
-        }
-
-        // Act header.
-        let mut act_name: Option<(String, Span)> = None;
-        match header_text(line, "Act", path) {
-            Ok((text, span)) => {
-                if strings::free_text_ok(&text) {
-                    act_name = Some((text, span));
-                } else {
-                    diagnostics.push(diag_at(
-                        Code::DslMissingHeader,
-                        "Act: name must be 1..=200 characters",
-                        span,
-                    ));
-                }
-            }
-            Err(diag) => diagnostics.push(diag),
-        }
-        i += 1;
-
-        // Optional Tags / Actors / Platforms directly after the Act line.
-        let mut tags: Vec<Named> = Vec::new();
-        let mut actors: Vec<Named> = Vec::new();
-        let mut platforms: Vec<Named> = Vec::new();
-        let mut saw_tags = false;
-        let mut saw_actors = false;
-        while let Some(next) = lines.get(i) {
-            if next.depth != 0 {
-                break;
-            }
-            if !saw_tags && next.content.starts_with("Tags:") {
-                match parse_tags_line(next, path) {
-                    Ok(list) => tags = list,
-                    Err(diag) => diagnostics.push(diag),
-                }
-                saw_tags = true;
-                i += 1;
-            } else if !saw_actors && next.content.starts_with("Actors:") {
-                match parse_actors_line(next, path) {
-                    Ok(list) => actors = list,
-                    Err(diag) => diagnostics.push(diag),
-                }
-                saw_actors = true;
-                i += 1;
-            } else {
-                break;
-            }
-        }
-        if let Some(next) = lines.get(i) {
-            if next.depth == 0 && next.content.starts_with("Platforms:") {
-                match parse_platforms_line(next, path) {
-                    Ok(list) => platforms = list,
-                    Err(diag) => diagnostics.push(diag),
-                }
-                i += 1;
-            }
-        }
-
-        // Stages.
-        let mut stages: Vec<StageDecl> = Vec::new();
-        while let Some(next) = lines.get(i) {
-            if next.depth == 0 && next.content.starts_with("Stage:") {
-                let (stage, consumed) = parse_stage(&lines, i, path, &mut diagnostics);
-                i += consumed;
-                if let Some(stage) = stage {
-                    if let Some(previous) = stages.iter().find(|s| s.name == stage.name) {
-                        diagnostics.push(
-                            Diagnostic::error(
-                                Code::DslDuplicateActStage,
-                                format!("stage '{}' is declared twice in this Act", stage.name),
-                            )
-                            .with_span(stage.name_span.clone())
-                            .with_help(format!(
-                                "first declared at line {}",
-                                previous.name_span.line
-                            )),
-                        );
-                    } else {
-                        stages.push(stage);
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-
-        if stages.is_empty() {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "an Act needs at least one Stage",
-                line.span(path),
-            ));
-        }
-
-        if let Some((act_name, act_span)) = act_name {
-            if let Some(previous) = acts.iter().find(|a| a.name == act_name) {
-                diagnostics.push(
-                    Diagnostic::error(
-                        Code::DslDuplicateActStage,
-                        format!("act '{act_name}' is declared twice in this play"),
-                    )
-                    .with_span(act_span)
-                    .with_help(format!(
-                        "first declared at line {}",
-                        previous.name_span.line
-                    )),
-                );
-            } else {
-                acts.push(ActDecl {
-                    name: act_name,
-                    name_span: act_span,
-                    params: Vec::new(),
-                    tags,
-                    actors,
-                    platforms,
-                    examples: None,
-                    performs: Vec::new(),
-                    stages,
-                });
-            }
-        }
-    }
-
-    if acts.is_empty() {
-        diagnostics.push(Diagnostic::error(
-            Code::DslMissingHeader,
-            "a play needs at least one Act",
-        ));
-    }
-
-    let ast = match (name, name_span) {
-        (Some(name), Some(name_span)) => Some(PlayFile {
-            path: PathBuf::from(path),
-            name,
-            name_span,
-            description,
-            app,
-            tags,
-            actors,
-            var_decls,
-            acts,
-        }),
-        _ => None,
-    };
-    ParseOutcome { ast, diagnostics }
-}
-
-/// Parse a `.theatre` file (TASK-2 section 8.3).
-#[must_use]
 pub fn parse_theatre(source: &str, path: &Path) -> ParseOutcome<TheatreFile> {
     let scanned = crate::scanner::scan(source, path);
     let mut diagnostics = Diagnostics::new();
@@ -1473,7 +795,6 @@ fn parse_theatre_stage(
     let mut description: Option<String> = None;
     let mut audience: Vec<Named> = Vec::new();
     let mut tags: Vec<Named> = Vec::new();
-    let mut platforms: Vec<Named> = Vec::new();
     let mut timeout: Option<DslDuration> = None;
     let mut timeout_span: Option<Span> = None;
     let mut items: Vec<StageItem> = Vec::new();
@@ -1553,23 +874,6 @@ fn parse_theatre_stage(
             consumed += 1;
             continue;
         }
-        if line.content.starts_with("Platforms:") {
-            if !platforms.is_empty() || saw_item {
-                diagnostics.push(diag_at(
-                    Code::DslMissingHeader,
-                    "Platforms: must come once, before the stage body",
-                    line.span(path),
-                ));
-                consumed += 1;
-                continue;
-            }
-            match parse_platforms_line(line, path) {
-                Ok(list) => platforms = list,
-                Err(diag) => diagnostics.push(diag),
-            }
-            consumed += 1;
-            continue;
-        }
         if line.content.starts_with("Timeout:") {
             if timeout.is_some() || saw_item {
                 diagnostics.push(diag_at(
@@ -1620,8 +924,11 @@ fn parse_theatre_stage(
         diagnostics.push(diag_at(
             Code::DslUnknownKeyword,
             format!(
-                "expected Scene:, Perform:, Platforms:, Timeout: or Description:, found '{keyword}'{}",
-                suggest(keyword, &["Scene", "Perform", "Platforms", "Timeout", "Description"])
+                "expected Audience:, Tags:, Timeout:, Description:, Scene: or Perform:, found '{keyword}'{}",
+                suggest(
+                    keyword,
+                    &["Audience", "Tags", "Timeout", "Description", "Scene", "Perform"],
+                )
                     .map(|h| format!("; {h}"))
                     .unwrap_or_default()
             ),
@@ -1646,7 +953,7 @@ fn parse_theatre_stage(
             description,
             audience,
             tags,
-            platforms,
+            platforms: Vec::new(),
             timeout,
             timeout_span,
             items,
@@ -2706,145 +2013,6 @@ fn parse_platforms_line(
     Ok(out)
 }
 
-/// Parse one Stage starting at `lines[start]` (a `Stage:` line).
-/// Returns the stage and the number of lines consumed.
-fn parse_stage(
-    lines: &[crate::scanner::LogicalLine],
-    start: usize,
-    path: &Path,
-    diagnostics: &mut Diagnostics,
-) -> (Option<StageDecl>, usize) {
-    let mut consumed = 0usize;
-    let Some(header) = lines.get(start) else {
-        return (None, 1);
-    };
-    consumed += 1;
-    let (name, name_span) = match header_text(header, "Stage", path) {
-        Ok((text, span)) if strings::free_text_ok(&text) => (text, span),
-        Ok((_, span)) => {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "Stage: name must be 1..=200 characters",
-                span.clone(),
-            ));
-            ("".to_string(), span)
-        }
-        Err(diag) => {
-            diagnostics.push(diag);
-            ("".to_string(), header.span(path))
-        }
-    };
-
-    let mut timeout: Option<DslDuration> = None;
-    let mut timeout_span: Option<Span> = None;
-    let mut scenes: Vec<SceneBlock> = Vec::new();
-
-    while let Some(line) = lines.get(start + consumed) {
-        if line.depth == 0 {
-            break;
-        }
-        if line.depth != 1 {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                "unexpected indentation inside a Stage",
-                line.span(path),
-            ));
-            consumed += 1;
-            continue;
-        }
-
-        if line.content.starts_with("Timeout:") {
-            if timeout.is_some() {
-                diagnostics.push(diag_at(
-                    Code::DslDuplicateActStage,
-                    "Timeout: is given twice in this Stage",
-                    line.span(path),
-                ));
-                consumed += 1;
-                continue;
-            }
-            if !scenes.is_empty() {
-                diagnostics.push(diag_at(
-                    Code::DslMissingHeader,
-                    "Timeout: must come before the first Scene block of the Stage",
-                    line.span(path),
-                ));
-                consumed += 1;
-                continue;
-            }
-            let body = line.content.get("Timeout:".len()..).unwrap_or("").trim();
-            let span = Span::new(
-                path,
-                line.line,
-                line.col + "Timeout:".len() + 1,
-                body.chars().count(),
-            );
-            match crate::duration::parse(body, Some(span.clone())) {
-                Ok(duration) => {
-                    timeout = Some(duration);
-                    timeout_span = Some(span);
-                }
-                Err(diag) => diagnostics.push(diag),
-            }
-            consumed += 1;
-            continue;
-        }
-
-        if line.content.starts_with("Scene:") {
-            let (block, used) = parse_scene_block(lines, start + consumed, path, diagnostics);
-            consumed += used;
-            if let Some(block) = block {
-                scenes.push(block);
-            }
-            continue;
-        }
-
-        let keyword = line.content.split(':').next().unwrap_or("").trim();
-        if PLAY_KEYWORDS.contains(&keyword) {
-            diagnostics.push(diag_at(
-                Code::DslMissingHeader,
-                format!("'{keyword}:' is not valid inside a Stage"),
-                line.span(path),
-            ));
-        } else {
-            let hint = suggest(keyword, PLAY_KEYWORDS)
-                .map(|h| format!("; {h}"))
-                .unwrap_or_default();
-            diagnostics.push(diag_at(
-                Code::DslUnknownKeyword,
-                format!("unknown keyword '{keyword}'{hint}"),
-                line.span(path),
-            ));
-        }
-        consumed += 1;
-    }
-
-    if scenes.is_empty() {
-        diagnostics.push(diag_at(
-            Code::DslMissingHeader,
-            "a Stage needs at least one Scene block",
-            name_span.clone(),
-        ));
-    }
-
-    (
-        Some(StageDecl {
-            name,
-            name_span,
-            params: Vec::new(),
-            description: None,
-            audience: Vec::new(),
-            tags: Vec::new(),
-            platforms: Vec::new(),
-            timeout,
-            timeout_span,
-            items: Vec::new(),
-            scenes,
-        }),
-        consumed,
-    )
-}
-
 /// Parse one `Scene: X` block starting at `lines[start]`.
 fn parse_scene_block(
     lines: &[crate::scanner::LogicalLine],
@@ -3346,7 +2514,7 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
                         cursor.span(cursor.col(), 1),
                     )
                 })?,
-                parse_legacy_condition(&mut cursor)?,
+                parse_check_condition(&mut cursor)?,
             )
         }
     } else if starts_keyword(cursor.rest, "Player") {
@@ -3360,7 +2528,7 @@ fn parse_check_line(line: &crate::scanner::LogicalLine, path: &Path) -> Result<S
                 cursor.span(cursor.col(), 1),
             )
         })?;
-        (piece, parse_legacy_condition(&mut cursor)?)
+        (piece, parse_check_condition(&mut cursor)?)
     };
 
     let mut timeout = None;
@@ -3745,7 +2913,7 @@ fn canonical_probe_value(raw: &str, property: crate::probe::ProbeProperty) -> St
     raw.to_string()
 }
 
-fn parse_legacy_condition(cursor: &mut Cursor<'_>) -> Result<CheckCondition, Diagnostic> {
+fn parse_check_condition(cursor: &mut Cursor<'_>) -> Result<CheckCondition, Diagnostic> {
     let condition = if cursor.try_lit("is") {
         let (word, span) = cursor.word().map_err(|_| {
             diag_at(

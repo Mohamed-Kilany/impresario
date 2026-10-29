@@ -4,7 +4,6 @@
 //! or `Act:` line, and the workspace index. It deliberately does not require
 //! the rest of the file to parse, so it keeps working while the user types.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use impresario_core::keys::RemoteKey;
@@ -46,13 +45,11 @@ const KEYWORDS: &[&str] = &[
     "Var:",
     "Tags:",
     "Platforms:",
-    "Platform:",
     "Timeout:",
     "Examples:",
     "Perform:",
     "Action:",
     "Check:",
-    "Pieces:",
 ];
 
 const DURATIONS: &[&str] = &[
@@ -104,10 +101,6 @@ impl Language {
             return self.stage_items();
         }
 
-        if is_scene && inside_pieces(&doc, position.line) {
-            return piece_entry_items(&prefix);
-        }
-
         if let Some(rest) = trimmed.strip_prefix("Scene:") {
             if is_scene {
                 return Vec::new();
@@ -153,7 +146,7 @@ impl Language {
         if trimmed.starts_with("Tags:") {
             return self.tag_items();
         }
-        if trimmed.starts_with("Platforms:") || trimmed.starts_with("Platform:") {
+        if trimmed.starts_with("Platforms:") {
             return self.platform_items(is_scene);
         }
         if trimmed.starts_with("App:") && (is_play || is_theatre) {
@@ -162,7 +155,6 @@ impl Language {
         if trimmed.starts_with("Timeout:")
             || trimmed.starts_with("Description:")
             || trimmed.starts_with("Var:")
-            || trimmed.starts_with("Pieces:")
         {
             return Vec::new();
         }
@@ -595,7 +587,7 @@ fn simple(label: impl Into<String>, kind: &str) -> CompletionItem {
 fn keyword_items(is_scene: bool, is_play: bool, is_theatre: bool) -> Vec<CompletionItem> {
     let mut available = vec!["Description:", "Tags:"];
     if is_scene {
-        available.extend(["Scene:", "Platform:", "Pieces:"]);
+        available.extend(["Scene:", "Platforms:"]);
     }
     if is_play {
         available.extend(["Play:", "App:", "Var:", "Act:"]);
@@ -607,21 +599,6 @@ fn keyword_items(is_scene: bool, is_play: bool, is_theatre: bool) -> Vec<Complet
         .into_iter()
         .map(|keyword| simple(keyword, "keyword"))
         .collect()
-}
-
-fn inside_pieces(doc: &Doc<'_>, cursor_line: u32) -> bool {
-    let indent = doc.indent(cursor_line);
-    for index in (1..cursor_line).rev() {
-        let line = doc.line(index);
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if doc.indent(index) < indent {
-            return trimmed == "Pieces:";
-        }
-    }
-    false
 }
 
 fn enclosing_scene(doc: &Doc<'_>, line: u32, _col: u32) -> Option<String> {
@@ -776,21 +753,6 @@ fn app_op_items() -> Vec<CompletionItem> {
         .collect()
 }
 
-fn key_of(fragment: &str) -> &str {
-    let before_eq = fragment.split_once('=').map_or(fragment, |(left, _)| left);
-    before_eq
-        .rsplit_once(':')
-        .map_or(before_eq, |(_, right)| right)
-        .trim()
-}
-
-fn platform_by_name(name: &str) -> Option<Platform> {
-    Platform::ALL
-        .iter()
-        .copied()
-        .find(|platform| platform.as_str() == name)
-}
-
 fn selector_prefix_items(key: Platform) -> Vec<CompletionItem> {
     let prefixes: &[&str] = match key {
         Platform::Android | Platform::AndroidTv => {
@@ -811,55 +773,6 @@ fn selector_prefix_items(key: Platform) -> Vec<CompletionItem> {
         .iter()
         .map(|prefix| simple(*prefix, "enumMember"))
         .collect()
-}
-
-fn piece_entry_items(prefix: &str) -> Vec<CompletionItem> {
-    let segment = prefix.rsplit(',').next().unwrap_or(prefix);
-    let mut inside_string = false;
-    let mut content = String::new();
-    for ch in segment.chars() {
-        match ch {
-            '"' => {
-                inside_string = !inside_string;
-                content.clear();
-            }
-            _ if inside_string => content.push(ch),
-            _ => {}
-        }
-    }
-    if inside_string {
-        if content.contains(':') {
-            return Vec::new();
-        }
-        return match platform_by_name(key_of(segment)) {
-            Some(key) => selector_prefix_items(key),
-            None => Vec::new(),
-        };
-    }
-    if segment.ends_with('"') {
-        return Vec::new();
-    }
-    if segment.contains('=') {
-        return vec![simple("\"", "operator")];
-    }
-    let used = prefix.split(',').map(key_of).collect::<BTreeSet<_>>();
-    Platform::ALL
-        .iter()
-        .filter(|platform| !used.contains(platform.as_str()))
-        .map(|platform| {
-            let mut item = simple(format!("{}=", platform.as_str()), "property");
-            item.detail = Some(selector_words(*platform));
-            item
-        })
-        .collect()
-}
-
-fn selector_words(key: Platform) -> String {
-    selector_prefix_items(key)
-        .iter()
-        .map(|item| item.label.trim_end_matches(':').to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn extension(path: &Path) -> &str {

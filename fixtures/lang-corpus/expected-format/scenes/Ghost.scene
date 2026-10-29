@@ -1,5 +1,6 @@
 Scene: Ghost
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginButton: web="css:#ghost"
+| Piece       | web        |
+|-------------|------------|
+| LoginButton | css:#ghost |

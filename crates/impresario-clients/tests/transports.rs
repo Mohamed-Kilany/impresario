@@ -5,7 +5,7 @@ use impresario_clients::transport::{
     transport_for, AdbTransport, AppleTransport, ConnectorTransport, DeviceTransport,
     TransportError,
 };
-use impresario_core::config::{DeviceConfig, DeviceConnection, DeviceOptions};
+use impresario_core::config::{DeviceConfig, DeviceOptions};
 use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
 
@@ -15,33 +15,18 @@ fn device(
     target_endpoint: &str,
     connector_address: Option<&str>,
 ) -> DeviceConfig {
-    let mut connection = DeviceConnection::default();
-    match platform {
-        Platform::Web => {
-            connection.endpoint = Some(target_endpoint.to_string());
-        }
-        Platform::WebOs | Platform::Tizen => {
-            connection.host = Some("192.168.1.50".to_string());
-            connection.endpoint = Some(target_endpoint.to_string());
-        }
-        Platform::Android | Platform::AndroidTv => {
-            connection.serial = Some(target_endpoint.to_string());
-        }
-        Platform::Ios | Platform::Tvos => {
-            connection.udid = Some(target_endpoint.to_string());
-        }
-    }
-    DeviceConfig {
-        name: name.to_string(),
-        platform,
-        connection,
-        auth: impresario_core::config::DeviceAuth::default(),
-        labels: Vec::new(),
-        options: DeviceOptions {
-            connector_address: connector_address.map(str::to_string),
-            ..DeviceOptions::default()
-        },
-    }
+    let ip = match platform {
+        Platform::Web => "127.0.0.1",
+        Platform::WebOs | Platform::Tizen => "192.168.1.50",
+        Platform::Android | Platform::AndroidTv => "192.168.1.60",
+        Platform::Ios | Platform::Tvos => target_endpoint,
+    };
+    let mut dev = DeviceConfig::new(name, platform, ip);
+    dev.options = DeviceOptions {
+        connector_address: connector_address.map(str::to_string),
+        ..DeviceOptions::default()
+    };
+    dev
 }
 
 #[tokio::test]
@@ -101,21 +86,16 @@ async fn connector_handles_a_loopback_address_with_nothing_listening() {
 }
 
 #[tokio::test]
-async fn apple_transport_rejects_simulators_and_requires_a_lan_host() {
+async fn apple_transport_requires_a_lan_host() {
     let mut transport = AppleTransport::new();
-    let simulator = device(
-        "test_iphone",
-        Platform::Ios,
-        "11111111-2222-3333-4444-555555555555",
-        None,
-    );
+    let physical = device("test_apple_tv", Platform::Tvos, "", None);
     let error = transport
-        .prepare(&simulator, None)
+        .prepare(&physical, None)
         .await
-        .expect_err("simulator");
+        .expect_err("missing LAN host");
     match error {
         TransportError::DeviceUnavailable(message) => {
-            assert!(message.contains("simulator"), "{message}");
+            assert!(message.contains("no IP"), "{message}");
         }
         other => panic!("unexpected error: {other}"),
     }
@@ -127,37 +107,30 @@ async fn apple_transport_rejects_simulators_and_requires_a_lan_host() {
     let physical = device(
         "test_apple_tv",
         Platform::Tvos,
-        "00008110-001A2345021E001E",
+        "https://example.test",
         None,
     );
     let error = transport
         .prepare(&physical, None)
         .await
-        .expect_err("missing LAN host");
+        .expect_err("hostname is not an IP");
     match error {
         TransportError::DeviceUnavailable(message) => {
-            assert!(message.contains("connection.host"), "{message}");
-            assert!(message.contains("connection.endpoint"), "{message}");
+            assert!(message.contains("LAN host"), "{message}");
         }
         other => panic!("unexpected error: {other}"),
     }
 }
 
 #[tokio::test]
-async fn adb_transport_reports_an_unknown_usb_serial_without_an_adb_binary() {
+async fn adb_transport_reports_a_device_without_an_ip() {
     let home = tempfile::tempdir().expect("temporary home");
     let mut transport = AdbTransport::with_home(Home::at(home.path()));
-    let dev = device(
-        "flagship_android",
-        Platform::Android,
-        "definitely-not-a-connected-device",
-        None,
-    );
+    let dev = DeviceConfig::new("flagship_android", Platform::Android, "");
     let error = transport.prepare(&dev, None).await.expect_err("no device");
     match &error {
         TransportError::DeviceUnavailable(message) => {
-            assert!(message.contains("device not found"), "{message}");
-            assert!(!message.contains("No such file"), "{message}");
+            assert!(message.contains("no IP"), "{message}");
         }
         other => panic!("unexpected error: {other}"),
     }

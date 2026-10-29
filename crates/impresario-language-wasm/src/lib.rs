@@ -453,7 +453,7 @@ mod tests {
             "sources": [
                 {
                     "path": "scenes/LoginScreen.scene",
-                    "text": "Scene: LoginScreen\nPlatform: cross-platform\n\n| Piece | web |\n|---|---|\n| LoginButton | #login |\n"
+                    "text": "Scene: LoginScreen\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| LoginButton | #login |\n"
                 },
                 {
                     "path": "plays/login.play",

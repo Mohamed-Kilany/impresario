@@ -80,7 +80,7 @@ impl Language {
                             create_files: vec![CreateFile {
                                 path: file.display().to_string(),
                                 text: format!(
-                                    "Scene: {name}\nPlatform: cross-platform\n\nPieces:\n"
+                                    "Scene: {name}\nPlatforms: cross-platform\n\n| Piece | web | android | ios |\n|---|---|---|---|\n"
                                 ),
                                 overwrite: false,
                             }],
@@ -234,19 +234,15 @@ impl Language {
                 span: Span::new(&scene_path, data_end as usize, col as usize, 0),
                 new_text: insert,
             });
-        } else if let Some(pieces_line) = line_starting_with(&scene_doc, "Pieces:") {
-            let col = u32::try_from(scene_doc.line(pieces_line).chars().count()).unwrap_or(0) + 1;
-            edit.add(TextEdit {
-                span: Span::new(&scene_path, pieces_line as usize, col as usize, 0),
-                new_text: format!("\n    {name}: web=\"#todo\""),
-            });
         } else {
             let col = u32::try_from(scene_doc.line(scene_doc.end_line()).chars().count())
                 .unwrap_or(0)
                 + 1;
             edit.add(TextEdit {
                 span: Span::new(&scene_path, scene_doc.end_line() as usize, col as usize, 0),
-                new_text: format!("\nPieces:\n    {name}: web=\"#todo\""),
+                new_text: format!(
+                    "\n| Piece | web | android | ios |\n|---|---|---|---|\n| {name} | #todo | - | - |"
+                ),
             });
         }
         Some(CodeAction {
@@ -465,10 +461,6 @@ fn table_data_end(doc: &Doc<'_>, header: u32) -> u32 {
         end += 1;
     }
     end
-}
-
-fn line_starting_with(doc: &Doc<'_>, needle: &str) -> Option<u32> {
-    (1..=doc.end_line()).find(|line| doc.line(*line).trim() == needle)
 }
 
 struct PlatformName(String);

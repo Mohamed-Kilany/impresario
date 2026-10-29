@@ -2,7 +2,7 @@
   "name": "impresario",
   "displayName": "Impresario",
   "description": "Impresario DSL support for .play, .scene and .theatre files: diagnostics, completion, hover, navigation, formatting and refactoring, via `impresario lsp` or a bundled WASM service.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "impresario",
   "license": "MIT OR Apache-2.0",
   "engines": {

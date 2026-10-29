@@ -80,7 +80,7 @@ impl Default for MockScript {
             single_session: false,
             heartbeat_interval: Duration::from_secs(5),
             heartbeat_stop_after: None,
-            agent_version: "0.1.0-mock".to_string(),
+            agent_version: "1.0.0-mock".to_string(),
             protocol_version: "1.0.0".to_string(),
             capabilities: mock_capabilities(),
             device: pb::DeviceInfo {

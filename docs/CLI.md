@@ -192,8 +192,9 @@ Certificate Manager if that port is in use. `--no-browser`, `--refresh`,
 shape. Errors are `IMP-SIGN-*` (see `docs/ERRORS.md`), and the full pipeline,
 paths and RSA/ECDSA details are in `docs/SIGNING.md`.
 
-During a run, a Tizen device reads `auth.profile` and resolves its own DUID;
-Tizen 7.0+ signs automatically, older Tizen installs the original package.
+During a run, a Tizen device resolves its own DUID and uses the signing profile
+selected by `IMPRESARIO_TIZEN_PROFILE` (default `samsung`); Tizen 7.0+ signs
+automatically, older Tizen installs the original package.
 A webOS app directory or `.ipk` may be named in `platforms.webos.package`;
 a directory is packaged into the cache, while an `.ipk` is validated first.
 
@@ -299,10 +300,10 @@ At runtime `AppleTransport` reads these machine-global stores:
 | `IMPRESARIO_APPLE_START_TIMEOUT_SECS` | `120` | wait for the agent port |
 | `IMPRESARIO_APPLE_HOST_ID` | host-derived UUID | RemotePairing host id override |
 
-A device needs `connection.udid`; the host comes from `connection.host` or
-`connection.endpoint`, and the agent port from `options.agent_port`, the
-endpoint port or `50062`. The same port is passed to the UI test as
-`IMPRESARIO_AGENT_PORT`. The transport installs/signs over AFC and
+A device needs only its `ip`. Pairing is looked up by host, the UDID is learned
+from the RSD tunnel, and the agent port is allocated dynamically. The same port
+is passed to the UI test as `IMPRESARIO_AGENT_PORT`. The transport installs/signs
+over AFC and
 InstallationProxy and starts the XCUITest bundle over the direct outer-RSD
 `testmanagerd`/`dtservicehub` path; it does not spawn `xcodebuild`, `iproxy`,
 `simctl`, `devicectl` or `ideviceinstaller`. Simulator UDIDs are rejected and
@@ -654,4 +655,4 @@ just the application protocol.
 | A job stays `queued` | Another job owns one of its device leases; `jobs` prints the position, `--on-busy fail` refuses instead. |
 | `job is running; wait for it before reading the report` | `impresario wait <id>` or `attach <id>` first. |
 | ConPTY test hangs with a blank screen | The harness must answer `ESC[6n` with `ESC[1;1R` **and** keep the PTY master alive; dropping it closes the output pipe (see `tests/tui_pty.rs`). |
-| Port 50051 is taken | Common on this host (`multipassd`); pin the web device with `options.connector_address: 127.0.0.1:<free-port>`. |
+| A fixed local port is taken | Connector and agent listeners are allocated dynamically per run, so another service holding `50051` or `50062` does not collide with Impresario. |

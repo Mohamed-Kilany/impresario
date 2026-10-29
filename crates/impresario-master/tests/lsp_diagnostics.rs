@@ -143,14 +143,15 @@ fn a_burst_of_changes_converges_on_the_last_version() {
 }
 
 const EMOJI_SCENE: &str = r##"Scene: Emoji
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    A: web="#🍎", bada="x"
+| Piece | web | 🍎bada |
+|---|---|---|
+| A | #a | x |
 "##;
 
-/// `bada` is an unknown selector key: the diagnostic starts right after the
-/// emoji, so its column depends on the negotiated encoding (the emoji is a
+/// `🍎bada` is an unknown platform column: its span starts before the emoji,
+/// so the end column depends on the negotiated encoding (the emoji is a
 /// surrogate pair in UTF-16 and four bytes in UTF-8).
 async fn encoding_case(offered: Option<&[&str]>, expected_encoding: &str, start: u64, end: u64) {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -179,18 +180,18 @@ async fn encoding_case(offered: Option<&[&str]>, expected_encoding: &str, start:
         .into_iter()
         .find(|diagnostic| diagnostic.get("code").and_then(Value::as_str) == Some("IMP-DSL-011"))
         .expect("the unknown selector key is reported");
-    assert_eq!(lsp::range_start(&diagnostic), (4, start));
-    assert_eq!(lsp::range_end(&diagnostic), (4, end));
+    assert_eq!(lsp::range_start(&diagnostic), (3, start));
+    assert_eq!(lsp::range_end(&diagnostic), (3, end));
 }
 
 #[test]
 fn the_default_encoding_is_utf16_with_surrogate_pairs() {
-    runtime().block_on(encoding_case(None, "utf-16", 18, 22));
+    runtime().block_on(encoding_case(None, "utf-16", 16, 22));
 }
 
 #[test]
 fn utf8_negotiation_shifts_offsets_past_wide_characters() {
-    runtime().block_on(encoding_case(Some(&["utf-8"]), "utf-8", 20, 24));
+    runtime().block_on(encoding_case(Some(&["utf-8"]), "utf-8", 16, 24));
 }
 
 #[test]
@@ -226,19 +227,23 @@ fn config_files_report_their_own_diagnostics() {
 }
 
 const PARTIAL_SCENE: &str = r##"Scene: Partial
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    OnlyAndroid: android="id:only"
+| Piece | android |
+|---|---|
+| OnlyAndroid | id:only |
 "##;
+
+const PARTIAL_THEATRE: &str = r#"Theatre: Partial
+Stage: S
+    Scene: Partial
+        Check: OnlyAndroid
+"#;
 
 const PARTIAL_PLAY: &str = r#"Play: Partial
 
 Act: A
-
-Stage: S
-    Scene: Partial
-        Check: OnlyAndroid
+    Perform: S
 "#;
 
 #[test]
@@ -257,6 +262,8 @@ fn device_warnings_follow_did_change_configuration() {
         );
         let scene = base.join("scenes/Partial.scene");
         lsp::write(&scene, PARTIAL_SCENE);
+        let theatre = base.join("theatres/partial.theatre");
+        lsp::write(&theatre, PARTIAL_THEATRE);
         let play = base.join("plays/partial.play");
         lsp::write(&play, PARTIAL_PLAY);
 

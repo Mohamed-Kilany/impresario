@@ -138,11 +138,57 @@ impl ApplePaths {
                 }
             }
         }
+        // Older pairings are keyed by UDID, but the public device schema has
+        // only the host/IP. If exactly one pairing is stored, use it; with
+        // several, the host must be named explicitly so we never guess.
+        if udid.is_none() {
+            let stored = self.stored_pairing_paths()?;
+            match stored.as_slice() {
+                [path] => match load_pairing_file(path) {
+                    Ok(file) => return Ok(file),
+                    Err(error) => errors.push(format!("{}: {error}", path.display())),
+                },
+                [] => {}
+                paths => {
+                    let names = paths
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    errors.push(format!(
+                        "several pairing records are stored ({names}); import the intended one \
+                         with `impresario apple import-pair <plist> --save {host}` or remove the \
+                         stale records"
+                    ));
+                }
+            }
+        }
         Err(Error::Device(format!(
             "no usable pairing record for {host}; run `impresario apple pair --host {host}` \
              or import an existing record (tried {})",
             errors.join("; ")
         )))
+    }
+
+    /// Pairing files currently stored in the machine-global pairing directory.
+    fn stored_pairing_paths(&self) -> Result<Vec<PathBuf>> {
+        let dir = self.pairing_dir();
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(Error::io(format!("read {}", dir.display()), error)),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| Error::io(format!("read {}", dir.display()), error))?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("plist") {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        Ok(paths)
     }
 
     /// Whether a pairing record exists under `key`.
@@ -434,6 +480,28 @@ mod tests {
             path.file_name().and_then(|name| name.to_str()),
             Some(".._.._etc_passwd.plist")
         );
+    }
+
+    #[test]
+    fn load_pairing_for_uses_a_single_stored_record() {
+        let dir = std::env::temp_dir().join(format!(
+            "impresario-apple-pair-lookup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let paths = ApplePaths::new(&dir);
+        let file = RpPairingFile::generate("test-host");
+        paths
+            .save_pairing("00008110-001A2345021E001E", &file)
+            .unwrap();
+        let loaded = paths
+            .load_pairing_for(None, "192.168.1.70")
+            .expect("single stored pairing");
+        assert_eq!(loaded.public_key_bytes(), file.public_key_bytes());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

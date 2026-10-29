@@ -26,20 +26,25 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A scene both test plays and test scenes can share.
 pub const SCENE: &str = r##"Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginButton: android="id:login_button", web="#login"
-    UsernameInput: android="id:username", ios="accessibilityId:username", web="#username"
+| Piece | android | web | ios |
+|---|---|---|---|
+| LoginButton | id:login_button | #login | - |
+| UsernameInput | id:username | #username | accessibilityId:username |
 "##;
 
-/// One act, one stage, two steps.
+/// One act that performs the shared navigation stage.
 pub const PLAY: &str = r#"Play: Login
 Description: sign in
 
 Act: Successful Login
 Tags: smoke
+    Perform: Navigate
+"#;
 
+/// The stage performed by [`PLAY`].
+pub const THEATRE: &str = r#"Theatre: Login
 Stage: Navigate
     Scene: LoginScreen
         Action: click => LoginButton
@@ -399,23 +404,19 @@ pub fn config_text() -> &'static str {
 pub fn devices_text(devices: &[(&str, &str)]) -> String {
     let mut yaml = String::from("devices:\n");
     for (name, platform) in devices {
-        yaml.push_str(&format!("  - name: {name}\n    platform: {platform}\n"));
-        match *platform {
-            "web" => yaml.push_str("    connection:\n      transport: launch\n"),
-            "webos" | "tizen" => yaml.push_str(
-                "    connection:\n      host: 127.0.0.1\n      endpoint: ws://127.0.0.1:9998\n",
-            ),
-            "android" | "androidtv" => {
-                yaml.push_str("    connection:\n      serial: emulator-5554\n");
-            }
-            "ios" => yaml.push_str(
-                "    connection:\n      udid: 00008110-001A2345021E001E\n",
-            ),
-            "tvos" => yaml.push_str(
-                "    connection:\n      udid: 00008110-001A2345021E001E\n      endpoint: 127.0.0.1:1\n",
-            ),
-            _ => {}
-        }
+        let (device_type, ip) = match *platform {
+            "web" => ("web", "127.0.0.1"),
+            "webos" => ("webOS", "192.0.2.10"),
+            "tizen" => ("tizenOS", "192.0.2.11"),
+            "android" => ("android", "192.0.2.12"),
+            "androidtv" => ("androidtv", "192.0.2.13"),
+            "ios" => ("iOS", "192.0.2.14"),
+            "tvos" => ("tvOS", "192.0.2.15"),
+            other => panic!("unknown test platform {other}"),
+        };
+        yaml.push_str(&format!(
+            "  - name: {name}\n    type: {device_type}\n    ip: {ip}\n"
+        ));
     }
     yaml
 }
@@ -432,6 +433,7 @@ pub fn standard_workspace(base: &Path, devices: &[(&str, &str)]) -> (PathBuf, Pa
     let play = base.join("plays/login.play");
     write(&scene, SCENE);
     write(&play, PLAY);
+    write(&base.join("theatres/login.theatre"), THEATRE);
     (scene, play)
 }
 

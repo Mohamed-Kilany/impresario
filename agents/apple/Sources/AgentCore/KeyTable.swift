@@ -53,6 +53,16 @@ public enum KeyTable {
             return unsupported(key, "the Apple TV remote has no colour keys")
         case .backspace:
             return unsupported(key, "the tvOS remote has no backspace key")
+        case .num0, .num1, .num2, .num3, .num4, .num5, .num6, .num7, .num8, .num9:
+            return unsupported(key, "the Apple TV remote has no number pad")
+        case .volumeUp, .volumeDown, .mute:
+            return unsupported(key, "the Apple TV remote has no volume keys")
+        case .channelUp, .channelDown:
+            return unsupported(key, "the Apple TV remote has no channel keys")
+        case .stop, .record:
+            return unsupported(key, "the XCUITest remote has no stop/record buttons")
+        case .info, .guide, .exit, .subtitle, .audio, .search, .settings:
+            return unsupported(key, "the Apple TV remote has no such button")
         }
     }
 

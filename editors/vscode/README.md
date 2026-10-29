@@ -48,7 +48,7 @@ npm run build            # esbuild bundle into out/
 npm run check            # strict tsc + ESLint
 npm run test:unit        # corpus parity + 1,000-file benchmark (Node + WASM)
 npm run test:host        # @vscode/test-electron extension-host suite
-npm run package          # impresario-0.1.0.vsix
+npm run package          # impresario-1.0.0.vsix
 ```
 
 `npm test` runs the build, the unit/corpus tests and the extension-host tests.
@@ -59,7 +59,7 @@ definition, formatting, symbols and code actions in a real VS Code window.
 Install a built package with:
 
 ```sh
-code --install-extension impresario-0.1.0.vsix
+code --install-extension impresario-1.0.0.vsix
 ```
 
 The VSIX contains `out/extension.js`, `media/impresario_language.wasm`, the

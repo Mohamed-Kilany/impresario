@@ -71,18 +71,9 @@ fn check(step: &Step) -> &Check {
     }
 }
 
-fn steps(play: &PlayFile) -> Vec<&Step> {
-    play.acts
-        .iter()
-        .flat_map(|act| act.stages.iter())
-        .flat_map(|stage| stage.scenes.iter())
-        .flat_map(|block| block.steps.iter())
-        .collect()
-}
-
-/// Wrap `Action:`/`Check:` lines into a minimal well-formed play.
-fn play_with_steps(step_lines: &[&str]) -> String {
-    let mut out = String::from("Play: P\n\nAct: A\n\nStage: S\n    Scene: Screen\n");
+/// Wrap `Action:`/`Check:` lines into a minimal well-formed theatre stage.
+fn theatre_with_steps(step_lines: &[&str]) -> String {
+    let mut out = String::from("Theatre: T\n\nStage: S\n    Scene: Screen\n");
     for line in step_lines {
         out.push_str("        ");
         out.push_str(line);
@@ -91,13 +82,31 @@ fn play_with_steps(step_lines: &[&str]) -> String {
     out
 }
 
+fn theatre_outcome(source: &str) -> ParseOutcome<TheatreFile> {
+    parse_theatre(source, Path::new("test.theatre"))
+}
+
+fn theatre_steps(theatre: &TheatreFile) -> Vec<&Step> {
+    theatre
+        .stages
+        .iter()
+        .flat_map(|stage| stage.items.iter())
+        .filter_map(|item| match item {
+            StageItem::Scene(block) => Some(block.steps.iter()),
+            StageItem::Perform(_) => None,
+        })
+        .flatten()
+        .collect()
+}
+
 const LOGIN_SCENE: &str = "\
 Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginTitle:    web=\"h1.title\",  android=\"id:login_title\"
-    UsernameInput: web=\"#username\", index=2
+| Piece         | web        | android         | index |
+|---------------|------------|-----------------|-------|
+| LoginTitle    | h1.title   | id:login_title  |       |
+| UsernameInput | #username  | -               | 2     |
 ";
 
 const LOGIN_PLAY: &str = "\
@@ -108,17 +117,8 @@ Var: USER = 'test_user_impresario'
 Act: Successful Login Flow
 Tags: smoke, auth
 Platforms: android, ios, webos
-
-Stage: Navigate and Login
-    Timeout: 15s
-    Scene: LoginScreen
-        Check: LoginTitle
-        Action: '${var.USER}' => UsernameInput
-        Action: click => SubmitButton
-
-Stage: Verify Outcome
-    Scene: DashboardScreen
-        Check: WelcomeBanner is visible timeout 20s
+    Perform: NavigateAndLogin
+    Perform: VerifyOutcome
 ";
 
 // ---------------------------------------------------------------------------
@@ -146,6 +146,7 @@ fn scene_header_and_pieces_parse_clean() {
     );
     let username = scene.piece("UsernameInput").expect("UsernameInput");
     assert_eq!(username.index, 2);
+    assert_eq!(username.selectors.len(), 1);
 }
 
 #[test]
@@ -156,25 +157,27 @@ fn scene_spans_are_precise() {
     assert_eq!(scene.name_span.len, 11);
     assert_eq!(scene.platforms_span.line, 2);
     let title = scene.piece("LoginTitle").expect("LoginTitle");
-    assert_eq!(title.name_span.line, 5);
-    assert_eq!(title.name_span.col, 5);
+    assert_eq!(title.name_span.line, 6);
+    assert_eq!(title.name_span.col, 3);
     assert_eq!(title.name_span.len, 10);
-    assert_eq!(title.span.line, 5);
+    assert_eq!(title.span.line, 6);
     let selector = title.selectors.first().expect("selector");
-    assert_eq!(selector.span.line, 5);
-    // The span covers the quoted literal, quotes included.
-    assert_eq!(selector.span.len, "\"h1.title\"".chars().count());
+    assert_eq!(selector.span.line, 6);
+    // The span covers the table cell text.
+    assert_eq!(selector.span.len, "h1.title".chars().count());
 }
 
 #[test]
 fn scene_platform_lists_parse_and_deduplicate() {
-    let scene =
-        scene_ok("Scene: A\nPlatform: android, ios, android\n\nPieces:\n    P: web=\"#p\"\n");
+    let scene = scene_ok(
+        "Scene: A\nPlatforms: android, ios, android\n\n| Piece | web |\n|---|---|\n| P | #p |\n",
+    );
     assert_eq!(
         scene.platforms,
         ScenePlatforms::List(vec![Platform::Android, Platform::Ios])
     );
-    let outcome = scene_outcome("Scene: A\nPlatform: webostv\n\nPieces:\n    P: web=\"#p\"\n");
+    let outcome =
+        scene_outcome("Scene: A\nPlatforms: webostv\n\n| Piece | web |\n|---|---|\n| P | #p |\n");
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-004"]);
     let message = outcome
         .diagnostics
@@ -188,18 +191,17 @@ fn scene_platform_lists_parse_and_deduplicate() {
 #[test]
 fn scene_errors_are_recovered_so_later_lines_still_parse() {
     let outcome = scene_outcome(
-        "Scene: Good\nPlatform: cross-platform\n\nPieces:\n    First: web=\"#first\"\n    Second: windows=\"#second\"\n    Third: web=\"#third\"\n",
+        "Scene: Good\n\n| Piece | web | windows |\n|---|---|---|\n| First | #first | - |\n| Second | #second | - |\n| Third | #third | - |\n",
     );
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-011"]);
     let scene = outcome.ast.expect("scene still produced");
-    assert_eq!(scene.pieces.len(), 2);
+    assert_eq!(scene.pieces.len(), 3);
     assert!(scene.piece("Third").is_some());
-    assert!(scene.piece("Second").is_none());
 }
 
 #[test]
 fn scanner_errors_are_collected_with_parse_errors() {
-    let outcome = scene_outcome("Scene: A\n\tPieces:\nPlatform: web\n");
+    let outcome = scene_outcome("Scene: A\n\t| Piece | web |\n");
     let codes = codes(&outcome.diagnostics);
     assert!(codes.contains(&"IMP-DSL-001"), "{codes:?}");
     assert!(codes.contains(&"IMP-DSL-005"), "{codes:?}");
@@ -228,9 +230,8 @@ fn play_example_structure_parses_clean() {
     assert_eq!(play.var_decls[0].name, "USER");
     assert_eq!(play.var_decls[0].value.raw, "test_user_impresario");
 
-    let bound = play_ok(
-        "Play: Bound\nDescription: One app.\nApp: shop\n\nAct: A\nStage: S\n    Scene: S\n        Action: click => B\n",
-    );
+    let bound =
+        play_ok("Play: Bound\nDescription: One app.\nApp: shop\n\nAct: A\n    Perform: S\n");
     let named = bound.app.expect("app header");
     assert_eq!(named.name, "shop");
 
@@ -250,19 +251,25 @@ fn play_example_structure_parses_clean() {
             .collect::<Vec<_>>(),
         vec!["android", "ios", "webos"]
     );
+    assert_eq!(act.performs.len(), 2);
+    assert_eq!(act.performs[0].stage_name, "NavigateAndLogin");
+    assert_eq!(act.performs[1].stage_name, "VerifyOutcome");
+    assert!(act.stages.is_empty());
 
-    let stage = act.stages.first().expect("stage");
-    assert_eq!(stage.name, "Navigate and Login");
+    // Step grammar is exercised through theatres now.
+    let theatre = theatre_ok(
+        "Theatre: Login\n\nStage: NavigateAndLogin\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${var.USER}' => UsernameInput\n        Action: click => SubmitButton\n\nStage: VerifyOutcome\n    Scene: DashboardScreen\n        Check: WelcomeBanner is visible timeout 20s\n",
+    );
+    let stage = &theatre.stages[0];
+    assert_eq!(stage.name, "NavigateAndLogin");
     assert_eq!(stage.timeout.map(|timeout| timeout.millis()), Some(15_000));
     let block = stage.scenes.first().expect("scene block");
     assert_eq!(block.scene_name, "LoginScreen");
     assert_eq!(block.steps.len(), 3);
-    // `Check: LoginTitle` means `is visible`.
     assert!(matches!(
         check(&block.steps[0]).condition,
         CheckCondition::IsVisible
     ));
-    // The shorthand `'text' => P` is `type`.
     match action(&block.steps[1]) {
         ActionVerb::Type { text, piece } => {
             assert_eq!(text.raw, "${var.USER}");
@@ -273,7 +280,7 @@ fn play_example_structure_parses_clean() {
     }
     assert!(matches!(action(&block.steps[2]), ActionVerb::Click { .. }));
 
-    let verify = play.acts[0].stages[1].scenes[0].steps[0].clone();
+    let verify = theatre.stages[1].scenes[0].steps[0].clone();
     assert!(matches!(
         check(&verify).condition,
         CheckCondition::IsVisible
@@ -283,9 +290,8 @@ fn play_example_structure_parses_clean() {
 
 #[test]
 fn duplicate_var_declarations_last_wins() {
-    let play = play_ok(
-        "Play: P\nVar: USER = 'first'\nVar: USER = 'second'\n\nAct: A\n\nStage: S\n    Scene: X\n        Check: A\n",
-    );
+    let play =
+        play_ok("Play: P\nVar: USER = 'first'\nVar: USER = 'second'\n\nAct: A\n    Perform: S\n");
     assert_eq!(play.var_decls.len(), 1);
     assert_eq!(play.var_decls[0].value.raw, "second");
 }
@@ -293,7 +299,7 @@ fn duplicate_var_declarations_last_wins() {
 #[test]
 fn duplicate_var_declaration_warns_about_shadowing() {
     let outcome = parse_play(
-        "Play: P\nVar: USER = 'first'\nVar: USER = 'second'\n\nAct: A\n\nStage: S\n    Scene: X\n        Check: A\n",
+        "Play: P\nVar: USER = 'first'\nVar: USER = 'second'\n\nAct: A\n    Perform: S\n",
         Path::new("p.play"),
     );
     assert!(outcome.ast.is_some());
@@ -308,25 +314,18 @@ fn duplicate_var_declaration_warns_about_shadowing() {
 }
 
 #[test]
-fn duplicate_act_and_stage_names_are_reported() {
+fn duplicate_act_names_are_reported() {
     let source = "\
 Play: P
 
 Act: A
-
-Stage: S
-    Scene: Screen
-        Check: A
-
-Stage: S
-    Scene: Screen
-        Check: A
+    Perform: S
 
 Act: A
+    Perform: S
 
-Stage: T
-    Scene: Screen
-        Check: A
+Act: A
+    Perform: S
 ";
     let outcome = play_outcome(source);
     assert_eq!(
@@ -336,15 +335,15 @@ Stage: T
 }
 
 #[test]
-fn play_recovery_keeps_good_steps() {
-    let outcome = play_outcome(&play_with_steps(&[
+fn theatre_recovery_keeps_good_steps() {
+    let outcome = theatre_outcome(&theatre_with_steps(&[
         "Check: A",
         "Action: tap => B",
         "Check: C",
     ]));
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
-    let play = outcome.ast.expect("play AST");
-    assert_eq!(steps(&play).len(), 2);
+    let theatre = outcome.ast.expect("theatre AST");
+    assert_eq!(theatre_steps(&theatre).len(), 2);
 }
 
 #[test]
@@ -357,9 +356,7 @@ fn empty_play_reports_missing_header() {
 #[test]
 fn unknown_keywords_carry_hints() {
     // A near miss of a depth-0 keyword gets a "did you mean" hint.
-    let outcome = play_outcome(
-        "Play: P\n\nAct: A\n\nStage: S\n    Scene: Screen\n        Check: A\n\nDescrption: late\n",
-    );
+    let outcome = play_outcome("Play: P\n\nAct: A\n    Perform: S\n\nDescrption: late\n");
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-004"]);
     let message = outcome
         .diagnostics
@@ -371,15 +368,15 @@ fn unknown_keywords_carry_hints() {
 }
 
 #[test]
-fn misplaced_keywords_use_imp_dsl_005() {
+fn misplaced_keywords_report_parse_errors() {
     // `Act:` inside a Stage is valid syntax elsewhere but invalid here.
     let outcome = play_outcome(
-        "Play: P\n\nAct: A\n\nStage: S\n    Act: B\n    Scene: Screen\n        Check: A\n",
+        "Play: P\n\nAct: A\n    Perform: S\n    Stage: Inline\n        Scene: Screen\n",
     );
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-005"]);
     // `Scene:` inside a scene block.
-    let outcome = play_outcome(&play_with_steps(&["Check: A", "Scene: Other"]));
-    assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-005"]);
+    let outcome = theatre_outcome(&theatre_with_steps(&["Check: A", "Scene: Other"]));
+    assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-004"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,13 +385,13 @@ fn misplaced_keywords_use_imp_dsl_005() {
 
 #[test]
 fn type_append_and_clear_are_distinct() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: 'abc' => Field",
         "Action: type 'abc' => Field",
         "Action: append 'abc' => Field",
         "Action: clear => Field",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     assert_eq!(all.len(), 4);
     // `'abc' => P` is exactly `type 'abc' => P` (D-06).
     for step in [all[0], all[1]] {
@@ -421,11 +418,11 @@ fn type_append_and_clear_are_distinct() {
 
 #[test]
 fn step_timeouts_are_captured() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: click => Button timeout 2s",
         "Check: Title timeout 500ms",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     assert_eq!(all[0].timeout.map(|timeout| timeout.millis()), Some(2000));
     assert_eq!(all[1].timeout.map(|timeout| timeout.millis()), Some(500));
 }
@@ -439,11 +436,11 @@ fn timeout_is_rejected_on_master_and_key_actions() {
         "Action: screenshot 's' timeout 1s",
         "Action: app launch timeout 1s",
     ] {
-        let outcome = play_outcome(&play_with_steps(&[line]));
+        let outcome = theatre_outcome(&theatre_with_steps(&[line]));
         assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-022"], "{line}");
     }
     // Allowed elsewhere.
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: click => P timeout 5s",
         "Action: type 'x' => P timeout 5s",
         "Action: longpress 2s => P timeout 5s",
@@ -453,16 +450,16 @@ fn timeout_is_rejected_on_master_and_key_actions() {
         "Action: select 'x' => P timeout 5s",
         "Action: clear => P timeout 5s",
     ]));
-    assert_eq!(steps(&play).len(), 8);
+    assert_eq!(theatre_steps(&theatre).len(), 8);
 }
 
 #[test]
 fn longpress_defaults_to_one_second() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: longpress => Card",
         "Action: longpress 250ms => Card",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     match action(all[0]) {
         ActionVerb::LongPress { duration, piece } => {
             assert_eq!(duration.millis(), 1000);
@@ -478,14 +475,14 @@ fn longpress_defaults_to_one_second() {
 
 #[test]
 fn scroll_and_swipe_variants() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: scroll down",
         "Action: scroll up 3 => List",
         "Action: scrollto => Footer",
         "Action: swipe left",
         "Action: swipe right => Carousel",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     match action(all[0]) {
         ActionVerb::Scroll {
             direction,
@@ -532,7 +529,7 @@ fn scroll_and_swipe_variants() {
 
 #[test]
 fn key_wait_screenshot_and_app_verbs() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Action: key ok",
         "Action: key rewind 3",
         "Action: back",
@@ -543,7 +540,7 @@ fn key_wait_screenshot_and_app_verbs() {
         "Action: app restart",
         "Action: app background",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     match action(all[0]) {
         ActionVerb::Key { key, repeat } => {
             assert_eq!(key.key, RemoteKey::Ok);
@@ -587,7 +584,7 @@ fn key_wait_screenshot_and_app_verbs() {
 
 #[test]
 fn unknown_directions_and_keys_report_precisely() {
-    let outcome = play_outcome(&play_with_steps(&["Action: scroll sideways"]));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Action: scroll sideways"]));
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
     let message = outcome
         .diagnostics
@@ -597,7 +594,7 @@ fn unknown_directions_and_keys_report_precisely() {
         .unwrap_or_default();
     assert!(message.contains("sideways"), "message: {message}");
 
-    let outcome = play_outcome(&play_with_steps(&["Action: swipe"]));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Action: swipe"]));
     let message = outcome
         .diagnostics
         .iter()
@@ -606,7 +603,7 @@ fn unknown_directions_and_keys_report_precisely() {
         .unwrap_or_default();
     assert!(message.contains("needs a direction"), "message: {message}");
 
-    let outcome = play_outcome(&play_with_steps(&["Action: key rewindd"]));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Action: key rewindd"]));
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-018"]);
 }
 
@@ -619,7 +616,7 @@ fn invalid_strings_report_dsl_003() {
         "Action: screenshot 'x",
         "Check: Field text 'x",
     ] {
-        let outcome = play_outcome(&play_with_steps(&[line]));
+        let outcome = theatre_outcome(&theatre_with_steps(&[line]));
         assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-003"], "{line}");
     }
 }
@@ -633,7 +630,7 @@ fn duration_errors_report_dsl_015() {
         "Action: click => P timeout 5x",
         "Check: P timeout 0ms",
     ] {
-        let outcome = play_outcome(&play_with_steps(&[line]));
+        let outcome = theatre_outcome(&theatre_with_steps(&[line]));
         assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-015"], "{line}");
     }
 }
@@ -644,7 +641,7 @@ fn duration_errors_report_dsl_015() {
 
 #[test]
 fn check_conditions_all_parse() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Check: A",
         "Check: B is visible",
         "Check: C is hidden",
@@ -655,7 +652,7 @@ fn check_conditions_all_parse() {
         "Check: H textContains 'ell'",
         "Check: I count 3",
     ]));
-    let all = steps(&play);
+    let all = theatre_steps(&theatre);
     assert_eq!(check(all[0]).piece.name, "A");
     assert!(matches!(check(all[0]).condition, CheckCondition::IsVisible));
     assert!(matches!(check(all[1]).condition, CheckCondition::IsVisible));
@@ -686,16 +683,16 @@ fn check_conditions_all_parse() {
 
 #[test]
 fn diagnostics_point_at_the_offending_span() {
-    // Unknown action verb `tap` on line 7: the span covers the verb itself.
-    let source = "Play: P\n\nAct: A\n\nStage: S\n    Scene: Screen\n        Action: tap => P\n";
-    let outcome = play_outcome(source);
+    // Unknown action verb `tap` on line 5: the span covers the verb itself.
+    let source = "Theatre: T\n\nStage: S\n    Scene: Screen\n        Action: tap => P\n";
+    let outcome = theatre_outcome(source);
     let diagnostic = outcome
         .diagnostics
         .iter()
         .find(|d| d.code == Code::DslUnknownAction)
         .expect("IMP-DSL-010");
     let span = diagnostic.span.clone().expect("span");
-    assert_eq!(span.line, 7);
+    assert_eq!(span.line, 5);
     assert_eq!(span.col, 17);
     assert_eq!(span.len, 3);
     assert!(
@@ -705,19 +702,18 @@ fn diagnostics_point_at_the_offending_span() {
     );
 
     // Trailing input on a Check line: `junk` at the end.
-    let outcome = play_outcome(&play_with_steps(&["Check: P junk"]));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Check: P junk"]));
     let diagnostic = outcome.diagnostics.iter().next().expect("diagnostic");
     let span = diagnostic.span.clone().expect("span");
-    assert_eq!(span.line, 7);
+    assert_eq!(span.line, 5);
     assert_eq!(span.col, 18);
     assert_eq!(span.len, 4);
 }
 
 #[test]
 fn duplicate_piece_names_are_reported() {
-    let outcome = scene_outcome(
-        "Scene: A\nPlatform: web\n\nPieces:\n    Title: web=\"#a\"\n    Title: web=\"#b\"\n",
-    );
+    let outcome =
+        scene_outcome("Scene: A\n\n| Piece | web |\n|---|---|\n| Title | #a |\n| Title | #b |\n");
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-007"]);
     let help = outcome
         .diagnostics
@@ -764,7 +760,7 @@ fn tabular_scene_defaults_to_cross_platform_and_accepts_omitted_column() {
 #[test]
 fn theatre_parses_parameters_platforms_and_ordered_items() {
     let theatre = theatre_ok(
-        "Theatre: Authentication\n\nStage: Login(user, password, remember = 'false')\n    Description: Fills the login form.\n    Platforms: web, android\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${param.user}' => UsernameInput\n    Perform: DashboardShown\n\nStage: DashboardShown\n    Scene: DashboardScreen\n        Check: WelcomeBanner\n",
+        "Theatre: Authentication\n\nStage: Login(user, password, remember = 'false')\n    Description: Fills the login form.\n    Audience: web, android\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${param.user}' => UsernameInput\n    Perform: DashboardShown\n\nStage: DashboardShown\n    Scene: DashboardScreen\n        Check: WelcomeBanner\n",
     );
     assert_eq!(theatre.name, "Authentication");
     assert_eq!(theatre.stages.len(), 2);
@@ -779,7 +775,7 @@ fn theatre_parses_parameters_platforms_and_ordered_items() {
             .map(|value| value.raw.as_str()),
         Some("false")
     );
-    assert_eq!(login.platforms.len(), 2);
+    assert_eq!(login.audience.len(), 2);
     assert_eq!(login.scenes.len(), 1);
     assert_eq!(login.items.len(), 2);
     assert!(matches!(login.items[0], StageItem::Scene(_)));
@@ -816,11 +812,11 @@ fn theatrical_play_rejects_inline_stage_blocks() {
 
 #[test]
 fn check_showing_parses_options() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Check: Showing => PlayerSurface with coverage>=50%, decoded, source~\"https://cdn.example\" timeout 12s",
         "Check: not Showing => PlayerSurface",
     ]));
-    let parsed = steps(&play);
+    let parsed = theatre_steps(&theatre);
     match &check(parsed[0]).condition {
         CheckCondition::Showing(showing) => {
             assert!(!showing.negated);
@@ -846,12 +842,12 @@ fn check_showing_parses_options() {
 
 #[test]
 fn check_player_parses_status_drm_and_assertions() {
-    let play = play_ok(&play_with_steps(&[
+    let theatre = theatre_ok(&theatre_with_steps(&[
         "Check: Player => VideoContainer Paused DRM-enabled FairPlay with position>30s, resolution>=1080p, not muted timeout 20s",
         "Check: Player => VideoContainer DRM-disabled with license=active, keyStatus=usable",
         "Check: Player => VideoContainer not Buffering",
     ]));
-    let parsed = steps(&play);
+    let parsed = theatre_steps(&theatre);
     match &check(parsed[0]).condition {
         CheckCondition::Player(player) => {
             let status = player.status.expect("status");
@@ -892,10 +888,10 @@ fn check_player_parses_status_drm_and_assertions() {
 
 #[test]
 fn check_player_rejects_empty_and_unknown_terms() {
-    let outcome = play_outcome(&play_with_steps(&["Check: Player => VideoContainer"]));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Check: Player => VideoContainer"]));
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
 
-    let outcome = play_outcome(&play_with_steps(&[
+    let outcome = theatre_outcome(&theatre_with_steps(&[
         "Check: Player => VideoContainer with nonsense=1",
     ]));
     assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);

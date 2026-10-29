@@ -25,7 +25,7 @@ final class AgentStateTests: XCTestCase {
     ) -> HandshakeRequestData {
         HandshakeRequestData(
             protocolVersion: version,
-            masterVersion: "0.1.0",
+            masterVersion: "1.0.0",
             platform: platform,
             appId: appId,
             options: options,
@@ -39,7 +39,7 @@ final class AgentStateTests: XCTestCase {
         XCTAssertTrue(result.accepted)
         XCTAssertEqual(result.sessionId, "session-1")
         XCTAssertEqual(result.protocolVersion, "1.0.0")
-        XCTAssertEqual(result.agentVersion, "0.1.0")
+        XCTAssertEqual(result.agentVersion, "1.0.0")
         XCTAssertEqual(result.capabilities, [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl, .probeShowing, .probePlayer, .probeDrm])
         XCTAssertEqual(result.deviceInfo?.runtime, "XCUITest")
         XCTAssertNil(result.error)

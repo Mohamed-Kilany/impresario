@@ -12,7 +12,7 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 | `IMP-CFG-002` | missing required field | `impresario-core::config` |
 | `IMP-CFG-003` | invalid value (range, enum, type, kind of file) | `impresario-core::config`, CLI |
 | `IMP-CFG-004` | duplicate device name | `impresario-core::config` |
-| `IMP-CFG-005` | bad `target_endpoint` for the device platform | `impresario-core::config` |
+| `IMP-CFG-005` | invalid device address for its type | `impresario-core::config` |
 | `IMP-CFG-006` | duplicate app name (within the merged app layers) | `impresario-core::apps` |
 
 ## Apps (`IMP-APP-*`)
@@ -49,8 +49,8 @@ overrides.
 | `IMP-DSL-001` | tab indentation | a `\t` as the first indentation character |
 | `IMP-DSL-002` | inconsistent indent | 4 spaces then 6 spaces |
 | `IMP-DSL-003` | unterminated / invalid string | `Action: 'abc => P` |
-| `IMP-DSL-004` | unknown keyword | `Steps:` instead of `Pieces:` |
-| `IMP-DSL-005` | missing or misplaced header | `Pieces:` before `Scene:` |
+| `IMP-DSL-004` | unknown keyword | `Perfrom:` instead of `Perform:` |
+| `IMP-DSL-005` | missing or misplaced header | inline `Stage:` inside a play, or `Pieces:` instead of a scene table |
 | `IMP-DSL-006` | duplicate scene name (workspace-wide) | two files declaring `Scene: Login` |
 | `IMP-DSL-007` | duplicate piece name in one scene | `Title` listed twice |
 | `IMP-DSL-008` | unknown scene referenced by a play | `Scene: LoginScreeen` |
@@ -81,7 +81,7 @@ overrides.
 | `IMP-DSL-040` | unknown `${example.X}` column | `X` not in the Act's `Examples:` header |
 | `IMP-DSL-041` | stage nesting deeper than 64 | recursive stage composition |
 | `IMP-DSL-042` | lint: scene is never used by a stage | unused `.scene` |
-| `IMP-DSL-043` | lint: piece is never used by a step | unused table row / `Pieces:` entry |
+| `IMP-DSL-043` | lint: piece is never used by a step | unused table row |
 | `IMP-DSL-044` | lint: stage is never reachable from an Act | unreferenced `.theatre` stage |
 | `IMP-DSL-045` | lint: theatre has no stage reachable from an Act | unreferenced theatre |
 | `IMP-DSL-046` | lint: duplicate `Audience:` declaration (last wins) | two `Audience:` lines |

@@ -22,7 +22,6 @@ pub mod duration;
 pub mod fmt;
 pub mod home;
 pub mod keys;
-pub mod migrate;
 pub mod parser;
 pub mod platforms;
 pub mod probe;

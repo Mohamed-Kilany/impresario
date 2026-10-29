@@ -301,6 +301,30 @@ public enum ProtoConversion {
         case .keyYellow: key = .yellow
         case .keyBlue: key = .blue
         case .keyBackspace: key = .backspace
+        case .keyNum0: key = .num0
+        case .keyNum1: key = .num1
+        case .keyNum2: key = .num2
+        case .keyNum3: key = .num3
+        case .keyNum4: key = .num4
+        case .keyNum5: key = .num5
+        case .keyNum6: key = .num6
+        case .keyNum7: key = .num7
+        case .keyNum8: key = .num8
+        case .keyNum9: key = .num9
+        case .keyVolumeup: key = .volumeUp
+        case .keyVolumedown: key = .volumeDown
+        case .keyMute: key = .mute
+        case .keyChannelup: key = .channelUp
+        case .keyChanneldown: key = .channelDown
+        case .keyStop: key = .stop
+        case .keyRecord: key = .record
+        case .keyInfo: key = .info
+        case .keyGuide: key = .guide
+        case .keyExit: key = .exit
+        case .keySubtitle: key = .subtitle
+        case .keyAudio: key = .audio
+        case .keySearch: key = .search
+        case .keySettings: key = .settings
         case .unspecified, .UNRECOGNIZED:
             throw AgentError.protocolError("the remote key is unspecified or unknown")
         }

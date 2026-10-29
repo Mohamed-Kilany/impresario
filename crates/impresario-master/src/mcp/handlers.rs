@@ -197,23 +197,10 @@ fn load_workspace_config(server: &Server) -> Result<WorkspaceConfig, String> {
 fn device_json(device: &DeviceConfig) -> Value {
     json!({
         "name": device.name,
+        "type": device.device_type.as_str(),
+        "ip": device.ip,
         "platform": device.platform.as_str(),
         "transport": device.effective_transport().as_str(),
-        "connection": {
-            "host": device.connection.host,
-            "port": device.connection.port,
-            "serial": device.connection.serial,
-            "udid": device.connection.udid,
-            "endpoint": device.connection.endpoint,
-        },
-        "auth": {
-            "key": device.auth.key,
-            "identity": device.auth.identity,
-            "profile": device.auth.profile,
-        },
-        "labels": device.labels,
-        "connector_address": device.connector_address(),
-        "target_endpoint": device.target_endpoint(),
         "support": platform_support(device.platform),
     })
 }

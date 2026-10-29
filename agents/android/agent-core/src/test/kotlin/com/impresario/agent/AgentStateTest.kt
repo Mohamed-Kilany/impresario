@@ -19,7 +19,7 @@ class AgentStateTest {
         options: Map<String, String> = emptyMap(),
     ): HandshakeRequest = HandshakeRequest.newBuilder()
         .setProtocolVersion(protocol)
-        .setMasterVersion("0.1.0")
+        .setMasterVersion("1.0.0")
         .setDeviceName("device")
         .setPlatform(platform)
         .setAppId(appId)

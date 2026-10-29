@@ -99,8 +99,8 @@
   {
     "op": "codeActions",
     "path": "scenes/Ghost.scene",
-    "start": { "line": 5, "col": 5 },
-    "end": { "line": 5, "col": 16 },
+    "start": { "line": 5, "col": 3 },
+    "end": { "line": 5, "col": 14 },
     "contains_titles": ["Make duplicate unique ('LoginButton2')"]
   },
   {

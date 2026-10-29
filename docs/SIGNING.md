@@ -84,8 +84,9 @@ impresario sign tizen profile show living-room
 impresario sign tizen profile remove living-room
 ```
 
-`remove` deletes the profile directory and its keychain entries. The profile
-name is referenced from a device as `auth.profile: living-room`.
+`remove` deletes the profile directory and its keychain entries. Runs use the
+`samsung` profile by default; set `IMPRESARIO_TIZEN_PROFILE` to choose another
+imported profile. Profiles are not configured per device.
 
 ### Creating a Samsung-issued profile
 

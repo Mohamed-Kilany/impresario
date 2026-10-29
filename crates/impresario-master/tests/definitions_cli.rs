@@ -1,4 +1,4 @@
-//! `device`, `app` and `migrate` integration tests (TASK-2 4.3, 5 and 8.9).
+//! `device` and `app` integration tests (TASK-2 4.3 and 5).
 //!
 //! Each test gets its own global home via `IMPRESARIO_HOME`; workspace scope is
 //! selected with the subcommand-level `--workspace` flag.
@@ -48,18 +48,7 @@ fn device_lifecycle_merges_global_and_workspace_layers() {
         &home,
         &workspace,
         &[
-            "device",
-            "add",
-            "--name",
-            "phone",
-            "--platform",
-            "android",
-            "--transport",
-            "usb",
-            "--serial",
-            "emulator-5554",
-            "--label",
-            "phone",
+            "device", "add", "--name", "phone", "--type", "android", "--ip", "10.0.0.5",
         ],
     );
     assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
@@ -75,26 +64,19 @@ fn device_lifecycle_merges_global_and_workspace_layers() {
             "--workspace",
             "--name",
             "tv",
-            "--platform",
-            "webos",
-            "--transport",
-            "ssh",
-            "--host",
+            "--type",
+            "webOS",
+            "--ip",
             "192.168.1.50",
-            "--endpoint",
-            "ws://192.168.1.50:9998",
-            "--key-dispatch",
-            "js",
-            "--page-match",
-            "index.html",
         ],
     );
     assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
     let local = workspace.join("impresario.devices.config");
     assert!(local.is_file(), "workspace device file was not written");
     let text = std::fs::read_to_string(&local).expect("workspace devices");
-    assert!(text.contains("key_dispatch: js"), "{text}");
-    assert!(text.contains("page_match: index.html"), "{text}");
+    assert!(text.contains("type: webOS"), "{text}");
+    assert!(text.contains("ip: 192.168.1.50"), "{text}");
+    assert!(!text.contains("connection:"), "{text}");
 
     let (code, stdout, stderr) = run(&home, &workspace, &["device", "list"]);
     assert_eq!(code, EXIT_OK, "stderr={stderr}");
@@ -103,7 +85,8 @@ fn device_lifecycle_merges_global_and_workspace_layers() {
 
     let (code, stdout, stderr) = run(&home, &workspace, &["device", "show", "tv"]);
     assert_eq!(code, EXIT_OK, "stderr={stderr}");
-    assert!(stdout.contains("ws://192.168.1.50:9998"), "{stdout}");
+    assert!(stdout.contains("192.168.1.50"), "{stdout}");
+    assert!(stdout.contains("webOS"), "{stdout}");
 
     let (code, _stdout, stderr) = run(
         &home,
@@ -126,16 +109,7 @@ fn device_lifecycle_merges_global_and_workspace_layers() {
 fn duplicate_devices_and_bad_fields_are_rejected() {
     let (_guard, home, workspace) = temp();
     let args = [
-        "device",
-        "add",
-        "--name",
-        "phone",
-        "--platform",
-        "android",
-        "--transport",
-        "usb",
-        "--serial",
-        "emulator-5554",
+        "device", "add", "--name", "phone", "--type", "android", "--ip", "10.0.0.5",
     ];
     let (code, _stdout, stderr) = run(&home, &workspace, &args);
     assert_eq!(code, EXIT_OK, "stderr={stderr}");
@@ -147,14 +121,7 @@ fn duplicate_devices_and_bad_fields_are_rejected() {
         &home,
         &workspace,
         &[
-            "device",
-            "add",
-            "--name",
-            "bad name",
-            "--platform",
-            "android",
-            "--serial",
-            "x",
+            "device", "add", "--name", "bad name", "--type", "android", "--ip", "10.0.0.6",
         ],
     );
     assert_eq!(code, EXIT_USAGE);
@@ -164,22 +131,15 @@ fn duplicate_devices_and_bad_fields_are_rejected() {
         &home,
         &workspace,
         &[
-            "device",
-            "add",
-            "--name",
-            "wat",
-            "--platform",
-            "webos",
-            "--transport",
-            "usb",
+            "device", "add", "--name", "wat", "--type", "bogus", "--ip", "10.0.0.7",
         ],
     );
     assert_eq!(code, EXIT_USAGE);
-    assert!(stderr.contains("IMP-CFG-003"), "{stderr}");
+    assert!(stderr.contains("unknown type"), "{stderr}");
 }
 
 #[test]
-fn apple_only_options_are_rejected_elsewhere() {
+fn exact_types_and_ip_validation() {
     let (_guard, home, workspace) = temp();
     let (code, _stdout, stderr) = run(
         &home,
@@ -190,17 +150,17 @@ fn apple_only_options_are_rejected_elsewhere() {
             "--workspace",
             "--name",
             "iphone",
-            "--platform",
-            "ios",
-            "--udid",
-            "00008110-001A2345021E001E",
-            "--animations-disabled",
+            "--type",
+            "iOS",
+            "--ip",
+            "192.168.1.70",
         ],
     );
     assert_eq!(code, EXIT_OK, "stderr={stderr}");
     let text = std::fs::read_to_string(workspace.join("impresario.devices.config"))
         .expect("workspace devices");
-    assert!(text.contains("animations_disabled: true"), "{text}");
+    assert!(text.contains("type: iOS"), "{text}");
+    assert!(text.contains("ip: 192.168.1.70"), "{text}");
 
     let (code, _stdout, stderr) = run(
         &home,
@@ -211,15 +171,14 @@ fn apple_only_options_are_rejected_elsewhere() {
             "--workspace",
             "--name",
             "tv",
-            "--platform",
-            "webos",
-            "--host",
-            "192.168.1.50",
-            "--animations-disabled",
+            "--type",
+            "webOS",
+            "--ip",
+            "not-an-ip",
         ],
     );
     assert_eq!(code, EXIT_USAGE);
-    assert!(stderr.contains("IMP-CFG-003"), "{stderr}");
+    assert!(stderr.contains("not an IPv4 or IPv6 address"), "{stderr}");
 }
 
 #[test]
@@ -284,109 +243,4 @@ fn app_lifecycle_and_check() {
         stderr.contains("IMP") || stdout.contains("IMP"),
         "{stdout}{stderr}"
     );
-}
-
-#[test]
-fn migrate_is_dry_runnable_idempotent_and_backs_up() {
-    let (_guard, home, workspace) = temp();
-    let path = workspace.join("impresario.devices.config");
-    let legacy = "devices:\n  - name: phone\n    platform: android\n    target_endpoint: emulator-5554\n    app_id: com.example.shop\n";
-    std::fs::write(&path, legacy).expect("legacy devices");
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate", "--dry-run"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("unchanged"),
-        legacy,
-        "dry-run must not write"
-    );
-    assert!(stdout.contains("apps:"), "{stdout}");
-    assert!(stdout.contains("impresario.apps.config"), "{stdout}");
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    let backup = std::fs::read_to_string(format!("{}.bak", path.display())).expect("backup");
-    assert_eq!(backup, legacy);
-    let devices = std::fs::read_to_string(&path).expect("devices");
-    assert!(devices.contains("serial: emulator-5554"), "{devices}");
-    assert!(!devices.contains("app_id"), "{devices}");
-    let apps = std::fs::read_to_string(workspace.join("impresario.apps.config")).expect("apps");
-    assert!(apps.contains("com.example.shop"), "{apps}");
-    assert!(apps.contains("name: phone_app"), "{apps}");
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("already"), "{stdout}");
-}
-
-#[test]
-fn migrate_converts_legacy_dsl_and_is_idempotent() {
-    let (_guard, home, workspace) = temp();
-    let scenes = workspace.join("scenes");
-    let plays = workspace.join("plays");
-    std::fs::create_dir_all(&scenes).expect("scenes");
-    std::fs::create_dir_all(&plays).expect("plays");
-    let scene_path = scenes.join("LoginScreen.scene");
-    let play_path = plays.join("login.play");
-    let legacy_scene =
-        "Scene: LoginScreen\nPlatform: android\n\nPieces:\n    Title: android=\"id:title\"\n";
-    let legacy_play =
-        "Play: Login\n\nAct: A\n\nStage: Fill\n    Scene: LoginScreen\n        Check: Title\n";
-    std::fs::write(&scene_path, legacy_scene).expect("scene");
-    std::fs::write(&play_path, legacy_play).expect("play");
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate", "--dry-run"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("| Piece"), "{stdout}");
-    assert!(stdout.contains("Perform: Fill"), "{stdout}");
-    assert_eq!(
-        std::fs::read_to_string(&scene_path).expect("unchanged"),
-        legacy_scene
-    );
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("converted"), "{stdout}");
-    assert_eq!(
-        std::fs::read_to_string(format!("{}.bak", scene_path.display())).expect("backup"),
-        legacy_scene
-    );
-    let migrated_play = std::fs::read_to_string(&play_path).expect("play");
-    assert!(migrated_play.contains("Perform: Fill"), "{migrated_play}");
-    let theatre = std::fs::read_to_string(workspace.join("theatres/login.theatre"))
-        .expect("generated theatre");
-    assert!(theatre.contains("Stage: Fill"), "{theatre}");
-
-    let (code, stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("already"), "{stdout}");
-}
-
-#[test]
-fn migrate_refuses_mixed_legacy_and_new_entries() {
-    let (_guard, home, workspace) = temp();
-    let path = workspace.join("impresario.devices.config");
-    std::fs::write(
-        &path,
-        "devices:\n  - name: phone\n    platform: android\n    connection:\n      transport: usb\n      serial: emulator-5554\n  - name: old\n    platform: android\n    target_endpoint: emulator-5556\n",
-    )
-    .expect("mixed devices");
-    let (code, _stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_USAGE);
-    assert!(stderr.contains("legacy"), "{stderr}");
-}
-
-#[test]
-fn migrate_without_apps_does_not_create_an_apps_file() {
-    let (_guard, home, workspace) = temp();
-    let path = workspace.join("impresario.devices.config");
-    std::fs::write(
-        &path,
-        "devices:\n  - name: phone\n    platform: android\n    target_endpoint: emulator-5554\n    options:\n      clear_app_data: true\n",
-    )
-    .expect("legacy devices");
-    let (code, _stdout, stderr) = run(&home, &workspace, &["migrate"]);
-    assert_eq!(code, EXIT_OK, "stderr={stderr}");
-    assert!(!workspace.join("impresario.apps.config").exists());
-    assert!(stderr.contains("clear_app_data"), "{stderr}");
 }

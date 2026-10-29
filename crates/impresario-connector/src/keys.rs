@@ -105,20 +105,38 @@ mod tests {
         assert_eq!(back.key_code, 10009);
 
         assert!(web_key(Platform::Web, RemoteKey::Back).is_none());
-        assert!(web_key(Platform::Web, RemoteKey::Play).is_none());
+        assert!(web_key(Platform::Web, RemoteKey::Play).is_some());
         assert!(web_key(Platform::WebOs, RemoteKey::Play).is_some());
         assert!(web_key(Platform::Web, RemoteKey::Up).is_some());
         assert!(web_key(Platform::Web, RemoteKey::Backspace).is_some());
+        assert_eq!(
+            web_key(Platform::Web, RemoteKey::Menu)
+                .expect("menu")
+                .key_code,
+            93
+        );
+        assert_eq!(
+            web_key(Platform::Web, RemoteKey::Num5)
+                .expect("num5")
+                .key_code,
+            53
+        );
+        assert_eq!(
+            web_key(Platform::Web, RemoteKey::Settings)
+                .expect("settings")
+                .key_code,
+            176
+        );
     }
 
     #[test]
     fn unsupported_keys_become_unsupported_action() {
-        let error = require_web_key(Platform::Web, RemoteKey::Menu).expect_err("menu");
+        let error = require_web_key(Platform::Web, RemoteKey::Back).expect_err("back");
         assert_eq!(
             error.code,
             impresario_core::command::WireErrorCode::UnsupportedAction
         );
-        assert_eq!(error.details.get("key").map(String::as_str), Some("menu"));
+        assert_eq!(error.details.get("key").map(String::as_str), Some("back"));
     }
 
     #[test]

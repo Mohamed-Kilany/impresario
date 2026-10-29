@@ -37,10 +37,6 @@ use crate::log::{unix_ms_now, LogBuffer, LogLevel, LogRecord};
 /// it. Overridable with `IMPRESARIO_AGENT_START_TIMEOUT_MS`.
 const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Port defaults used when the device entry does not override them.
-const ANDROID_AGENT_PORT: u16 = 50061;
-const APPLE_AGENT_PORT: u16 = 50062;
-
 /// Agent packages (must match `agents/android`, spec section 11).
 const AGENT_PACKAGE: &str = "com.impresario.agent";
 const AGENT_INSTRUMENTATION_PACKAGE: &str = "com.impresario.agent.test";
@@ -482,25 +478,30 @@ impl DeviceTransport for ConnectorTransport {
         device: &DeviceConfig,
         _app: Option<&AppConfig>,
     ) -> Result<Endpoint, TransportError> {
-        let address = device
-            .connector_address()
-            .ok_or_else(|| {
-                TransportError::Transport(format!(
-                    "device '{}' has no connector_address and no default for {}",
-                    device.name, device.platform
-                ))
-            })?
-            .to_string();
-        self.address = Some(address.clone());
-
-        if !is_loopback_address(&address) || port_open(&address, Duration::from_millis(300)).await {
-            return Ok(Endpoint::new(address));
-        }
+        // Production always owns a fresh connector on an ephemeral loopback
+        // port. A test may pin an address through the private options map.
+        let address = match device.connector_address() {
+            Some(address) => {
+                self.address = Some(address.to_string());
+                if !is_loopback_address(address)
+                    || port_open(address, Duration::from_millis(300)).await
+                {
+                    return Ok(Endpoint::new(address.to_string()));
+                }
+                address.to_string()
+            }
+            None => {
+                let port = free_local_port().await?;
+                let address = format!("127.0.0.1:{port}");
+                self.address = Some(address.clone());
+                address
+            }
+        };
 
         let binary = connector_binary().ok_or_else(|| {
             TransportError::Transport(format!(
-                "nothing is listening on {address} and impresario-connector was not found; \
-                 build it (cargo build -p impresario-connector -p impresario-master) or start it manually"
+                "impresario-connector was not found; build it \
+                 (cargo build -p impresario-connector -p impresario-master)"
             ))
         })?;
         let mut cmd = Command::new(binary);
@@ -574,7 +575,7 @@ impl AdbTransport {
             client: None,
             serial: None,
             local_port: None,
-            device_port: ANDROID_AGENT_PORT,
+            device_port: 0,
             forward: None,
             instrument: None,
             logcat: None,
@@ -717,16 +718,15 @@ impl AdbTransport {
         Ok(())
     }
 
-    /// Reachable address of the device itself: the configured override, the
-    /// TCP target host, or the source address of the device's default route.
-    async fn network_address(&self, device: &DeviceConfig, client: &AdbClient) -> Option<String> {
-        if let Some(configured) = device.connection.endpoint.as_deref() {
-            return Some(configured.to_string());
+    /// Reachable address of the device itself. A loopback target (an emulator)
+    /// always uses the direct forward; otherwise the configured IP is the
+    /// network address and the dynamically allocated agent port is appended.
+    async fn network_address(&self, device: &DeviceConfig, _client: &AdbClient) -> Option<String> {
+        if device.is_local() {
+            None
+        } else {
+            Some(format!("{}:{}", device.socket_host(), self.device_port))
         }
-        client
-            .network_host()
-            .await
-            .map(|host| format!("{host}:{}", self.device_port))
     }
 
     fn spawn_stream(
@@ -822,7 +822,10 @@ impl DeviceTransport for AdbTransport {
         let target = AdbTarget::for_device(device).map_err(Self::adb_error)?;
         let client = AdbClient::new(target, &home);
         self.serial = Some(client.target().label());
-        self.device_port = device.effective_agent_port().unwrap_or(ANDROID_AGENT_PORT);
+        self.device_port = match device.effective_agent_port() {
+            Some(port) => port,
+            None => free_local_port().await?,
+        };
         self.client = Some(client.clone());
 
         let probe = client.probe().await.map_err(Self::adb_error)?;
@@ -870,8 +873,8 @@ impl DeviceTransport for AdbTransport {
                         return Err(TransportError::Transport(format!(
                             "the Android agent is not reachable on {address} ({error}); \
                              USB ADB carries one session, so the forward fallback cannot \
-                             coexist with instrumentation. Enable Wi-Fi or set \
-                             connection.endpoint to a reachable agent address"
+                             coexist with instrumentation. Enable Wi-Fi and set the \
+                             device IP to a reachable address"
                         )));
                     }
                     tracing::warn!(
@@ -1096,32 +1099,38 @@ impl AppleTransport {
                 device.platform
             )));
         }
-        let udid = device.connection.udid.as_deref().ok_or_else(|| {
-            TransportError::DeviceUnavailable(format!(
-                "Apple device '{}' has no connection.udid",
-                device.name
-            ))
-        })?;
-        if is_simulator_udid(udid) {
-            return Err(TransportError::DeviceUnavailable(format!(
-                "Apple device '{}' is a simulator; the native transport only drives physical \
-                 devices",
-                device.name
-            )));
-        }
-        let (host, _agent_port) = apple_host_port(device)?;
+        let (host, _agent_port) = apple_host_port(device).await?;
         let home = Home::resolve().map_err(|error| {
             TransportError::DeviceUnavailable(format!(
                 "could not resolve the Impresario home directory for Apple setup: {error}"
             ))
         })?;
         let paths = ApplePaths::new(home.root());
-        let pairing = paths.load_pairing_for(Some(udid), &host).map_err(|error| {
+        let pairing = paths.load_pairing_for(None, &host).map_err(|error| {
             TransportError::DeviceUnavailable(format!(
-                "no pairing for Apple device {udid}: {error}; run `impresario apple pair --host \
+                "no pairing for Apple device at {host}: {error}; run `impresario apple pair --host \
                  {host}`"
             ))
         })?;
+        let mut tunnel = AppleTunnel::connect(&host, &pairing)
+            .await
+            .map_err(|error| {
+                TransportError::DeviceUnavailable(format!(
+                    "connect to Apple device '{}' at {host}: {error}",
+                    device.name
+                ))
+            })?;
+        let actual_udid = tunnel.udid().map(str::to_string);
+        let udid = actual_udid.as_deref();
+        if let Some(udid) = udid {
+            if is_simulator_udid(udid) {
+                return Err(TransportError::DeviceUnavailable(format!(
+                    "Apple device '{}' is a simulator; the native transport only drives physical \
+                     devices",
+                    device.name
+                )));
+            }
+        }
 
         let signing_name = apple_env("IMPRESARIO_APPLE_SIGNING", "default");
         let product_name = apple_env("IMPRESARIO_APPLE_PRODUCTS", "current");
@@ -1190,10 +1199,13 @@ impl AppleTransport {
                 if !materials.info.allows_bundle(&bundle_id) {
                     issues.push("does not cover that bundle id".to_string());
                 }
-                if !materials.info.allows_device(udid) {
-                    issues.push(format!(
-                        "does not list device {udid}; re-provision it or add the device to the team"
-                    ));
+                if let Some(udid) = udid {
+                    if !materials.info.allows_device(udid) {
+                        issues.push(format!(
+                            "does not list device {udid}; re-provision it or add the device to \
+                             the team"
+                        ));
+                    }
                 }
                 if materials.info.get_task_allow != Some(true) {
                     issues.push("is not marked get-task-allow".to_string());
@@ -1237,24 +1249,7 @@ impl AppleTransport {
             }
         }
 
-        let mut tunnel = AppleTunnel::connect(&host, &pairing)
-            .await
-            .map_err(|error| {
-                TransportError::DeviceUnavailable(format!(
-                    "connect to Apple device '{}' at {host}: {error}",
-                    device.name
-                ))
-            })?;
-        let actual_udid = tunnel.udid().map(str::to_string);
-        if let Some(actual) = actual_udid.as_deref() {
-            if !actual.eq_ignore_ascii_case(udid) {
-                return Err(TransportError::DeviceUnavailable(format!(
-                    "Apple device '{}' at {host} reports UDID {actual}, but the configuration \
-                     expects {udid}",
-                    device.name
-                )));
-            }
-        } else {
+        if actual_udid.is_none() {
             warnings.push("RSD did not report UniqueDeviceID".to_string());
         }
         let product_type = tunnel.product_type().unwrap_or("unknown").to_string();
@@ -1360,29 +1355,16 @@ impl DeviceTransport for AppleTransport {
                 device.platform
             )));
         }
-        let udid = device.connection.udid.as_deref().ok_or_else(|| {
-            TransportError::DeviceUnavailable(format!(
-                "Apple device '{}' has no connection.udid",
-                device.name
-            ))
-        })?;
-        if is_simulator_udid(udid) {
-            return Err(TransportError::DeviceUnavailable(format!(
-                "Apple device '{}' is a simulator; the pure-Rust transport only drives physical \
-                 devices. Simulators would need xcrun/simctl, which D-19 forbids.",
-                device.name
-            )));
-        }
-        let (host, agent_port) = apple_host_port(device)?;
+        let (host, agent_port) = apple_host_port(device).await?;
         let home = Home::resolve().map_err(|error| {
             TransportError::DeviceUnavailable(format!(
                 "could not resolve the Impresario home directory for Apple setup: {error}"
             ))
         })?;
         let paths = ApplePaths::new(home.root());
-        let pairing = paths.load_pairing_for(Some(udid), &host).map_err(|error| {
+        let pairing = paths.load_pairing_for(None, &host).map_err(|error| {
             TransportError::DeviceUnavailable(format!(
-                "no pairing for Apple device {udid}: {error}; run `impresario apple import-pair` \
+                "no pairing for Apple device at {host}: {error}; run `impresario apple import-pair` \
                  or `impresario apple pair --host {host}`"
             ))
         })?;
@@ -1444,7 +1426,7 @@ impl DeviceTransport for AppleTransport {
             app: app_path,
             app_bundle_id,
             install_stub,
-            expected_udid: Some(udid.to_string()),
+            expected_udid: None,
             runner: RunnerOptions {
                 agent_port,
                 startup_timeout: apple_start_timeout(),
@@ -1452,7 +1434,7 @@ impl DeviceTransport for AppleTransport {
             },
         };
         let prepared = session::prepare(options).await.map_err(|error| {
-            TransportError::Transport(format!("prepare Apple device {udid} at {host}: {error}"))
+            TransportError::Transport(format!("prepare Apple device at {host}: {error}"))
         })?;
         let endpoint = prepared.endpoint().to_string();
         for install in prepared.installs() {
@@ -1546,77 +1528,33 @@ fn apple_install_stub(
 
 /// Resolve the Apple TV's LAN host and agent port from the device config.
 ///
-/// `connection.host` wins; otherwise the host part of `connection.endpoint`
-/// (the usual tvOS form, `HOST:50062`) is used. The port can also come from
-/// `options.agent_port`, with 50062 as the final default.
-pub fn apple_host_port(device: &DeviceConfig) -> Result<(String, u16), TransportError> {
-    let configured = device
-        .connection
-        .host
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            device
-                .connection
-                .endpoint
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .ok_or_else(|| {
-            TransportError::DeviceUnavailable(format!(
-                "Apple device '{}' needs connection.host or connection.endpoint (LAN IP), for \
-                 example `host: {device_name}`",
-                device.name,
-                device_name = device.name
-            ))
-        })?;
-    let (host, endpoint_port) = split_host_port(configured);
+/// The host is the configured device IP. The agent port is allocated from a
+/// fresh loopback port for every run unless a test pins one internally.
+pub async fn apple_host_port(device: &DeviceConfig) -> Result<(String, u16), TransportError> {
+    let host = device.host().trim().trim_matches(['[', ']']).to_string();
     if host.is_empty() {
         return Err(TransportError::DeviceUnavailable(format!(
-            "Apple device '{}' has no host in '{}'",
-            device.name, configured
-        )));
-    }
-    if host.contains("://") {
-        return Err(TransportError::DeviceUnavailable(format!(
-            "Apple device '{}' needs a LAN host, not a URL: '{}'",
-            device.name, configured
-        )));
-    }
-    let port = device
-        .options
-        .agent_port
-        .or(endpoint_port)
-        .unwrap_or(APPLE_AGENT_PORT);
-    if port == 0 {
-        return Err(TransportError::DeviceUnavailable(format!(
-            "Apple device '{}' has agent port 0",
+            "Apple device '{}' has no IP",
             device.name
         )));
     }
+    if host.parse::<std::net::IpAddr>().is_err() {
+        return Err(TransportError::DeviceUnavailable(format!(
+            "Apple device '{}' needs a LAN host IP, got '{host}'",
+            device.name
+        )));
+    }
+    let port = match device.effective_agent_port() {
+        Some(port) if port > 0 => port,
+        Some(_) => {
+            return Err(TransportError::DeviceUnavailable(format!(
+                "Apple device '{}' has agent port 0",
+                device.name
+            )));
+        }
+        None => free_local_port().await?,
+    };
     Ok((host, port))
-}
-
-fn split_host_port(value: &str) -> (String, Option<u16>) {
-    let value = value.trim();
-    if let Some(rest) = value.strip_prefix('[') {
-        if let Some((host, tail)) = rest.split_once(']') {
-            let port = tail
-                .strip_prefix(':')
-                .and_then(|port| port.parse::<u16>().ok());
-            return (host.to_string(), port);
-        }
-    }
-    if value.matches(':').count() == 1 {
-        if let Some((host, port)) = value.rsplit_once(':') {
-            if !host.is_empty() {
-                if let Ok(port) = port.parse::<u16>() {
-                    return (host.to_string(), Some(port));
-                }
-            }
-        }
-    }
-    (value.to_string(), None)
 }
 
 fn apple_env(key: &str, default: &str) -> String {
@@ -1705,18 +1643,8 @@ mod tests {
         );
     }
 
-    fn apple_device(platform: Platform, udid: &str) -> DeviceConfig {
-        DeviceConfig {
-            name: "apple-device".to_string(),
-            platform,
-            connection: impresario_core::config::DeviceConnection {
-                udid: Some(udid.to_string()),
-                ..impresario_core::config::DeviceConnection::default()
-            },
-            auth: impresario_core::config::DeviceAuth::default(),
-            labels: Vec::new(),
-            options: impresario_core::config::DeviceOptions::default(),
-        }
+    fn apple_device(platform: Platform, ip: &str) -> DeviceConfig {
+        DeviceConfig::new("apple-device", platform, ip)
     }
 
     fn apple_app(clear_data: bool, package: Option<&str>) -> AppConfig {
@@ -1741,33 +1669,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn apple_host_port_reads_the_tvos_endpoint() {
-        let mut device = apple_device(Platform::Tvos, "00008110-001A2345021E001E");
-        device.connection.endpoint = Some("192.0.2.10:50062".to_string());
-        let (host, port) = apple_host_port(&device).expect("tvOS endpoint");
+    #[tokio::test]
+    async fn apple_host_port_reads_the_device_ip() {
+        let mut device = apple_device(Platform::Tvos, "192.0.2.10");
+        let (host, port) = apple_host_port(&device).await.expect("tvOS endpoint");
         assert_eq!(host, "192.0.2.10");
-        assert_eq!(port, 50062);
+        assert_ne!(port, 0);
 
         device.options.agent_port = Some(50123);
-        let (_, port) = apple_host_port(&device).expect("option wins");
+        let (_, port) = apple_host_port(&device).await.expect("option wins");
         assert_eq!(port, 50123);
 
-        device.connection.host = Some("[fd00::1]".to_string());
-        device.connection.endpoint = None;
-        let (host, port) = apple_host_port(&device).expect("IPv6 host");
+        device.ip = "fd00::1".to_string();
+        let (host, port) = apple_host_port(&device).await.expect("IPv6 host");
         assert_eq!(host, "fd00::1");
         assert_eq!(port, 50123);
     }
 
-    #[test]
-    fn apple_host_port_rejects_missing_or_url_hosts() {
-        let mut device = apple_device(Platform::Tvos, "00008110-001A2345021E001E");
-        let error = apple_host_port(&device).expect_err("no host");
+    #[tokio::test]
+    async fn apple_host_port_rejects_missing_hosts() {
+        let mut device = apple_device(Platform::Tvos, "");
+        let error = apple_host_port(&device).await.expect_err("no host");
         assert!(matches!(error, TransportError::DeviceUnavailable(_)));
 
-        device.connection.endpoint = Some("https://example.test:50062".to_string());
-        let error = apple_host_port(&device).expect_err("URL");
+        device.ip = "https://example.test:50062".to_string();
+        let error = apple_host_port(&device).await.expect_err("URL");
         assert!(error.to_string().contains("LAN host"));
     }
 
@@ -1810,21 +1736,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apple_prepare_rejects_simulators_without_host_tools() {
-        let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Ios, "11111111-2222-3333-4444-555555555555");
-        let error = transport
-            .prepare(&device, None)
-            .await
-            .expect_err("simulator");
-        assert!(matches!(error, TransportError::DeviceUnavailable(_)));
-        assert!(error.to_string().contains("simulator"));
-    }
-
-    #[tokio::test]
     async fn apple_reset_is_a_noop_without_clear_app_data() {
         let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Ios, "00008110-000123456789001E");
+        let device = apple_device(Platform::Ios, "192.0.2.20");
         let app = apple_app(false, None);
         let outcome = transport
             .reset_app_data_for(&device, Some(&app))
@@ -1836,7 +1750,7 @@ mod tests {
     #[tokio::test]
     async fn apple_reset_reports_a_missing_app_path() {
         let mut transport = AppleTransport::new();
-        let device = apple_device(Platform::Ios, "00008110-000123456789001E");
+        let device = apple_device(Platform::Ios, "192.0.2.21");
         let app = apple_app(true, None);
         let outcome = transport
             .reset_app_data_for(&device, Some(&app))

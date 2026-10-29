@@ -60,7 +60,7 @@ does not exist, an argument is out of range) are tool errors
 | --- | --- | --- |
 | `impresario_workspace_info` | — | Config defaults, devices **with each platform's action/check support matrix**, scenes, plays, acts, tags and diagnostics. Call this first. |
 | `impresario_validate` | `paths?` | Parse/validate the workspace (or listed files/dirs) without touching a device. Returns core diagnostics with codes. |
-| `impresario_devices_list` | — | The devices file, verbatim: name, platform, endpoint, app id/url, agent address, connector. No device contacted. |
+| `impresario_devices_list` | - | The effective devices: name, exact type, IP, derived platform/transport and support matrix. No device contacted. |
 | `impresario_devices_check` | `devices?` | Prepare → connect → handshake → `DeviceInfo` → teardown per device. Contacts hardware; takes seconds per device. |
 | `impresario_run` | `plays?`, `devices?`, `tags?`, `exclude_tags?`, `acts?`, `vars?`, `args?`, `timeout_ms?`, `retries?`, `fail_fast?`, `reporters?` | Plan and execute; writes `report_output/<run_id>` and returns a compact summary (statuses, counts, failures with the last 10 log lines, `run_dir`). `plays` entries may be bare names or simple globs (resolved against the plays directory) as well as workspace-relative paths or globs; a refusal lists the underlying diagnostics, not just a count. |
 | `impresario_report_get` | `run_id?` | The full `report.json` (Appendix B document). Default: the newest run. |

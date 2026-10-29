@@ -332,9 +332,9 @@ pub struct SessionArgs {
     /// Also install the fixture stub from the product set.
     #[arg(long)]
     pub with_stub: bool,
-    /// Port the agent listens on inside the Apple TV.
-    #[arg(long, default_value_t = 50062)]
-    pub agent_port: u16,
+    /// Port the agent listens on inside the Apple TV; allocated when omitted.
+    #[arg(long)]
+    pub agent_port: Option<u16>,
     /// Seconds to wait for the agent port after starting XCUITest.
     #[arg(long, default_value_t = 120)]
     pub startup_timeout: u64,
@@ -472,7 +472,7 @@ fn run_doctor(args: &DoctorArgs, paths: &ApplePaths) -> i32 {
     };
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
-    let pairing = match load_pairing(paths, args.udid.as_deref()) {
+    let pairing = match load_pairing(paths, args.udid.as_deref(), &args.host) {
         Ok(pairing) => pairing,
         Err(error) => {
             eprintln!("error: {error}");
@@ -1354,7 +1354,7 @@ fn run_ddi(command: &DdiCommand, paths: &ApplePaths) -> i32 {
 }
 
 fn run_restart(args: &RestartArgs, paths: &ApplePaths) -> i32 {
-    let pairing = match load_pairing(paths, args.udid.as_deref()) {
+    let pairing = match load_pairing(paths, args.udid.as_deref(), &args.host) {
         Ok(pairing) => pairing,
         Err(error) => {
             eprintln!("error: {error}");
@@ -1385,7 +1385,7 @@ fn run_restart(args: &RestartArgs, paths: &ApplePaths) -> i32 {
 }
 
 fn run_session(args: &SessionArgs, paths: &ApplePaths) -> i32 {
-    let pairing = match load_pairing(paths, args.udid.as_deref()) {
+    let pairing = match load_pairing(paths, args.udid.as_deref(), &args.host) {
         Ok(pairing) => pairing,
         Err(error) => {
             eprintln!("error: {error}");
@@ -1416,6 +1416,16 @@ fn run_session(args: &SessionArgs, paths: &ApplePaths) -> i32 {
         },
         None => None,
     };
+    let agent_port = match args.agent_port {
+        Some(port) => port,
+        None => match free_loopback_port() {
+            Ok(port) => port,
+            Err(error) => {
+                eprintln!("error: cannot allocate an Apple agent port: {error}");
+                return EXIT_FAILURE;
+            }
+        },
+    };
     let options = SessionOptions {
         host: args.host.clone(),
         pairing,
@@ -1428,7 +1438,7 @@ fn run_session(args: &SessionArgs, paths: &ApplePaths) -> i32 {
         install_stub: args.with_stub,
         expected_udid: args.udid.clone(),
         runner: RunnerOptions {
-            agent_port: args.agent_port,
+            agent_port,
             startup_timeout: Duration::from_secs(args.startup_timeout),
             ..RunnerOptions::default()
         },
@@ -1591,28 +1601,21 @@ fn resolve_pairing_key(paths: &ApplePaths, udid: Option<&str>) -> Result<String,
     }
 }
 
+fn free_loopback_port() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    Ok(listener.local_addr()?.port())
+}
+
 fn load_pairing(
     paths: &ApplePaths,
     udid: Option<&str>,
+    host: &str,
 ) -> Result<impresario_apple_device::RpPairingFile, Error> {
-    if let Some(udid) = udid {
-        return paths.load_pairing(udid).map_err(|error| {
-            Error::Device(format!(
-                "no pairing stored under {udid}: {error}; run `impresario apple pair --host <host>`"
-            ))
-        });
-    }
-    let keys = pairing_keys(paths)?;
-    match keys.as_slice() {
-        [] => Err(Error::Device(
-            "no Apple pairing is stored; run `impresario apple pair --host <host>`".to_string(),
-        )),
-        [key] => paths.load_pairing(key),
-        _ => Err(Error::Device(format!(
-            "several Apple pairings are stored ({}); pass --udid",
-            keys.join(", ")
-        ))),
-    }
+    paths.load_pairing_for(udid, host).map_err(|error| {
+        Error::Device(format!(
+            "{error}; run `impresario apple pair --host {host}`"
+        ))
+    })
 }
 
 fn pairing_keys(paths: &ApplePaths) -> Result<Vec<String>, Error> {

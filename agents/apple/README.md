@@ -182,16 +182,14 @@ impresario account logout
 ```yaml
 devices:
   - name: rama
-    platform: tvos
-    connection:
-      transport: network
-      udid: <udid>
-      endpoint: <apple-tv-host>:50062
+    type: tvOS
+    ip: <apple-tv-host>
 ```
 
-`connection.endpoint` is the agent address the master dials. The transport
-starts XCUITest on that device and opens the tunnel to the same host. Select a
-non-default signing/product set with environment variables:
+The `ip` is the LAN host used for RemotePairing and the RSD tunnel. Pairing is
+looked up by host, the UDID is learned from the tunnel, and the agent port is
+allocated dynamically. Select a non-default signing/product set with
+environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -280,12 +278,12 @@ its addresses in the device log.
 
 | Symptom | Cause / fix |
 | --- | --- |
-| `no pairing for Apple device …` | run `impresario apple pair` or `import-pair` for that UDID |
+| `no pairing for Apple device …` | run `impresario apple pair` or `import-pair` for that host |
 | `signing set 'default' is not usable` | import the `.p12`, profiles and entitlements; check expiry with `signing status` |
 | `Apple product set 'current' is not usable` | import the unsigned Xcode output with `products import` |
 | `Image.dmg` / `BuildManifest` missing | import the personalized DDI for the OS build RSD reports |
 | `simulator` / `DEVICE_UNAVAILABLE` | the pure-Rust transport supports physical devices only |
-| agent port already in use | let the previous session exit, or change `--agent-port`, the device endpoint and `options.agent_port` together |
+| agent port already in use | the port is allocated dynamically; if a firewall blocks the ephemeral range, allow the host and Apple TV to reach each other |
 | `UNSUPPORTED_ACTION … tvos-only / ios-only` | platform gap by design; see `docs/PARITY.md` |
 | `clear_app_data` warns the reinstall is unavailable | give the app a signed `package` and `id` (see §4) |
 | profile expired | generate new profiles for the current bundle ids and re-import the signing set |

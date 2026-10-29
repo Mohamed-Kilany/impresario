@@ -4,11 +4,11 @@ Tests are written as two kinds of plain-text file:
 
 | File | Purpose |
 |---|---|
-| `*.scene` | One screen. Maps logical element names (**Pieces**) to per-platform selectors (table form) or lists them under `Pieces:`. |
+| `*.scene` | One screen. Maps logical element names (**Pieces**) to per-platform selectors in a table. |
 | `*.theatre` | Reusable **Stages**, composed of Scene blocks and nested `Perform:` calls. |
 | `*.play` | One test file. Contains **Acts** (test cases) that perform Stages, optionally with an `Examples:` table. |
 
-Both formats follow the lexical rules below. `impresario validate` checks a
+All three formats follow the lexical rules below. `impresario validate` checks a
 whole workspace, `impresario parse <file> [--json]` checks one file. Every
 diagnostic has a stable code documented in [ERRORS.md](ERRORS.md).
 
@@ -28,8 +28,7 @@ diagnostic has a stable code documented in [ERRORS.md](ERRORS.md).
 - **Strings**: single (`'...'`) or double (`"..."`) quoted. The escapes are
   `\\`, `\'`, `\"`, `\n`, `\t` and `\u{XXXX}` (1–6 hex digits, e.g.
   `\u{1F600}`). Any other escape is an error. A string may not span lines; an
-  unterminated string or invalid escape is `IMP-DSL-003`. Double quotes are
-  required for selectors in piece lines.
+  unterminated string or invalid escape is `IMP-DSL-003`.
 - **Interpolation** (inside strings only):
   - `${env.NAME}` — process environment variable `NAME` (master side),
   - `${var.NAME}` — play variable declared with `Var: NAME = '...'`.
@@ -46,63 +45,49 @@ diagnostic has a stable code documented in [ERRORS.md](ERRORS.md).
   scenes and pieces (warning `IMP-DSL-020`).
 - **Free text** (`Play:`, `Description:`, `Act:`, `Stage:` values): the rest
   of the line, trimmed, 1..=200 characters.
-- **Keywords are case-sensitive**: `Scene Platform Pieces Play Description App
-  Var Act Tags Platforms Theatre Stage Timeout Perform Examples Action Check`.
+- **Keywords are case-sensitive**: `Scene Platforms Play Description App Var Act
+  Tags Theatre Stage Timeout Perform Examples Action Check`.
 
 ---
 
 ## 2. Scene files
 
-The canonical Phase 2 form uses a table instead of `Pieces:` (section 3.1).
-The optional `Platforms:` line still controls where the **scene applies** and
-defaults to `cross-platform`; it is independent of which platform columns the
-table happens to contain. A column that is missing or has a `-` cell means
-“no selector written here”, so the D-07 fallback chain applies. The legacy
-`Pieces:` form is shown next; it is still parsed (I-110) and `migrate`
-converts it.
+A scene is one table. The optional `Platforms:` line controls where the
+**scene applies** and defaults to `cross-platform`; it is independent of which
+platform columns the table happens to contain.
 
 ```text
 Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginTitle:    web="h1.title",  android="id:login_title",  ios="accessibilityId:login_title"
-    UsernameInput: web="#username", android="id:username",     ios="accessibilityId:username"
-    SubmitButton:  web="button[type='submit']", android="id:login_btn", ios="accessibilityId:login"
+| Piece         | web                   | android        | ios                         |
+|---------------|-----------------------|----------------|-----------------------------|
+| LoginTitle    | h1.title              | id:login_title | accessibilityId:login_title |
+| UsernameInput | #username             | id:username    | accessibilityId:username    |
+| SubmitButton  | button[type='submit'] | id:login_btn   | accessibilityId:login      |
 ```
 
-- The first three logical lines are, in order: `Scene: <Name>`,
-  `Platform: ...` and `Pieces:`. Anything else in those positions is
-  `IMP-DSL-005`; an unknown keyword elsewhere is `IMP-DSL-004` (with a
-  "did you mean" hint).
-- Piece lines must be indented one level under `Pieces:`.
+- The first logical line is `Scene: <Name>`; `Platforms:` may follow directly
+  before the table. Anything else in those positions is `IMP-DSL-005`; an
+  unknown keyword elsewhere is `IMP-DSL-004` (with a "did you mean" hint).
+- The first table column is `Piece`; every further column is a platform key.
+  A `-` cell or a missing column means “no selector written here”, so the
+  D-07 fallback chain applies.
 - `Scene:` names the scene; the **file name is irrelevant**, but a mismatch
   with the file stem is the warning `IMP-DSL-021` (name files after scenes,
   e.g. `LoginScreen.scene`). Scene names must be unique across the workspace
   (`IMP-DSL-006`); piece names must be unique within one scene
   (`IMP-DSL-007`).
-- `Platform:` is either `cross-platform` (all devices) or a comma list of
+- `Platforms:` is either `cross-platform` (all devices) or a comma list of
   platform names (`web, webos, tizen, android, androidtv, ios, tvos`). A
   scene applies to a device iff it is `cross-platform` or lists the device's
   platform **exactly** — no implicit family matching (`webos` does not
   "include" `web` here). A play step on a device the scene does not apply to
   is `IMP-DSL-017`, raised per device by `validate` and by the planner.
-
-### Piece lines
-
-```text
-Name: platform="selector" {, platform="selector"} {, index=N}
-```
-
-- One pair per platform key (`web`, `webos`, `tizen`, `android`, `androidtv`,
-  `ios`, `tvos`). A key listed twice in one piece, an unknown key, a missing
-  `=`, a selector without quotes, or a selector that violates the selector
-  grammar below is `IMP-DSL-011`.
-- At least one pair is required.
-- `index=N` (0-based, default 0) picks the N-th match when a selector matches
-  several elements.
 - A piece used by a play step on a device whose selector is missing after the
   fallback chain below is `IMP-DSL-012`.
+- The pre-release parser accepts only this table form. `Pieces:` blocks are
+  rejected with `IMP-DSL-005`; there is no compatibility path.
 
 **Fallback chain (D-07)**: `webos→web`, `tizen→web`, `androidtv→android`,
 `tvos→ios`. The key itself is always tried first.
@@ -132,86 +117,41 @@ Notes:
 
 ## 3. Play files
 
-> **Canonical Phase 2 form (I-110).** New workspaces use table-form scenes,
-> reusable `.theatre` stages and `Perform:` calls in plays (section 3.1).
-> The inline `Stage:` form shown next is still accepted for backward
-> compatibility, but `impresario fmt` and `impresario migrate` rewrite it to
-> the canonical form. Both forms therefore have tests and neither is a silent
-> no-op.
-
-The legacy inline-stage form:
-
-```text
-Play: User Authentication Feature
-Description: Validating secure user entry across platforms.
-App: shop
-Var: USER = 'test_user_impresario'
-
-Act: Successful Login Flow
-Tags: smoke, auth
-Platforms: android, ios, webos
-
-Stage: Navigate and Login
-    Timeout: 15s
-    Scene: LoginScreen
-        Check: LoginTitle
-        Action: '${var.USER}' => UsernameInput
-        Action: '${env.TEST_PASSWORD}' => PasswordInput
-        Action: click => SubmitButton
-
-Stage: Verify Outcome
-    Scene: DashboardScreen
-        Check: WelcomeBanner is visible timeout 20s
-```
+A play contains Acts. Each Act performs one or more reusable stages defined in
+`.theatre` files. Scenes are tables (section 2); there is no inline `Stage:`
+form in a play — it is rejected with `IMP-DSL-005`.
 
 Structure:
 
-- Depth 0: `Play`, `Description`, `App`, `Var`, `Act`, `Tags`, `Platforms`, `Stage`.
-- Depth 1 (inside a Stage): `Timeout`, `Scene`.
-- Depth 2 (inside a Scene block): `Action`, `Check`.
+- Depth 0: `Play`, `Description`, `App`, `Var`, `Act`, `Tags`, `Platforms`.
+- Depth 1 (inside an Act): `Examples` and `Perform`.
 - `Play:` is the first non-comment line. `Description:` may follow directly.
   `App: <name>` may follow `Play:`/`Description:` and must precede the first
   `Var:`; it binds the play to an app from `impresario.apps.config` (or the
   global layer). `--app` overrides it; two selected plays binding different
   apps is `IMP-APP-004` unless `--app` resolves it.
 - `Var:` declarations follow before the first `Act:`.
-- `Tags:` and `Platforms:` must directly follow their `Act:` line; a `Stage:`
-  belongs to the nearest preceding `Act:`.
-- An Act has at least one Stage; a Stage at least one Scene block; a Scene
-  block at least one step. Act names are unique within the play, Stage names
-  within the Act (`IMP-DSL-016`).
+- `Tags:` and `Platforms:` must directly follow their `Act:` line.
+- An Act has at least one `Perform:` call. Act names are unique within the
+  play (`IMP-DSL-016`).
 - `Tags:` is a comma list of `[a-z0-9_-]+` used by `run --tag/--exclude-tag`.
 - `Platforms:` is a comma list of platform names. When present, the Act runs
   only on devices of those platforms and is reported `skipped` elsewhere.
 - `Var: NAME = 'value'` defines a play variable (a string: interpolation and
   escapes apply). `--var NAME=value` on the command line overrides it. A
   duplicate `Var:` for the same name keeps the **last** declaration (I-04).
-- `Timeout:` (stage level, optional, at most once and before the first Scene
-  block) is the default poll timeout for the steps of its stages/scene
-  blocks.
-- A Scene block names an existing scene (`IMP-DSL-008` with a hint); every
-  piece used by its steps must exist in that scene (`IMP-DSL-009` with a
-  hint). Pieces are not shared across scenes. The same scene may appear in
-  several Stages.
+- A referenced stage must exist (`IMP-DSL-031`); arguments and parameters are
+  checked with `IMP-DSL-032`/`035`/`036`/`037`.
 
-### 3.1 Canonical theatrical form
-
-Scenes are tables. The first column is the piece name; every further column
-is a platform (`cross-platform` is not a table column). A `-` cell means the
-piece has no selector for that platform.
-
-```text
-Scene: LoginScreen
-
-| Piece         | web                   | android        | ios                         |
-|---------------|-----------------------|----------------|-----------------------------|
-| LoginTitle    | h1.title              | id:login_title | accessibilityId:login_title |
-| UsernameInput | #username             | id:username    | accessibilityId:username    |
-```
+### 3.1 Theatres and stages
 
 Reusable stages live in `.theatre` files. Stage names are globally unique
 across the workspace; theatre names are unique as well. A stage may mix Scene
-blocks and nested `Perform:` calls in source order.
+blocks and nested `Perform:` calls in source order. `Timeout:` (optional, at
+most once, before the first Scene block) is the default poll timeout for the
+steps of its scene blocks. `Audience:` (optional, theatre or stage level) is a
+comma list of platforms, or `cross-platform`, that narrows where the stage is
+available. The old stage-level `Platforms:` spelling is rejected.
 
 ```text
 Theatre: User Authentication Feature stages
@@ -314,20 +254,34 @@ property/provider matrix is in `docs/PARITY.md`.
 `INDENT`/`DEDENT` are produced by the scanner; `EOL` ends a logical line.
 
 ```ebnf
-scene-file   = scene-line , platform-line , "Pieces:" , EOL , INDENT , piece-line , { piece-line } , DEDENT ;
-scene-line   = "Scene:" , ident , EOL ;
-platform-line= "Platform:" , ( "cross-platform" | platform , { "," , platform } ) , EOL ;
-piece-line   = ident , ":" , sel-pair , { "," , sel-pair } , [ "," , "index" , "=" , integer ] , EOL ;
-sel-pair     = platform , "=" , dq-string ;
-platform     = "web" | "webos" | "tizen" | "android" | "androidtv" | "ios" | "tvos" ;
+scene-file    = "Scene:" , ident , EOL , [ platforms-line ] , EOL? , scene-table ;
+platforms-line= "Platforms:" , ( "cross-platform" | platform , { "," , platform } ) , EOL ;
+platform      = "web" | "webos" | "tizen" | "android" | "androidtv" | "ios" | "tvos" ;
 
-play-file    = "Play:" , text , EOL , [ "Description:" , text , EOL ] , [ "App:" , ident , EOL ] , { var-decl } , act , { act } ;
-var-decl     = "Var:" , ident , "=" , string , EOL ;
-act          = "Act:" , text , EOL , [ "Tags:" , tag , { "," , tag } , EOL ]
-             , [ "Platforms:" , platform , { "," , platform } , EOL ] , stage , { stage } ;
-stage        = "Stage:" , text , EOL , INDENT , [ "Timeout:" , duration , EOL ] , scene-block , { scene-block } , DEDENT ;
-scene-block  = "Scene:" , ident , EOL , INDENT , step , { step } , DEDENT ;
-step         = action-line | check-line ;
+table         = header-row , separator-row , { data-row } ;
+header-row    = "|" , text , { "|" , text } , "|" , EOL ;
+data-row      = "|" , text , { "|" , text } , "|" , EOL ;
+scene-table   = table ;  (* first header cell is "Piece", then platform keys *)
+
+theatre-file  = "Theatre:" , text , EOL , [ "Description:" , text , EOL ] , stage , { stage } ;
+stage         = "Stage:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
+              , INDENT , [ "Timeout:" , duration , EOL ]
+              , { ( scene-block | perform-line ) } , DEDENT ;
+param         = ident , [ "=" , string ] ;
+perform-line  = "Perform:" , text , [ "(" , argument , { "," , argument } , ")" ] , EOL ;
+argument      = ident , "=" , string ;
+
+play-file     = "Play:" , text , EOL , [ "Description:" , text , EOL ] , [ "App:" , ident , EOL ] , { var-decl } , act , { act } ;
+var-decl      = "Var:" , ident , "=" , string , EOL ;
+act           = "Act:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
+              , [ "Tags:" , tag , { "," , tag } , EOL ]
+              , [ platforms-line ]
+              , [ examples ]
+              , perform-line , { perform-line } ;
+examples      = "Examples:" , EOL , INDENT , table , DEDENT ;
+
+scene-block   = "Scene:" , ident , EOL , INDENT , step , { step } , DEDENT ;
+step          = action-line | check-line ;
 
 action-line  = "Action:" , action , EOL ;
 action       = string , "=>" , piece , [ tmo ]                        (* shorthand for: type *)
@@ -357,31 +311,11 @@ cond         = "is" , ( "visible" | "hidden" | "enabled" | "disabled" | "focused
 tmo          = "timeout" , duration ;
 direction    = "up" | "down" | "left" | "right" ;
 keyname      = "ok"|"enter"|"back"|"up"|"down"|"left"|"right"|"home"|"menu"|"play"|"pause"|"playpause"
-             | "rewind"|"fastforward"|"red"|"green"|"yellow"|"blue"|"backspace" ;
+             | "rewind"|"fastforward"|"red"|"green"|"yellow"|"blue"|"backspace"
+             | "num0"|"num1"|"num2"|"num3"|"num4"|"num5"|"num6"|"num7"|"num8"|"num9"
+             | "volumeup"|"volumedown"|"mute"|"channelup"|"channeldown"
+             | "stop"|"record"|"info"|"guide"|"exit"|"subtitle"|"audio"|"search"|"settings" ;
 piece        = ident ;
-```
-
-### 4.1 Theatrical grammar
-
-```ebnf
-theatre-file = "Theatre:" , text , EOL , [ "Description:" , text , EOL ] , stage , { stage } ;
-stage        = "Stage:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
-             , INDENT , [ "Timeout:" , duration , EOL ]
-             , { ( scene-block | perform-line ) } , DEDENT ;
-param        = ident , [ "=" , string ] ;
-perform-line = "Perform:" , text , [ "(" , argument , { "," , argument } , ")" ] , EOL ;
-argument     = ident , "=" , string ;
-
-table-scene  = "Scene:" , ident , EOL , EOL? , table ;
-table        = header-row , separator-row , { data-row } ;
-header-row   = "|" , "Piece" , "|" , platform , { "|" , platform } , "|" , EOL ;
-data-row     = "|" , ident , "|" , cell , { "|" , cell } , "|" , EOL ;
-cell         = text | "-" ;
-
-theatrical-act = "Act:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
-               , [ tags ] , [ platforms ] , [ examples ]
-               , { perform-line } ;
-examples       = "Examples:" , EOL , INDENT , table , DEDENT ;
 ```
 
 The table header and separator cells may be padded for readability; the
@@ -550,11 +484,10 @@ not bytes).
 
 ---
 
-## 8. Formatting, migration and Act arguments
+## 8. Formatting and Act arguments
 
 ```text
 impresario fmt [PATHS...] [--check]
-impresario migrate [--dry-run]
 impresario run ... [--arg 'Act.param=value']...
 ```
 
@@ -566,14 +499,9 @@ impresario run ... [--arg 'Act.param=value']...
   `would reformat <path>` without writing. A comment inside a table splits
   the alignment run (a documented limitation; the text and comment are
   preserved).
-- `migrate` converts `Pieces:` scene blocks to tables and inline play
-  `Stage:` blocks to stages in a generated `.theatre` (`<play stem>.theatre`,
-  suffix on filesystem collision). It writes `.bak` files for every rewritten
-  DSL file (generated theatres are new files and get no backup), is
-  idempotent, supports `--dry-run`, and reports duplicate stage/play names
-  with `_2`, `_3`, ... suffixes instead of dropping either definition. Every
-  generated file is parsed and formatted; if that fails, the diagnostics are
-  printed and **no** file is written.
+- `migrate` was removed before 1.0.0. The parser accepts only table scenes,
+  `.theatre` stages and `Perform:` plays; old files fail with a diagnostic
+  instead of being rewritten.
 - `--arg ACT.PARAM=VALUE` is repeatable. Precedence is CLI `--arg`, then a
   same-named `Examples:` column, then the parameter default. Malformed pairs
   or names that do not match any selected Act parameter are diagnostic

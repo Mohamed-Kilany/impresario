@@ -166,6 +166,30 @@ public enum RemoteKey: String, Sendable, Equatable, CaseIterable {
     case yellow
     case blue
     case backspace
+    case num0
+    case num1
+    case num2
+    case num3
+    case num4
+    case num5
+    case num6
+    case num7
+    case num8
+    case num9
+    case volumeUp = "volumeup"
+    case volumeDown = "volumedown"
+    case mute
+    case channelUp = "channelup"
+    case channelDown = "channeldown"
+    case stop
+    case record
+    case info
+    case guide
+    case exit
+    case subtitle
+    case audio
+    case search
+    case settings
 }
 
 public enum AppOpKind: String, Sendable, Equatable, CaseIterable {

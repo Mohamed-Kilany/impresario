@@ -728,9 +728,13 @@ fn validate_perform(
 }
 
 fn stage_applies(stage: &StageDecl, platform: Platform) -> bool {
-    stage.platforms.is_empty()
-        || stage
-            .platforms
+    let audience = if stage.audience.is_empty() {
+        &stage.platforms
+    } else {
+        &stage.audience
+    };
+    audience.is_empty()
+        || audience
             .iter()
             .filter_map(|named| named.name.parse::<Platform>().ok())
             .any(|p| p == platform)
@@ -1756,29 +1760,33 @@ mod tests {
     use crate::parser::{parse_play, parse_scene, parse_theatre};
 
     fn scene(source: &str, name: &str) -> SceneFile {
-        parse_scene(source, Path::new(name))
-            .ast
-            .expect("scene parses")
+        let outcome = parse_scene(source, Path::new(name));
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "scene {name} did not parse: {:?}",
+            outcome.diagnostics
+        );
+        outcome.ast.expect("scene AST")
     }
 
     fn play(source: &str, name: &str) -> PlayFile {
-        parse_play(source, Path::new(name))
-            .ast
-            .expect("play parses")
+        let outcome = parse_play(source, Path::new(name));
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "play {name} did not parse: {:?}",
+            outcome.diagnostics
+        );
+        outcome.ast.expect("play AST")
     }
 
     fn theatre(source: &str, name: &str) -> crate::ast::TheatreFile {
-        parse_theatre(source, Path::new(name))
-            .ast
-            .expect("theatre parses")
-    }
-
-    fn workspace(scenes: Vec<SceneFile>, plays: Vec<PlayFile>) -> Workspace {
-        Workspace {
-            scenes,
-            theatres: Vec::new(),
-            plays,
-        }
+        let outcome = parse_theatre(source, Path::new(name));
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "theatre {name} did not parse: {:?}",
+            outcome.diagnostics
+        );
+        outcome.ast.expect("theatre AST")
     }
 
     fn workspace_with_theatre(
@@ -1805,21 +1813,31 @@ mod tests {
         vec![DeviceRef::new("flagship_android", Platform::Android)]
     }
 
+    const LOGIN_SCENE: &str = "\
+Scene: LoginScreen
+Platforms: cross-platform
+
+| Piece | web | android | ios |
+|---|---|---|---|
+| LoginTitle | h1.title | id:login_title | accessibilityId:login_title |
+";
+
     #[test]
     fn clean_workspace_has_no_errors() {
-        let scenes = vec![scene(
-            "Scene: LoginScreen\nPlatform: cross-platform\n\nPieces:\n    LoginTitle: web=\"h1.title\", android=\"id:login_title\", ios=\"accessibilityId:login_title\"\n",
-            "LoginScreen.scene",
+        let scenes = vec![scene(LOGIN_SCENE, "LoginScreen.scene")];
+        let theatres = vec![theatre(
+            "Theatre: Auth\n\nStage: Enter\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${var.USER}' => LoginTitle\n        Action: click => LoginTitle timeout 5s\n",
+            "auth.theatre",
         )];
         let plays = vec![play(
-            "Play: Auth\nDescription: Login.\nVar: USER = 'test_user'\n\nAct: Login\nTags: smoke\n\nStage: Enter\n    Timeout: 15s\n    Scene: LoginScreen\n        Check: LoginTitle\n        Action: '${var.USER}' => LoginTitle\n        Action: click => LoginTitle timeout 5s\n",
+            "Play: Auth\nDescription: Login.\nVar: USER = 'test_user'\n\nAct: Login\nTags: smoke\n    Perform: Enter\n",
             "auth.play",
         )];
         let devices = vec![
             DeviceRef::new("flagship_android", Platform::Android),
             DeviceRef::new("test_iphone", Platform::Ios),
         ];
-        let diagnostics = validate(&workspace(scenes, plays), &devices);
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &devices);
         assert!(
             !diagnostics.has_errors(),
             "{:?}",
@@ -1897,11 +1915,11 @@ mod tests {
     fn workspace_lints_report_unused_declarations_and_columns() {
         let scenes = vec![
             scene(
-                "Scene: UsedScene\nPlatform: cross-platform\n\nPieces:\n    UsedPiece: android=\"id:used\"\n    UnusedPiece: android=\"id:unused\"\n",
+                "Scene: UsedScene\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| UsedPiece | id:used |\n| UnusedPiece | id:unused |\n",
                 "UsedScene.scene",
             ),
             scene(
-                "Scene: UnusedScene\nPlatform: cross-platform\n\nPieces:\n    Other: android=\"id:other\"\n",
+                "Scene: UnusedScene\nPlatforms: cross-platform\n\n| Piece | android |\n|---|---|\n| Other | id:other |\n",
                 "UnusedScene.scene",
             ),
         ];
@@ -1910,7 +1928,10 @@ mod tests {
                 "Theatre: T\n\nStage: UsedStage(user)\n    Scene: UsedScene\n        Action: type '${var.USED}' => UsedPiece\n        Check: UsedPiece\n",
                 "T.theatre",
             ),
-            theatre("Theatre: Other\n\nStage: Never\n", "Other.theatre"),
+            theatre(
+                "Theatre: Other\n\nStage: Never\n    Scene: UsedScene\n        Check: UsedPiece\n",
+                "Other.theatre",
+            ),
         ];
         let plays = vec![play(
             "Play: P\nVar: USED = 'x'\nVar: DEAD = 'y'\nVar: USED = 'z'\n\nAct: A\n    Examples:\n        | user | unused |\n        | alice | x |\n    Perform: UsedStage(user = '${example.user}')\n",
@@ -2032,15 +2053,13 @@ mod tests {
 
     #[test]
     fn unknown_scene_reports_with_hint() {
-        let scenes = vec![scene(
-            "Scene: LoginScreen\nPlatform: cross-platform\n\nPieces:\n    Title: web=\"h1\"\n",
-            "LoginScreen.scene",
+        let scenes = vec![scene(LOGIN_SCENE, "LoginScreen.scene")];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: LoginScreeen\n        Check: Title\n",
+            "t.theatre",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: LoginScreeen\n        Check: Title\n",
-            "p.play",
-        )];
-        let diagnostics = validate(&workspace(scenes, plays), &android());
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
         let errors: Vec<_> = diagnostics.errors().collect();
         assert_eq!(error_codes(&diagnostics), vec!["IMP-DSL-008"], "{errors:?}");
         assert!(errors[0]
@@ -2052,15 +2071,13 @@ mod tests {
 
     #[test]
     fn unknown_piece_reports_with_hint() {
-        let scenes = vec![scene(
-            "Scene: LoginScreen\nPlatform: cross-platform\n\nPieces:\n    LoginTitle: web=\"h1\"\n",
-            "LoginScreen.scene",
+        let scenes = vec![scene(LOGIN_SCENE, "LoginScreen.scene")];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: LoginScreen\n        Check: LoginTitel\n",
+            "t.theatre",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: LoginScreen\n        Check: LoginTitel\n",
-            "p.play",
-        )];
-        let diagnostics = validate(&workspace(scenes, plays), &android());
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
         assert_eq!(error_codes(&diagnostics), vec!["IMP-DSL-009"]);
         assert!(diagnostics
             .errors()
@@ -2073,21 +2090,20 @@ mod tests {
     #[test]
     fn missing_selector_uses_the_fallback_chain() {
         let scenes = vec![scene(
-            "Scene: S1\nPlatform: cross-platform\n\nPieces:\n    Title: web=\"h1\"\n",
+            "Scene: S1\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| Title | h1 |\n",
             "S1.scene",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: S1\n        Check: Title\n",
-            "p.play",
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: S1\n        Check: Title\n",
+            "t.theatre",
         )];
-        // webos falls back to web: fine.
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
         let ok = validate(
-            &workspace(scenes.clone(), plays.clone()),
+            &workspace_with_theatre(scenes.clone(), theatres.clone(), plays.clone()),
             &[DeviceRef::new("living_room_tv", Platform::WebOs)],
         );
         assert!(!ok.has_errors(), "{:?}", ok.errors().collect::<Vec<_>>());
-        // android does not: IMP-DSL-012, plus the actionable IMP-DSL-049 lint.
-        let bad = validate(&workspace(scenes, plays), &android());
+        let bad = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
         assert_eq!(error_codes(&bad), vec!["IMP-DSL-012"]);
         assert!(
             bad.iter()
@@ -2099,16 +2115,16 @@ mod tests {
     #[test]
     fn unsupported_action_and_key_and_check() {
         let scenes = vec![scene(
-            "Scene: S1\nPlatform: cross-platform\n\nPieces:\n    List: web=\"#l\", android=\"id:l\", ios=\"accessibilityId:l\"\n",
+            "Scene: S1\nPlatforms: cross-platform\n\n| Piece | web | android | ios |\n|---|---|---|---|\n| List | #l | id:l | accessibilityId:l |\n",
             "S1.scene",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: S1\n        Action: swipe up => List\n        Action: key rewind\n        Check: List is focused\n",
-            "p.play",
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: S1\n        Action: swipe up => List\n        Action: key rewind\n        Check: List is focused\n",
+            "t.theatre",
         )];
-        // On webos: swipe ✖; rewind ✅ (415); focused ✅.
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
         let webos = validate(
-            &workspace(scenes.clone(), plays.clone()),
+            &workspace_with_theatre(scenes.clone(), theatres.clone(), plays.clone()),
             &[DeviceRef::new("tv", Platform::WebOs)],
         );
         assert_eq!(codes(&webos), vec!["IMP-DSL-013"], "{webos:?}");
@@ -2116,9 +2132,8 @@ mod tests {
             .errors()
             .next()
             .is_some_and(|d| d.message.contains("swipe")));
-        // On ios: swipe ✅; key rewind ✖; the focused check ✖.
         let ios = validate(
-            &workspace(scenes, plays),
+            &workspace_with_theatre(scenes, theatres, plays),
             &[DeviceRef::new("iphone", Platform::Ios)],
         );
         assert_eq!(codes(&ios), vec!["IMP-DSL-013", "IMP-DSL-013"], "{ios:?}");
@@ -2129,18 +2144,19 @@ mod tests {
     #[test]
     fn scene_not_applicable_is_reported_per_platform() {
         let scenes = vec![scene(
-            "Scene: TvOnly\nPlatform: webos, tizen\n\nPieces:\n    Title: web=\"h1\", android=\"id:t\"\n",
+            "Scene: TvOnly\nPlatforms: webos, tizen\n\n| Piece | web | android |\n|---|---|---|\n| Title | h1 | id:t |\n",
             "TvOnly.scene",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: TvOnly\n        Check: Title\n",
-            "p.play",
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: TvOnly\n        Check: Title\n",
+            "t.theatre",
         )];
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
         let devices = vec![
             DeviceRef::new("living_room_tv", Platform::WebOs),
             DeviceRef::new("flagship_android", Platform::Android),
         ];
-        let diagnostics = validate(&workspace(scenes, plays), &devices);
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &devices);
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-017"], "{diagnostics:?}");
         assert!(diagnostics
             .errors()
@@ -2151,33 +2167,38 @@ mod tests {
     #[test]
     fn undefined_variable_is_reported_at_the_reference() {
         let scenes = vec![scene(
-            "Scene: S1\nPlatform: cross-platform\n\nPieces:\n    Field: web=\"#f\", android=\"id:f\"\n",
+            "Scene: S1\nPlatforms: cross-platform\n\n| Piece | web | android |\n|---|---|---|\n| Field | #f | id:f |\n",
             "S1.scene",
         )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: S1\n        Action: '${var.PASSWORD}' => Field\n        Action: '${var.USER}' => Field\n        Action: '${env.HOME}' => Field\n",
+            "t.theatre",
+        )];
         let plays = vec![play(
-            "Play: P\nVar: USER = 'u'\n\nAct: A\n\nStage: S\n    Scene: S1\n        Action: '${var.PASSWORD}' => Field\n        Action: '${var.USER}' => Field\n        Action: '${env.HOME}' => Field\n",
+            "Play: P\nVar: USER = 'u'\n\nAct: A\n    Perform: S\n",
             "p.play",
         )];
-        let diagnostics = validate(&workspace(scenes, plays), &android());
+        let diagnostics = validate(&workspace_with_theatre(scenes, theatres, plays), &android());
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-014"]);
         let error = diagnostics.errors().next().expect("one error");
         assert!(error.message.contains("PASSWORD"));
         let span = error.span.clone().expect("span");
-        assert_eq!(span.line, 8);
+        assert_eq!(span.line, 5);
     }
 
     #[test]
     fn lints_fire_as_warnings_only() {
         let scenes = vec![scene(
-            "Scene: login_screen\nPlatform: cross-platform\n\nPieces:\n    submit_button: web=\"#s\"\n",
+            "Scene: login_screen\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| submit_button | #s |\n",
             "other_file.scene",
         )];
-        let plays = vec![play(
-            "Play: P\n\nAct: A\n\nStage: S\n    Scene: login_screen\n        Action: wait 2s\n        Check: submit_button\n",
-            "p.play",
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: login_screen\n        Action: wait 2s\n        Check: submit_button\n",
+            "t.theatre",
         )];
+        let plays = vec![play("Play: P\n\nAct: A\n    Perform: S\n", "p.play")];
         let diagnostics = validate(
-            &workspace(scenes, plays),
+            &workspace_with_theatre(scenes, theatres, plays),
             &[DeviceRef::new("site", Platform::Web)],
         );
         assert!(!diagnostics.has_errors());
@@ -2190,22 +2211,24 @@ mod tests {
     #[test]
     fn act_platforms_filter_checks() {
         let scenes = vec![scene(
-            "Scene: S1\nPlatform: cross-platform\n\nPieces:\n    List: web=\"#l\", android=\"id:l\", ios=\"accessibilityId:l\"\n",
+            "Scene: S1\nPlatforms: cross-platform\n\n| Piece | web | android | ios |\n|---|---|---|---|\n| List | #l | id:l | accessibilityId:l |\n",
             "S1.scene",
         )];
+        let theatres = vec![theatre(
+            "Theatre: T\n\nStage: S\n    Scene: S1\n        Action: swipe up => List\n",
+            "t.theatre",
+        )];
         let plays = vec![play(
-            "Play: P\n\nAct: OnlyTv\nPlatforms: webos\n\nStage: S\n    Scene: S1\n        Action: swipe up => List\n",
+            "Play: P\n\nAct: OnlyTv\nPlatforms: webos\n    Perform: S\n",
             "p.play",
         )];
-        // swipe is ✖ on webos which the act targets → error; on android the
-        // act is skipped entirely → no error.
         let webos = validate(
-            &workspace(scenes.clone(), plays.clone()),
+            &workspace_with_theatre(scenes.clone(), theatres.clone(), plays.clone()),
             &[DeviceRef::new("tv", Platform::WebOs)],
         );
         assert_eq!(codes(&webos), vec!["IMP-DSL-013"]);
         let android_only = validate(
-            &workspace(scenes, plays),
+            &workspace_with_theatre(scenes, theatres, plays),
             &[DeviceRef::new("phone", Platform::Android)],
         );
         assert!(

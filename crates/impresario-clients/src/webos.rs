@@ -41,14 +41,13 @@ const DEFAULT_INSPECTOR_PORT: u16 = 9998;
 const REMOTE_TEMP_DIR: &str = "/media/developer/temp";
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
-const KEYRING_SERVICE: &str = "impresario.webos";
 const MAX_KEY_BYTES: usize = 1024 * 1024;
 
 /// webOS-specific failures. Every path that claims success performs the
 /// protocol work first.
 #[derive(Debug, thiserror::Error)]
 pub enum WebOsError {
-    #[error("webOS host is not configured (connection.host)")]
+    #[error("webOS device has no IP")]
     NoHost,
     #[error("webOS app is required for a native run")]
     NoApp,
@@ -179,16 +178,8 @@ impl WebOsSession {
     /// Connect, verify the host key and authenticate with the configured or
     /// developer-mode key.
     pub async fn connect(device: &DeviceConfig, home: &Home) -> Result<Self, WebOsError> {
-        let host = device
-            .connection
-            .host
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .ok_or(WebOsError::NoHost)?;
-        let port = device
-            .connection
-            .port_or_default(device.platform)
-            .unwrap_or(9922);
+        let host = device.host();
+        let port = device.protocol_port().unwrap_or(9922);
         let expected = expected_host_key(device, home)?;
         let key = load_or_fetch_key(device, home, host).await?;
         let config = Arc::new(client::Config {
@@ -862,11 +853,8 @@ impl WebOsTransport {
             .map_err(|error| WebOsError::Ssh(format!("initialise IMPRESARIO home: {error}")))?;
         self.home = Some(home.clone());
         let session = WebOsSession::connect(device, &home).await?;
-        let host = device.connection.host.clone().unwrap_or_default();
-        let port = device
-            .connection
-            .port_or_default(Platform::WebOs)
-            .unwrap_or(9922);
+        let host = device.host().to_string();
+        let port = device.protocol_port().unwrap_or(9922);
         let mut details = vec![
             format!("SSH {SSH_USER}@{host}:{port}"),
             if device
@@ -875,7 +863,7 @@ impl WebOsTransport {
                 .as_deref()
                 .is_some_and(|value| !value.is_empty())
             {
-                "host key pinned by auth.identity".to_string()
+                "host key pinned explicitly".to_string()
             } else {
                 "host key trust-on-first-use in keys/webos_known_hosts".to_string()
             },
@@ -1215,7 +1203,7 @@ async fn load_or_fetch_key(
 
     let encrypted = text.contains("ENCRYPTED") || text.contains("DEK-Info:");
     let passphrase = if encrypted {
-        Some(webos_passphrase(host)?)
+        Some(webos_passphrase()?)
     } else {
         None
     };
@@ -1238,28 +1226,21 @@ async fn load_or_fetch_key(
     private_key_from_pkcs1_der(&der).map_err(|error| WebOsError::Passphrase(error.to_string()))
 }
 
-fn webos_passphrase(host: &str) -> Result<String, WebOsError> {
+fn webos_passphrase() -> Result<String, WebOsError> {
     if let Ok(value) = std::env::var("IMPRESARIO_WEBOS_PASSPHRASE") {
         if !value.is_empty() {
             return Ok(value);
         }
     }
-    keyring_get(KEYRING_SERVICE, host).map_err(|error| {
-        WebOsError::Passphrase(format!(
-            "no passphrase in the OS keychain ({error}); set IMPRESARIO_WEBOS_PASSPHRASE \
-             or store it with the webOS key setup command"
-        ))
-    })
+    Err(WebOsError::Passphrase(
+        "no Developer Mode passphrase for this session; set IMPRESARIO_WEBOS_PASSPHRASE \
+         (the passphrase is never stored)"
+            .to_string(),
+    ))
 }
 
 fn keyring_get(service: &str, user: &str) -> Result<String, keyring::Error> {
     keyring::Entry::new(service, user)?.get_password()
-}
-
-/// Store the six-character TV passphrase in the OS keychain. Used by the
-/// device command and documented in docs/SIGNING.md; never written to YAML.
-pub fn store_webos_passphrase(host: &str, passphrase: &str) -> Result<(), keyring::Error> {
-    keyring::Entry::new(KEYRING_SERVICE, host)?.set_password(passphrase)
 }
 
 /// Retrieve the developer-mode key over the TV's plain HTTP key service.
@@ -2219,10 +2200,9 @@ mod tests {
         client_key: &Path,
     ) -> impresario_core::config::DeviceConfig {
         impresario_core::config::DeviceConfig {
-            name: "fake_webos".to_string(),
-            platform: Platform::WebOs,
+            device_type: impresario_core::platforms::DeviceType::WebOs,
+            ip: "127.0.0.1".to_string(),
             connection: impresario_core::config::DeviceConnection {
-                host: Some("127.0.0.1".to_string()),
                 port: Some(server.addr.port()),
                 ..Default::default()
             },
@@ -2231,8 +2211,7 @@ mod tests {
                 identity: Some(server.public_key.clone()),
                 ..Default::default()
             },
-            labels: Vec::new(),
-            options: impresario_core::config::DeviceOptions::default(),
+            ..impresario_core::config::DeviceConfig::new("fake_webos", Platform::WebOs, "127.0.0.1")
         }
     }
 

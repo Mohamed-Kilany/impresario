@@ -95,10 +95,10 @@ fn parse_reports_broken_files_on_stderr_with_exit_2() {
     let dir = repo_root().join("target").join("tmp-parse-broken");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    let file = dir.join("broken.play");
+    let file = dir.join("broken.theatre");
     std::fs::write(
         &file,
-        "Play: Broken\n\nAct: A\n\nStage: S\n    Scene: Screen\n        Action: tap => Nope\n",
+        "Theatre: Broken\nStage: S\n    Scene: Screen\n        Action: tap => Nope\n",
     )
     .expect("write");
     let output = Command::new(env!("CARGO_BIN_EXE_impresario"))

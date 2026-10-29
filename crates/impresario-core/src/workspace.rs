@@ -721,17 +721,17 @@ mod tests {
         write(
             &dir,
             "scenes/b.scene",
-            "Scene: Second\nPlatform: cross-platform\n\nPieces:\n    B: web=\"#b\"\n",
+            "Scene: Second\n\n| Piece | web |\n|---|---|\n| B | #b |\n",
         );
         write(
             &dir,
             "scenes/a.scene",
-            "Scene: First\nPlatform: cross-platform\n\nPieces:\n    A: web=\"#a\"\n",
+            "Scene: First\n\n| Piece | web |\n|---|---|\n| A | #a |\n",
         );
         write(
             &dir,
             "plays/one.play",
-            "Play: One\n\nAct: A\n\nStage: S\n    Scene: First\n        Check: A\n",
+            "Play: One\n\nAct: A\n    Perform: S\n",
         );
         let loaded = load_dirs(
             &dir.join("scenes"),
@@ -753,12 +753,12 @@ mod tests {
         write(
             &dir,
             "one.scene",
-            "Scene: Login\nPlatform: cross-platform\n\nPieces:\n    A: web=\"#a\"\n",
+            "Scene: Login\n\n| Piece | web |\n|---|---|\n| A | #a |\n",
         );
         write(
             &dir,
             "two.scene",
-            "Scene: Login\nPlatform: cross-platform\n\nPieces:\n    B: web=\"#b\"\n",
+            "Scene: Login\n\n| Piece | web |\n|---|---|\n| B | #b |\n",
         );
         let loaded = load_paths(&[dir.join("one.scene"), dir.join("two.scene")]);
         let dupes: Vec<_> = loaded
@@ -787,12 +787,12 @@ mod tests {
         write(
             &dir,
             "bad.play",
-            "Play: Broken\n\nAct: A\n\nStage: S\n    Scene: Missing\n        Check: Nope\n",
+            "Play: Broken\n\nAct: A\n    Perform: Missing\n\nDescrption: late\n",
         );
         write(
             &dir,
             "good.scene",
-            "Scene: Good\nPlatform: cross-platform\n\nPieces:\n    A: web=\"#a\"\n",
+            "Scene: Good\n\n| Piece | web |\n|---|---|\n| A | #a |\n",
         );
         let loaded = load_paths(&[dir.join("bad.play"), dir.join("good.scene")]);
         assert_eq!(loaded.workspace.scenes.len(), 1);

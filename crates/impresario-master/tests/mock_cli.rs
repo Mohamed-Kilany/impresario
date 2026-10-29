@@ -75,7 +75,7 @@ fn run_in(
 }
 
 #[test]
-fn readme_mock_quick_start_runs_green() {
+fn mock_agent_quick_start_runs_green() {
     let temp = tempfile::tempdir().expect("tempdir");
 
     // Terminal A: `impresario mock-agent --port 50071` (port 0 here so the
@@ -91,10 +91,13 @@ fn readme_mock_quick_start_runs_green() {
     // README step 3: append the mock device (the example play runs on web).
     let devices_path = temp.path().join("impresario.devices.config");
     let mut devices = std::fs::read_to_string(&devices_path).expect("read devices");
-    devices.push_str(&format!(
-        "  - name: mock_device\n    platform: web\n    connection:\n      transport: launch\n    options:\n      connector_address: {address}\n"
-    ));
+    devices.push_str("  - name: mock_device\n    type: web\n    ip: 127.0.0.1\n");
     std::fs::write(&devices_path, devices).expect("write devices");
+    std::fs::write(
+        temp.path().join("impresario.devices.test-options.yaml"),
+        format!("devices:\n  mock_device:\n    connector_address: {address}\n"),
+    )
+    .expect("write test device options");
 
     // Terminal B: `TEST_PASSWORD=… impresario run --play plays/login.play --device mock_device`.
     let (code, stdout, stderr) = run_in(
@@ -106,7 +109,10 @@ fn readme_mock_quick_start_runs_green() {
             "--device",
             "mock_device",
         ],
-        &[("TEST_PASSWORD", "impresario")],
+        &[
+            ("TEST_PASSWORD", "impresario"),
+            ("IMPRESARIO_TEST_DEVICE_OPTIONS", "1"),
+        ],
     );
     assert_eq!(code, Some(0), "run failed\n{stdout}\n{stderr}");
     assert!(

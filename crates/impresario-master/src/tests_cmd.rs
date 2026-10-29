@@ -837,7 +837,7 @@ fn new_test(base: &Path, config_path: &Path, kind: &str, name: &str, force: bool
             &loaded.config.scenes_dir,
             "scene",
             format!(
-                "Scene: {name}\nPlatform: cross-platform\n\nPieces:\n    Item: web=\"#item\", android=\"id:item\", ios=\"accessibilityId:item\"\n"
+                "Scene: {name}\nPlatforms: cross-platform\n\n| Piece | web | android | ios |\n|---|---|---|---|\n| Item | #item | id:item | accessibilityId:item |\n"
             ),
         ),
         "theatre" => (

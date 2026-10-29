@@ -2285,20 +2285,6 @@ mod tests {
     use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
     use std::path::Path;
 
-    fn workspace(scene_source: &str, play_source: &str) -> Workspace {
-        let scene = parse_scene(scene_source, Path::new("S.scene"))
-            .ast
-            .expect("scene parses");
-        let play = parse_play(play_source, Path::new("p.play"))
-            .ast
-            .expect("play parses");
-        Workspace {
-            scenes: vec![scene],
-            theatres: Vec::new(),
-            plays: vec![play],
-        }
-    }
-
     fn theatrical_workspace(
         scene_source: &str,
         theatre_source: &str,
@@ -2375,65 +2361,46 @@ mod tests {
         })
     }
 
-    fn config() -> ImpresarioConfig {
-        let outcome = config::parse_config(
-            "project: t\ntimeout_default_ms: 10000\nscreenshot_on_failure: false\nreport_output: ./reports\n",
-            Path::new("impresario.config"),
-        );
-        outcome.config.expect("config parses")
-    }
-
-    fn device(platform: Platform) -> DeviceConfig {
-        let mut connection = config::DeviceConnection::default();
-        match platform {
-            Platform::Android | Platform::AndroidTv => {
-                connection.serial = Some("emulator-5554".to_string());
-            }
-            Platform::Ios | Platform::Tvos => {
-                connection.udid = Some("00008110-001A2345021E001E".to_string());
-                if platform == Platform::Tvos {
-                    connection.endpoint = Some("127.0.0.1:50062".to_string());
-                }
-            }
-            Platform::Web | Platform::WebOs | Platform::Tizen => {
-                connection.endpoint = Some("ws://127.0.0.1:9999".to_string());
-                if platform != Platform::Web {
-                    connection.host = Some("127.0.0.1".to_string());
-                }
-            }
-        }
-        DeviceConfig {
-            name: "dev".to_string(),
-            platform,
-            connection,
-            auth: config::DeviceAuth::default(),
-            labels: Vec::new(),
-            options: config::DeviceOptions::default(),
-        }
-    }
-
-    fn compile(
+    fn compile_theatrical_vars(
         scene_source: &str,
+        theatre_source: &str,
         play_source: &str,
         platform: Platform,
         vars: &BTreeMap<String, String>,
     ) -> Result<ExecutionPlan, Diagnostics> {
-        compile_apps(scene_source, play_source, platform, vars, &[], None)
+        let workspace = theatrical_workspace(scene_source, theatre_source, play_source);
+        let config = config();
+        let devices = vec![device(platform)];
+        let plays = workspace.plays.clone();
+        build_plan(&PlanInput {
+            config: &config,
+            workspace: &workspace,
+            base: Path::new("."),
+            devices: &devices,
+            all_devices: &devices,
+            groups: &BTreeMap::new(),
+            apps: &[],
+            cli_app: None,
+            plays: &plays,
+            selection: &Selection::default(),
+            cli_vars: vars,
+            cli_args: &BTreeMap::new(),
+            cli_timeout: None,
+        })
     }
 
-    fn compile_apps(
+    fn compile_theatrical_apps(
         scene_source: &str,
+        theatre_source: &str,
         play_source: &str,
         platform: Platform,
-        vars: &BTreeMap<String, String>,
         apps: &[AppConfig],
         cli_app: Option<&str>,
     ) -> Result<ExecutionPlan, Diagnostics> {
-        let workspace = workspace(scene_source, play_source);
+        let workspace = theatrical_workspace(scene_source, theatre_source, play_source);
         let config = config();
         let devices = vec![device(platform)];
-        let plays: Vec<&PlayFile> = workspace.plays.iter().collect();
-        let plays: Vec<PlayFile> = plays.into_iter().cloned().collect();
+        let plays = workspace.plays.clone();
         build_plan(&PlanInput {
             config: &config,
             workspace: &workspace,
@@ -2445,10 +2412,39 @@ mod tests {
             cli_app,
             plays: &plays,
             selection: &Selection::default(),
-            cli_vars: vars,
+            cli_vars: &BTreeMap::new(),
             cli_args: &BTreeMap::new(),
             cli_timeout: None,
         })
+    }
+
+    fn theatre_with_steps(scene: &str, steps: &str) -> String {
+        format!("Theatre: T\nStage: S1\n    Scene: {scene}\n{steps}")
+    }
+
+    fn config() -> ImpresarioConfig {
+        let outcome = config::parse_config(
+            "project: t\ntimeout_default_ms: 10000\nscreenshot_on_failure: false\nreport_output: ./reports\n",
+            Path::new("impresario.config"),
+        );
+        outcome.config.expect("config parses")
+    }
+
+    fn device(platform: Platform) -> DeviceConfig {
+        let mut device = DeviceConfig::new("dev", platform, "127.0.0.1");
+        match platform {
+            Platform::Android | Platform::AndroidTv => {
+                device.connection.serial = Some("emulator-5554".to_string());
+            }
+            Platform::Ios | Platform::Tvos => {
+                device.connection.udid = Some("00008110-001A2345021E001E".to_string());
+            }
+            Platform::Web => {
+                device.connection.endpoint = Some("ws://127.0.0.1:9999".to_string());
+            }
+            Platform::WebOs | Platform::Tizen => {}
+        }
+        device
     }
 
     fn app_defs(source: &str) -> Vec<AppConfig> {
@@ -2463,11 +2459,12 @@ mod tests {
     }
 
     const SCENE: &str = r##"Scene: S
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    Field: web="#f", android="id:f", ios="accessibilityId:f"
-    Button: web="#b", android="id:b", ios="accessibilityId:b"
+| Piece | web | android | ios |
+|---|---|---|---|
+| Field | #f | id:f | accessibilityId:f |
+| Button | #b | id:b | accessibilityId:b |
 "##;
 
     #[test]
@@ -2477,7 +2474,9 @@ Var: USER = 'u1'
 
 Act: A
 Tags: smoke
-
+    Perform: S1
+"#;
+        let theatre = r#"Theatre: T
 Stage: S1
     Timeout: 5s
     Scene: S
@@ -2487,7 +2486,7 @@ Stage: S1
         Action: clear => Field
         Action: click => Button timeout 2s
 "#;
-        let plan = compile(SCENE, play, Platform::Android, &BTreeMap::new()).expect("plans");
+        let plan = compile_theatrical(SCENE, theatre, play, Platform::Android).expect("plans");
         let device = plan.devices.first().expect("device");
         let act = device
             .plays
@@ -2670,16 +2669,14 @@ Stage: B
 
     #[test]
     fn timeout_precedence_cli_beats_default_stage_beats_cli_beat_by_step() {
-        let play = r#"Play: P
-
-Act: A
-
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = r#"Theatre: T
 Stage: S1
     Timeout: 5s
     Scene: S
         Check: Field
 "#;
-        let workspace = workspace(SCENE, play);
+        let workspace = theatrical_workspace(SCENE, theatre, play);
         let config = config();
         let devices = vec![device(Platform::Android)];
         let plays: Vec<PlayFile> = workspace.plays.to_vec();
@@ -2706,8 +2703,9 @@ Stage: S1
 
     #[test]
     fn cli_timeout_applies_when_no_stage_timeout() {
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: S\n        Check: Field\n";
-        let workspace = workspace(SCENE, play);
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Check: Field\n");
+        let workspace = theatrical_workspace(SCENE, &theatre, play);
         let config = config();
         let devices = vec![device(Platform::Android)];
         let plays: Vec<PlayFile> = workspace.plays.to_vec();
@@ -2733,35 +2731,37 @@ Stage: S1
 
     #[test]
     fn unsupported_action_is_an_error() {
-        let play =
-            "Play: P\n\nAct: A\n\nStage: S1\n    Scene: S\n        Action: swipe up => Field\n";
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Action: swipe up => Field\n");
         let diagnostics =
-            compile(SCENE, play, Platform::AndroidTv, &BTreeMap::new()).expect_err("fails");
+            compile_theatrical(SCENE, &theatre, play, Platform::AndroidTv).expect_err("fails");
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-013"]);
     }
 
     #[test]
     fn unsupported_key_is_an_error() {
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: S\n        Action: key rewind\n";
-        let diagnostics = compile(SCENE, play, Platform::Web, &BTreeMap::new()).expect_err("fails");
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Action: key back\n");
+        let diagnostics =
+            compile_theatrical(SCENE, &theatre, play, Platform::Web).expect_err("fails");
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-013"]);
     }
 
     #[test]
     fn missing_selector_for_platform_is_an_error() {
-        let scene = "Scene: S\nPlatform: cross-platform\n\nPieces:\n    Field: web=\"#f\"\n";
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: S\n        Check: Field\n";
+        let scene =
+            "Scene: S\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| Field | #f |\n";
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Check: Field\n");
         let diagnostics =
-            compile(scene, play, Platform::Android, &BTreeMap::new()).expect_err("fails");
+            compile_theatrical(scene, &theatre, play, Platform::Android).expect_err("fails");
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-012"]);
     }
 
     #[test]
     fn undefined_var_and_missing_env_are_errors_together() {
-        let play = r#"Play: P
-
-Act: A
-
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = r#"Theatre: T
 Stage: S1
     Scene: S
         Action: '${var.NOPE}' => Field
@@ -2770,7 +2770,7 @@ Stage: S1
         // Make sure the env var really is unset.
         std::env::remove_var("IMPRESARIO_TEST_UNSET_VAR_X");
         let diagnostics =
-            compile(SCENE, play, Platform::Android, &BTreeMap::new()).expect_err("fails");
+            compile_theatrical(SCENE, theatre, play, Platform::Android).expect_err("fails");
         assert_eq!(
             codes(&diagnostics),
             vec!["IMP-DSL-014", "IMP-DSL-014"],
@@ -2780,20 +2780,24 @@ Stage: S1
 
     #[test]
     fn cli_vars_define_and_override() {
-        let play = "Play: P\nVar: V = 'play'\n\nAct: A\n\nStage: S1\n    Scene: S\n        Action: '${var.V}' => Field\n";
+        let play = "Play: P\nVar: V = 'play'\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Action: '${var.V}' => Field\n");
         let mut vars = BTreeMap::new();
         vars.insert("V".to_string(), "cli".to_string());
-        let plan = compile(SCENE, play, Platform::Android, &vars).expect("plans");
+        let plan = compile_theatrical_vars(SCENE, &theatre, play, Platform::Android, &vars)
+            .expect("plans");
         match &plan.devices[0].plays[0].acts[0].stages[0].steps[0].command {
             Some(Command::RunAction(action)) => assert_eq!(action.text, "cli"),
             other => panic!("unexpected {other:?}"),
         }
 
         // A variable that only exists on the CLI is defined.
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: S\n        Action: '${var.ONLY_CLI}' => Field\n";
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("S", "        Action: '${var.ONLY_CLI}' => Field\n");
         let mut vars = BTreeMap::new();
         vars.insert("ONLY_CLI".to_string(), "yes".to_string());
-        let plan = compile(SCENE, play, Platform::Android, &vars).expect("plans");
+        let plan = compile_theatrical_vars(SCENE, &theatre, play, Platform::Android, &vars)
+            .expect("plans");
         match &plan.devices[0].plays[0].acts[0].stages[0].steps[0].command {
             Some(Command::RunAction(action)) => assert_eq!(action.text, "yes"),
             other => panic!("unexpected {other:?}"),
@@ -2802,19 +2806,20 @@ Stage: S1
 
     #[test]
     fn unknown_scene_and_piece_do_not_cascade() {
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: Missing\n        Check: Whatever\n";
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("Missing", "        Check: Whatever\n");
         let diagnostics =
-            compile(SCENE, play, Platform::Android, &BTreeMap::new()).expect_err("fails");
+            compile_theatrical(SCENE, &theatre, play, Platform::Android).expect_err("fails");
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-008"]);
     }
 
     #[test]
     fn scene_not_applicable_is_an_error() {
-        let scene =
-            "Scene: OnlyTv\nPlatform: webos\n\nPieces:\n    Field: webos=\"#f\", android=\"id:f\"\n";
-        let play = "Play: P\n\nAct: A\n\nStage: S1\n    Scene: OnlyTv\n        Check: Field\n";
+        let scene = "Scene: OnlyTv\nPlatforms: webos\n\n| Piece | webos | android |\n|---|---|---|\n| Field | #f | id:f |\n";
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = theatre_with_steps("OnlyTv", "        Check: Field\n");
         let diagnostics =
-            compile(scene, play, Platform::Android, &BTreeMap::new()).expect_err("fails");
+            compile_theatrical(scene, &theatre, play, Platform::Android).expect_err("fails");
         assert_eq!(codes(&diagnostics), vec!["IMP-DSL-017"]);
     }
 
@@ -2825,26 +2830,28 @@ Stage: S1
 Act: Keep
 Tags: smoke
 Platforms: android
-
-Stage: S1
-    Scene: S
-        Check: Field
+    Perform: S1
 
 Act: DropTag
 Tags: slow
-
-Stage: S2
-    Scene: S
-        Check: Field
+    Perform: S2
 
 Act: DropPlatform
 Platforms: ios
-
+    Perform: S3
+"#;
+        let theatre = r#"Theatre: T
+Stage: S1
+    Scene: S
+        Check: Field
+Stage: S2
+    Scene: S
+        Check: Field
 Stage: S3
     Scene: S
         Check: Field
 "#;
-        let workspace = workspace(SCENE, play);
+        let workspace = theatrical_workspace(SCENE, theatre, play);
         let config = config();
         let devices = vec![device(Platform::Android)];
         let plays: Vec<PlayFile> = workspace.plays.to_vec();
@@ -2935,7 +2942,10 @@ Stage: S3
 
     const APP_PLAY: &str = r#"Act: A
 Tags: smoke
+    Perform: S1
+"#;
 
+    const APP_THEATRE: &str = r#"Theatre: T
 Stage: S1
     Scene: S
         Action: click => Button
@@ -2951,11 +2961,11 @@ Stage: S1
     #[test]
     fn app_header_binds_the_plan() {
         let play = format!("Play: P\nApp: shop\n\n{APP_PLAY}");
-        let plan = compile_apps(
+        let plan = compile_theatrical_apps(
             SCENE,
+            APP_THEATRE,
             &play,
             Platform::Android,
-            &BTreeMap::new(),
             &app_defs(APPS_ANDROID),
             None,
         )
@@ -2969,17 +2979,17 @@ Stage: S1
     #[test]
     fn no_app_header_leaves_the_plan_app_less() {
         let play = format!("Play: P\n\n{APP_PLAY}");
-        let plan = compile(SCENE, &play, Platform::Android, &BTreeMap::new()).expect("plans");
+        let plan = compile_theatrical(SCENE, APP_THEATRE, &play, Platform::Android).expect("plans");
         assert!(plan.devices[0].app.is_none());
     }
 
     #[test]
     fn unknown_app_header_is_reported() {
-        let diagnostics = compile_apps(
+        let diagnostics = compile_theatrical_apps(
             SCENE,
+            APP_THEATRE,
             &app_play("missing"),
             Platform::Android,
-            &BTreeMap::new(),
             &app_defs(APPS_ANDROID),
             None,
         )
@@ -2998,11 +3008,11 @@ Stage: S1
         let apps = app_defs(
             "apps:\n- name: shop\n  platforms:\n    web:\n      url: http://localhost:8080/\n",
         );
-        let diagnostics = compile_apps(
+        let diagnostics = compile_theatrical_apps(
             SCENE,
+            APP_THEATRE,
             &app_play("shop"),
             Platform::Android,
-            &BTreeMap::new(),
             &apps,
             None,
         )
@@ -3015,11 +3025,11 @@ Stage: S1
         let apps = app_defs(
             "apps:\n- name: shop\n  platforms:\n    android:\n      id: com.example.shop\n      package: ./definitely-missing.apk\n",
         );
-        let diagnostics = compile_apps(
+        let diagnostics = compile_theatrical_apps(
             SCENE,
+            APP_THEATRE,
             &app_play("shop"),
             Platform::Android,
-            &BTreeMap::new(),
             &apps,
             None,
         )
@@ -3032,11 +3042,11 @@ Stage: S1
         let apps = app_defs(
             "apps:\n- name: shop\n  platforms:\n    android:\n      id: com.example.shop\n- name: other\n  platforms:\n    android:\n      id: com.example.other\n",
         );
-        let plan = compile_apps(
+        let plan = compile_theatrical_apps(
             SCENE,
+            APP_THEATRE,
             &app_play("missing"),
             Platform::Android,
-            &BTreeMap::new(),
             &apps,
             Some("shop"),
         )
@@ -3053,9 +3063,12 @@ Stage: S1
             .ast
             .expect("second play");
         let scene = parse_scene(SCENE, Path::new("S.scene")).ast.expect("scene");
+        let theatre = parse_theatre(APP_THEATRE, Path::new("T.theatre"))
+            .ast
+            .expect("theatre");
         let workspace = Workspace {
             scenes: vec![scene],
-            theatres: Vec::new(),
+            theatres: vec![theatre],
             plays: vec![first, second],
         };
         let config = config();
@@ -3126,10 +3139,8 @@ Stage: S1
     }
     #[test]
     fn compiles_showing_and_player_probes() {
-        let play = r#"Play: P
-
-Act: A
-
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = r#"Theatre: T
 Stage: S1
     Scene: S
         Check: Showing => Button with coverage>=50%, decoded
@@ -3137,7 +3148,7 @@ Stage: S1
         Check: not Showing => Field
         Check: Player => Field not Buffering
 "#;
-        let plan = compile(SCENE, play, Platform::Web, &BTreeMap::new()).expect("plans");
+        let plan = compile_theatrical(SCENE, theatre, play, Platform::Web).expect("plans");
         let act = plan.devices[0].plays[0].acts[0].clone();
         let steps: Vec<&PlannedStep> = act
             .stages
@@ -3188,15 +3199,13 @@ Stage: S1
 
     #[test]
     fn showing_source_is_web_only() {
-        let play = r#"Play: P
-
-Act: A
-
+        let play = "Play: P\n\nAct: A\n    Perform: S1\n";
+        let theatre = r#"Theatre: T
 Stage: S1
     Scene: S
         Check: Showing => Button with source~"https://cdn.example"
 "#;
-        let plan = compile(SCENE, play, Platform::Web, &BTreeMap::new()).expect("plans");
+        let plan = compile_theatrical(SCENE, theatre, play, Platform::Web).expect("plans");
         let command = plan.devices[0].plays[0].acts[0].stages[0].steps[0]
             .command
             .clone()
@@ -3206,7 +3215,7 @@ Stage: S1
             other => panic!("expected probe, got {other:?}"),
         }
 
-        let diagnostics = compile(SCENE, play, Platform::Android, &BTreeMap::new())
+        let diagnostics = compile_theatrical(SCENE, theatre, play, Platform::Android)
             .expect_err("source is web-only");
         assert!(diagnostics
             .iter()

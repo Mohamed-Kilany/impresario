@@ -1,5 +1,5 @@
 Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
 | Piece         | web           | android         |
 |---------------|---------------|-----------------|

@@ -477,18 +477,6 @@ fn scan_duplicate_headers(source: &SourceFile, text: &str, names: &mut Vec<Name>
                     }
                     continue;
                 }
-                if line.depth == 1 && in_pieces_section(&scanned.lines, index) {
-                    if let Some((name, span)) = legacy_piece(line, path) {
-                        names.push(Name {
-                            name: name.to_string(),
-                            span,
-                            code: Code::DslDuplicatePiece,
-                            scope: format!("scene:{} pieces", scene_name.as_deref().unwrap_or("*")),
-                            severity: Severity::Error,
-                            help: "piece names must be unique within one scene".to_string(),
-                        });
-                    }
-                }
             }
             "theatre" => {
                 if line.depth != 0 {
@@ -608,15 +596,6 @@ fn scan_duplicate_headers(source: &SourceFile, text: &str, names: &mut Vec<Name>
     }
 }
 
-fn in_pieces_section(lines: &[scanner::LogicalLine], index: usize) -> bool {
-    for line in lines.iter().take(index).rev() {
-        if line.depth == 0 {
-            return line.content.starts_with("Pieces:");
-        }
-    }
-    false
-}
-
 /// The identifier of an `Act:`/`Stage:` header, without its parameter list.
 fn stage_header_name(header: &str) -> &str {
     header.split('(').next().unwrap_or(header).trim()
@@ -631,25 +610,6 @@ fn add_header(name: &str, span: Span, code: Code, scope: &str, names: &mut Vec<N
         severity: Severity::Error,
         help: "this name must be unique in its scope".to_string(),
     });
-}
-
-fn legacy_piece<'a>(line: &'a scanner::LogicalLine, path: &Path) -> Option<(&'a str, Span)> {
-    let colon = line.content.find(':')?;
-    let name = line.content.get(..colon)?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let offset = line.content.get(..colon)?.find(name).unwrap_or(0);
-    let char_offset = line.content.get(..offset)?.chars().count();
-    Some((
-        name,
-        Span::new(
-            path,
-            line.line,
-            line.col + char_offset,
-            name.chars().count(),
-        ),
-    ))
 }
 
 fn cells(line: &scanner::LogicalLine, path: &Path) -> Vec<(String, Span)> {

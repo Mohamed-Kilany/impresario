@@ -1,8 +1,0 @@
-Scene: LoginScreen
-Platforms: web,android
-
-| Piece | web | android | index |
-|---|---|---|---|
-| LoginTitle|h1.title|id:login_title||
-| SubmitButton | button[type='submit'] | id:submit | 0 |
-| PromoBanner | - | - | 2 |

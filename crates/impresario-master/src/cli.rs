@@ -139,8 +139,6 @@ pub enum Command {
     Package(crate::artifact_cmd::PackageArgs),
     /// Sign and inspect Tizen packages, and manage signing profiles.
     Sign(crate::artifact_cmd::SignArgs),
-    /// Convert a legacy flat devices file into devices + apps (TASK-2 8.9).
-    Migrate(MigrateArgs),
     /// Plan and execute plays on devices (spec section 8.2/8.3).
     Run(RunArgs),
     /// Save and inspect reusable run profiles (`profiles:` in config.yaml).
@@ -178,9 +176,9 @@ pub enum Command {
     Mcp,
     /// Serve the scripted mock device on loopback (no hardware needed).
     ///
-    /// Development aid for the README quick start (decision I-77): point a
-    /// `web`/`webos`/`tizen` device at it via `connector`/`agent_address`
-    /// and `impresario run` exercises the whole pipeline hardware-free.
+    /// Automated-suite aid (decision I-77): the test harness points a `web`
+    /// device at the printed loopback address through the debug-only test
+    /// sidecar, and `impresario run` exercises the whole pipeline hardware-free.
     MockAgent {
         /// Loopback port to listen on (0 = any free port, printed on start).
         #[arg(long, default_value_t = 50071)]
@@ -188,7 +186,7 @@ pub enum Command {
     },
 }
 
-use crate::definitions::{AppCommand, DeviceCommand, MigrateArgs};
+use crate::definitions::{AppCommand, DeviceCommand};
 
 /// `--global` / `--workspace` scope selector; the workspace is the default.
 #[derive(Debug, Args)]
@@ -458,7 +456,6 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Tools { command } => crate::tools_cmd::run(command, &home),
         Command::Package(args) => crate::artifact_cmd::run_package(args),
         Command::Sign(args) => crate::artifact_cmd::run_sign(&home, args),
-        Command::Migrate(args) => crate::definitions::migrate(&base, &config_path, args.dry_run),
         Command::Run(args) => cmd_run(
             &home,
             &base,
@@ -562,38 +559,25 @@ report_output: ./reports
 const EXAMPLE_DEVICES: &str = "\
 devices:
   - name: living_room_tv
-    platform: webos
-    connection:
-      transport: ssh
-      host: 192.168.1.50
-      endpoint: ws://192.168.1.50:9998
-    labels: [tv, living_room]
+    type: webOS
+    ip: 192.168.1.50
   - name: flagship_android
-    platform: android
-    connection:
-      transport: usb
-      serial: emulator-5554
+    type: android
+    ip: 192.168.1.60
   - name: shield_tv
-    platform: androidtv
-    connection:
-      transport: tcp
-      host: 192.168.1.60
-      port: 5555
+    type: androidtv
+    ip: 192.168.1.61
   - name: test_iphone
-    platform: ios
-    connection:
-      udid: 00008110-001A2345021E001E
+    type: iOS
+    ip: 192.168.1.70
   - name: apple_tv
-    platform: tvos
-    connection:
-      udid: 00008110-001B3456021E002F
-      endpoint: 192.168.1.70:50062
+    type: tvOS
+    ip: 192.168.1.71
   # A local Chromium instance started by the connector; uncomment to try the
-  # example on this machine (TASK-2 section 4.3).
+  # example on this machine.
   # - name: local_chrome
-  #   platform: web
-  #   connection:
-  #     transport: launch
+  #   type: web
+  #   ip: 127.0.0.1
 ";
 
 const EXAMPLE_APPS: &str = "\
@@ -622,22 +606,24 @@ apps:
 
 const EXAMPLE_LOGIN_SCENE: &str = "\
 Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    LoginTitle:    web=\"h1.title\",  android=\"id:login_title\",  ios=\"accessibilityId:login_title\"
-    UsernameInput: web=\"#username\", android=\"id:username\",     ios=\"accessibilityId:username\"
-    PasswordInput: web=\"#password\", android=\"id:password\",     ios=\"accessibilityId:password\"
-    SubmitButton:  web=\"button[type='submit']\", android=\"id:login_btn\", ios=\"accessibilityId:login\"
+| Piece | web | android | ios |
+|---|---|---|---|
+| LoginTitle | h1.title | id:login_title | accessibilityId:login_title |
+| UsernameInput | #username | id:username | accessibilityId:username |
+| PasswordInput | #password | id:password | accessibilityId:password |
+| SubmitButton | button[type='submit'] | id:login_btn | accessibilityId:login |
 ";
 
 const EXAMPLE_DASHBOARD_SCENE: &str = "\
 Scene: DashboardScreen
-Platform: cross-platform
+Platforms: cross-platform
 
-Pieces:
-    WelcomeBanner: web=\"h2.welcome\", android=\"id:welcome_banner\", ios=\"accessibilityId:welcome_banner\"
-    LogoutButton:  web=\"#logout\",    android=\"id:logout_btn\",      ios=\"accessibilityId:logout\"
+| Piece | web | android | ios |
+|---|---|---|---|
+| WelcomeBanner | h2.welcome | id:welcome_banner | accessibilityId:welcome_banner |
+| LogoutButton | #logout | id:logout_btn | accessibilityId:logout |
 ";
 
 const EXAMPLE_LOGIN_PLAY: &str = "\
@@ -649,8 +635,13 @@ Var: USER = 'test_user_impresario'
 Act: Successful Login Flow
 Tags: smoke, auth
 Platforms: android, ios, web, webos
+    Perform: NavigateAndLogin
+    Perform: VerifyOutcome
+";
 
-Stage: Navigate and Login
+const EXAMPLE_LOGIN_THEATRE: &str = "\
+Theatre: Login
+Stage: NavigateAndLogin
     Timeout: 15s
     Scene: LoginScreen
         Check: LoginTitle
@@ -658,7 +649,7 @@ Stage: Navigate and Login
         Action: '${env.TEST_PASSWORD}' => PasswordInput
         Action: click => SubmitButton
 
-Stage: Verify Outcome
+Stage: VerifyOutcome
     Scene: DashboardScreen
         Check: WelcomeBanner is visible timeout 20s
 ";
@@ -1322,6 +1313,7 @@ fn cmd_workspace_new(root: &Path, example: bool, force: bool) -> i32 {
             ("impresario.apps.config", EXAMPLE_APPS),
             ("scenes/LoginScreen.scene", EXAMPLE_LOGIN_SCENE),
             ("scenes/DashboardScreen.scene", EXAMPLE_DASHBOARD_SCENE),
+            ("theatres/login.theatre", EXAMPLE_LOGIN_THEATRE),
             ("plays/login.play", EXAMPLE_LOGIN_PLAY),
         ]);
     }
@@ -3315,6 +3307,7 @@ mod tests {
             ".gitignore",
             "scenes/LoginScreen.scene",
             "scenes/DashboardScreen.scene",
+            "theatres/login.theatre",
             "plays/login.play",
         ] {
             assert!(dir.join(file).exists(), "{file} missing");
@@ -3358,7 +3351,7 @@ mod tests {
         );
         std::fs::write(
             dir.join("plays/broken.play"),
-            "Play: Broken\n\nAct: A\n\nStage: S\n    Scene: NoSuchScene\n        Check: Nope\n",
+            "Play: Broken\n\nAct: A\n    Perform: Missing\n",
         )
         .expect("write");
         assert_eq!(run_with(&argv(&dir, &["validate"])), EXIT_USAGE);
@@ -3448,16 +3441,10 @@ mod tests {
     #[test]
     fn select_devices_all_names_and_unknown() {
         use impresario_core::platforms::Platform;
-        let device = |name: &str| DeviceConfig {
-            name: name.to_string(),
-            platform: Platform::Android,
-            connection: impresario_core::config::DeviceConnection {
-                serial: Some("emulator-5554".to_string()),
-                ..Default::default()
-            },
-            auth: Default::default(),
-            labels: Vec::new(),
-            options: Default::default(),
+        let device = |name: &str| {
+            let mut device = DeviceConfig::new(name, Platform::Android, "192.168.1.60");
+            device.connection.serial = Some("emulator-5554".to_string());
+            device
         };
         let devices = vec![device("a"), device("b")];
         assert_eq!(select_devices(&devices, &[]).expect("all").len(), 2);
@@ -3491,7 +3478,7 @@ mod tests {
         );
         std::fs::write(
             dir.join("plays/extra.play"),
-            "Play: Extra\n\nAct: A\n\nStage: S\n    Scene: LoginScreen\n        Check: LoginTitle\n",
+            "Play: Extra\n\nAct: A\n    Perform: NavigateAndLogin\n",
         )
         .expect("write");
         let config = config::load_config(&dir.join("impresario.config"))

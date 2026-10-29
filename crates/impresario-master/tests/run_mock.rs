@@ -27,10 +27,7 @@ use tempfile::TempDir;
 const SECRET_PLAY: &str = r#"Play: Secret
 
 Act: Leak
-
-Stage: S
-    Scene: TestScreen
-        Check: A text '${env.IMPRESARIO_TEST_SECRET}'
+    Perform: Leak
 "#;
 
 /// A play that hangs until cancelled; the 30 s step timeout keeps the command
@@ -38,10 +35,7 @@ Stage: S
 const PLAY_LONG_HANG: &str = r#"Play: Long
 
 Act: Hang
-
-Stage: S
-    Scene: TestScreen
-        Action: click => A timeout 30s
+    Perform: LongHang
 "#;
 
 fn device_of<'a>(report: &'a RunReport, name: &str) -> &'a DeviceReport {

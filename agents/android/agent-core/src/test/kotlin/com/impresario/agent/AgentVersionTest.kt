@@ -8,7 +8,7 @@ import org.junit.Test
 class AgentVersionTest {
     @Test
     fun versionAndGeneratedCodeAreReachable() {
-        assertEquals("0.1.0", AgentVersion.VERSION)
+        assertEquals("1.0.0", AgentVersion.VERSION)
         assertEquals(4, Platform.ANDROID.number)
     }
 }

@@ -18,10 +18,10 @@ pub struct SceneFile {
     /// `Scene: Name`
     pub name: String,
     pub name_span: Span,
-    /// `Platform: ...` / `Platforms: ...`
+    /// `Platforms: ...`
     pub platforms: ScenePlatforms,
     pub platforms_span: Span,
-    /// Column order of the table form (empty for the legacy `Pieces:` form).
+    /// Column order of the table form (empty only in older serialized ASTs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<SceneColumn>,
     pub pieces: Vec<PieceDecl>,
@@ -43,7 +43,7 @@ impl SceneFile {
     }
 }
 
-/// One `Name: key="selector", ...` line under `Pieces:`.
+/// One logical element and its per-platform selectors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PieceDecl {
     pub name: String,
@@ -135,7 +135,7 @@ impl TheatreFile {
     }
 
     /// Platforms this implementation serves. A stage narrows the theatre;
-    /// `Platforms:` is the legacy spelling; empty means every platform.
+    /// empty means every platform.
     #[must_use]
     pub fn stage_audience(&self, stage: &StageDecl) -> Vec<Platform> {
         let source = if !stage.audience.is_empty() {
@@ -176,7 +176,7 @@ pub struct ActDecl {
     /// `Actors: a, @group` (overrides the play's actor list when non-empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actors: Vec<Named>,
-    /// Legacy `Platforms: a, b` (empty = all platforms).
+    /// `Platforms: a, b` (empty = all platforms).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub platforms: Vec<Named>,
     /// `Examples:` rows (one execution each).
@@ -185,12 +185,12 @@ pub struct ActDecl {
     /// New-style `Perform:` lines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub performs: Vec<PerformDecl>,
-    /// Legacy inline `Stage:` blocks (kept for `migrate`/backward compatibility).
+    /// Inline `Stage:` blocks (the parser rejects them; kept for older ASTs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<StageDecl>,
 }
 
-/// `Stage: Name(param, ...)` declaration (theatre or legacy inline).
+/// `Stage: Name(param, ...)` declaration in a theatre file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageDecl {
     pub name: String,
@@ -207,7 +207,8 @@ pub struct StageDecl {
     /// `Tags: a, b` (inherited by nested performances).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<Named>,
-    /// Legacy `Platforms:` restriction inside the stage.
+    /// Legacy `Platforms:` restriction inside a stage. The parser rejects it;
+    /// the field remains for older serialized ASTs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub platforms: Vec<Named>,
     pub timeout: Option<DslDuration>,

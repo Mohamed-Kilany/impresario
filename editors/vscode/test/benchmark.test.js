@@ -54,8 +54,7 @@ async function service() {
 test("standalone stays responsive on a 1,000+ file workspace", async () => {
   const language = await service();
   const sources = workspace();
-  const devices =
-    "devices:\n  - name: web1\n    platform: web\n    connection:\n      transport: launch\n";
+  const devices = "devices:\n  - name: web1\n    type: web\n    ip: 127.0.0.1\n";
 
   const first = performance.now();
   language.analyze({ sources, devicesYaml: devices });

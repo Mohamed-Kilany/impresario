@@ -396,8 +396,9 @@ mod tests {
             key_support(Platform::Tizen, RemoteKey::Rewind),
             Support::Full
         );
+        assert_eq!(key_support(Platform::Web, RemoteKey::Rewind), Support::Full);
         assert_eq!(
-            key_support(Platform::Web, RemoteKey::Rewind),
+            key_support(Platform::Web, RemoteKey::Back),
             Support::Unsupported
         );
         assert_eq!(

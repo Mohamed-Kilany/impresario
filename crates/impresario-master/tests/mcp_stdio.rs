@@ -385,7 +385,7 @@ fn modern_discover_protocol_errors_and_diagnostics() {
     // Broken plays come back as diagnostics with stable codes.
     std::fs::write(
         temp.path().join("plays/broken.play"),
-        "Play: Broken\n\nAct: Broken\n\nStage: S\n    Scene: Ghost\n        Check: A\n",
+        "Play: Broken\n\nAct: Broken\n    Perform: Missing\n",
     )
     .expect("write broken play");
     let broken = structured(&mcp.tools_call_meta(
@@ -451,8 +451,7 @@ fn modern_discover_protocol_errors_and_diagnostics() {
 
 #[test]
 fn failed_run_returns_failure_screenshot_as_image() {
-    const PLAY_FAILS: &str =
-        "Play: Fails\n\nAct: Boom\n\nStage: S\n    Scene: TestScreen\n        Check: A\n";
+    const PLAY_FAILS: &str = "Play: Fails\n\nAct: Boom\n    Perform: Shot\n";
     let png = b"\x89PNG\r\n\x1a\nmock-failure".to_vec();
     let agent = TestAgent::start(
         MockAgentBuilder::new()

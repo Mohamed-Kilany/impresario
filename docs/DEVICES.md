@@ -22,45 +22,37 @@ The master is always the gRPC **client**. Every executor is a gRPC **server**:
 handshake → `Shutdown` (no `Session` stream). `devices check` remains an alias.
 
 **Devices and apps are separate** (D-21, TASK-2 §5). A device owns how to reach
-the hardware; an app owns what runs on it. Fields used below:
+the hardware; an app owns what runs on it.
+
+The public device schema has exactly three fields: an optional `name`, the
+exact product `type`, and the device `ip`.
 
 ```yaml
 # impresario.devices.config (workspace) / ~/.impresario/devices.yaml (global)
 devices:
-  - name: living_room_tv
-    platform: webos            # web | webos | tizen | android | androidtv | ios | tvos
-    connection:
-      transport: ssh           # auto | usb | tcp | network | cdp | launch | ssh | sdb
-      host: 192.168.1.50       # where the master reaches the platform service
-      port: 9922               # optional; defaults: webOS 9922, Tizen 26101, Android 5555
-      endpoint: ws://192.168.1.50:9998   # device-side CDP/agent endpoint
-    auth: { key: living_room_tv }        # references, never secret values
-    labels: [tv, living_room]
-    options:
-      connector_address: 127.0.0.1:47654  # where the master's connector listens
-      cdp_backend: raw                    # web family only
-      key_dispatch: cdp                   # web family only
-      page_match: "index.html"            # web family only
-
-  - name: pocket_phone
-    platform: android
-    connection:
-      transport: tcp
-      host: 192.168.1.61
-      port: 5555
-      # serial: emulator-5554            # USB instead of TCP
-    options:
-      agent_port: 50061                   # Android/Apple agent port
-
-  - name: iphone
-    platform: ios
-    connection:
-      transport: usb
-      udid: 00008110-...                  # Apple UDID
-      # endpoint: 192.168.1.42:50062      # WLAN agent override
-    options:
-      animations_disabled: true           # iOS/tvOS only
+  - name: living_room_tv   # optional; derived as <type-slug>-<ip> when omitted
+    type: webOS            # web | webOS | tizenOS | android | androidtv | iOS | tvOS
+    ip: 192.168.1.50
+  - type: android
+    ip: 192.168.1.61
 ```
+
+Transport, protocol ports, pairing, signing and credential references are
+derived during planning; they are not part of the file:
+
+| Type | Derived transport | Fixed protocol port |
+|---|---|---|
+| `web` on `127.0.0.1` | launch managed Chromium | — |
+| `web` on another IP | CDP | `9222` |
+| `webOS` | SSH | `9922` |
+| `tizenOS` | SDB | `26101` |
+| `android`, `androidtv` | native ADB over TCP | `5555` |
+| `iOS`, `tvOS` | RemotePairing/RSD | discovered |
+
+Connector and native-agent gRPC listeners are allocated on fresh loopback
+ports per run, so parallel jobs cannot collide. The test suite may inject
+internal overrides through a debug-only sidecar; that file is never read by a
+release build and is not part of the schema.
 
 ```yaml
 # impresario.apps.config (workspace) / ~/.impresario/apps.yaml (global)
@@ -78,8 +70,7 @@ A play binds with `App: shop` (after `Play:`/`Description:`, before `Var:`);
 `--app shop` overrides it. Global and workspace layers merge by name, and the
 workspace wins. `impresario device add`/`app add` default to the global layer;
 pass `--workspace` to edit the workspace file. Secrets stay in the OS
-credential store and are referenced by `auth.key`/`auth.identity`/
-`auth.profile`.
+credential store; no passphrase or private key is written to a device file.
 
 ---
 
@@ -103,25 +94,20 @@ credential store and are referenced by `auth.key`/`auth.identity`/
   remain supported.
 - `impresario-connector` is resolved as `$IMPRESARIO_CONNECTOR_BIN`, else a
   sibling of the master binary, else `impresario-connector` on `PATH` (I-33).
-  A loopback `options.connector_address` that already has something listening
-  is used directly without spawning anything.
-- `connection.endpoint` values:
-  - `launch` / `launch:headless` — the connector starts Chromium with a private
-    profile and owns the process;
-  - `ws://host:port` — an existing CDP endpoint (Chrome started with
-    `--remote-debugging-port=9222`); an endpoint without `/devtools/page/…`
-    resolves its page through `/json/list`, filtered by `options.page_match`
-    (I-38).
+  The master starts it on a fresh loopback port for every run.
+- The device `ip` selects the mode:
+  - `127.0.0.1` (or another loopback address) — the connector starts managed
+    Chromium with a private profile and owns the process;
+  - any other IP — the connector attaches to Chrome already running with
+    `--remote-debugging-port=9222` on that host.
 
 Example device and app:
 
 ```yaml
 devices:
   - name: desktop_chrome
-    platform: web
-    connection:
-      transport: launch
-      endpoint: launch:headless
+    type: web
+    ip: 127.0.0.1
 
 apps:
   - name: desktop_page
@@ -139,12 +125,11 @@ impresario device check desktop_chrome
 impresario run --play plays/login.play --device desktop_chrome --app desktop_page
 ```
 
-Phase 2 theatrical acceptance (2026-10-20): the legacy web fixture workspace
-was migrated with `impresario migrate` (table scene, generated
-`theatres/web_smoke.theatre`, play rewritten to `Perform:`), validated with 0
-warnings, and run green — `run 20261020-133846-23c0: passed (1.87 s, exit 0)`,
-9 steps, 0 failed, including click/type/select/scrollto. The run used the
-`launch:headless` device and the local `fixtures/web/index.html`.
+Phase 2 theatrical acceptance (2026-10-20): the web fixture workspace (table
+scene, generated `theatres/web_smoke.theatre`, `Perform:` play) validated with
+0 warnings and ran green — `run 20261020-133846-23c0: passed (1.87 s, exit 0)`,
+9 steps, 0 failed, including click/type/select/scrollto. The run used a local
+`web` device and `fixtures/web/index.html`.
 
 ### Media probe fixture
 
@@ -163,20 +148,18 @@ media_probes_collect_showing_player_and_drm_evidence`, which covers
 `fixtures/web/hook.html` loads `sdk/web/impresario-hook.js` and reports the real
 `HTMLMediaElement` state through `window.__impresarioHook`; use it to check the
 optional hook path. The fixture suite skips when no Chromium is available, so
-CI on a Chrome-less host is not evidence. For a real TV, the browser must be
-started with a reachable CDP endpoint (`connection.endpoint: ws://…`) and the
-same probes apply; real-TV CDP is hardware-verified on LG/Tizen (HD-7 closed,
-2026-10-29).
+CI on a Chrome-less host is not evidence. For a real TV, the browser is
+reached through the TV's own CDP forward and the same probes apply; real-TV CDP
+is hardware-verified on LG/Tizen (HD-7 closed, 2026-10-29).
 
 Notes:
 
-- This host's port `50051` is held by an unrelated service (`multipassd`); a
-  workspace can pin the connector with
-  `options.connector_address: 127.0.0.1:47654`. Without the pin the master sees
-  the unrelated listener and the handshake fails; this was hit and fixed during
-  the Phase 2 run.
-- `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
-  backend needs the browser websocket from `/json/version` (I-39).
+- Connector listeners are allocated dynamically, so a local service already
+  holding a fixed port (for example `multipassd` on `50051`) cannot collide
+  with a run.
+- `cdp_backend: chromiumoxide` remains an internal option (D-03); the typed
+  backend needs the browser websocket from `/json/version` (I-39). It is not
+  part of the public devices file.
 
 ### 1.3 webOS (TV) — native SSH transport (hardware-verified 2026-10-29)
 
@@ -194,31 +177,20 @@ work is Impresario's own SSH/SFTP/luna client. No `ares-*`, `ssh`, `scp`,
 ```yaml
 devices:
   - name: living_room_tv
-    platform: webos
-    connection:
-      transport: ssh          # auto also resolves to ssh for webos
-      host: 192.168.1.50
-      port: 9922              # default
-    auth:
-      identity: SHA256:...    # optional host-key pin (recommended)
-      # key: C:\keys\living-room.pem   # optional private-key override
-    options:
-      connector_address: 127.0.0.1:50151  # 50051 is held by multipassd here
+    type: webOS
+    ip: 192.168.1.50
 ```
 
+- SSH is derived for `webOS` and always uses port `9922`.
 - The first connection fetches `http://<tv>:9991/webos_rsa` and stores the
   encrypted key at `~/.impresario/keys/webos/<host>.pem`; the TV passphrase is
-  read from `IMPRESARIO_WEBOS_PASSPHRASE` or from keychain service
-  `impresario.webos` (account = host). The environment variable is the
-  headless override; do not put the passphrase in YAML.
-- `auth.identity` pins the SSH host key using a `SHA256:` fingerprint, an
-  OpenSSH public-key string, or a path under `keys/`. Without it the first key
-  is remembered in `keys/webos_known_hosts`; a later change is rejected.
-- `auth.key` may name a private-key file or `keychain:<entry>` whose stored
-  value is the key itself. Usually it is omitted.
-- `options.connector_address` pins the local connector listener. On this host
-  the default `127.0.0.1:50051` is held by `multipassd`, so the LG device uses
-  `127.0.0.1:50151`. A multi-TV run needs a distinct port per device.
+  read from `IMPRESARIO_WEBOS_PASSPHRASE` for the current process only. It is
+  never written to a device file or the OS keychain.
+- The first host key is remembered in `keys/webos_known_hosts`; a later change
+  is rejected. Host-key pins and private-key overrides are internal
+  test/wizard state, not public device fields.
+- The connector listener is allocated on a fresh loopback port for every run;
+  parallel TVs cannot collide.
 
 **App definition**
 
@@ -238,7 +210,7 @@ produces the same package explicitly.
 **What a run does**
 
 1. Connects SSH as `prisoner`, verifying the pinned/TOFU host key.
-2. Prepares the local connector listener.
+2. Starts the local connector on a fresh loopback port.
 3. Uploads the `.ipk` to `/media/developer/temp` (SFTP, exec `cat` fallback).
 4. Streams `com.webos.appInstallService/dev/install` until a terminal state and
    verifies the app through `dev/listApps`; presence of a pre-existing app is
@@ -280,7 +252,8 @@ through the native transport:
 - `device check` prints `deviceInfo query failed: ... Denied method call
   "query"` because this firmware denies the luna query, but the app list is
   returned and the check completes;
-- the connector listens on `127.0.0.1:50151` because `multipassd` owns 50051.
+- the historical run pinned the connector at `127.0.0.1:50151` because
+  `multipassd` owns 50051; current builds allocate an ephemeral port per run.
 
 For re-verification: record model/firmware and `device check`; package the
 fixture; run install and update; then exercise invalid-package and
@@ -304,23 +277,16 @@ runs on the host (D-19/I-140...I-142).
 ```yaml
 devices:
   - name: living_room_tv
-    platform: tizen
-    connection:
-      transport: sdb         # auto also resolves to sdb for tizen
-      host: 192.168.1.51
-      port: 26101            # default
-    auth:
-      profile: living-room   # required on Tizen 7.0+; see docs/SIGNING.md
-    options:
-      connector_address: 127.0.0.1:50152  # distinct from the LG device's port
+    type: tizenOS
+    ip: 192.168.1.51
 ```
 
-SDB authenticates with a locally generated RSA key at
-`~/.impresario/keys/tizen_adbkey`; the TV may show a confirmation prompt on the
-first connection. `auth.profile` names an imported or created signing profile;
-older Tizen does not require one. `options.connector_address` is optional but
-required on this host when more than one TV is configured: `multipassd` owns
-50051, so the LG uses 50151 and Tizen uses 50152.
+SDB is derived for `tizenOS` and always uses port `26101`. It authenticates
+with a locally generated RSA key at `~/.impresario/keys/tizen_adbkey`; the TV
+may show a confirmation prompt on the first connection. The signing profile
+defaults to `samsung` (required on Tizen 7.0+; see `docs/SIGNING.md`) and can
+be changed with `IMPRESARIO_TIZEN_PROFILE`. There is no per-device profile
+field. The connector listener is allocated dynamically per run.
 
 **Signing profile (Tizen 7.0+)**
 
@@ -330,9 +296,9 @@ Studio. Run it from the machine with the browser and keep port `4794` free
 
 ```powershell
 impresario device check living_room_tv   # prints the TV DUID
-impresario sign tizen profile create --name living-room --duid <DUID> `
+impresario sign tizen profile create --name samsung --duid <DUID> `
   --email you@example.com
-impresario sign tizen profile show living-room
+impresario sign tizen profile show samsung
 ```
 
 The browser opens Samsung's normal account login; complete the login and any
@@ -348,9 +314,9 @@ To import an existing author/distributor pair instead:
 ```powershell
 $env:IMPRESARIO_TIZEN_AUTHOR_PASSWORD = '...'
 $env:IMPRESARIO_TIZEN_DISTRIBUTOR_PASSWORD = '...'
-impresario sign tizen profile add living-room `
+impresario sign tizen profile add samsung `
   --author .\keys\author.p12 --distributor .\keys\distributor.p12
-impresario sign tizen profile show living-room
+impresario sign tizen profile show samsung
 ```
 
 The distributor certificate must contain the TV's DUID
@@ -390,9 +356,9 @@ platform manifest.
 
 1. Connects over SDB, authenticating with the local RSA key.
 2. Reads capabilities, `platform_version`, staging (`sdk_toolpath`) and DUID.
-3. On Tizen 7.0+: requires `auth.profile`, signs the package for the DUID,
-   validates it, and caches it by package hash/profile/DUID. On older versions:
-   installs the original package.
+3. On Tizen 7.0+: uses the selected signing profile (default `samsung`),
+   signs the package for the DUID, validates it, and caches it by package
+   hash/profile/DUID. On older versions: installs the original package.
 4. Pushes to a unique, space-free `impresario-<pid>-<ms>.wgt` in the staging
    directory. Every SDB WRTE is acknowledged; unacknowledged or oversized sync
    frames make sdbd drop the connection. Runs
@@ -476,12 +442,11 @@ needs older hardware.
   host/no-stub run and the full 105-step stub play; see `docs/STATUS.md` HD-1.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
-through the connector's JS key dispatch; `options.key_dispatch` picks the
-mechanism (I-46). Keep `options.cdp_backend: raw`: old TV Chromium builds break
-strict typed bindings (D-03). On webOS, `connection.endpoint` may override the
-inspector port; a native run always hands the connector its SSH-forwarded
-target endpoint. On Tizen, an explicit inspector port is only a fallback when
-`0 debug` does not return one.
+through the connector's JS key dispatch; key dispatch and the raw CDP backend
+are internal defaults (I-46, D-03). A native run always hands the connector its
+SSH/SDB-forwarded inspector endpoint. On Tizen, the inspector port from
+`0 debug` is preferred; a TV that does not report an inspector port fails with
+guidance because the public device schema has no endpoint override.
 
 ---
 
@@ -492,10 +457,10 @@ own app** (I-62): the master installs three APKs - the agent app `:agent`
 (`com.impresario.agent`), its `am instrument` test APK and, for the acceptance
 fixture, the separate app-under-test stub (`com.impresario.stub`) - starts
 `AgentRunner` through Impresario's native `libadb` transport, then **dials the
-agent over the network**: `connection.endpoint` first, else the ADB target's
-own host when it is `host:port` (ADB-over-TCP), else the device's address from
-`ip route` / `ip -f inet addr show`. A direct native `tcp:` forwarding channel
-remains the fallback for devices with no reachable address. The agent binds
+agent over the network** using the configured device IP and the dynamically
+allocated agent port. A direct native `tcp:` forwarding channel remains the
+fallback for loopback targets (emulators) and devices with no reachable network
+address. The agent binds
 `0.0.0.0`, so every command travels over TCP; the native transport is used only
 for device checks, APK installs, `am instrument`, logcat and screenshots. No
 `adb` process is spawned (I-121). The JVM-library parts (`agent-core`) are
@@ -618,9 +583,11 @@ $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 & $adb shell am instrument -w -r -e class com.impresario.agent.DriverInstrumentedTest `
   com.impresario.agent.test/androidx.test.runner.AndroidJUnitRunner
 
-# what the Rust transport starts (blocking server, no JUnit reporting)
+# what the Rust transport starts (blocking server, no JUnit reporting).
+# Replace <free-port> with a port that is free on the host and device; the
+# product allocates one per run.
 & $adb shell am instrument -w -r -e class com.impresario.agent.AgentRunner `
-  -e port 50061 com.impresario.agent.test/androidx.test.runner.AndroidJUnitRunner
+  -e port <free-port> com.impresario.agent.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `AgentRunner.serve` is an entry point, not a test: a package-wide run would
@@ -785,12 +752,8 @@ was removed).
 ```yaml
 devices:
   - name: living_room_tv
-    platform: androidtv                  # `android` for phones
-    connection:
-      transport: tcp
-      host: 10.102.93.233                # ADB-over-TCP; use serial for USB
-      port: 5555
-      # endpoint: 10.102.93.233:50061    # optional agent-address override
+    type: androidtv
+    ip: 10.102.93.233
 
 apps:
   - name: stub
@@ -801,14 +764,14 @@ apps:
       clear_data: true                   # `pm clear` before each reset
 ```
 
-- The master installs the three APKs, starts the instrumentation with
-  `-e port`, then **dials the agent over the network**: `connection.endpoint`
-  if set, else the ADB target's own host for `host:port` targets, else
-  `ip route`/`ip -f inet addr show` on the device; a direct native `tcp:`
-  forwarding channel is the fallback when the device has no reachable
-  address. All commands, checks, events and screenshots travel over that TCP
-  connection; the native ADB transport is used only for device checks,
-  installs, `am instrument`, logcat and screenshots (I-121).
+- The master installs the three APKs, starts the instrumentation with a
+  dynamically allocated `-e port`, then **dials the agent over the network**
+  using the configured device IP and that port; a direct native `tcp:`
+  forwarding channel is the fallback for loopback targets and devices with no
+  reachable network address. All commands, checks,
+  events and screenshots travel over that TCP connection; the native ADB
+  transport is used only for device checks, installs, `am instrument`, logcat
+  and screenshots (I-121).
 - Every reset policy works against any target (I-62): the agent is its own
   process, so `terminate`/`restart`/clear-data/`background` of the app under
   test never kill the agent. The E2E workspace sets `app_reset: per_play`
@@ -824,10 +787,9 @@ apps:
   covers `background`/`launch`, `restart` (counter reset) and
   `terminate`/relaunch. The agent process lived ≈ 100 s — inside the ~223 s
   freeze budget (I-68).
-- Phase 2 theatrical re-run (2026-10-20): the legacy TV workspace was migrated
-  with `impresario migrate` (table scene, generated
-  `theatres/tv_smoke.theatre`, play rewritten to `Perform:`), validated with 0
-  warnings, and run green — `run 20261020-133548-61d9: passed (1m38s, exit 0)`,
+- Phase 2 theatrical re-run (2026-10-20): the TV workspace (table scene,
+  generated `theatres/tv_smoke.theatre`, `Perform:` play) validated with 0
+  warnings and ran green — `run 20261020-133548-61d9: passed (1m38s, exit 0)`,
   2 acts, 89 steps, 0 failed, including D-pad `scrollto`, text entry,
   selection, key log and the app-control lifecycle. The initial `device check`
   failed on the TV user-profile quirk above (agent installed only for user 10);
@@ -848,11 +810,8 @@ unsupported — D-13/I-57).
 ```yaml
 devices:
   - name: pocket_phone
-    platform: android
-    connection:
-      transport: tcp
-      host: 10.102.93.196                 # wireless debugging
-      port: 40997                        # random; re-read on the phone
+    type: android
+    ip: 10.102.93.196
 
 apps:
   - name: stub
@@ -863,12 +822,11 @@ apps:
       clear_data: true
 ```
 
-- Add the device with `impresario device wizard` (route `m` for an mDNS
-  connect endpoint, or `p` for a fresh pairing code), or non-interactively
-  with `impresario device add`; `adb connect` is only a development
-  convenience and is not used by the product (I-121/I-124). Wireless-debugging
-  ports are random and rotate per session, so re-read the port on the phone
-  when the connection drops (the Phase 3 E2E used `:40997`). Verified devices:
+- Add the device with `impresario device wizard` (type and IP only), or
+  non-interactively with `impresario device add --type android --ip <ip>`;
+  `adb connect` is only a development convenience and is not used by the
+  product (I-121/I-124). The public file carries the IP; the derived ADB TCP
+  port is `5555`. Verified devices:
   Realme RMX3997, Android 16 (SDK 36), 720x1604 @ 2.0, and SM-A515F,
   Android 13 (SDK 33), 1080x2400 @ 420 dpi.
 - Touch semantics on this path: `click`/`longpress` tap the element,
@@ -910,12 +868,11 @@ apps:
   `clear_data: true` app option still relaunches the app but cannot guarantee
   empty data on this device. `run 20261019-064750-dca4` (the build with the
   I-82 fix) passed through MCP afterwards.
-- Phase 2 theatrical re-run (2026-10-20) on the same Realme: the legacy phone
-  workspace was migrated with `impresario migrate` (table scene, generated
-  `theatres/mobile_smoke.theatre`, play rewritten to `Perform:`). The migrated
-  scene declared four TV-only pieces the touch play never used, so they were
-  removed to clear `IMP-DSL-043`; it then validated with 0 warnings and ran
-  green — `run 20261020-134217-2dfe: passed (1m35s,
+- Phase 2 theatrical re-run (2026-10-20) on the same Realme: the phone
+  workspace (table scene, generated `theatres/mobile_smoke.theatre`,
+  `Perform:` play) declared four TV-only pieces the touch play never used, so
+  they were removed to clear `IMP-DSL-043`; it then validated with 0 warnings
+  and ran green — `run 20261020-134217-2dfe: passed (1m35s,
   exit 0)`, 2 acts, 86 steps, 0 failed. The expected `pm clear` denial warning
   above appeared once and the I-82 cold-start fallback kept the run green.
 - Phase 3 native-ADB re-run (2026-10-20) with `PATH` reduced to
@@ -943,9 +900,8 @@ apps:
   instrumentation; use TCP for full logcat/forwarding, or the agent log stream
   (I-121).
 - ADB-over-TCP devices are the normal path; `adb connect` is development-only
-  and not needed by the product. The master derives the agent address from
-  `connection.endpoint`, the target host or `ip route` and dials
-  `<device>:50061` directly (`options.agent_port`).
+  and not needed by the product. The master dials the dynamically allocated
+  agent port at the configured device IP.
 - USB: `libadb`/`nusb` needs a WinUSB-compatible ADB driver on Windows. USB
   discovery is implemented but not live-verified here; host logcat is skipped
   and the forwarding fallback refuses to run with instrumentation, returning
@@ -964,25 +920,20 @@ apps:
   install and native `tcp:` forwarding. On Windows, a fresh key is created by
   Impresario because of the `libadb` key-store path bug recorded as I-122.
 - `impresario device discover [--json] [--timeout SECS]` browses USB, classic
-  TCP and mDNS connect/pairing services. The wizard runs the same discovery
-  with a 5 s mDNS window and offers `m` (manual/mDNS connect), `p` (pairing
-  code), `r` (re-scan), `u` (USB serial) and numbered routes.
+  TCP and mDNS connect/pairing services. Discovery is a separate diagnostic;
+  the device file itself stays at type and IP.
 - `impresario device pair HOST:PORT --code 123456 [--json]` performs the
-  Android 11+ SPAKE2/TLS pairing. The pairing port is different from the
-  connect port: after pairing, the device shows a new wireless-debugging port
-  that must be used for `device check`/runs. The wizard asks for both.
-- `impresario device wizard [--edit NAME] [--workspace] [--no-check]` writes
-  only after the final preview; Enter accepts every default, `b` goes back
-  and `q` cancels without writing. On a phone it detects the real form factor
-  and offers to switch `android`/`androidtv` if the declaration disagrees. On
-  `tvos` it asks for the physical UDID and the XCUITest runner's LAN endpoint,
-  writes `transport: network`, rejects simulator UUIDs, and states that
-  pairing/signing/runner startup need macOS; the live check is skipped on
-  non-macOS hosts.
-- The TCP forwarding fallback was live-checked on the phone on 2026-10-20 by
-  setting `connection.endpoint` to `127.0.0.1:59999` (unreachable). After the
-  30 s network wait the transport logged the fallback, opened a native
-  `tcp:` forward and `device check pocket_phone` exited 0.
+  Android 11+ SPAKE2/TLS pairing as a separate setup step.
+- `impresario device wizard [--edit NAME] [--workspace] [--no-check]` asks for
+  the exact type, an optional name and the IP, then writes only after the
+  final preview; Enter accepts every default, `b` goes back and `q` cancels
+  without writing. On a phone it detects the real form factor and offers to
+  switch `android`/`androidtv` if the declaration disagrees. For `iOS`/`tvOS`
+  the UDID is learned from the RSD tunnel; the file still contains only type
+  and IP.
+- The device-side agent port is allocated dynamically; the host-side TCP
+  forwarding fallback is used only when the device has no reachable network
+  address.
 - `impresario device check NAME` and `impresario doctor [--json]` are the
   non-interactive diagnostics. `doctor` reports each platform as
   `ready`/`degraded`/`unavailable`/`planned`, shows the chosen rung and fix,
@@ -1108,7 +1059,7 @@ pure-Rust RemotePairing -> RSD -> AFC -> InstallationProxy pipeline; the
 personalized tvOS Developer Disk Image was mounted; the UI test started through
 a direct outer-RSD `testmanagerd`/`dtservicehub` connection.
 `AgentRunnerTests.testServe()` (the pre-rename name) passed, Impresario Agent
-accepted a real gRPC `Handshake` on `50062` (session
+accepted a real gRPC `Handshake` on the then-default `50062` (session
 `47123c1c-df6e-44b8-8efd-0043cdb3d001`, capabilities `2,3,5,7,8,9,10,11`) and
 completed `Shutdown`. The same install/start/handshake path was then repeated
 through the product `AppleTransport` with `impresario device check`.
@@ -1132,7 +1083,8 @@ short-id signing/install path is proven separately below.
 
 **2026-10-28 — actual agent, no stub.** A scratch workspace bound app `agent`
 to the real host bundle `com.impresario.agent.AgentHost-tvOS` with no package
-and pointed it at `RAMA (4)` on `192.168.93.19:50062`. The long-id signing set
+and pointed it at `RAMA (4)` on `192.168.93.19` (the historical run used port
+`50062`; current builds allocate it dynamically). The long-id signing set
 `p0test` and product set `p0test-fix` signed/installed the host and XCUITest
 runner; no stub was selected or installed. The play checked
 `agent_host_status` and took a screenshot. `run 20261028-060832-b7cc` passed
@@ -1315,11 +1267,8 @@ Master side:
 ```yaml
 devices:
   - name: rama
-    platform: tvos
-    connection:
-      transport: network
-      udid: <udid>
-      endpoint: "<apple-tv-host>:50062"
+    type: tvOS
+    ip: <apple-tv-host>
 
 apps:
   - name: stub
@@ -1357,12 +1306,15 @@ configured name: pairing, RSD/UDID, DDI state/assets, signing identity and the
 host/runner/nested profiles. It never mounts a DDI or installs anything. Use
 `impresario apple doctor --host <host>` for the Apple-specific report.
 
-Endpoint resolution: `connection.udid` is required. The host comes from
-`connection.host`, else the host part of `connection.endpoint`; the port comes
-from `options.agent_port`, else the endpoint port, else `50062`. The transport
-passes that port to the UI test as `IMPRESARIO_AGENT_PORT`, so both sides always
-agree. The pure-Rust path reaches devices over the network (RemotePairing on
-`_remotepairing._tcp:49152`); a USB-only iPhone is not supported yet. iOS/tvOS
+Endpoint resolution: the device `ip` is the LAN host. Pairing is looked up by
+that host, and a single UDID-keyed pairing is used as a fallback when only one
+record is stored; with several records, import the intended one under the host
+(`impresario apple import-pair <plist> --save <host>`) or remove stale records.
+The UDID is learned from the RSD tunnel, and the agent port is allocated
+dynamically and passed to the UI test as `IMPRESARIO_AGENT_PORT`, so both sides
+always agree. The pure-Rust path reaches devices over the network
+(RemotePairing on `_remotepairing._tcp:49152`); a USB-only iPhone is not
+supported yet. iOS/tvOS
 **simulators are rejected** because the Rust path cannot drive them and D-19
 forbids the host tools that could. Physical iOS over WLAN would use the same
 path but is not hardware-verified.
@@ -1449,8 +1401,9 @@ The native USB implementation exists but this host only had TCP reachability.
 
 1. On Windows, bind the phone/TV ADB interface to WinUSB (the device must
    expose an ADB USB interface; a charge-only cable is not enough).
-2. Define the device with `connection.transport: usb` and `serial: <usb
-   serial>` (no host/port).
+2. USB is not exposed by the 1.0 public schema (type + IP only); the native
+   USB implementation remains an internal path for future work. Use the
+   device's TCP address for a run.
 3. Run `impresario device check`, then the full phone/TV smoke play with the
    USB device and record `doctor --json`.
 4. Launch the stub media scenario and run playback probes:

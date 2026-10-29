@@ -10,7 +10,7 @@ use impresario_language::service::{DocumentSymbol, Language};
 use impresario_language::text::Position;
 
 const SCENE: &str = r#"Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
 | Piece | web | android |
 |---|---|---|
@@ -473,12 +473,12 @@ fn duplicate_declarations_are_reported_on_every_occurrence() {
     let files = vec![
         SourceFile {
             path: PathBuf::from("a.scene"),
-            text: "Scene: Same\nPlatform: cross-platform\n\nPieces:\n    One: web=\"#a\"\n"
+            text: "Scene: Same\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| One | #a |\n"
                 .to_string(),
         },
         SourceFile {
             path: PathBuf::from("b.scene"),
-            text: "Scene: Same\nPlatform: cross-platform\n\nPieces:\n    One: web=\"#b\"\n"
+            text: "Scene: Same\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| One | #b |\n"
                 .to_string(),
         },
     ];

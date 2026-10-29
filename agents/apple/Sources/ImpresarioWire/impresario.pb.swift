@@ -450,6 +450,30 @@ public nonisolated enum Impresario_V1_RemoteKey: SwiftProtobuf.Enum, Swift.CaseI
   case keyYellow // = 17
   case keyBlue // = 18
   case keyBackspace // = 19
+  case keyNum0 // = 20
+  case keyNum1 // = 21
+  case keyNum2 // = 22
+  case keyNum3 // = 23
+  case keyNum4 // = 24
+  case keyNum5 // = 25
+  case keyNum6 // = 26
+  case keyNum7 // = 27
+  case keyNum8 // = 28
+  case keyNum9 // = 29
+  case keyVolumeup // = 30
+  case keyVolumedown // = 31
+  case keyMute // = 32
+  case keyChannelup // = 33
+  case keyChanneldown // = 34
+  case keyStop // = 35
+  case keyRecord // = 36
+  case keyInfo // = 37
+  case keyGuide // = 38
+  case keyExit // = 39
+  case keySubtitle // = 40
+  case keyAudio // = 41
+  case keySearch // = 42
+  case keySettings // = 43
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -478,6 +502,30 @@ public nonisolated enum Impresario_V1_RemoteKey: SwiftProtobuf.Enum, Swift.CaseI
     case 17: self = .keyYellow
     case 18: self = .keyBlue
     case 19: self = .keyBackspace
+    case 20: self = .keyNum0
+    case 21: self = .keyNum1
+    case 22: self = .keyNum2
+    case 23: self = .keyNum3
+    case 24: self = .keyNum4
+    case 25: self = .keyNum5
+    case 26: self = .keyNum6
+    case 27: self = .keyNum7
+    case 28: self = .keyNum8
+    case 29: self = .keyNum9
+    case 30: self = .keyVolumeup
+    case 31: self = .keyVolumedown
+    case 32: self = .keyMute
+    case 33: self = .keyChannelup
+    case 34: self = .keyChanneldown
+    case 35: self = .keyStop
+    case 36: self = .keyRecord
+    case 37: self = .keyInfo
+    case 38: self = .keyGuide
+    case 39: self = .keyExit
+    case 40: self = .keySubtitle
+    case 41: self = .keyAudio
+    case 42: self = .keySearch
+    case 43: self = .keySettings
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -504,6 +552,30 @@ public nonisolated enum Impresario_V1_RemoteKey: SwiftProtobuf.Enum, Swift.CaseI
     case .keyYellow: return 17
     case .keyBlue: return 18
     case .keyBackspace: return 19
+    case .keyNum0: return 20
+    case .keyNum1: return 21
+    case .keyNum2: return 22
+    case .keyNum3: return 23
+    case .keyNum4: return 24
+    case .keyNum5: return 25
+    case .keyNum6: return 26
+    case .keyNum7: return 27
+    case .keyNum8: return 28
+    case .keyNum9: return 29
+    case .keyVolumeup: return 30
+    case .keyVolumedown: return 31
+    case .keyMute: return 32
+    case .keyChannelup: return 33
+    case .keyChanneldown: return 34
+    case .keyStop: return 35
+    case .keyRecord: return 36
+    case .keyInfo: return 37
+    case .keyGuide: return 38
+    case .keyExit: return 39
+    case .keySubtitle: return 40
+    case .keyAudio: return 41
+    case .keySearch: return 42
+    case .keySettings: return 43
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -530,6 +602,30 @@ public nonisolated enum Impresario_V1_RemoteKey: SwiftProtobuf.Enum, Swift.CaseI
     .keyYellow,
     .keyBlue,
     .keyBackspace,
+    .keyNum0,
+    .keyNum1,
+    .keyNum2,
+    .keyNum3,
+    .keyNum4,
+    .keyNum5,
+    .keyNum6,
+    .keyNum7,
+    .keyNum8,
+    .keyNum9,
+    .keyVolumeup,
+    .keyVolumedown,
+    .keyMute,
+    .keyChannelup,
+    .keyChanneldown,
+    .keyStop,
+    .keyRecord,
+    .keyInfo,
+    .keyGuide,
+    .keyExit,
+    .keySubtitle,
+    .keyAudio,
+    .keySearch,
+    .keySettings,
   ]
 
 }
@@ -1639,7 +1735,7 @@ nonisolated extension Impresario_V1_CheckKind: SwiftProtobuf._ProtoNameProviding
 }
 
 nonisolated extension Impresario_V1_RemoteKey: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REMOTE_KEY_UNSPECIFIED\0\u{1}KEY_OK\0\u{1}KEY_ENTER\0\u{1}KEY_BACK\0\u{1}KEY_UP\0\u{1}KEY_DOWN\0\u{1}KEY_LEFT\0\u{1}KEY_RIGHT\0\u{1}KEY_HOME\0\u{1}KEY_MENU\0\u{1}KEY_PLAY\0\u{1}KEY_PAUSE\0\u{1}KEY_PLAYPAUSE\0\u{1}KEY_REWIND\0\u{1}KEY_FASTFORWARD\0\u{1}KEY_RED\0\u{1}KEY_GREEN\0\u{1}KEY_YELLOW\0\u{1}KEY_BLUE\0\u{1}KEY_BACKSPACE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REMOTE_KEY_UNSPECIFIED\0\u{1}KEY_OK\0\u{1}KEY_ENTER\0\u{1}KEY_BACK\0\u{1}KEY_UP\0\u{1}KEY_DOWN\0\u{1}KEY_LEFT\0\u{1}KEY_RIGHT\0\u{1}KEY_HOME\0\u{1}KEY_MENU\0\u{1}KEY_PLAY\0\u{1}KEY_PAUSE\0\u{1}KEY_PLAYPAUSE\0\u{1}KEY_REWIND\0\u{1}KEY_FASTFORWARD\0\u{1}KEY_RED\0\u{1}KEY_GREEN\0\u{1}KEY_YELLOW\0\u{1}KEY_BLUE\0\u{1}KEY_BACKSPACE\0\u{1}KEY_NUM0\0\u{1}KEY_NUM1\0\u{1}KEY_NUM2\0\u{1}KEY_NUM3\0\u{1}KEY_NUM4\0\u{1}KEY_NUM5\0\u{1}KEY_NUM6\0\u{1}KEY_NUM7\0\u{1}KEY_NUM8\0\u{1}KEY_NUM9\0\u{1}KEY_VOLUMEUP\0\u{1}KEY_VOLUMEDOWN\0\u{1}KEY_MUTE\0\u{1}KEY_CHANNELUP\0\u{1}KEY_CHANNELDOWN\0\u{1}KEY_STOP\0\u{1}KEY_RECORD\0\u{1}KEY_INFO\0\u{1}KEY_GUIDE\0\u{1}KEY_EXIT\0\u{1}KEY_SUBTITLE\0\u{1}KEY_AUDIO\0\u{1}KEY_SEARCH\0\u{1}KEY_SETTINGS\0")
 }
 
 nonisolated extension Impresario_V1_AppOp: SwiftProtobuf._ProtoNameProviding {

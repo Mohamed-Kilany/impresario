@@ -18,7 +18,7 @@ class AgentServiceImplTest {
         val response = state.handshake(
             HandshakeRequest.newBuilder()
                 .setProtocolVersion("1.0.0")
-                .setMasterVersion("0.1.0")
+                .setMasterVersion("1.0.0")
                 .setDeviceName("device")
                 .setPlatform(Platform.ANDROID)
                 .setAppId("com.example.app")

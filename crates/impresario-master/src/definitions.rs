@@ -1,5 +1,4 @@
-//! Device and app definition commands (TASK-2 sections 4.3 and 5) plus the
-//! one-shot legacy migration (section 8.9, config part).
+//! Device and app definition commands (TASK-2 sections 4.3 and 5).
 //!
 //! Pure appends are written as text so comments in the existing file survive;
 //! other edits round-trip the typed list. Every candidate file is parsed again
@@ -10,14 +9,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use impresario_core::apps::{self, AppConfig, AppOptions, AppPlatform, AppsConfig};
-use impresario_core::config::{
-    self, CdpBackend, DeviceAuth, DeviceConfig, DeviceConnection, DeviceOptions, DevicesConfig,
-    KeyDispatch, TransportKind,
-};
+use impresario_core::config::{self, DeviceConfig, DevicesConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::home::Home;
-use impresario_core::platforms::Platform;
-use serde_yaml_ng::Value;
+use impresario_core::platforms::{DeviceType, Platform};
 
 use crate::cli::{EXIT_OK, EXIT_USAGE};
 
@@ -105,56 +100,15 @@ pub enum DeviceCommand {
 
 #[derive(Debug, Args)]
 pub struct DeviceAddArgs {
-    /// Device name (^[a-z0-9][a-z0-9_-]{0,62}$).
+    /// Optional device label (^[a-z0-9][a-z0-9_-]{0,62}$). Derived from type+IP when omitted.
     #[arg(long)]
-    pub name: String,
-    /// web, webos, tizen, android, androidtv, ios or tvos.
+    pub name: Option<String>,
+    /// Exact device type: web, webOS, tizenOS, android, androidtv, iOS or tvOS.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub device_type: String,
+    /// Device IPv4 or IPv6 address (127.0.0.1 for the local web).
     #[arg(long)]
-    pub platform: String,
-    /// auto, usb, tcp, network, cdp, launch, ssh or sdb.
-    #[arg(long, default_value = "auto")]
-    pub transport: String,
-    #[arg(long)]
-    pub host: Option<String>,
-    #[arg(long)]
-    pub port: Option<u16>,
-    #[arg(long)]
-    pub serial: Option<String>,
-    #[arg(long)]
-    pub udid: Option<String>,
-    /// Device endpoint (CDP URL or agent host:port override).
-    #[arg(long)]
-    pub endpoint: Option<String>,
-    /// Label (repeatable).
-    #[arg(long = "label")]
-    pub labels: Vec<String>,
-    /// Credential reference (for example `keychain:android`).
-    #[arg(long)]
-    pub key: Option<String>,
-    /// Signing identity reference (Apple).
-    #[arg(long)]
-    pub identity: Option<String>,
-    /// Certificate profile reference (Tizen/Apple).
-    #[arg(long)]
-    pub profile: Option<String>,
-    /// Device agent port override.
-    #[arg(long)]
-    pub agent_port: Option<u16>,
-    /// Connector listen address for web runtimes (host:port).
-    #[arg(long)]
-    pub connector_address: Option<String>,
-    /// Web CDP backend: raw or chromiumoxide.
-    #[arg(long, default_value = "raw", value_name = "BACKEND")]
-    pub cdp_backend: String,
-    /// Web key dispatch: cdp or js.
-    #[arg(long, default_value = "cdp", value_name = "DISPATCH")]
-    pub key_dispatch: String,
-    /// Web page title/URL substring used to pick the CDP page.
-    #[arg(long)]
-    pub page_match: Option<String>,
-    /// Launch Apple apps with reduced-motion arguments.
-    #[arg(long)]
-    pub animations_disabled: bool,
+    pub ip: String,
     #[command(flatten)]
     pub scope: DefinitionScope,
 }
@@ -221,13 +175,6 @@ pub struct AppAddArgs {
     pub scope: DefinitionScope,
 }
 
-#[derive(Debug, Args)]
-pub struct MigrateArgs {
-    /// Print the converted files without writing anything.
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
 // ---------------------------------------------------------------------------
 // Device commands
 // ---------------------------------------------------------------------------
@@ -269,68 +216,30 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
 }
 
 fn add_device(args: &DeviceAddArgs, home: &Home, workspace_path: &Path, replace: bool) -> i32 {
-    let platform = match args.platform.parse::<Platform>() {
-        Ok(platform) => platform,
+    let device_type = match args.device_type.parse::<DeviceType>() {
+        Ok(device_type) => device_type,
         Err(()) => {
             eprintln!(
-                "device add: unknown platform '{}'; expected web, webos, tizen, android, androidtv, ios or tvos",
-                args.platform
+                "device add: unknown type '{}'; expected web, webOS, tizenOS, android, androidtv, iOS or tvOS",
+                args.device_type
             );
             return EXIT_USAGE;
         }
     };
-    let transport = match parse_transport(&args.transport) {
-        Some(transport) => transport,
-        None => {
-            eprintln!(
-                "device add: unknown transport '{}'; expected auto, usb, tcp, network, cdp, launch, ssh or sdb",
-                args.transport
-            );
+    let ip = match args.ip.trim().parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.to_string(),
+        Err(_) => {
+            eprintln!("device add: '{}' is not an IPv4 or IPv6 address", args.ip);
             return EXIT_USAGE;
         }
     };
-    let cdp_backend = match args.cdp_backend.as_str() {
-        "raw" => CdpBackend::Raw,
-        "chromiumoxide" => CdpBackend::Chromiumoxide,
-        other => {
-            eprintln!("device add: unknown cdp backend '{other}'; expected raw or chromiumoxide");
-            return EXIT_USAGE;
-        }
-    };
-    let key_dispatch = match args.key_dispatch.as_str() {
-        "cdp" => KeyDispatch::Cdp,
-        "js" => KeyDispatch::Js,
-        other => {
-            eprintln!("device add: unknown key dispatch '{other}'; expected cdp or js");
-            return EXIT_USAGE;
-        }
-    };
-    let device = DeviceConfig {
-        name: args.name.clone(),
-        platform,
-        connection: DeviceConnection {
-            transport,
-            host: args.host.clone(),
-            port: args.port,
-            serial: args.serial.clone(),
-            udid: args.udid.clone(),
-            endpoint: args.endpoint.clone(),
-        },
-        auth: DeviceAuth {
-            key: args.key.clone(),
-            identity: args.identity.clone(),
-            profile: args.profile.clone(),
-        },
-        labels: args.labels.clone(),
-        options: DeviceOptions {
-            cdp_backend,
-            key_dispatch,
-            page_match: args.page_match.clone(),
-            connector_address: args.connector_address.clone(),
-            agent_port: args.agent_port,
-            animations_disabled: args.animations_disabled,
-        },
-    };
+    let platform = device_type.platform();
+    let name = args
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("{}-{}", device_type.slug(), ip.replace([':', '.'], "-")));
+    let mut device = DeviceConfig::new(name, platform, ip);
+    device.device_type = device_type;
     let path = layer_path(home, workspace_path, !args.scope.workspace, true);
     match mutate_devices(&path, |source| {
         let outcome = config::parse_devices(source, &path);
@@ -528,7 +437,7 @@ fn list_devices(home: &Home, workspace_path: &Path, json: bool) -> i32 {
     let workspace_names = device_names(workspace_path);
     println!(
         "{:<20} {:<10} {:<8} {:<10} CONNECTION",
-        "NAME", "PLATFORM", "TRANSPORT", "ORIGIN"
+        "NAME", "TYPE", "TRANSPORT", "ORIGIN"
     );
     for device in &devices.devices {
         let origin = if overrides.contains(&device.name) {
@@ -543,7 +452,7 @@ fn list_devices(home: &Home, workspace_path: &Path, json: bool) -> i32 {
         println!(
             "{:<20} {:<10} {:<8} {:<8} {}",
             device.name,
-            device.platform.as_str(),
+            device.device_type.as_str(),
             device.effective_transport().as_str(),
             origin,
             device.connection_summary()
@@ -1103,575 +1012,8 @@ fn export_apps(home: &Home, workspace_path: &Path, global: bool, merged: bool) -
 }
 
 // ---------------------------------------------------------------------------
-// Migration
-// ---------------------------------------------------------------------------
-
-/// Migrate both the device/app definitions and the DSL files.
-pub fn migrate(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
-    let definitions = migrate_definitions(base, dry_run);
-    if definitions != EXIT_OK {
-        return definitions;
-    }
-    migrate_dsl(base, config_path, dry_run)
-}
-
-fn migrate_definitions(base: &Path, dry_run: bool) -> i32 {
-    let devices_path = base.join("impresario.devices.config");
-    let apps_path = base.join("impresario.apps.config");
-    let source = match std::fs::read_to_string(&devices_path) {
-        Ok(source) => source,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            println!(
-                "migrate: {} does not exist; skipping device/app migration",
-                devices_path.display()
-            );
-            return EXIT_OK;
-        }
-        Err(err) => {
-            eprintln!("migrate: cannot read {}: {err}", devices_path.display());
-            return EXIT_USAGE;
-        }
-    };
-    let value = match serde_yaml_ng::from_str::<Value>(&source) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("migrate: invalid YAML in {}: {err}", devices_path.display());
-            return EXIT_USAGE;
-        }
-    };
-    let Some(devices) = value.get("devices").and_then(Value::as_sequence) else {
-        eprintln!("migrate: {} has no 'devices' list", devices_path.display());
-        return EXIT_USAGE;
-    };
-    let legacy_count = devices
-        .iter()
-        .filter(|device| device.get("target_endpoint").is_some())
-        .count();
-    if legacy_count == 0 {
-        println!("migrate: devices are already in the device/app split; nothing to do");
-        return EXIT_OK;
-    }
-    if legacy_count != devices.len() {
-        eprintln!(
-            "migrate: {} mixes legacy and new device entries; convert or remove the new ones first",
-            devices_path.display()
-        );
-        return EXIT_USAGE;
-    }
-
-    let mut new_devices: Vec<DeviceConfig> = Vec::new();
-    let mut new_apps: Vec<AppConfig> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    for device in devices {
-        let legacy_name = device.get("name").and_then(Value::as_str).unwrap_or("?");
-        let legacy_platform = device
-            .get("platform")
-            .and_then(Value::as_str)
-            .unwrap_or("?");
-        let legacy_app_url = device.get("app_url").and_then(Value::as_str);
-        let legacy_app_path = device
-            .get("options")
-            .and_then(Value::as_mapping)
-            .and_then(|options| options.get("app_path"))
-            .and_then(Value::as_str);
-        let legacy_clear_data = device
-            .get("options")
-            .and_then(Value::as_mapping)
-            .and_then(|options| options.get("clear_app_data"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        match migrate_device(device) {
-            Ok((device, app)) => {
-                if legacy_app_url.is_some() && app.is_none() {
-                    warnings.push(format!(
-                        "device '{legacy_name}' ({legacy_platform}) had app_url but no app_id; \
-                         the URL was not migrated because only the web platform stores a URL"
-                    ));
-                }
-                if legacy_app_path.is_some()
-                    && !matches!(device.platform, Platform::Ios | Platform::Tvos)
-                {
-                    warnings.push(format!(
-                        "device '{legacy_name}' ({legacy_platform}) had app_path; \
-                         it was dropped because packages are only meaningful for ios/tvos"
-                    ));
-                }
-                if legacy_clear_data && app.is_none() {
-                    warnings.push(format!(
-                        "device '{legacy_name}' ({legacy_platform}) had clear_app_data but no \
-                         app_id/app_url; the reset flag was not migrated because there is no app \
-                         to attach it to"
-                    ));
-                }
-                new_devices.push(device);
-                if let Some(app) = app {
-                    new_apps.push(app);
-                }
-            }
-            Err(message) => {
-                eprintln!("migrate: {message}");
-                return EXIT_USAGE;
-            }
-        }
-    }
-    let devices_yaml = match serde_yaml_ng::to_string(&DevicesConfig {
-        devices: new_devices,
-        groups: std::collections::BTreeMap::new(),
-    }) {
-        Ok(text) => text,
-        Err(err) => {
-            eprintln!("migrate: cannot render devices: {err}");
-            return EXIT_USAGE;
-        }
-    };
-    let migrated_app_count = new_apps.len();
-    let apps_yaml = match serde_yaml_ng::to_string(&AppsConfig {
-        apps: new_apps.clone(),
-    }) {
-        Ok(text) => text,
-        Err(err) => {
-            eprintln!("migrate: cannot render apps: {err}");
-            return EXIT_USAGE;
-        }
-    };
-
-    for warning in &warnings {
-        eprintln!("migrate: warning: {warning}");
-    }
-    if dry_run {
-        println!("# {}", devices_path.display());
-        print!("{devices_yaml}");
-        if migrated_app_count > 0 {
-            println!("# {}", apps_path.display());
-            print!("{apps_yaml}");
-        }
-        return EXIT_OK;
-    }
-
-    if let Err(err) = std::fs::write(format!("{}.bak", devices_path.display()), &source) {
-        eprintln!("migrate: cannot write the backup: {err}");
-        return EXIT_USAGE;
-    }
-    if apps_path.exists() {
-        if let Ok(existing) = std::fs::read(&apps_path) {
-            let _ = std::fs::write(format!("{}.bak", apps_path.display()), existing);
-        }
-    }
-    if let Err(err) = std::fs::write(&devices_path, &devices_yaml) {
-        eprintln!("migrate: cannot write {}: {err}", devices_path.display());
-        return EXIT_USAGE;
-    }
-    let existing_apps = std::fs::read_to_string(&apps_path)
-        .ok()
-        .and_then(|source| apps::parse_apps(&source, &apps_path).config)
-        .unwrap_or(AppsConfig { apps: Vec::new() });
-    let mut merged = existing_apps;
-    for app in new_apps {
-        let mut name = app.name.clone();
-        let mut suffix = 2u32;
-        while merged.apps.iter().any(|item| item.name == name) {
-            name = format!("{}_{suffix}", app.name);
-            suffix += 1;
-        }
-        let mut app = app;
-        app.name = name;
-        merged.apps.push(app);
-    }
-    if migrated_app_count > 0 {
-        match serde_yaml_ng::to_string(&merged) {
-            Ok(text) => {
-                if let Err(err) = std::fs::write(&apps_path, text) {
-                    eprintln!("migrate: cannot write {}: {err}", apps_path.display());
-                    return EXIT_USAGE;
-                }
-            }
-            Err(err) => {
-                eprintln!("migrate: cannot render merged apps: {err}");
-                return EXIT_USAGE;
-            }
-        }
-    }
-    println!(
-        "migrate: converted {} device(s) and {} app(s); backup at {}.bak",
-        devices.len(),
-        migrated_app_count,
-        devices_path.display()
-    );
-    if migrated_app_count > 0 {
-        println!(
-            "migrate: apps written to {}; declare `App: <name>` in each play or pass --app",
-            apps_path.display()
-        );
-    }
-    for warning in &warnings {
-        eprintln!("migrate: warning: {warning}");
-    }
-    EXIT_OK
-}
-
-/// Devices to use while migrating actors. A dry-run has not written the
-/// device/app split yet, so the legacy file is converted in memory instead of
-/// being rejected. A real run normally sees the already-migrated file.
-fn migration_devices(base: &Path) -> Result<Vec<DeviceConfig>, i32> {
-    let path = base.join("impresario.devices.config");
-    let outcome = config::load_devices_merged(&path);
-    if !outcome.diagnostics.has_errors() {
-        return Ok(outcome
-            .config
-            .map(|config| config.devices)
-            .unwrap_or_default());
-    }
-    let source = match std::fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(_) => {
-            crate::render::eprint_all(&outcome.diagnostics);
-            eprintln!("migrate: fix the devices configuration before migrating actors");
-            return Err(EXIT_USAGE);
-        }
-    };
-    let value = match serde_yaml_ng::from_str::<Value>(&source) {
-        Ok(value) => value,
-        Err(_) => {
-            crate::render::eprint_all(&outcome.diagnostics);
-            eprintln!("migrate: fix the devices configuration before migrating actors");
-            return Err(EXIT_USAGE);
-        }
-    };
-    let Some(devices) = value.get("devices").and_then(Value::as_sequence) else {
-        crate::render::eprint_all(&outcome.diagnostics);
-        eprintln!("migrate: fix the devices configuration before migrating actors");
-        return Err(EXIT_USAGE);
-    };
-    if devices.is_empty()
-        || !devices
-            .iter()
-            .all(|device| device.get("target_endpoint").is_some())
-    {
-        crate::render::eprint_all(&outcome.diagnostics);
-        eprintln!("migrate: fix the devices configuration before migrating actors");
-        return Err(EXIT_USAGE);
-    }
-    let mut migrated = Vec::with_capacity(devices.len());
-    for device in devices {
-        match migrate_device(device) {
-            Ok((device, _app)) => migrated.push(device),
-            Err(message) => {
-                eprintln!("migrate: {message}");
-                return Err(EXIT_USAGE);
-            }
-        }
-    }
-    Ok(migrated)
-}
-
-fn migrate_dsl(base: &Path, config_path: &Path, dry_run: bool) -> i32 {
-    let cfg_outcome = crate::cli::load_effective_config(base, config_path);
-    if cfg_outcome.diagnostics.has_errors() {
-        crate::render::eprint_all(&cfg_outcome.diagnostics);
-        return EXIT_USAGE;
-    }
-    let Some(cfg) = cfg_outcome.config else {
-        eprintln!("migrate: cannot load configuration");
-        return EXIT_USAGE;
-    };
-    let scenes_dir = base.join(&cfg.scenes_dir);
-    let theatres_dir = base.join(&cfg.theatres_dir);
-    let plays_dir = base.join(&cfg.plays_dir);
-    let loaded = impresario_core::workspace::load_dirs(&scenes_dir, &theatres_dir, &plays_dir);
-    if loaded.diagnostics.has_errors() {
-        crate::render::eprint_all(&loaded.diagnostics);
-        eprintln!("migrate: fix the DSL errors above first");
-        return EXIT_USAGE;
-    }
-    let devices = match migration_devices(base) {
-        Ok(devices) => devices,
-        Err(code) => return code,
-    };
-    let migration = impresario_core::migrate::migrate(&loaded.workspace, &theatres_dir, &devices);
-    if migration.errors.has_errors() {
-        crate::render::eprint_all(&migration.errors);
-        eprintln!("migrate: generated DSL did not validate; nothing was written");
-        return EXIT_USAGE;
-    }
-    for warning in &migration.warnings {
-        eprintln!("migrate: warning: {warning}");
-    }
-    if migration.is_empty() {
-        println!("migrate: DSL files are already in the theatre/play format");
-        return EXIT_OK;
-    }
-    if dry_run {
-        for file in &migration.files {
-            println!(
-                "# {} ({})",
-                file.path.display(),
-                if file.created { "new" } else { "rewritten" }
-            );
-            print!("{}", file.contents);
-            if !file.contents.ends_with('\n') {
-                println!();
-            }
-            println!();
-        }
-        return EXIT_OK;
-    }
-
-    for file in &migration.files {
-        if let Some(parent) = file.path.parent() {
-            if let Err(err) = std::fs::create_dir_all(parent) {
-                eprintln!("migrate: cannot create {}: {err}", parent.display());
-                return EXIT_USAGE;
-            }
-        }
-        if !file.created {
-            match std::fs::read(&file.path) {
-                Ok(original) => {
-                    let backup = PathBuf::from(format!("{}.bak", file.path.display()));
-                    if let Err(err) = std::fs::write(&backup, original) {
-                        eprintln!("migrate: cannot write {}: {err}", backup.display());
-                        return EXIT_USAGE;
-                    }
-                }
-                Err(err) => {
-                    eprintln!("migrate: cannot read {}: {err}", file.path.display());
-                    return EXIT_USAGE;
-                }
-            }
-        }
-        if let Err(err) = std::fs::write(&file.path, &file.contents) {
-            eprintln!("migrate: cannot write {}: {err}", file.path.display());
-            return EXIT_USAGE;
-        }
-    }
-    let created = migration.files.iter().filter(|file| file.created).count();
-    println!(
-        "migrate: converted {} DSL file(s) ({} new); backups use .bak",
-        migration.files.len(),
-        created
-    );
-    EXIT_OK
-}
-
-fn migrate_device(value: &Value) -> Result<(DeviceConfig, Option<AppConfig>), String> {
-    let map = value
-        .as_mapping()
-        .ok_or_else(|| "each device must be a mapping".to_string())?;
-    let name = map
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "a legacy device has no name".to_string())?
-        .to_string();
-    if !config::valid_device_name(&name) {
-        return Err(format!("invalid device name '{name}'"));
-    }
-    let platform = map
-        .get("platform")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("device '{name}' has no platform"))?
-        .parse::<Platform>()
-        .map_err(|()| format!("device '{name}' has an unknown platform"))?;
-    let target = map
-        .get("target_endpoint")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("device '{name}' has no target_endpoint"))?
-        .to_string();
-    let app_id = map
-        .get("app_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let app_url = map
-        .get("app_url")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let agent_address = map
-        .get("agent_address")
-        .or_else(|| map.get("connector"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let options = map.get("options").and_then(Value::as_mapping);
-
-    let mut connection = DeviceConnection::default();
-    match platform {
-        Platform::Web => {
-            if target == "launch" || target == "launch:headless" {
-                connection.transport = TransportKind::Launch;
-                if target == "launch:headless" {
-                    connection.endpoint = Some(target.clone());
-                }
-            } else {
-                connection.transport = TransportKind::Cdp;
-                connection.endpoint = Some(target.clone());
-            }
-        }
-        Platform::WebOs | Platform::Tizen => {
-            connection.transport = if platform == Platform::WebOs {
-                TransportKind::Ssh
-            } else {
-                TransportKind::Sdb
-            };
-            connection.host = Some(url_host(&target).ok_or_else(|| {
-                format!("device '{name}': target_endpoint '{target}' is not a ws://host:port URL")
-            })?);
-            connection.endpoint = Some(target.clone());
-        }
-        Platform::Android | Platform::AndroidTv => {
-            if let Some((host, port)) = target.rsplit_once(':') {
-                if !host.is_empty() && port.parse::<u16>().is_ok() {
-                    connection.transport = TransportKind::Tcp;
-                    connection.host = Some(host.to_string());
-                    connection.port = port.parse().ok();
-                } else {
-                    connection.transport = TransportKind::Usb;
-                    connection.serial = Some(target.clone());
-                }
-            } else {
-                connection.transport = TransportKind::Usb;
-                connection.serial = Some(target.clone());
-            }
-        }
-        Platform::Ios | Platform::Tvos => {
-            connection.udid = Some(target.clone());
-            connection.transport = if agent_address.is_some() {
-                TransportKind::Network
-            } else {
-                TransportKind::Usb
-            };
-            if platform == Platform::Tvos || agent_address.is_some() {
-                connection.endpoint = agent_address.clone();
-            }
-        }
-    }
-
-    let mut device_options = DeviceOptions::default();
-    let mut clear_data = false;
-    let mut app_path = None;
-    if let Some(options) = options {
-        if let Some(value) = options.get("cdp_backend").and_then(Value::as_str) {
-            device_options.cdp_backend = if value == "chromiumoxide" {
-                CdpBackend::Chromiumoxide
-            } else {
-                CdpBackend::Raw
-            };
-        }
-        if let Some(value) = options.get("key_dispatch").and_then(Value::as_str) {
-            device_options.key_dispatch = if value == "js" {
-                KeyDispatch::Js
-            } else {
-                KeyDispatch::Cdp
-            };
-        }
-        device_options.page_match = options
-            .get("page_match")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        device_options.agent_port = options
-            .get("agent_port")
-            .and_then(Value::as_u64)
-            .and_then(|port| u16::try_from(port).ok());
-        device_options.animations_disabled = options
-            .get("animations_disabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        clear_data = options
-            .get("clear_app_data")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        app_path = options
-            .get("app_path")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-    }
-    if matches!(platform, Platform::Web | Platform::WebOs | Platform::Tizen) {
-        device_options.connector_address = agent_address;
-    }
-
-    let app = migrate_app(&name, platform, app_id, app_url, clear_data, app_path);
-    Ok((
-        DeviceConfig {
-            name,
-            platform,
-            connection,
-            auth: DeviceAuth::default(),
-            labels: Vec::new(),
-            options: device_options,
-        },
-        app,
-    ))
-}
-
-fn migrate_app(
-    device_name: &str,
-    platform: Platform,
-    app_id: Option<String>,
-    app_url: Option<String>,
-    clear_data: bool,
-    app_path: Option<String>,
-) -> Option<AppConfig> {
-    let entry = AppPlatform {
-        id: if platform == Platform::Web {
-            None
-        } else {
-            app_id
-        },
-        package: if matches!(platform, Platform::Ios | Platform::Tvos) {
-            app_path
-        } else {
-            None
-        },
-        launch_activity: None,
-        url: if platform == Platform::Web {
-            app_url
-        } else {
-            None
-        },
-    };
-    if platform == Platform::Web && entry.url.is_none() {
-        return None;
-    }
-    if platform != Platform::Web && entry.id.is_none() {
-        return None;
-    }
-    let mut platforms = BTreeMap::new();
-    platforms.insert(platform, entry);
-    Some(AppConfig {
-        name: format!("{device_name}_app"),
-        description: Some(format!("Migrated from device '{device_name}'")),
-        platforms,
-        options: AppOptions {
-            clear_data,
-            launch_params: BTreeMap::new(),
-        },
-    })
-}
-
-fn url_host(endpoint: &str) -> Option<String> {
-    let rest = endpoint
-        .strip_prefix("ws://")
-        .or_else(|| endpoint.strip_prefix("wss://"))?;
-    let authority = rest.split('/').next()?;
-    let host = authority
-        .rsplit_once(':')
-        .map_or(authority, |(host, _)| host);
-    (!host.is_empty()).then(|| host.to_string())
-}
-
-// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-fn parse_transport(text: &str) -> Option<TransportKind> {
-    Some(match text {
-        "auto" => TransportKind::Auto,
-        "usb" => TransportKind::Usb,
-        "tcp" => TransportKind::Tcp,
-        "network" => TransportKind::Network,
-        "cdp" => TransportKind::Cdp,
-        "launch" => TransportKind::Launch,
-        "ssh" => TransportKind::Ssh,
-        "sdb" => TransportKind::Sdb,
-        _ => return None,
-    })
-}
 
 fn layer_path(home: &Home, workspace_path: &Path, global: bool, devices: bool) -> PathBuf {
     if global {

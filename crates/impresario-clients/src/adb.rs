@@ -82,18 +82,14 @@ impl AdbTarget {
                         device.name
                     )));
                 }
-                let host = device
-                    .connection
-                    .host
-                    .clone()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        AdbError::Unsupported(format!(
-                            "device '{}' has no connection.host or connection.serial",
-                            device.name
-                        ))
-                    })?;
-                let port = device.connection.port.unwrap_or(DEFAULT_TCP_PORT);
+                let host = device.host().to_string();
+                if host.trim().is_empty() {
+                    return Err(AdbError::Unsupported(format!(
+                        "device '{}' has no IP",
+                        device.name
+                    )));
+                }
+                let port = device.protocol_port().unwrap_or(DEFAULT_TCP_PORT);
                 Ok(Self::Tcp { host, port })
             }
             other => Err(AdbError::Unsupported(format!(
@@ -541,11 +537,6 @@ impl AdbClient {
         Ok(output.stdout_text().trim().to_string())
     }
 
-    /// `ip route` output, used by the agent-endpoint discovery and doctor.
-    pub async fn ip_route(&self) -> Result<String, AdbError> {
-        Ok(self.exec_checked("ip route").await?.stdout_text())
-    }
-
     /// PNG screenshot bytes from `screencap -p` (device-side, no adb binary).
     pub async fn screencap(&self) -> Result<Vec<u8>, AdbError> {
         let output = self
@@ -564,22 +555,6 @@ impl AdbClient {
             ));
         }
         Ok(output.stdout)
-    }
-
-    /// Device IP address suitable for the agent endpoint, from `ip route`
-    /// with an `ip addr` fallback.
-    pub async fn network_host(&self) -> Option<String> {
-        if let AdbTarget::Tcp { host, .. } = &self.target {
-            if !is_loopback(host) {
-                return Some(host.clone());
-            }
-        }
-        let route = self.ip_route().await.ok()?;
-        if let Some(host) = parse_route_source(&route) {
-            return Some(host);
-        }
-        let addr = self.exec("ip -f inet addr show").await.ok()?;
-        parse_inet_address(&addr.stdout_text())
     }
 }
 
@@ -710,49 +685,6 @@ fn package_installed_in(listing: &str, package: &str) -> bool {
     listing
         .lines()
         .any(|line| line.trim() == format!("package:{package}"))
-}
-
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::Ipv4Addr>()
-            .map(|address| address.is_loopback())
-            .unwrap_or(false)
-        || host == "::1"
-}
-
-/// Source address of the default route in `ip route` output.
-pub fn parse_route_source(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let mut tokens = line.split_whitespace();
-        while let Some(token) = tokens.next() {
-            if token == "src" {
-                if let Some(address) = tokens.next() {
-                    if address.parse::<std::net::Ipv4Addr>().is_ok() && !address.starts_with("127.")
-                    {
-                        return Some(address.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// First non-loopback `inet` address in `ip addr` output.
-pub fn parse_inet_address(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let mut tokens = line.split_whitespace();
-        if tokens.next() == Some("inet") {
-            if let Some(cidr) = tokens.next() {
-                let host = cidr.split('/').next().unwrap_or("");
-                if host.parse::<std::net::Ipv4Addr>().is_ok() && !host.starts_with("127.") {
-                    return Some(host.to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Pair this host's key with Android 11+ wireless debugging.
@@ -1077,23 +1009,6 @@ mod tests {
         let usb = AdbTarget::parse("usb://").expect("usb");
         assert_eq!(usb.uri(), "usb://");
         assert_eq!(usb.label(), "usb");
-    }
-
-    #[test]
-    fn route_and_address_parsers() {
-        assert_eq!(
-            parse_route_source("default via 10.0.0.1 dev wlan0 src 10.0.0.7 metric 303"),
-            Some("10.0.0.7".to_string())
-        );
-        assert_eq!(parse_route_source("10.0.0.0/24 dev wlan0 scope link"), None);
-        assert_eq!(
-            parse_inet_address("    inet 192.168.1.5/24 brd 192.168.1.255 scope global wlan0"),
-            Some("192.168.1.5".to_string())
-        );
-        assert_eq!(
-            parse_inet_address("    inet 127.0.0.1/8 scope host lo"),
-            None
-        );
     }
 
     #[test]

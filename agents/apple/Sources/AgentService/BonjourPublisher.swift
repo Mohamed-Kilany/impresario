@@ -3,8 +3,8 @@ import Foundation
 
 #if canImport(Darwin)
 /// Advertises the agent as `_impresario._tcp` on the local network (spec 12.4),
-/// so a master can find an iOS/tvOS device without a configured
-/// `agent_address`.
+/// so a master can discover the dynamically allocated agent port on an
+/// iOS/tvOS device.
 ///
 /// The publisher owns the `NetService`, publishes on the main run loop (the
 /// test bundle's run loop keeps spinning while the test waits) and re-publishes on
@@ -97,7 +97,7 @@ public final class BonjourPublisher {
             .warn,
             "agent",
             "Bonjour advertisement is unavailable on this platform; the master needs an explicit "
-                + "agent_address (name '\(name)', port \(port), domain \(domain), txt \(txt))"
+                + "agent endpoint (name '\(name)', port \(port), domain \(domain), txt \(txt))"
         )
     }
 

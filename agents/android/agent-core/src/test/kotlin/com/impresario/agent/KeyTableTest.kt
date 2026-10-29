@@ -41,6 +41,22 @@ class KeyTableTest {
         assertEquals(184, code(RemoteKey.KEY_GREEN, isTv = true))
         assertEquals(185, code(RemoteKey.KEY_YELLOW, isTv = true))
         assertEquals(186, code(RemoteKey.KEY_BLUE, isTv = true))
+        assertEquals(7, code(RemoteKey.KEY_NUM0, isTv = false))
+        assertEquals(16, code(RemoteKey.KEY_NUM9, isTv = true))
+        assertEquals(24, code(RemoteKey.KEY_VOLUMEUP, isTv = false))
+        assertEquals(25, code(RemoteKey.KEY_VOLUMEDOWN, isTv = true))
+        assertEquals(164, code(RemoteKey.KEY_MUTE, isTv = false))
+        assertEquals(166, code(RemoteKey.KEY_CHANNELUP, isTv = true))
+        assertEquals(167, code(RemoteKey.KEY_CHANNELDOWN, isTv = false))
+        assertEquals(86, code(RemoteKey.KEY_STOP, isTv = true))
+        assertEquals(130, code(RemoteKey.KEY_RECORD, isTv = false))
+        assertEquals(165, code(RemoteKey.KEY_INFO, isTv = true))
+        assertEquals(172, code(RemoteKey.KEY_GUIDE, isTv = false))
+        assertEquals(111, code(RemoteKey.KEY_EXIT, isTv = true))
+        assertEquals(175, code(RemoteKey.KEY_SUBTITLE, isTv = false))
+        assertEquals(222, code(RemoteKey.KEY_AUDIO, isTv = true))
+        assertEquals(84, code(RemoteKey.KEY_SEARCH, isTv = false))
+        assertEquals(176, code(RemoteKey.KEY_SETTINGS, isTv = true))
     }
 
     @Test

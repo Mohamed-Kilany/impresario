@@ -15,7 +15,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 const SCENE: &str = r#"Scene: LoginScreen
-Platform: cross-platform
+Platforms: cross-platform
 
 | Piece | web | android |
 |---|---|---|
@@ -39,10 +39,6 @@ Var: USER = 'alice'
 Act: Successful Login
 Tags: smoke
     Perform: Auth.Fill(user = '${var.USER}')
-
-Stage: Navigate
-    Scene: LoginScreen
-        Action: click => LoginButton
 "#;
 
 /// A workspace with a scene, a theatre and a play.
@@ -315,7 +311,7 @@ fn formatting_range_and_on_type_cover_all_three_file_kinds() {
         let temp = tempfile::tempdir().expect("tempdir");
         let base = temp.path();
         let (scene, theatre, play) = workspace(base);
-        let unformatted = "Scene: Fmt\nPlatform: cross-platform\n\n|Piece|web|android|\n|---|---|---|\n|LoginButton|css:#\u{1f600}|id:login_button|";
+        let unformatted = "Scene: Fmt\nPlatforms: cross-platform\n\n|Piece|web|android|\n|---|---|---|\n|LoginButton|css:#\u{1f600}|id:login_button|";
         lsp::write(&scene, unformatted);
         let mut server = TestLsp::start(base).await;
         let mark = server.mark();
@@ -421,7 +417,7 @@ fn duplicate_diagnostics_have_related_locations_and_theatre_watches_recover() {
             &base.join("impresario.devices.config"),
             &lsp::devices_text(&[("web1", "web")]),
         );
-        let scene = "Scene: Same\nPlatform: cross-platform\n\nPieces:\n    One: web=\"#a\"\n";
+        let scene = "Scene: Same\nPlatforms: cross-platform\n\n| Piece | web |\n|---|---|\n| One | #a |\n";
         let first = base.join("scenes/First.scene");
         let second = base.join("scenes/Second.scene");
         lsp::write(&first, scene);
@@ -482,11 +478,9 @@ fn code_actions_extract_steps_and_create_missing_pieces() {
         let temp = tempfile::tempdir().expect("tempdir");
         let base = temp.path();
         let (scene, theatre, play) = workspace(base);
-        lsp::write(
-            &theatre,
-            "Theatre: Auth\n\nStage: Fill(user, password = 'secret')\n    Scene: LoginScreen\n        Action: click => Missing\n        Action: click => LoginButton\n",
-        );
-        let broken = "Play: Login\nApp: shop\n\nAct: A\n    Perform: Auth.Fill(user = 'alice')\n\nStage: Navigate\n    Scene: LoginScreen\n        Action: click => LoginButton\n        Action: click => UsernameInput\n";
+        let theatre_text = "Theatre: Auth\n\nStage: Fill(user, password = 'secret')\n    Scene: LoginScreen\n        Action: click => Missing\n        Action: click => LoginButton\n        Action: click => UsernameInput\n";
+        lsp::write(&theatre, theatre_text);
+        let broken = "Play: Login\nApp: shop\n\nAct: A\n    Perform: Auth.Fill(user = 'alice')\n";
         lsp::write(&play, broken);
         let mut server = TestLsp::start(base).await;
         let mark = server.mark();
@@ -500,11 +494,7 @@ fn code_actions_extract_steps_and_create_missing_pieces() {
             "missing piece diagnostic: {published}"
         );
 
-        let (line, _) = at(
-            "Theatre: Auth\n\nStage: Fill(user, password = 'secret')\n    Scene: LoginScreen\n        Action: click => Missing\n        Action: click => LoginButton\n",
-            "Missing",
-            0,
-        );
+        let (line, _) = at(theatre_text, "Missing", 0);
         let actions = server
             .request(
                 "textDocument/codeAction",
@@ -529,12 +519,12 @@ fn code_actions_extract_steps_and_create_missing_pieces() {
             "{actions}"
         );
 
-        let (start, _) = at(broken, "Action:", 0);
+        let (start, _) = at(theatre_text, "Action:", 0);
         let extract = server
             .request(
                 "textDocument/codeAction",
                 json!({
-                    "textDocument": {"uri": TestLsp::uri(&play)},
+                    "textDocument": {"uri": TestLsp::uri(&theatre)},
                     "range": {
                         "start": {"line": start, "character": 0},
                         "end": {"line": start + 1, "character": 0}
