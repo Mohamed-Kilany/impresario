@@ -49,6 +49,10 @@ const AUTHOR_PROP_DIGEST: &str =
 const DISTRIBUTOR_PROP_DIGEST: &str =
     "/r5npk2VVA46QFJnejgONBEh4BWtjrtu9x/IFeLksjWyGmB/cMWKSJWQl7aU3YRQRZ3AesG8gF7qGyvKX9Snig==";
 const KEYRING_SERVICE: &str = "impresario.tizen";
+/// Samsung issues certificates with `notBefore` equal to the issuance instant,
+/// so a small clock difference between this machine and Samsung's CA can make a
+/// brand-new certificate look "not yet valid" for a few seconds.
+const CERTIFICATE_CLOCK_SKEW_SECONDS: i64 = 300;
 
 /// Signing/packaging failures. Callers turn these into `IMP-SIGN-*` output.
 #[derive(Debug, thiserror::Error)]
@@ -261,15 +265,28 @@ impl SigningCertificate {
         let leaf = self.leaf()?;
         let (_, cert) = parse_x509_certificate(leaf.as_der())
             .map_err(|error| SignError::Pkcs12(error.to_string()))?;
-        if !cert.validity().is_valid() {
+        let validity = cert.validity();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or(0);
+        if !validity_allows(
+            validity.not_before.timestamp(),
+            validity.not_after.timestamp(),
+            now,
+        ) {
             return Err(SignError::Expired(format!(
                 "{label}: valid {} .. {}",
-                cert.validity().not_before,
-                cert.validity().not_after
+                validity.not_before, validity.not_after
             )));
         }
         Ok(())
     }
+}
+
+fn validity_allows(not_before: i64, not_after: i64, now: i64) -> bool {
+    now.saturating_add(CERTIFICATE_CLOCK_SKEW_SECONDS) >= not_before
+        && now.saturating_sub(CERTIFICATE_CLOCK_SKEW_SECONDS) <= not_after
 }
 
 /// One loaded profile, with private material only in memory.
@@ -926,12 +943,34 @@ pub fn import_profile(
     distributor_p12: &Path,
     distributor_password: &str,
 ) -> Result<ProfileRecord, SignError> {
-    validate_profile_name(name)?;
     let author_bytes = std::fs::read(author_p12)?;
     let distributor_bytes = std::fs::read(distributor_p12)?;
-    let author = SigningCertificate::load(&author_bytes, author_password, "author")?;
+    import_profile_bytes(
+        home,
+        name,
+        &author_bytes,
+        author_password,
+        &distributor_bytes,
+        distributor_password,
+    )
+}
+
+/// Import an in-memory author/distributor PKCS#12 pair. This is the same
+/// validation and atomic keychain-backed install as [`import_profile`], but it
+/// lets the Samsung certificate wizard keep generated private material off the
+/// filesystem.
+pub fn import_profile_bytes(
+    home: &Home,
+    name: &str,
+    author_bytes: &[u8],
+    author_password: &str,
+    distributor_bytes: &[u8],
+    distributor_password: &str,
+) -> Result<ProfileRecord, SignError> {
+    validate_profile_name(name)?;
+    let author = SigningCertificate::load(author_bytes, author_password, "author")?;
     let distributor =
-        SigningCertificate::load(&distributor_bytes, distributor_password, "distributor")?;
+        SigningCertificate::load(distributor_bytes, distributor_password, "distributor")?;
     author.ensure_valid("author certificate")?;
     distributor.ensure_valid("distributor certificate")?;
     let (author_subject, author_not_after, author_not_after_unix, _) = author.leaf_info()?;
@@ -971,8 +1010,8 @@ pub fn import_profile(
     let old_author = read_password(name, "author");
     let old_distributor = read_password(name, "distributor");
     let staged = (|| -> Result<(), SignError> {
-        std::fs::write(staging.join("author.p12"), &author_bytes)?;
-        std::fs::write(staging.join("distributor.p12"), &distributor_bytes)?;
+        std::fs::write(staging.join("author.p12"), author_bytes)?;
+        std::fs::write(staging.join("distributor.p12"), distributor_bytes)?;
         std::fs::write(
             staging.join("profile.json"),
             serde_json::to_vec_pretty(&record)
@@ -1241,6 +1280,19 @@ fn set_private_permissions(path: &Path) {
 mod tests {
     use super::*;
     use p12_keystore::{KeyStoreEntry, LocalKeyId, PrivateKey, PrivateKeyChain};
+
+    #[test]
+    fn certificate_validity_tolerates_small_clock_skew() {
+        let now = 1_000_000;
+        // Freshly issued by a CA whose clock is slightly ahead of ours.
+        assert!(validity_allows(now + 60, now + 31_536_000, now));
+        // Clearly not yet valid.
+        assert!(!validity_allows(now + 600, now + 31_536_000, now));
+        // Expired beyond the allowance.
+        assert!(!validity_allows(now - 31_536_000, now - 600, now));
+        // Expired moments ago but within the allowance.
+        assert!(validity_allows(now - 31_536_000, now - 60, now));
+    }
 
     #[test]
     fn prop_canonical_digest_matches_tizen_constants() {

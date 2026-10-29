@@ -279,8 +279,28 @@ impl WebOsSession {
             .map_err(|_| WebOsError::Timeout("command", deadline))?
     }
 
-    /// Upload one file through the SFTP subsystem.
+    /// Upload one file through the SFTP subsystem, falling back to an
+    /// acknowledged `cat` over an exec channel when the TV's SFTP server
+    /// refuses writes.
     pub async fn upload(&self, remote_path: &str, bytes: &[u8]) -> Result<(), WebOsError> {
+        match self.upload_sftp(remote_path, bytes).await {
+            Ok(()) => Ok(()),
+            Err(sftp_error) => {
+                tracing::debug!(
+                    %sftp_error,
+                    remote_path,
+                    "webOS SFTP upload failed; trying exec cat fallback"
+                );
+                self.upload_cat(remote_path, bytes).await.map_err(|cat_error| {
+                    WebOsError::Ssh(format!(
+                        "upload {remote_path}: SFTP failed ({sftp_error}); cat fallback failed ({cat_error})"
+                    ))
+                })
+            }
+        }
+    }
+
+    async fn upload_sftp(&self, remote_path: &str, bytes: &[u8]) -> Result<(), WebOsError> {
         let channel = self
             .handle
             .lock()
@@ -302,6 +322,56 @@ impl WebOsSession {
         Ok(())
     }
 
+    async fn upload_cat(&self, remote_path: &str, bytes: &[u8]) -> Result<(), WebOsError> {
+        let command = format!("cat > {}", shell_quote(remote_path));
+        let future = async {
+            let mut channel = self
+                .handle
+                .lock()
+                .await
+                .channel_open_session()
+                .await
+                .map_err(|error| WebOsError::Ssh(format!("open cat channel: {error}")))?;
+            channel
+                .exec(true, command.as_bytes())
+                .await
+                .map_err(|error| WebOsError::Ssh(format!("exec cat: {error}")))?;
+            channel
+                .data_bytes(bytes.to_vec())
+                .await
+                .map_err(|error| WebOsError::Ssh(format!("write cat stdin: {error}")))?;
+            channel
+                .eof()
+                .await
+                .map_err(|error| WebOsError::Ssh(format!("close cat stdin: {error}")))?;
+            let mut stderr = Vec::new();
+            let mut exit_status = None;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    russh::ChannelMsg::ExtendedData { data, ext: 1 } => {
+                        stderr.extend_from_slice(&data);
+                    }
+                    russh::ChannelMsg::ExitStatus { exit_status: code } => {
+                        exit_status = Some(code);
+                    }
+                    russh::ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            if exit_status == Some(0) {
+                Ok(())
+            } else {
+                Err(WebOsError::Ssh(format!(
+                    "cat upload exited {exit_status:?}: {}",
+                    String::from_utf8_lossy(&stderr).trim()
+                )))
+            }
+        };
+        timeout(EXEC_TIMEOUT, future)
+            .await
+            .map_err(|_| WebOsError::Timeout("cat upload", EXEC_TIMEOUT))?
+    }
+
     /// Call one luna method and return the parsed JSON response.
     pub async fn luna(
         &self,
@@ -320,9 +390,41 @@ impl WebOsSession {
     ///
     /// `luna-send-pub -i` keeps its subscription open after the last progress
     /// line, so this method streams replies until a terminal state, closes the
-    /// channel, then verifies the app through `listApps`. A first "installing"
-    /// reply is never reported as success.
+    /// channel, then verifies the app's version through `listApps`. Some
+    /// firmware acknowledges the subscription with
+    /// `{returnValue:true,subscribed:true}` and never sends a terminal state;
+    /// that ack is not success by itself. The package version is the proof:
+    /// an install is accepted only when `listApps` reports the requested
+    /// version. If the app is already at that version the upload is skipped.
     pub async fn install(&self, app_id: &str, local_ipk: &Path) -> Result<(), WebOsError> {
+        let package = crate::webos_package::inspect_ipk(local_ipk)
+            .map_err(|error| WebOsError::Package(error.to_string()))?;
+        let expected_version = package.version;
+        let installed_version = self.list_app_versions().await.ok().and_then(|apps| {
+            apps.into_iter()
+                .find(|(id, _)| id == app_id)
+                .map(|(_, version)| version)
+        });
+        if installed_version.as_deref() == Some(expected_version.as_str()) {
+            tracing::debug!(
+                app_id,
+                version = %expected_version,
+                "webOS app is already installed at the requested version"
+            );
+            return Ok(());
+        }
+        let was_installed = installed_version.is_some();
+        if was_installed {
+            // The install service can update a running app, but closing it
+            // first avoids a long "app closing" phase and makes the update
+            // deterministic. A close failure is not fatal: the service will
+            // close the app itself when needed.
+            if let Err(error) = self.close(app_id).await {
+                tracing::debug!(%error, app_id, "webOS app close before update failed");
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
         let bytes = std::fs::read(local_ipk).map_err(|error| {
             WebOsError::Package(format!("read {}: {error}", local_ipk.display()))
         })?;
@@ -333,11 +435,6 @@ impl WebOsSession {
             safe_component(app_id)
         );
         self.upload(&remote, &bytes).await?;
-        let was_installed = self
-            .list_apps()
-            .await
-            .ok()
-            .map(|apps| apps.iter().any(|id| id == app_id));
         let payload = serde_json::json!({
             "id": app_id,
             "ipkUrl": remote,
@@ -346,22 +443,47 @@ impl WebOsSession {
         .to_string();
         let url = luna_url("com.webos.appInstallService", Some("dev"), "install");
         let command = format!("luna-send-pub -i -f {url} {}", shell_quote(&payload));
-        let result = self
-            .install_subscription(&command, app_id, was_installed)
-            .await;
+        let result = self.install_subscription(&command, was_installed).await;
         // The reference installer removes its temporary upload; this is not a
         // reason to turn a successful install into a failure.
         if let Err(error) = self.exec(&format!("rm -f {}", shell_quote(&remote))).await {
             tracing::debug!(%error, remote, "webOS package cleanup failed");
         }
-        result
+        result?;
+        self.verify_app_version(app_id, &expected_version).await
+    }
+
+    /// Wait briefly for the app manager to report the requested package
+    /// version. The install subscription is not a completion proof on its own.
+    async fn verify_app_version(
+        &self,
+        app_id: &str,
+        expected_version: &str,
+    ) -> Result<(), WebOsError> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Ok(apps) = self.list_app_versions().await {
+                if apps
+                    .iter()
+                    .any(|(id, version)| id == app_id && version == expected_version)
+                {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(WebOsError::Luna(format!(
+                    "install did not make '{app_id}' report version \
+                     '{expected_version}' in listApps"
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 
     async fn install_subscription(
         &self,
         command: &str,
-        app_id: &str,
-        was_installed: Option<bool>,
+        wait_for_terminal: bool,
     ) -> Result<(), WebOsError> {
         let future = async {
             let mut channel = self
@@ -380,10 +502,16 @@ impl WebOsSession {
             let mut stderr = Vec::new();
             let mut pending = String::new();
             let mut terminal = None;
-            loop {
-                let message = tokio::time::timeout_at(deadline, channel.wait()).await;
-                let message =
-                    message.map_err(|_| WebOsError::Timeout("install", INSTALL_TIMEOUT))?;
+            let mut terminal_deadline: Option<tokio::time::Instant> = None;
+            'install: loop {
+                let wait_until = terminal_deadline.map_or(deadline, |grace| grace.min(deadline));
+                let message = match tokio::time::timeout_at(wait_until, channel.wait()).await {
+                    Ok(message) => message,
+                    // An update that acknowledged the subscription but stopped
+                    // sending progress is still checked through listApps.
+                    Err(_) if terminal_deadline.is_some() => break,
+                    Err(_) => return Err(WebOsError::Timeout("install", INSTALL_TIMEOUT)),
+                };
                 let Some(message) = message else {
                     break;
                 };
@@ -391,16 +519,31 @@ impl WebOsSession {
                     russh::ChannelMsg::Data { data } => {
                         stdout.extend_from_slice(&data);
                         pending.push_str(&String::from_utf8_lossy(&data));
-                        while let Some(index) = pending.find('\n') {
-                            let line = pending[..index].trim().to_string();
-                            pending.drain(..=index);
-                            if let Some(found) = parse_install_line(&line) {
+                        // luna-send-pub pretty-prints each reply object, so a
+                        // newline is not a reply boundary. Extract complete
+                        // JSON objects and keep any partial tail buffered.
+                        while let Some(reply) = take_json_object(&mut pending) {
+                            if let Some(found) = parse_install_line(&reply) {
                                 terminal = Some(found);
-                                break;
+                                break 'install;
                             }
-                        }
-                        if terminal.is_some() {
-                            break;
+                            // This firmware acknowledges the subscription but
+                            // never sends a terminal state on a first install.
+                            // The caller verifies the requested version through
+                            // listApps, so the ack only ends the wait; it is not
+                            // success alone. Updates do send progress and a
+                            // terminal, so give them a bounded grace period.
+                            if install_accepted_without_terminal(&reply) {
+                                if wait_for_terminal {
+                                    if terminal_deadline.is_none() {
+                                        terminal_deadline = Some(
+                                            tokio::time::Instant::now() + Duration::from_secs(30),
+                                        );
+                                    }
+                                } else {
+                                    break 'install;
+                                }
+                            }
                         }
                     }
                     russh::ChannelMsg::ExtendedData { data, ext: 1 } => {
@@ -417,8 +560,17 @@ impl WebOsSession {
                     _ => {}
                 }
             }
-            if terminal.is_none() && !pending.trim().is_empty() {
-                terminal = parse_install_line(pending.trim());
+            // Drain a complete reply that arrived without a trailing newline.
+            if terminal.is_none() {
+                while let Some(reply) = take_json_object(&mut pending) {
+                    if let Some(found) = parse_install_line(&reply) {
+                        terminal = Some(found);
+                        break;
+                    }
+                    if install_accepted_without_terminal(&reply) {
+                        break;
+                    }
+                }
             }
             // The subscription is the reason `-i` stays open; closing the
             // channel asks the remote luna client to stop cleanly.
@@ -426,46 +578,14 @@ impl WebOsSession {
             Ok::<_, WebOsError>((terminal, stdout, stderr))
         };
         let (terminal, stdout, stderr) = future.await?;
-        match terminal {
-            Some(InstallTerminal::Failed(message)) => {
-                return Err(WebOsError::Luna(format!("install failed: {message}")));
-            }
-            Some(InstallTerminal::Installed) => {}
-            None => {
-                if was_installed != Some(false) {
-                    let text = String::from_utf8_lossy(&stdout);
-                    let reason = if was_installed == Some(true) {
-                        "the app was already installed, so its presence is not proof"
-                    } else {
-                        "the pre-install app list was unavailable, so its presence is not proof"
-                    };
-                    return Err(WebOsError::Luna(format!(
-                        "install subscription ended without a terminal state ({reason}); \
-                         output: {}",
-                        concise(&text, &stderr)
-                    )));
-                }
-            }
+        if let Some(InstallTerminal::Failed(message)) = terminal {
+            return Err(WebOsError::Luna(format!("install failed: {message}")));
         }
-        // Verify through the app manager before reporting success. Updates can
-        // take a moment to appear; retry briefly.
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if self
-                .list_apps()
-                .await
-                .map(|apps| apps.iter().any(|id| id == app_id))
-                .unwrap_or(false)
-            {
-                return Ok(());
-            }
-            if Instant::now() >= deadline {
-                return Err(WebOsError::Luna(format!(
-                    "install did not make '{app_id}' appear in listApps"
-                )));
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        tracing::debug!(
+            output = %concise(&String::from_utf8_lossy(&stdout), &stderr),
+            "webOS install subscription closed; verifying package version"
+        );
+        Ok(())
     }
 
     /// Wait until an SSH `direct-tcpip` connection to the inspector succeeds.
@@ -489,8 +609,7 @@ impl WebOsSession {
         }
     }
 
-    /// Installed application ids.
-    pub async fn list_apps(&self) -> Result<Vec<String>, WebOsError> {
+    async fn list_apps_value(&self) -> Result<serde_json::Value, WebOsError> {
         let value = self
             .luna(
                 "com.webos.applicationManager",
@@ -500,6 +619,12 @@ impl WebOsSession {
             )
             .await?;
         require_luna_success(&value, "listApps")?;
+        Ok(value)
+    }
+
+    /// Installed application ids.
+    pub async fn list_apps(&self) -> Result<Vec<String>, WebOsError> {
+        let value = self.list_apps_value().await?;
         let apps = value
             .get("apps")
             .and_then(|value| value.as_array())
@@ -513,6 +638,39 @@ impl WebOsSession {
             ids.push(id.to_string());
         }
         Ok(ids)
+    }
+
+    /// Installed application ids and package versions.
+    pub async fn list_app_versions(&self) -> Result<Vec<(String, String)>, WebOsError> {
+        let value = self.list_apps_value().await?;
+        let apps = value
+            .get("apps")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| WebOsError::Luna("listApps response has no apps array".to_string()))?;
+        let mut entries = Vec::with_capacity(apps.len());
+        for app in apps {
+            let id = app
+                .get("id")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| WebOsError::Luna("listApps entry has no id".to_string()))?;
+            let version = app
+                .get("version")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            entries.push((id.to_string(), version));
+        }
+        Ok(entries)
+    }
+
+    /// The installed version of one app, if the app manager knows it.
+    pub async fn app_version(&self, app_id: &str) -> Result<Option<String>, WebOsError> {
+        Ok(self
+            .list_app_versions()
+            .await?
+            .into_iter()
+            .find(|(id, _)| id == app_id)
+            .map(|(_, version)| version))
     }
 
     /// Launch an app by id.
@@ -1349,8 +1507,49 @@ enum InstallTerminal {
     Failed(String),
 }
 
-/// Interpret one line of a `com.webos.appInstallService/dev/install`
-/// subscription. Progress states return `None`.
+/// Take the first complete JSON object from `buffer`, leaving any partial
+/// tail (and any trailing bytes) for the next read. `luna-send-pub` formats
+/// each reply over multiple lines, so line-delimited parsing misses both
+/// progress and terminal objects.
+fn take_json_object(buffer: &mut String) -> Option<String> {
+    let start = buffer.find('{')?;
+    if start > 0 {
+        buffer.drain(..start);
+    }
+    let mut depth = 0_u32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in buffer.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' => depth = depth.saturating_add(1),
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = index + character.len_utf8();
+                    let object = buffer[..end].to_string();
+                    buffer.drain(..end);
+                    return Some(object);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Interpret one `com.webos.appInstallService/dev/install` reply object.
+/// Progress states return `None`.
 fn parse_install_line(line: &str) -> Option<InstallTerminal> {
     let line = line.trim();
     if !line.starts_with('{') {
@@ -1384,6 +1583,29 @@ fn parse_install_line(line: &str) -> Option<InstallTerminal> {
         return Some(InstallTerminal::Installed);
     }
     None
+}
+
+/// True for the install service's subscription acknowledgement on firmware
+/// that never follows it with a terminal state. The caller must still prove
+/// the requested package version through `listApps`; this is not success by
+/// itself.
+fn install_accepted_without_terminal(line: &str) -> bool {
+    let line = line.trim();
+    if !line.starts_with('{') {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    value
+        .get("returnValue")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+        && value.get("subscribed").and_then(serde_json::Value::as_bool) == Some(true)
+        && value
+            .pointer("/details/state")
+            .or_else(|| value.get("state"))
+            .is_none()
 }
 
 fn concise(stdout: &str, stderr: &[u8]) -> String {
@@ -1615,6 +1837,66 @@ mod tests {
     }
 
     #[test]
+    fn parses_install_terminal_states() {
+        assert_eq!(
+            parse_install_line(r#"{"returnValue":true,"details":{"state":"installed"}}"#),
+            Some(InstallTerminal::Installed)
+        );
+        assert!(matches!(
+            parse_install_line(r#"{"returnValue":false,"errorText":"bad ipk"}"#),
+            Some(InstallTerminal::Failed(message)) if message == "bad ipk"
+        ));
+        assert_eq!(
+            parse_install_line(r#"{"returnValue":true,"details":{"state":"installing"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn recognizes_subscribed_ack_without_terminal() {
+        assert!(install_accepted_without_terminal(
+            r#"{"returnValue":true,"subscribed":true}"#
+        ));
+        assert!(!install_accepted_without_terminal(
+            r#"{"returnValue":true,"subscribed":true,"details":{"state":"installing"}}"#
+        ));
+        assert!(!install_accepted_without_terminal(
+            r#"{"returnValue":true}"#
+        ));
+        assert!(!install_accepted_without_terminal("not json"));
+    }
+
+    #[test]
+    fn extracts_pretty_printed_install_replies() {
+        let mut buffer = concat!(
+            "noise\n",
+            "{\n",
+            "  \"subscribed\": true,\n",
+            "  \"returnValue\": true\n",
+            "}\n",
+            "{\"returnValue\":true,\"details\":{\"state\":\"installed\"}}\n"
+        )
+        .to_string();
+        let first = take_json_object(&mut buffer).expect("ack object");
+        assert!(install_accepted_without_terminal(&first));
+        let second = take_json_object(&mut buffer).expect("terminal object");
+        assert_eq!(
+            parse_install_line(&second),
+            Some(InstallTerminal::Installed)
+        );
+        assert!(take_json_object(&mut buffer).is_none());
+    }
+
+    #[test]
+    fn waits_for_a_partial_install_object() {
+        let mut buffer = "{\n  \"subscribed\": true".to_string();
+        assert!(take_json_object(&mut buffer).is_none());
+        buffer.push_str(",\n  \"returnValue\": true\n}");
+        let reply = take_json_object(&mut buffer).expect("complete object");
+        assert!(install_accepted_without_terminal(&reply));
+    }
+
+    #[test]
     fn rejects_missing_json() {
         let output = ExecOutput {
             stdout: b"error".to_vec(),
@@ -1742,12 +2024,14 @@ mod tests {
                 if !apps.contains(&app) {
                     apps.push(app);
                 }
-                "{\"returnValue\":true,\"details\":{\"state\":\"installed\"}}\n".to_string()
+                // The LG TV acknowledges the subscription but sends no
+                // terminal state; install() must verify through listApps.
+                "{\"returnValue\":true,\"subscribed\":true}\n".to_string()
             } else if command.contains("applicationManager/dev/listApps") {
                 let apps = self.state.apps.lock().await;
                 let entries = apps
                     .iter()
-                    .map(|id| format!("{{\"id\":{}}}", json_string(id)))
+                    .map(|id| format!("{{\"id\":{},\"version\":\"1.2.3\"}}", json_string(id)))
                     .collect::<Vec<_>>()
                     .join(",");
                 format!("{{\"returnValue\":true,\"apps\":[{entries}]}}\n")
@@ -1978,8 +2262,19 @@ mod tests {
             .await?;
         assert_eq!(info["modelName"], "Fake webOS TV");
 
+        let source = temporary.path().join("app");
+        std::fs::create_dir_all(&source)?;
+        std::fs::write(
+            source.join("appinfo.json"),
+            r#"{"id":"com.example.test","version":"1.2.3","title":"Test","main":"index.html"}"#,
+        )?;
+        std::fs::write(
+            source.join("index.html"),
+            "<!doctype html><title>test</title>",
+        )?;
         let ipk = temporary.path().join("app.ipk");
-        std::fs::write(&ipk, b"fake-ipk-bytes")?;
+        crate::webos_package::build_ipk(&source, &ipk)?;
+        let ipk_bytes = std::fs::read(&ipk)?;
         session.install("com.example.test", &ipk).await?;
         assert_eq!(
             server.state.apps.lock().await.clone(),
@@ -1990,7 +2285,7 @@ mod tests {
             uploads
                 .get("/media/developer/temp/impresario-com.example.test.ipk")
                 .map(Vec::as_slice),
-            Some(b"fake-ipk-bytes".as_slice())
+            Some(ipk_bytes.as_slice())
         );
         drop(uploads);
 

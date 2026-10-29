@@ -2340,13 +2340,20 @@ fn media_status(first: &ProbeSample, second: &ProbeSample) -> Option<&'static st
     }
 }
 
+/// AVPlay is exposed on every Tizen page, even when the app uses an HTML
+/// `<video>`. `getState()` returns `NONE` until a session is opened, so an
+/// unused API must not be reported as an idle player and contradict the HTML
+/// media collector.
+fn active_avplay(sample: &ProbeSample) -> Option<&AvPlaySample> {
+    sample.avplay.as_ref().filter(|avplay| {
+        avplay.present && !avplay.state.is_empty() && !avplay.state.eq_ignore_ascii_case("NONE")
+    })
+}
+
 fn avplay_status(sample: &ProbeSample) -> Option<&'static str> {
-    let avplay = sample.avplay.as_ref()?;
-    if !avplay.present {
-        return None;
-    }
+    let avplay = active_avplay(sample)?;
     match avplay.state.as_str() {
-        "IDLE" | "NONE" => Some("Idle"),
+        "IDLE" => Some("Idle"),
         "READY" => Some("Ready"),
         "PLAYING" => Some("Playing"),
         "PAUSED" => Some("Paused"),
@@ -2436,11 +2443,7 @@ fn observe_property(
         return Some(found);
     }
     let media = second.media.as_ref().or(first.media.as_ref());
-    let avplay = second
-        .avplay
-        .as_ref()
-        .or(first.avplay.as_ref())
-        .filter(|avplay| avplay.present);
+    let avplay = active_avplay(second).or_else(|| active_avplay(first));
     let source = EvidenceSource::HtmlMedia;
     let authoritative = EvidenceClass::Authoritative;
     let value = match property {
@@ -3353,6 +3356,26 @@ mod tests {
             error.details.get("reason").map(String::as_str),
             Some("disabled")
         );
+    }
+
+    #[test]
+    fn unused_avplay_is_not_an_idle_player() {
+        let mut sample = ProbeSample {
+            avplay: Some(AvPlaySample {
+                present: true,
+                state: "NONE".to_string(),
+                ..AvPlaySample::default()
+            }),
+            ..ProbeSample::default()
+        };
+        assert_eq!(avplay_status(&sample), None);
+        assert!(active_avplay(&sample).is_none());
+
+        sample.avplay.as_mut().expect("avplay").state = "IDLE".to_string();
+        assert_eq!(avplay_status(&sample), Some("Idle"));
+
+        sample.avplay.as_mut().expect("avplay").state = "PLAYING".to_string();
+        assert_eq!(avplay_status(&sample), Some("Playing"));
     }
 
     #[test]

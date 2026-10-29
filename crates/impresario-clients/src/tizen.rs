@@ -1065,22 +1065,38 @@ impl TizenTransport {
                 let host = host.clone();
                 let home = home.clone();
                 tokio::spawn(async move {
-                    match SdbConnection::connect(&host, port, &home).await {
-                        Ok(connection) => {
-                            match connection.open(&format!("tcp:{remote_port}")).await {
-                                Ok(channel) => {
-                                    if let Err(error) = channel.proxy(socket).await {
-                                        tracing::debug!(%error, remote_port, "Tizen forward ended");
-                                    }
+                    // The TV's sdbd occasionally drops a handshake when several
+                    // channels are opened in quick succession (page discovery
+                    // plus the WebSocket). Retry before closing the local socket
+                    // so the connector sees a transient failure, not a dead
+                    // inspector endpoint.
+                    let mut last_error = None;
+                    for attempt in 0..3_u64 {
+                        let connection = match SdbConnection::connect(&host, port, &home).await {
+                            Ok(connection) => connection,
+                            Err(error) => {
+                                last_error = Some(error);
+                                tokio::time::sleep(Duration::from_millis(150 * (attempt + 1)))
+                                    .await;
+                                continue;
+                            }
+                        };
+                        match connection.open(&format!("tcp:{remote_port}")).await {
+                            Ok(channel) => {
+                                if let Err(error) = channel.proxy(socket).await {
+                                    tracing::debug!(%error, remote_port, "Tizen forward ended");
                                 }
-                                Err(error) => {
-                                    tracing::warn!(%error, remote_port, "Tizen tcp: open failed");
-                                }
+                                return;
+                            }
+                            Err(error) => {
+                                last_error = Some(error);
+                                tokio::time::sleep(Duration::from_millis(150 * (attempt + 1)))
+                                    .await;
                             }
                         }
-                        Err(error) => {
-                            tracing::warn!(%error, remote_port, "Tizen forward connection failed");
-                        }
+                    }
+                    if let Some(error) = last_error {
+                        tracing::warn!(%error, remote_port, "Tizen forward connection failed");
                     }
                 });
             }

@@ -11,12 +11,13 @@ Verification vocabulary is deliberate:
   against generated keys, byte fixtures or a fake server;
 - **hardware-verified** means a real TV accepted the package and the app ran.
 
-The Tizen and webOS paths are fixture-verified. Tizen and webOS TVs became
-reachable on 2026-10-25. The Tizen TV accepted the SDB upload and install
-command but rejected a temporary self-signed certificate chain at install; a
-Samsung-issued profile is still missing. The webOS TV's Developer Mode
-passphrase is missing. None of the hardware steps below is claimed as
-hardware-verified; the pending checks are `HD-3`, `HD-4` and `HD-7` in
+The Tizen and webOS paths are hardware-verified on real TVs (2026-10-29), in
+addition to their fixture/replay coverage. The Tizen TV rejected a temporary
+self-signed certificate chain at install and then accepted a native
+Samsung-issued, DUID-bound profile created without Tizen Studio; the shared
+105-step stub installed, launched and passed on both TVs. The webOS Developer
+Mode passphrase was supplied for the session only. Hardware steps below are
+claimed only where the run is recorded; `HD-3`, `HD-4` and `HD-7` are closed in
 `docs/STATUS.md`.
 
 The Apple path is now pure Rust too: RemotePairing/RSD, DDI mounting, bundle
@@ -35,9 +36,12 @@ below and `docs/DEVICES.md` §3.3.
 ### Signing profiles
 
 A Tizen signing profile consists of an **author** PKCS#12 file and a
-**distributor** PKCS#12 file. Profiles are imported, never created here:
-creating them needs Samsung certificate services and a Samsung account, which
-is an external, optional flow (S-7). Import validates:
+**distributor** PKCS#12 file. Profiles can be imported from existing files or
+created through Samsung's certificate service with the guided
+`impresario sign tizen profile create` flow. That flow discovers Samsung's
+current Certificate Extension endpoints, opens the normal Samsung account
+login in a browser, and does the certificate work natively; Tizen Studio, Java,
+`openssl` and the Samsung password are not used. Import validates:
 
 - the PKCS#12 password and private-key chain;
 - that each private key matches its leaf certificate;
@@ -83,13 +87,65 @@ impresario sign tizen profile remove living-room
 `remove` deletes the profile directory and its keychain entries. The profile
 name is referenced from a device as `auth.profile: living-room`.
 
+### Creating a Samsung-issued profile
+
+Tizen Studio's Certificate Manager is a Java front end around a Samsung account
+login and Samsung's certificate APIs. The same flow is available without Tizen
+Studio:
+
+```powershell
+impresario sign tizen profile create --name samsung `
+  --duid P7CIFS3MU3C26
+```
+
+The wizard:
+
+1. reads Samsung's current extension index, downloads the Certificate
+   Extension if the seven-day cache under
+   `~/.impresario/cache/tizen-samsung.json` is missing or stale, and extracts
+   the current service URLs and TV CA certificates;
+2. prints the Samsung account login URL and opens the default browser. The
+   callback listener is `http://localhost:4794/signin/callback`; complete the
+   login and any 2FA in the browser. Close Tizen Studio's Certificate Manager
+   first if it is using port 4794;
+3. generates two RSA-2048 keys and SHA-512 CSRs: the author subject is
+   `CN=<email>`; the distributor subject is `CN=TizenSDK` plus the account
+   email RDN, with `URN:tizen:packageid=` and one
+   `URN:tizen:deviceid=<DUID>` SAN per `--duid`;
+4. requests the author and distributor certificates from Samsung, checks that
+   the distributor certificate covers every requested DUID, and writes the two
+   legacy PBE-SHA1-3DES PKCS#12 files;
+5. imports the profile with the same validation and atomic keychain-backed
+   storage as `profile add`.
+
+`--duid` is repeatable and accepts a comma-separated list (maximum 50 DUIDs).
+`--email` is normally unnecessary: the login response supplies the account
+email. Some accounts' callbacks omit it (the 2026-10-29 test account did), so
+pass `--email` for those.
+`--no-browser` prints the URL instead of opening a browser, `--refresh`
+bypasses the seven-day endpoint cache, and `--extension-url` points at a
+specific Certificate Extension ZIP. The login timeout defaults to 300 seconds.
+
+The Samsung account login is the only external step. The access token is kept
+in memory and zeroized; the random PKCS#12 password is stored only by the
+existing OS-keychain profile import. No Samsung password is read or stored.
+
+On 2026-10-29 this flow created profile `samsung` for the attached TV's DUID,
+with author and distributor certificates valid to 2027-10-29, and the TV
+installed and launched the 105-step stub (`20261029-082529-96bd`). The TV
+limits package ids to 10 characters; longer ids fail with `[118, -4] Load
+archive info fail`, before signature validation. Certificate validation allows
+300 seconds of clock skew because Samsung issues `notBefore` at the issuance
+instant.
+
 The attached Tizen 9.0 TV reports DUID `P7CIFS3MU3C26` and requires signing.
 Its distributor certificate must carry that DUID in a
 `URN:tizen:deviceid=<DUID>` SAN. A self-signed profile with the right DUID
 passes `device check` and reaches the TV's installer, but the TV rejects the
 chain with `[118, -12] Invalid certificate chain with certificate in
 signature`; only a Samsung-issued author/distributor profile can install
-(I-146, I-147).
+(I-146, I-147, I-157). Use `profile create`, or `profile add` with a profile
+exported from another machine.
 
 ### `.wgt` package and signatures
 
@@ -180,8 +236,8 @@ up best-effort after the result is known.
 
 webOS `.ipk` signing is not implemented in this phase: the Developer Mode
 install flow used by Impresario is the one described above, and no `ares-*`
-packager/signer is invoked. Packaging and installation remain fixture-tested
-only (`HD-3`).
+packager/signer is invoked. Packaging and installation are hardware-verified on
+the LG TV (2026-10-29, `HD-3` closed); signing remains fixture-tested.
 
 ## Apple
 
@@ -449,5 +505,7 @@ Signing and packaging failures use the `IMP-SIGN-*` family:
 The exact TV steps and the evidence to record are in `docs/DEVICES.md` §1.3
 (webOS) and §1.4 (Tizen). For both, record the TV model/firmware, the
 `device check` output, the package hash, the install terminal state and the
-observed app launch. Do not mark `HD-3`/`HD-4`/`HD-7` verified until those
-steps have run on real hardware.
+observed app launch. The 2026-10-29 runs recorded these and passed the
+105-step play on both TVs, closing `HD-3`/`HD-4`/`HD-7`; the runbook remains
+for re-verification and for the negative cases (invalid package, wrong
+passphrase, profile without the DUID, expired certificate).

@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Impresario Stub</title>
+<style>
+  html, body { width: 100%; min-height: 100%; }
+  body {
+    margin: 0;
+    background: #303030;
+    color: #c1c1c1;
+    font-family: sans-serif;
+  }
+  button, input { font-family: inherit; }
+
+  /* Android's platform action bar: black, 48 dp at the TV's 2x density. */
+  #app-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    height: 96px;
+    background: #000;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  }
+  #app-bar span {
+    display: block;
+    padding-left: 32px;
+    font-size: 28px;
+    line-height: 96px;
+    font-weight: 500;
+  }
+
+  /* MainActivity/ScenarioActivity use 48 x 36 dp at 2x. */
+  #content {
+    box-sizing: border-box;
+    min-height: calc(100vh - 96px);
+    margin-top: 96px;
+    padding: 72px 96px;
+  }
+  #content.media-mode { padding: 40px 48px; }
+
+  #stub_title {
+    margin: 0;
+    color: #c1c1c1;
+    font-size: 48px;
+    line-height: 65px;
+    font-weight: bold;
+  }
+  #stub_subtitle {
+    margin: 0 0 12px 0;
+    color: #c1c1c1;
+    font-size: 30px;
+    line-height: 41px;
+    opacity: 0.8;
+  }
+
+  .home-list { margin: 0; }
+  .stub-button {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 96px;
+    min-height: 96px;
+    margin: 0;
+    padding: 12px 8px;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 36px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .stub-button .bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 100%;
+    height: 72px;
+    border-radius: 4px;
+    background: #5a595b;
+  }
+  .stub-button:focus { outline: none; }
+  .stub-button:focus .bar { background: #646365; }
+  .stub-button[disabled] { cursor: default; }
+  .stub-button[disabled] .bar {
+    background: #3d3d3d;
+    color: #787878;
+  }
+  .home-list .stub-button { margin-bottom: 12px; }
+  .home-list .stub-button:last-child { margin-bottom: 0; }
+
+  #scenario-body { display: none; margin-top: 12px; }
+  .scenario-screen { display: none; }
+  .scenario-screen.active { display: block; }
+  .stack > * + * { margin-top: 12px; }
+
+  .label {
+    color: #c1c1c1;
+    font-size: 36px;
+    line-height: 49px;
+  }
+  .status {
+    margin-top: 12px;
+    color: #c1c1c1;
+    font-size: 32px;
+    line-height: 43px;
+    opacity: 0.85;
+  }
+
+  #stub_input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 73px;
+    padding: 0 24px;
+    border: 0;
+    border-bottom: 4px solid #6b6b6b;
+    border-radius: 0;
+    background: transparent;
+    color: #c1c1c1;
+    font-size: 36px;
+    line-height: 73px;
+    outline: none;
+  }
+  #stub_input:focus { border-bottom-color: #80cbc4; }
+  #stub_input::placeholder { color: rgba(255, 255, 255, 0.6); }
+
+  /* ScrollActivity hardcodes a 10 dp gap above the scroller on television. */
+  #stub_scroller {
+    box-sizing: border-box;
+    width: 100%;
+    height: calc(100vh - 96px - 144px - 65px - 20px - 12px - 43px);
+    margin-top: 8px;
+    overflow-y: auto;
+    outline: none;
+  }
+  #stub_list { display: block; }
+  .stub-row {
+    padding: 24px 0;
+    color: #c1c1c1;
+    font-size: 36px;
+    line-height: 49px;
+  }
+
+  #stub_hidden { visibility: hidden; }
+
+  /* MediaActivity uses 24 x 20 dp at 2x; the 4:3 video is 586 x 440. */
+  .media-screen { color: #c1c1c1; }
+  #stub_media_title {
+    margin: 0;
+    color: #c1c1c1;
+    font-size: 44px;
+    line-height: 60px;
+  }
+  #stub_media_video {
+    display: block;
+    width: 586px;
+    height: 440px;
+    margin-top: 24px;
+    background: #000;
+    object-fit: contain;
+  }
+  #stub_media_image {
+    display: block;
+    width: 240px;
+    height: 240px;
+    margin-top: 24px;
+    object-fit: contain;
+  }
+  #stub_media_broken {
+    display: block;
+    width: 240px;
+    height: 120px;
+    margin-top: 24px;
+    background: #202020;
+  }
+  #stub_media_status {
+    margin-top: 24px;
+    color: #c1c1c1;
+    font-size: 32px;
+    line-height: 43px;
+  }
+
+  /* Android's AlertDialog: teal-tinted surface, 496 dp wide at 2x. */
+  #dialog-backdrop {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+  }
+  #dialog-card {
+    box-sizing: border-box;
+    width: 992px;
+    max-width: calc(100vw - 192px);
+    padding: 0 0 16px 0;
+    border-radius: 4px;
+    background: #324248;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  }
+  #stub_dialog_title {
+    padding: 36px 48px 16px 48px;
+    color: #c8cbcc;
+    font-size: 48px;
+    line-height: 54px;
+    font-weight: 500;
+  }
+  .dialog-option {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 96px;
+    padding: 0 48px;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 36px;
+    line-height: 96px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dialog-option:focus {
+    outline: none;
+    background: #3f4e53;
+  }
+</style>
+</head>
+<body>
+<header id="app-bar"><span>Impresario Stub</span></header>
+
+<main id="content">
+  <h1 id="stub_title">Impresario stub</h1>
+  <p id="stub_subtitle">One screen per test scenario.</p>
+
+  <div id="home-list" class="home-list">
+    <button id="stub_scenario_basic" class="stub-button" type="button"><span class="bar">Basic controls</span></button>
+    <button id="stub_scenario_text" class="stub-button" type="button"><span class="bar">Text entry</span></button>
+    <button id="stub_scenario_scroll" class="stub-button" type="button"><span class="bar">Scroller</span></button>
+    <button id="stub_scenario_select" class="stub-button" type="button"><span class="bar">Selection</span></button>
+    <button id="stub_scenario_flags" class="stub-button" type="button"><span class="bar">Flags</span></button>
+    <button id="stub_scenario_keys" class="stub-button" type="button"><span class="bar">Key log</span></button>
+    <button id="stub_scenario_info" class="stub-button" type="button"><span class="bar">Device info</span></button>
+    <button id="stub_scenario_media" class="stub-button" type="button"><span class="bar">Playback</span></button>
+  </div>
+
+  <div id="scenario-body">
+    <section id="screen-basic" class="scenario-screen">
+      <div class="stack">
+        <button id="stub_button" class="stub-button" type="button"><span class="bar">Tap me</span></button>
+        <div id="stub_counter" class="label">taps=0</div>
+      </div>
+    </section>
+
+    <section id="screen-text" class="scenario-screen">
+      <div class="stack">
+        <input id="stub_input" type="text" placeholder="type here" autocomplete="off" spellcheck="false">
+        <div id="stub_echo" class="label">echo:</div>
+      </div>
+    </section>
+
+    <section id="screen-scroll" class="scenario-screen">
+      <div id="stub_scroller" tabindex="0">
+        <div id="stub_list"></div>
+      </div>
+    </section>
+
+    <section id="screen-select" class="scenario-screen">
+      <div class="stack">
+        <button id="stub_select" class="stub-button" type="button"><span class="bar">Choose</span></button>
+      </div>
+    </section>
+
+    <section id="screen-flags" class="scenario-screen">
+      <div class="stack">
+        <button id="stub_enabled" class="stub-button" type="button"><span class="bar">Enabled</span></button>
+        <button id="stub_disabled" class="stub-button" type="button" disabled><span class="bar">Disabled</span></button>
+        <div id="stub_visible" class="label">visible text</div>
+        <div id="stub_hidden" class="label" aria-hidden="true">hidden text</div>
+      </div>
+    </section>
+
+    <section id="screen-keys" class="scenario-screen">
+      <div class="stack">
+        <button id="stub_key_a" class="stub-button" type="button"><span class="bar">Alpha</span></button>
+        <button id="stub_key_b" class="stub-button" type="button"><span class="bar">Bravo</span></button>
+        <button id="stub_key_c" class="stub-button" type="button"><span class="bar">Charlie</span></button>
+        <div id="stub_key_log" class="label">key=none</div>
+      </div>
+    </section>
+
+    <section id="screen-info" class="scenario-screen">
+      <div id="stub_info" class="label">pkg=com.impresario.stub; sdk=web; model=web TV; tv=true</div>
+    </section>
+
+    <section id="screen-media" class="scenario-screen media-screen">
+      <div id="stub_media_title">Playback fixture</div>
+      <video id="stub_media_video" src="media_sample.mp4" muted playsinline loop preload="auto"></video>
+      <img id="stub_media_image" src="sample_image.png" alt="poster image">
+      <div id="stub_media_broken" role="img" aria-label="missing image"></div>
+      <div id="stub_media_status">loading</div>
+    </section>
+  </div>
+
+  <div id="stub_status" class="status">status=idle</div>
+</main>
+
+<div id="dialog-backdrop">
+  <div id="dialog-card">
+    <div id="stub_dialog_title">Pick one</div>
+    <div class="dialog-options">
+      <button id="stub_option_a" class="dialog-option" type="button">Option A</button>
+      <button id="stub_option_b" class="dialog-option" type="button">Option B</button>
+      <button id="stub_option_c" class="dialog-option" type="button">Option C</button>
+    </div>
+  </div>
+</div>
+
+<script src="impresario-hook.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function byId(id) { return document.getElementById(id); }
+  function keyCodeOf(event) { return event.keyCode || event.which || 0; }
+  function isOkKey(event) {
+    var key = event.key || '';
+    var code = keyCodeOf(event);
+    return key === 'Enter' || key === 'OK' || code === 13 || code === 23;
+  }
+  function isDownKey(event) {
+    var key = event.key || '';
+    return key === 'ArrowDown' || key === 'Down' || keyCodeOf(event) === 40;
+  }
+  function isUpKey(event) {
+    var key = event.key || '';
+    return key === 'ArrowUp' || key === 'Up' || keyCodeOf(event) === 38;
+  }
+  function isBackKey(event) {
+    var key = event.key || '';
+    var code = keyCodeOf(event);
+    return key === 'Back' || key === 'Escape' || key === 'GoBack' ||
+      key === 'BrowserBack' || code === 461 || code === 10009 || code === 27;
+  }
+
+  var content = byId('content');
+  var title = byId('stub_title');
+  var subtitle = byId('stub_subtitle');
+  var homeList = byId('home-list');
+  var scenarioBody = byId('scenario-body');
+  var status = byId('stub_status');
+  var backdrop = byId('dialog-backdrop');
+  var dialogCard = byId('dialog-card');
+
+  var screens = {
+    basic: byId('screen-basic'),
+    text: byId('screen-text'),
+    scroll: byId('screen-scroll'),
+    select: byId('screen-select'),
+    flags: byId('screen-flags'),
+    keys: byId('screen-keys'),
+    info: byId('screen-info'),
+    media: byId('screen-media')
+  };
+  var scenarioTitles = {
+    basic: 'Basic controls',
+    text: 'Text entry',
+    scroll: 'Scroller',
+    select: 'Selection',
+    flags: 'Flags',
+    keys: 'Key log',
+    info: 'Device info',
+    media: 'Playback fixture'
+  };
+
+  var currentScreen = 'home';
+  var lastScenario = 'stub_scenario_basic';
+  var dialogOpen = false;
+
+  // Basic controls: Android's long-click is 500 ms; the DSL's longpress
+  // default is 1000 ms, so the timer fires before the key is released.
+  var basicTaps = 0;
+  var basicLongTimer = null;
+  var basicKeyHeld = false;
+  var basicKeyStarted = 0;
+  var basicMouseStarted = 0;
+  var basicSuppressClick = false;
+  var tapButton = byId('stub_button');
+  var counter = byId('stub_counter');
+
+  // Key log: Android logs onKeyDown; the focused button's click reports the
+  // selected label after the key.
+  var keyLog = byId('stub_key_log');
+  var keyButtons = [byId('stub_key_a'), byId('stub_key_b'), byId('stub_key_c')];
+  var keyIndex = 0;
+
+  var input = byId('stub_input');
+  var echo = byId('stub_echo');
+  var scroller = byId('stub_scroller');
+  var list = byId('stub_list');
+  var mediaVideo = byId('stub_media_video');
+  var mediaStatus = byId('stub_media_status');
+  var info = byId('stub_info');
+
+  function buildInfo() {
+    var ua = navigator.userAgent || '';
+    var sdk = 'web';
+    if (ua.indexOf('Tizen') >= 0) {
+      sdk = 'Tizen';
+    } else if (ua.indexOf('Web0S') >= 0 || ua.indexOf('webOS') >= 0) {
+      sdk = 'webOS';
+    }
+    return 'pkg=com.impresario.stub; sdk=' + sdk + '; model=' + sdk + ' TV; tv=true';
+  }
+
+  for (var row = 0; row < 30; row += 1) {
+    var rowNode = document.createElement('div');
+    rowNode.id = 'stub_row_' + row;
+    rowNode.className = 'stub-row';
+    rowNode.textContent = 'row ' + row;
+    list.appendChild(rowNode);
+  }
+
+  function resetBasic() {
+    basicTaps = 0;
+    basicKeyHeld = false;
+    basicSuppressClick = false;
+    if (basicLongTimer) {
+      clearTimeout(basicLongTimer);
+      basicLongTimer = null;
+    }
+    counter.textContent = 'taps=0';
+  }
+
+  function basicTap() {
+    if (basicSuppressClick) {
+      basicSuppressClick = false;
+      return;
+    }
+    basicTaps += 1;
+    counter.textContent = 'taps=' + basicTaps;
+    status.textContent = 'status=clicked';
+  }
+
+  function startBasicLongPress() {
+    if (basicLongTimer) {
+      return;
+    }
+    basicLongTimer = setTimeout(function () {
+      basicLongTimer = null;
+      basicSuppressClick = true;
+      status.textContent = 'status=long-pressed';
+    }, 500);
+  }
+
+  function cancelBasicLongPress() {
+    if (basicLongTimer) {
+      clearTimeout(basicLongTimer);
+      basicLongTimer = null;
+    }
+  }
+
+  tapButton.addEventListener('click', basicTap);
+  tapButton.addEventListener('mousedown', function (event) {
+    if (event.button !== 0) { return; }
+    basicMouseStarted = Date.now();
+    startBasicLongPress();
+  });
+  tapButton.addEventListener('mouseup', cancelBasicLongPress);
+  tapButton.addEventListener('mouseleave', cancelBasicLongPress);
+  tapButton.addEventListener('keydown', function (event) {
+    if (!isOkKey(event)) { return; }
+    // Stop the browser's immediate Enter click; keyup decides short/long.
+    event.preventDefault();
+    if (!basicKeyHeld) {
+      basicKeyHeld = true;
+      basicKeyStarted = Date.now();
+      startBasicLongPress();
+    }
+  });
+  tapButton.addEventListener('keyup', function (event) {
+    if (!isOkKey(event)) { return; }
+    event.preventDefault();
+    if (!basicKeyHeld) { return; }
+    var held = Date.now() - basicKeyStarted;
+    basicKeyHeld = false;
+    cancelBasicLongPress();
+    if (held < 500) {
+      basicTap();
+    } else {
+      basicSuppressClick = false;
+    }
+  });
+
+  function resetKeys() {
+    keyLog.textContent = 'key=none';
+    keyIndex = 0;
+    keyButtons[0].focus();
+  }
+
+  // The TV connector scrolls `scrollto` with remote DPAD presses, matching
+  // the native Android/Apple fixtures. A focused web scroller does not
+  // reliably scroll itself in TV Chromium, so mirror a ScrollView's step here.
+  function scrollStep(direction) {
+    var step = Math.max(1, Math.floor(scroller.clientHeight * 0.8));
+    scroller.scrollTop += direction * step;
+  }
+
+  function focusKey(index) {
+    keyIndex = (index + keyButtons.length) % keyButtons.length;
+    keyButtons[keyIndex].focus();
+  }
+
+  function handleKeys(event) {
+    if (isDownKey(event)) {
+      keyLog.textContent = 'key=DPAD_DOWN';
+      focusKey(keyIndex + 1);
+      event.preventDefault();
+      return;
+    }
+    if (isUpKey(event)) {
+      keyLog.textContent = 'key=DPAD_UP';
+      focusKey(keyIndex - 1);
+      event.preventDefault();
+      return;
+    }
+    if (isOkKey(event)) {
+      keyLog.textContent = 'key=DPAD_CENTER';
+      event.preventDefault();
+      keyButtons[keyIndex].click();
+    }
+  }
+
+  for (var i = 0; i < keyButtons.length; i += 1) {
+    (function (index) {
+      keyButtons[index].addEventListener('focus', function () {
+        keyIndex = index;
+      });
+      keyButtons[index].addEventListener('click', function () {
+        keyLog.textContent = 'clicked=' + keyButtons[index].textContent;
+      });
+    })(i);
+  }
+
+  input.addEventListener('input', function () {
+    echo.textContent = 'echo:' + input.value;
+  });
+
+  function openDialog() {
+    dialogOpen = true;
+    backdrop.style.display = 'flex';
+    byId('stub_option_a').focus();
+  }
+
+  function closeDialog(focusTrigger) {
+    if (!dialogOpen) { return; }
+    dialogOpen = false;
+    backdrop.style.display = 'none';
+    if (focusTrigger !== false) {
+      byId('stub_select').focus();
+    }
+  }
+
+  function chooseOption(option) {
+    status.textContent = 'chosen: ' + option;
+    closeDialog();
+  }
+
+  byId('stub_select').addEventListener('click', openDialog);
+  byId('stub_option_a').addEventListener('click', function () { chooseOption('Option A'); });
+  byId('stub_option_b').addEventListener('click', function () { chooseOption('Option B'); });
+  byId('stub_option_c').addEventListener('click', function () { chooseOption('Option C'); });
+  backdrop.addEventListener('click', function () { closeDialog(); });
+  dialogCard.addEventListener('click', function (event) { event.stopPropagation(); });
+
+  byId('stub_enabled').addEventListener('click', function () {
+    status.textContent = 'status=enabled-clicked';
+  });
+
+  function reportMedia() {
+    var hook = window.ImpresarioHook;
+    if (!hook) { return; }
+    var state = mediaVideo.paused
+      ? 'Paused'
+      : (mediaVideo.readyState >= 2 ? 'Playing' : 'Loading');
+    var decoded = mediaVideo.readyState >= 2 && !mediaVideo.error;
+    var source = mediaVideo.currentSrc || mediaVideo.src || '';
+    hook.player({
+      state: state,
+      positionSeconds: mediaVideo.currentTime,
+      durationSeconds: isFinite(mediaVideo.duration) ? mediaVideo.duration : null,
+      rate: mediaVideo.playbackRate,
+      volume: mediaVideo.volume,
+      muted: mediaVideo.muted,
+      widthPx: mediaVideo.videoWidth,
+      heightPx: mediaVideo.videoHeight,
+      decoded: decoded,
+      source: source,
+      error: mediaVideo.error ? String(mediaVideo.error.code) : ''
+    });
+    hook.showing({
+      decoded: decoded,
+      source: source,
+      piece: 'stub_media_video'
+    });
+  }
+
+  function playMedia() {
+    mediaStatus.textContent = 'loading';
+    var started = mediaVideo.play();
+    if (started && started.catch) {
+      started.catch(function () {
+        mediaStatus.textContent = 'paused';
+        reportMedia();
+      });
+    }
+  }
+
+  mediaVideo.addEventListener('loadeddata', reportMedia);
+  mediaVideo.addEventListener('playing', function () {
+    mediaStatus.textContent = 'playing';
+    reportMedia();
+  });
+  mediaVideo.addEventListener('pause', function () {
+    mediaStatus.textContent = 'paused';
+    reportMedia();
+  });
+  mediaVideo.addEventListener('error', function () {
+    mediaStatus.textContent = 'error';
+    reportMedia();
+  });
+  mediaVideo.addEventListener('timeupdate', reportMedia);
+  setInterval(reportMedia, 250);
+
+  function resetScenario(name) {
+    status.textContent = 'status=idle';
+    if (name === 'basic') {
+      resetBasic();
+    } else if (name === 'text') {
+      input.value = '';
+      echo.textContent = 'echo:';
+    } else if (name === 'scroll') {
+      scroller.scrollTop = 0;
+    } else if (name === 'select') {
+      closeDialog(false);
+    } else if (name === 'keys') {
+      resetKeys();
+    } else if (name === 'info') {
+      info.textContent = buildInfo();
+    } else if (name === 'media') {
+      mediaStatus.textContent = 'loading';
+      mediaVideo.currentTime = 0;
+      reportMedia();
+    }
+  }
+
+  function showScreen(name) {
+    currentScreen = name;
+    var isHome = name === 'home';
+    var isMedia = name === 'media';
+
+    for (var key in screens) {
+      if (Object.prototype.hasOwnProperty.call(screens, key)) {
+        screens[key].className = 'scenario-screen';
+      }
+    }
+
+    if (isHome) {
+      title.textContent = 'Impresario stub';
+      title.style.display = '';
+      subtitle.style.display = '';
+      homeList.style.display = '';
+      scenarioBody.style.display = 'none';
+      status.style.display = 'none';
+      content.className = '';
+      var rowButton = byId(lastScenario);
+      if (rowButton) {
+        rowButton.focus();
+      }
+      return;
+    }
+
+    title.textContent = scenarioTitles[name];
+    title.style.display = isMedia ? 'none' : '';
+    subtitle.style.display = 'none';
+    homeList.style.display = 'none';
+    scenarioBody.style.display = 'block';
+    scenarioBody.style.marginTop = isMedia ? '0' : '12px';
+    status.style.display = isMedia ? 'none' : '';
+    content.className = isMedia ? 'media-mode' : '';
+    screens[name].className = 'scenario-screen active';
+
+    resetScenario(name);
+
+    if (name === 'basic') {
+      tapButton.focus();
+    } else if (name === 'text') {
+      input.focus();
+    } else if (name === 'scroll') {
+      scroller.focus();
+    } else if (name === 'select') {
+      byId('stub_select').focus();
+    } else if (name === 'flags') {
+      byId('stub_enabled').focus();
+    } else if (name === 'keys') {
+      keyButtons[0].focus();
+    } else if (name === 'media') {
+      playMedia();
+    }
+  }
+
+  function openScenario(name) {
+    lastScenario = 'stub_scenario_' + name;
+    showScreen(name);
+  }
+
+  var scenarioNames = ['basic', 'text', 'scroll', 'select', 'flags', 'keys', 'info', 'media'];
+  for (var n = 0; n < scenarioNames.length; n += 1) {
+    (function (name) {
+      byId('stub_scenario_' + name).addEventListener('click', function () {
+        openScenario(name);
+      });
+    })(scenarioNames[n]);
+  }
+
+  document.addEventListener('keydown', function (event) {
+    if (isBackKey(event)) {
+      if (dialogOpen) {
+        closeDialog();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (currentScreen !== 'home') {
+        if (currentScreen === 'media') {
+          mediaVideo.pause();
+        }
+        showScreen('home');
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      return;
+    }
+    if (currentScreen === 'scroll') {
+      if (isDownKey(event)) {
+        scrollStep(1);
+        event.preventDefault();
+        return;
+      }
+      if (isUpKey(event)) {
+        scrollStep(-1);
+        event.preventDefault();
+        return;
+      }
+    }
+    if (currentScreen === 'keys') {
+      handleKeys(event);
+    }
+  });
+
+  showScreen('home');
+})();
+</script>
+</body>
+</html>

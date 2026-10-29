@@ -288,16 +288,16 @@ The web fixture is exercised by
 the optional hook contract is exercised by
 `web_app_hook_supplies_authoritative_player_evidence`. The Android and Apple fixture apps
 compile in their own toolchains but hardware playback acceptance is deferred (`HD-1`,
-`HD-5`, `HD-8`). Web probes on other managed Chromium archives are part of `HD-6`; real-TV
-CDP is `HD-7`.
+`HD-5`, `HD-8`). Web probes on other managed Chromium archives are part of `HD-6`;
+real-TV CDP and the `Player` probe are hardware-verified on LG/Tizen (2026-10-29).
 
 ## Unverified work
 
-- webOS, Tizen and Apple TVs became reachable on 2026-10-25, but none has installed,
-  launched or played the fixtures: the LG passphrase, a Samsung-issued Tizen profile
-  and local macOS/Xcode pairing are missing. The Tizen TV accepted the upload and
-  install command but rejected a self-signed chain at certificate validation.
-  Transport/probe paths remain verified with fakes, fixtures and replay only.
+- LG webOS and Samsung Tizen TVs were hardware-verified on 2026-10-29: native
+  install/update, launch, forwarded CDP and the `Player => Video Playing` probe
+  passed on both (105/105 steps). Deeper `Showing`/decoder/DRM/position probes and
+  the Android/Apple hardware paths remain fixture-only. The Apple TV has the P0
+  UI/media step and 105-step play, but not the loopback hook/decoder/DRM evidence.
 - Apple host-side DVT/syslog/pcapd evidence and the in-app hook over loopback are not
   hardware-tested.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are

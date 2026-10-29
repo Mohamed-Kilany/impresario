@@ -1,0 +1,10 @@
+{
+  "id": "com.impresario.stub",
+  "version": "1.0.3",
+  "vendor": "Impresario",
+  "type": "web",
+  "main": "index.html",
+  "title": "Impresario Stub",
+  "icon": "icon.png",
+  "resolution": "1920x1080"
+}

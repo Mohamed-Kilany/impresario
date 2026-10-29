@@ -38,3 +38,6 @@ __pycache__/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# TV stub build output
+/fixtures/tv-stub/build/

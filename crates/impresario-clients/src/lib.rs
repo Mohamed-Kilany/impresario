@@ -21,6 +21,7 @@ pub mod convert;
 pub mod log;
 pub mod testing;
 pub mod tizen;
+pub mod tizen_cert;
 pub mod tizen_sign;
 pub mod transport;
 pub mod webos;

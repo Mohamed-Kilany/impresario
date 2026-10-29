@@ -160,6 +160,10 @@ impresario package inspect .\build\shop.ipk --json
 # deterministic unsigned Tizen WGT
 impresario package tizen .\build\web -o .\build\shop.wgt
 
+# create a Samsung-issued TV profile without Tizen Studio; sign in through the
+# browser when prompted. The DUID is printed by `impresario device check`.
+impresario sign tizen profile create --name living-room --duid 1234567890
+
 # import an existing author + distributor profile (passwords from env/keychain,
 # never from the command line)
 $env:IMPRESARIO_TIZEN_AUTHOR_PASSWORD = '...'
@@ -176,6 +180,13 @@ impresario sign tizen package .\build\shop.wgt `
   --profile living-room --duid 1234567890 -o .\build\shop-signed.wgt
 impresario sign tizen check .\build\shop-signed.wgt
 ```
+
+`profile create` discovers Samsung's current certificate endpoints, opens the
+normal Samsung account login, and generates the author/distributor profile
+natively. It uses the browser callback on `localhost:4794`; close Tizen Studio's
+Certificate Manager if that port is in use. `--no-browser`, `--refresh`,
+`--extension-url` and `--timeout` control the flow; see `docs/SIGNING.md`.
+`profile add` remains the route for an existing PKCS#12 pair.
 
 `package inspect` accepts `.ipk` and `.wgt`; `--json` is the stable machine
 shape. Errors are `IMP-SIGN-*` (see `docs/ERRORS.md`), and the full pipeline,

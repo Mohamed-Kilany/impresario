@@ -47,10 +47,13 @@ x509-parser.workspace = true
 roxmltree.workspace = true
 keyring.workspace = true
 base64.workspace = true
+ureq.workspace = true
+url.workspace = true
+zeroize.workspace = true
+rcgen.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-rcgen = "=0.14.10"
 # Loopback fake SSH server tests use the same rand release as russh's own
 # server examples.
 rand = "=0.10.3"

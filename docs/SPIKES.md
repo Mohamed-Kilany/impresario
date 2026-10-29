@@ -28,11 +28,11 @@ project/agent research whose artefact exists but which was not re-run here;
 |---|---|---|---|---|---|
 | S-1 | Android without `adb` (§6.1) | settled | **go** - shipped on `libadb` 0.6.0 (MIT): USB/TCP/TLS/SPAKE2 pairing, shell v2, install/instrument, forwarding, logcat, screencap; live phone/TV with `adb` absent; USB data implemented but unverified | 1 | I-121/I-122 |
 | S-2 | iOS/tvOS without Xcode tools (§6.2) | settled | **go** with recorded constraints (no direct-USB in `idevice`; iOS 17+ tunnel needs OS plumbing; XCTest end-to-end unverified) | 1 | I-95 |
-| S-3 | webOS without `ares-*` (§6.3) | settled | **go** — `russh`/`russh-sftp` build and pass a loopback probe on Windows; protocol facts cited from ares-cli 2.4.0/ares-cli-rs; no webOS TV to validate against | 1 | I-99 |
-| S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware validation pending | 1 | I-93 |
+| S-3 | webOS without `ares-*` (§6.3) | settled | **go** — `russh`/`russh-sftp` build and pass a loopback probe on Windows; protocol facts cited from ares-cli 2.4.0/ares-cli-rs; hardware-verified on the LG TV 2026-10-29 (install/update/launch/CDP, 105/105) | 1 | I-99, I-157 |
+| S-4 | Tizen without `sdb`/`tizen` CLI (§6.4) | settled | **go** for the Rust sdb client + fixture mock; hardware-verified on the Samsung TV 2026-10-29 (Samsung-issued profile, install/launch/CDP, 105/105) | 1 | I-93, I-157 |
 | S-5 | CLI/TUI/daemon/IPC/lossless config (§3, §4.2, §3.5) | settled, implemented in Phase 4 | **go** — 26/26 probe checks pass on Windows; config **stays YAML**; the TUI, daemon, PTY harness and profiles shipped | 1 | I-91, I-92, I-125…I-130 |
 | S-6 | Apple signing sources (§7.1) | settled | **go** for (a) local `.p12` re-sign (verified on Windows), **conditional go** for (b) ASC API and (c) free-Apple-ID sideloading (external services) | 1/3 | I-96 |
-| S-7 | Tizen certificates (§7.3) | settled | **go** for import/inspection; creation needs Samsung account services (external, optional) | 1/3 | I-94 |
+| S-7 | Tizen certificates (§7.3) | settled | **go** for import/inspection and native browser-assisted Samsung creation; hardware-verified on the Samsung TV 2026-10-29 | 1 | I-94, I-157 |
 | S-8 | Standalone editor without LSP (§9.2) | settled | **go** — `impresario-core` builds unchanged for `wasm32-unknown-unknown` | 1 | I-98 |
 
 ## Method
@@ -110,8 +110,10 @@ byte fixtures and an in-process mock device. On 2026-10-25 a Tizen 9.0 TV
 completed the CNXN handshake, capability/DUID reads and `0 vd_applist`; it did
 not issue an AUTH challenge. The TV also accepted the sync upload and
 `0 vd_appinstall` command, but rejected a self-signed package at certificate
-validation (`[118, -12]`), so AUTH signing, a successful install and launch
-remain hardware-gated on a Samsung-issued profile.
+validation (`[118, -12]`). On 2026-10-29 a Samsung-issued, DUID-bound profile
+installed and launched the fixture, forwarded CDP and passed the 105-step play
+(`20261029-082529-96bd`). The TV limits package ids to 10 characters; longer
+ids fail with `[118, -4] Load archive info fail`.
 
 **Transport (all verified first-hand from source):**
 
@@ -155,11 +157,11 @@ remain hardware-gated on a Samsung-issued profile.
   The Samsung repo layout differs from the research paths; our citations use the
   verified prefix `tizen-action-skills/`.
 
-**Open (hardware-gated):** the AUTH branch (the 2026-10-25 TV connected without
-requesting it); successful installation with a Samsung-issued, DUID-bound
-profile (the self-signed chain was rejected at certificate validation); exact
-success text for `vd_appinstall`; launch and CDP forwarding; the `capability`
-prefix across firmware generations.
+**Open (hardware-gated):** the AUTH branch (the attached TV connects without
+requesting it); exact success text for `vd_appinstall` (the app list remains
+authoritative); the `capability` prefix across firmware generations; Tizen < 7
+unsigned installs. Successful install with a Samsung-issued, DUID-bound profile
+and launch/CDP forwarding passed on 2026-10-29.
 
 **Phase 6 outcome (2026-10-23, fixture-verified only).** The native
 `TizenTransport` implements the SDB handshake (CNXN plus RSA-SHA1 AUTH token,
@@ -177,8 +179,10 @@ push, install command dispatch and failure, debug launch, `was_kill` and
 forwarding. The 2026-10-25 TV exercised the CNXN handshake, capability parsing,
 DUID, `0 vd_applist`, sync upload and `0 vd_appinstall`; it did not issue AUTH
 and rejected the self-signed package at certificate validation, so no app was
-installed and no debug launch or forward ran. The exact successful install text
-remains unknown (`HD-4`/`HD-7`).
+installed and no debug launch or forward ran. The 2026-10-29 run with a
+Samsung-issued profile then installed and launched the fixture, forwarded CDP
+and passed 105/105; the exact successful install text is still not used as
+proof (`HD-4`/`HD-7` closed, I-157).
 
 ---
 
@@ -292,8 +296,9 @@ dependency, ToS-grey — the user explicitly approved "with clear warnings").
 
 ## S-7 · Tizen certificates
 
-**Verdict:** import/inspection **go**; creation **conditional** (Samsung account
-services, external). Evidence:
+**Verdict:** import/inspection **go**; native Samsung-account creation **go**
+(the Samsung login itself remains an external browser service); live TV install
+verified 2026-10-29. Evidence:
 
 - Distributor certificates bind devices through **URI SANs**:
   `URN:tizen:packageid=` (first entry) then one `URN:tizen:deviceid=<DUID>` per
@@ -318,20 +323,45 @@ services, external). Evidence:
 - The fixed `#prop` digests double as a free oracle for our exclusive-C14N
   implementation — the single fiddly part of the signer.
 - Creation of a *Samsung-issued* distributor certificate is a browser OAuth flow
-  against Samsung account services (external by nature). Plan: always support
-  import + inspection + self-generated author flow; offer the account flow as a
-  clearly-marked external step; never silently degrade to an unsigned package.
-- Hardware-gated unknowns: what the TV validates on install (self-signed
-  distributor acceptance per firmware), and whether older firmware digests differ.
+  against Samsung account services (external by nature). The native
+  `tizen_cert` flow now implements it: discover the current Certificate
+  Extension endpoints/CA chain, wait on `localhost:4794/signin/callback` for the
+  browser login, generate RSA-2048 SHA-512 CSRs, request author/distributor
+  certificates, and build legacy PKCS#12 files. Import + inspection remain
+  supported for existing profiles; the flow never silently degrades to an
+  unsigned package.
+- Hardware result: the attached Tizen 9.0 TV rejected a self-signed chain
+  (`[118, -12]`) and accepted a Samsung-issued, DUID-bound profile; the app
+  installed, launched and passed 105/105 (`20261029-082529-96bd`). What other
+  firmware generations validate, and whether older firmware digests differ,
+  remains open.
 
 **Phase 6 outcome (2026-10-23, fixture-verified only).** Profiles are
-import-only and store encrypted PKCS#12 files under
-`~/.impresario/signing/tizen/`; passwords are keychain entries (with the
-documented headless environment overrides). The signer supports RSA and
-P-256/P-384 ECDSA keys with SHA-512, emitting raw `r || s` ECDSA values and
-`ecdsa-sha512` in `SignedInfo`. RSA/ECDSA round trips, tamper rejection,
-fixed `#prop` digests, deterministic packages and percent-encoded references
-pass locally. No Samsung-issued profile or TV install was exercised.
+imported into encrypted PKCS#12 files under `~/.impresario/signing/tizen/`;
+passwords are keychain entries (with the documented headless environment
+overrides). The signer supports RSA and P-256/P-384 ECDSA keys with SHA-512,
+emitting raw `r || s` ECDSA values and `ecdsa-sha512` in `SignedInfo`.
+RSA/ECDSA round trips, tamper rejection, fixed `#prop` digests, deterministic
+packages and percent-encoded references pass locally. No Samsung-issued profile
+or TV install was exercised in that phase.
+
+**Native Samsung creation (2026-10-29).** The Certificate Extension `2.0.75`
+was downloaded and inspected. The live TV endpoints are `SERVICE_ID
+v285zxnl3h`, `https://svdca.samsungqbe.com/apis/v3/authors` and
+`.../distributors`; the login redirect is
+`http://localhost:4794/signin/callback`, and the callback `code` is a
+URL-encoded JSON object with `access_token`, `userId` and optionally `email`.
+The VD CA files are `res/ca/vd_tizen_dev_author_ca.cer` and
+`res/ca/vd_tizen_dev_public2.crt`. `impresario sign tizen profile create`
+discovers these values (seven-day cache), runs the browser callback locally,
+generates the CSRs, requests both certificates, verifies the distributor DUID
+SANs, and imports the profile. Offline tests cover the Java constant-pool and
+nested ZIP discovery, callback parsing, CSR SANs, PEM/DER handling, legacy
+PKCS#12 import and the local HTTP callback. The 2026-10-29 live login omitted
+the email from the callback, so `--email` was supplied; the author and
+distributor certificates were issued, and the TV installed and launched the
+fixture (105/105). Certificate validation allows 300 seconds of clock skew
+because Samsung sets `notBefore` at the issuance instant.
 
 ---
 
@@ -440,9 +470,10 @@ explicit guidance. Decision I-121, key-store I-122.
 
 **Verdict: go**, rung 1 (own Rust client; no `ssh`, `scp`, `openssl`, `ares-*`
 or `luna-send` process on the host). Probe: `%TEMP%\opencode\spike-webos\`
-(`FEASIBILITY.md`, `probe/`, `probe-default-nasm/`). There is **no webOS TV**
-on this host, so the client stack and the protocol facts are verified, while
-every TV-side behaviour stays unverified and is listed below. Decision I-99.
+(`FEASIBILITY.md`, `probe/`, `probe-default-nasm/`). The LG TV at
+`192.168.93.116` was hardware-verified on 2026-10-29: native SSH
+install/update, launch, forwarding and the 105-step play passed. The protocol
+facts and the remaining TV-side limits are listed below. Decision I-99, I-157.
 
 **Dependency and probe (verified on this host).** `russh` 0.63.3 and
 `russh-sftp` 3.0.1, both Apache-2.0. With russh's default `aws-lc-rs` feature
@@ -484,13 +515,13 @@ reference-only. `ssh2`/libssh is rejected: it drags OpenSSL (and Perl/MSVC) into
 the Windows build, which is worse than the `ring` stack even if a TV cipher
 turns out to need the manual fallback.
 
-**Hardware-gated (recorded in `docs/STATUS.md`):** the exact PEM cipher/key
-size/padding, the SSH banner and algorithm negotiation, host-key type, SFTP
-availability and `/media/developer/temp` permissions, the 9991 response
-headers/chunking, whether `com.webos.appInstallService/dev/install` is still
-the right service on current firmware (vs `appinstalld2/install`), whether
-`luna-send-pub` is present and `-i`/`-n` behave over exec, and whether an
-unsigned/unencrypted IPK is accepted.
+**Hardware result (2026-10-29):** the LG TV accepted russh's SSH negotiation,
+the Developer Mode key/passphrase, luna exec and
+`com.webos.appInstallService/dev/install`; install/update, launch, SSH
+`direct-tcpip` forwarding and the 105-step play passed. SFTP writes were
+rejected, so the exec `cat` fallback is the live path. Still unverified across
+other firmware: the exact PEM cipher/key size/padding, `luna-send-pub` `-i`/`-n`
+variants, `appinstalld2/install`, and unsigned/unencrypted IPK acceptance.
 
 **Phase 6 outcome (2026-10-23, fixture-verified only).** The spike choices are
 now the shipped `WebOsTransport`: `russh`/`russh-sftp` with the `ring`
@@ -502,7 +533,9 @@ connector. An in-process fake SSH server replays the whole path (pin mismatch,
 capability/exec, SFTP upload, install subscription, app-list verification,
 launch/close, forwarding and cleanup). This proves the client state machine
 against the recorded protocol, **not** that a real TV accepts these SSH
-algorithms, SFTP, luna service names or IPK layout. `HD-3`/`HD-7` remain open.
+algorithms, SFTP, luna service names or IPK layout. The 2026-10-29 LG run then
+installed/updated the IPK, launched the app, forwarded CDP and passed 105/105,
+closing `HD-3`/`HD-7`.
 
 ## S-8 · Standalone editor (WASM)
 
@@ -527,7 +560,7 @@ required path for a run. Each probe capability records its chosen rung here.
 
 | Capability | Rung | Chosen implementation and fallback | Evidence status |
 |---|---|---|---|
-| Web, webOS, Tizen DOM/media/EME collection | 1 | Connector CDP helpers plus the EME hook; AVPlay is used on Tizen only. Chromium is either the existing browser or the managed rung-3 browser, but the collector itself is in-process. | Fixture/replay verified on local Chromium; real-TV CDP is `HD-7`. |
+| Web, webOS, Tizen DOM/media/EME collection | 1 | Connector CDP helpers plus the EME hook; AVPlay is used on Tizen only. Chromium is either the existing browser or the managed rung-3 browser, but the collector itself is in-process. | Fixture/replay verified on local Chromium; real-TV CDP and the `Player` probe are hardware-verified on LG/Tizen (2026-10-29). Deeper probes remain fixture-only. |
 | Web in-app hook | 1 | `sdk/web/impresario-hook.js` sets a versioned `window.__impresarioHook.snapshot`; the connector reads it as AUTHORITATIVE. Nothing is downloaded and playback is not altered. | Fixture `fixtures/web/hook.html`; connector evidence path is unit/fixture-covered. |
 | Web screenshot-region coverage | 1 | Native PNG decode in the connector (no image tool, no shell). | Fixture verified with local PNG/WebM. |
 | Android showing / player / DRM collection | 1 | In-process Kotlin agent: accessibility tree, screenshot pixels, MediaSession state for the target package, and `dumpsys media.drm` only when it names that package. `dumpsys` text is read through the native ADB shell as a degraded structured-channel substitute, feature-detected and reported as such; no host `adb` process. AudioManager is not used because it is system-wide. | JVM probe tests cover collection and verdict mapping; the new probe path has not run on a phone/TV and is hardware-gated (`HD-5`). |
@@ -538,8 +571,8 @@ required path for a run. Each probe capability records its chosen rung here.
 | iOS/tvOS host-assisted DVT, syslog and pcapd metadata | 3 (not implemented) | The `idevice` DVT/pcapd path was evaluated (S-2) but no host-assisted collector is shipped; `doctor` does not invoke it. Apple playback evidence uses the hook instead. | Explicitly unverified/deferred; no claim of implementation. |
 | iOS/tvOS protected-surface inference | 1 | Design: XCTest screenshot + hook/decoder corroboration; never a standalone verdict. | Not a shipped verdict path; protected frames are not captured. |
 | Resident runner and OS autostart | 1 | Own per-user process using OS logon integration; tray icon is optional and best-effort (D-42). | Windows live tests planned in the resident phase; other OSes replay/runbook. |
-| Signing (Android, Apple, Tizen, webOS packaging) | 1/2 | Pure-Rust signing/packaging with embedded provider assets where required; no `openssl`, `apksigner`, `tar`, `ar` or `gzip` process. | Phase 6 fixtures green; hardware acceptance deferred (HD-3/HD-4/HD-7). |
-| Apple `.p12` re-sign and Tizen profiles | 1 | `apple-codesign` as an unmodified crate (MPL-2.0) and native PKCS#12/XML-DSig code; Samsung account certificate creation remains external. | Local `.p12` sign verified; Tizen creation unsupported by design. |
+| Signing (Android, Apple, Tizen, webOS packaging) | 1/2 | Pure-Rust signing/packaging with embedded provider assets where required; no `openssl`, `apksigner`, `tar`, `ar` or `gzip` process. | Phase 6 fixtures green; Tizen/LG signing/install/launch hardware-verified 2026-10-29 (HD-3/HD-4/HD-7 closed). |
+| Apple `.p12` re-sign and Tizen profiles | 1 | `apple-codesign` as an unmodified crate (MPL-2.0), native PKCS#12/XML-DSig code, and native Samsung browser-assisted profile creation (discovery, callback, CSRs, certificates). | Local `.p12` sign verified; native Samsung profile creation and TV install verified 2026-10-29. |
 
 No capability is silently moved to a lower rung: a fallback that changes input,
 confidence or output is recorded as a decision and reflected in the probe

@@ -135,7 +135,7 @@ Commands (verified):
 ```powershell
 cargo build --workspace
 cargo test -p impresario-connector     # headless-Chrome fixture suite (spec 10.3)
-impresario device check --device desktop_chrome
+impresario device check desktop_chrome
 impresario run --play plays/login.play --device desktop_chrome --app desktop_page
 ```
 
@@ -165,7 +165,8 @@ media_probes_collect_showing_player_and_drm_evidence`, which covers
 optional hook path. The fixture suite skips when no Chromium is available, so
 CI on a Chrome-less host is not evidence. For a real TV, the browser must be
 started with a reachable CDP endpoint (`connection.endpoint: ws://…`) and the
-same probes apply; that path is HD-7.
+same probes apply; real-TV CDP is hardware-verified on LG/Tizen (HD-7 closed,
+2026-10-29).
 
 Notes:
 
@@ -177,7 +178,7 @@ Notes:
 - `cdp_backend: chromiumoxide` is an option-level switch (D-03); the typed
   backend needs the browser websocket from `/json/version` (I-39).
 
-### 1.3 webOS (TV) — native SSH transport (fixture-verified; LG host reachable 2026-10-25, auth blocked)
+### 1.3 webOS (TV) — native SSH transport (hardware-verified 2026-10-29)
 
 The executor is still `impresario-connector` (D-03), but the host-side device
 work is Impresario's own SSH/SFTP/luna client. No `ares-*`, `ssh`, `scp`,
@@ -201,6 +202,8 @@ devices:
     auth:
       identity: SHA256:...    # optional host-key pin (recommended)
       # key: C:\keys\living-room.pem   # optional private-key override
+    options:
+      connector_address: 127.0.0.1:50151  # 50051 is held by multipassd here
 ```
 
 - The first connection fetches `http://<tv>:9991/webos_rsa` and stores the
@@ -213,6 +216,9 @@ devices:
   is remembered in `keys/webos_known_hosts`; a later change is rejected.
 - `auth.key` may name a private-key file or `keychain:<entry>` whose stored
   value is the key itself. Usually it is omitted.
+- `options.connector_address` pins the local connector listener. On this host
+  the default `127.0.0.1:50051` is held by `multipassd`, so the LG device uses
+  `127.0.0.1:50151`. A multi-TV run needs a distinct port per device.
 
 **App definition**
 
@@ -244,26 +250,44 @@ produces the same package explicitly.
    `package`, the transport attaches to an already-installed app.
 
 ```powershell
-impresario device check --device living_room_tv
+impresario device check living_room_tv
 impresario run --play plays/smoke.play --device living_room_tv --app shop
 ```
 
 `device check` is read-only: it connects, queries `deviceInfo`/`listApps`, and
 tears down; it does not install or launch. It reports a warning if luna cannot
-answer rather than inventing device details.
+answer rather than inventing device details. This LG TV rejects SFTP writes, so
+the transport's exec `cat > /media/developer/temp/...` fallback is the live
+upload path. Install success is the luna terminal `returnValue:true,
+subscribed:true` plus a `dev/listApps` version match; an update closes the app
+first, waits for a terminal state (30 s grace) and then verifies the requested
+version within 30 s.
 
-**Hardware runbook (HD-3, HD-7 — install/launch not executed here)**
+**Hardware verification (HD-3, HD-7 — passed 2026-10-29)**
 
-1. Record TV model/firmware, Developer Mode version, `device check` output and
-   the host-key fingerprint.
-2. Package a fixture app with `impresario package webos`; record its SHA-256.
-3. Run `device check`, then a real run. Record the install terminal line, the
-   app-list verification, the forwarded inspector port and the play report.
-4. Repeat with an app already installed and a changed package to prove update
-   verification; then test an invalid package and confirm the run fails.
-5. Only after these pass should `HD-3`/`HD-7` be marked hardware-verified.
+The LG TV at `192.168.93.116` (SSH 9922, key server 9991) is hardware-verified
+through the native transport:
 
-### 1.4 Tizen (TV) - native SDB transport (fixture-verified; Samsung SDB/upload/install path exercised 2026-10-25, certificate rejected)
+- the Developer Mode passphrase was supplied only for the session through
+  `IMPRESARIO_WEBOS_PASSPHRASE` (not stored);
+- SFTP writes are rejected by this TV, so the SSH `cat >
+  /media/developer/temp/...` fallback carried the IPK;
+- `com.impresario.stub` 1.0.1 -> 1.0.2 passed 105/105 steps
+  (`20261029-065359-d11c`, 26.5 s), and 1.0.2 -> 1.0.3 passed 105/105
+  (`20261029-082618-7cc3`, 27.1 s); both verified the installed version through
+  `dev/listApps`, launched the app, forwarded the inspector over SSH and drove
+  the `Player => Video Playing` probe;
+- `device check` prints `deviceInfo query failed: ... Denied method call
+  "query"` because this firmware denies the luna query, but the app list is
+  returned and the check completes;
+- the connector listens on `127.0.0.1:50151` because `multipassd` owns 50051.
+
+For re-verification: record model/firmware and `device check`; package the
+fixture; run install and update; then exercise invalid-package and
+wrong-passphrase failures. The 2026-10-29 runs cover install, update, launch and
+CDP; the negative cases remain fixture-tested.
+
+### 1.4 Tizen (TV) - native SDB transport (hardware-verified 2026-10-29)
 
 The executor is still `impresario-connector`; the host-side SDB protocol,
 package signing and forwarding are native Rust. No `sdb` or `tizen` process
@@ -287,14 +311,39 @@ devices:
       port: 26101            # default
     auth:
       profile: living-room   # required on Tizen 7.0+; see docs/SIGNING.md
+    options:
+      connector_address: 127.0.0.1:50152  # distinct from the LG device's port
 ```
 
 SDB authenticates with a locally generated RSA key at
 `~/.impresario/keys/tizen_adbkey`; the TV may show a confirmation prompt on the
-first connection. `auth.profile` names an imported signing profile; older Tizen
-does not require one.
+first connection. `auth.profile` names an imported or created signing profile;
+older Tizen does not require one. `options.connector_address` is optional but
+required on this host when more than one TV is configured: `multipassd` owns
+50051, so the LG uses 50151 and Tizen uses 50152.
 
 **Signing profile (Tizen 7.0+)**
+
+The guided route creates a Samsung-issued profile for the TV without Tizen
+Studio. Run it from the machine with the browser and keep port `4794` free
+(close Tizen Studio's Certificate Manager):
+
+```powershell
+impresario device check living_room_tv   # prints the TV DUID
+impresario sign tizen profile create --name living-room --duid <DUID> `
+  --email you@example.com
+impresario sign tizen profile show living-room
+```
+
+The browser opens Samsung's normal account login; complete the login and any
+2FA there. Impresario does not read or store the Samsung password. The
+distributor certificate is requested with one `URN:tizen:deviceid=<DUID>` SAN
+per `--duid` (repeat the option or use a comma-separated list, up to 50).
+Samsung's callback for the 2026-10-29 test account omitted the email address;
+pass `--email` for accounts whose callback has no `email` field. The command
+still works without it when the callback supplies one.
+
+To import an existing author/distributor pair instead:
 
 ```powershell
 $env:IMPRESARIO_TIZEN_AUTHOR_PASSWORD = '...'
@@ -312,8 +361,9 @@ On 2026-10-25 a temporary **self-signed** profile passed the local profile and
 DUID checks and the TV accepted the upload and `0 vd_appinstall` command, but
 the installer rejected the package with
 `[118, -12] Invalid certificate chain with certificate in signature`.
-Self-signed certificates cannot install apps on a retail TV; use a
-Samsung-issued author/distributor profile that covers the DUID.
+Self-signed certificates cannot install apps on a retail TV; use
+`profile create` or a Samsung-issued author/distributor profile that covers the
+DUID.
 
 **App definition**
 
@@ -322,9 +372,19 @@ apps:
   - name: shop
     platforms:
       tizen:
-        id: org.example.shop
+        id: shop.main
         package: ./build/shop.wgt   # .wgt; an app directory must be packaged first
 ```
+
+**Package-ID limit.** The TV limits the `<tizen:application package=...>` id in
+`config.xml` to **10 characters**, and the dotted app id must start with that
+package id plus a dot. Longer package ids fail at install with
+`[118, -4] Load archive info fail` (the self-signed/ID diagnostics that led to
+this are recorded in I-157). The shared fixture therefore uses package
+`impresario` and app id `impresario.stub`. A Tizen `.wgt` must not contain
+`appinfo.json`; a webOS `.ipk` must not contain `config.xml`. The fixture
+builder `fixtures/tv-stub/build.ps1` stages the shared HTML with only the
+platform manifest.
 
 **What a run does**
 
@@ -341,49 +401,68 @@ apps:
    confirmed by `app_tizen_id`/`app_package_name` in `0 vd_applist`, not by
    trusting the install output.
 5. Runs `0 debug <app-id>` for the inspector port and forwards it with a native
-   SDB `tcp:` channel.
+   SDB `tcp:` channel. The forward retries transient sdbd handshake drops
+   (three attempts with backoff) before reporting the inspector endpoint dead.
 6. Hands `ws://127.0.0.1:<local-port>` to the connector handshake. Teardown
    uses `0 was_kill`.
 
 ```powershell
-impresario device check --device living_room_tv
+impresario device check living_room_tv
 impresario run --play plays/smoke.play --device living_room_tv --app shop
 ```
 
 `device check` reads capabilities/DUID/app list and profile status only; it
 does not install, launch or sign.
 
-**Hardware runbook (HD-4, HD-7 — install/launch not executed here)**
+**Hardware verification (HD-4, HD-7 — passed 2026-10-29)**
 
-1. Record TV model/firmware, `device check` output, DUID and profile coverage.
-2. On Tizen 7+, sign a fixture `.wgt`, record its SHA-256, install through a
-   run, and confirm `0 vd_applist` shows the app and the play connects.
-3. Repeat on Tizen < 7 with an unsigned fixture to verify the original-package
-   branch (if such hardware is available).
-4. Test a profile without the TV DUID, an expired certificate and a corrupted
-   `.wgt`; each must fail with the documented `IMP-SIGN-*`/transport error.
-5. Record the exact `0 vd_appinstall` output and whether AUTH was requested.
-6. Only after these pass should `HD-4`/`HD-7` be marked hardware-verified.
+The Samsung TV at `192.168.93.37:26101` (`UA55CU8500UXSA`, Tizen 9.0, DUID
+`P7CIFS3MU3C26`) is hardware-verified through the native transport:
 
-**Hardware access log (2026-10-25)**
+- `impresario sign tizen profile create` obtained a Samsung-issued,
+  DUID-bound author/distributor profile through the browser login, with no Tizen
+  Studio, Java, `openssl` or Samsung password stored by Impresario. The
+  callback omitted the email for this account, so `--email` was supplied; the
+  profile was created and `profile show` reports both certificates valid to
+  2027-10-29.
+- The TV installed package `impresario` / app `impresario.stub`, launched it
+  with `0 debug`, served CDP through the SDB `tcp:` forward, and passed the
+  shared 105-step stub play (`20261029-082529-96bd`, 30.8 s, 10 stages, 0
+  failures), including the `Player => Video Playing` probe.
+- The TV requires the package id to be at most 10 characters. Longer ids fail
+  with `[118, -4] Load archive info fail`; the app id must start with
+  `<package>.`.
+- The SDB connection occasionally drops a handshake with `early eof` or
+  `An existing connection was forcibly closed`; the transport retries the
+  forward, and a retry succeeds.
 
-- **Tizen** — `192.168.93.37:26101`, `device check --device samsung_tizen`
-  passed with the native SDB transport:
-  `Tizen TV · Tizen 9.0 · 0x0 @1x · SDB (native)`; the banner is
-  `device::UA55CU8500UXSA::0` (55" CU8500). The handshake completed **without
-  an AUTH challenge**, so capability parsing, DUID and the app-list read are
-  hardware-verified, but the RSA AUTH path is not. It also reports
-  `signing required (Tizen 7.0+)`, and no profile is imported. Package signing,
-  upload, `0 vd_appinstall`, `0 debug`, forwarding and playback are not
-  verified. `0 vd_appinstall` success semantics remain unverified.
+For re-verification: record model/firmware, `device check`, DUID and profile
+coverage; install an updated fixture and confirm the app-list version; test a
+profile without the DUID, an expired certificate and a corrupted `.wgt` (these
+negative cases remain fixture-tested). The Tizen < 7 unsigned branch still
+needs older hardware.
+
+**Hardware access log (2026-10-29)**
+
+- **Tizen** — `192.168.93.37:26101`, `device check samsung_tizen` passed with
+  the native SDB transport: `Tizen TV · Tizen 9.0 · 0x0 @1x · SDB (native)`;
+  the banner is `device::UA55CU8500UXSA::0` (55" CU8500). The handshake
+  completed **without an AUTH challenge**, so capability parsing, DUID and the
+  app-list read are hardware-verified, but the RSA AUTH path is not. On
+  2026-10-29 a native Samsung-issued profile installed and launched package
+  `impresario` / app `impresario.stub`; the 105-step play passed
+  (`20261029-082529-96bd`). Package signing, upload, `0 vd_appinstall`,
+  `0 debug`, forwarding and the `Player` probe are now verified; the exact
+  success text for `vd_appinstall` is still not treated as proof (the app list
+  is authoritative).
 - **webOS** — `192.168.93.116`. TCP 9922 and 9991 are reachable. The key server
   served `/webos_rsa`; the encrypted key is
-  `~/.impresario/keys/webos/192.168.93.116.pem`. `device check` fails before
-  SSH authentication with `webOS key passphrase: no passphrase in the OS
-  keychain`; set `IMPRESARIO_WEBOS_PASSPHRASE` from the TV's Developer Mode app
-  for the session and rerun (there is no CLI command that stores the secret).
-  No install/launch/CDP is verified on this TV. The 2026-10-21 four-device run used the web connector
-  path, not `WebOsTransport`.
+  `~/.impresario/keys/webos/192.168.93.116.pem`. The Developer Mode passphrase
+  was supplied for the 2026-10-29 session through
+  `IMPRESARIO_WEBOS_PASSPHRASE` (not stored). Native SSH install/update,
+  launch, forwarding and the 105-step play passed (`20261029-082618-7cc3`);
+  SFTP writes are rejected, so the exec `cat` fallback carried the IPK. The
+  2026-10-21 four-device run used the web connector path, not `WebOsTransport`.
 - **Apple TV** – now `192.168.93.19` (the 2026-10-27 P0 run; the
   2026-10-26 run used `10.102.93.222`).
   AirPlay `/info` reports `AppleTV5,3` (Apple TV HD), `RAMA (4)`, device ID
@@ -393,8 +472,8 @@ does not install, launch or sign.
   `testServe` passed with a real handshake/shutdown over the direct-RSD path
   (I-150). `AppleTransport` now uses the same pure-Rust path; `device check`
   passed on this Windows host with the pre-rename bundle ids. The renamed
-  bundle ids need new profiles, and full tvOS actions/focus/playback are not
-  verified.
+  short-id bundles now have profiles (expiry 2026-11-04) and passed the ordinary
+  host/no-stub run and the full 105-step stub play; see `docs/STATUS.md` HD-1.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; `options.key_dispatch` picks the
@@ -1358,10 +1437,11 @@ probes remain HD-1 work.
 
 ## 4. Hardware acceptance backlog scheduled with the Phase 6/7 window
 
-Phase 6 closes on fixture/replay evidence. The TV runbooks are §1.3/§1.4
-above; the remaining device/release checks below stay in the same deferred
-window (and are tracked as HD-5, HD-6 and HD-8 in `docs/STATUS.md`). None of
-them is a prerequisite for the Phase 6 code gates.
+Phase 6 closed on fixture/replay evidence in 2026-10-23; the TV runbooks in
+§1.3/§1.4 above are now hardware-verified (2026-10-29). The remaining
+device/release checks below stay in the deferred window (and are tracked as
+HD-5, HD-6 and HD-8 in `docs/STATUS.md`). None of them is a prerequisite for
+the Phase 6 code gates.
 
 ### 4.1 Android USB data (HD-5)
 

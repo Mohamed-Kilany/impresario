@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
+use impresario_clients::tizen_cert;
 use impresario_clients::tizen_sign;
 use impresario_clients::webos_package;
 use impresario_core::home::Home;
@@ -89,6 +90,35 @@ pub enum TizenSignCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TizenProfileCommand {
+    /// Sign in to Samsung and create a TV author/distributor profile.
+    ///
+    /// This is the guided alternative to Tizen Studio's Certificate Manager.
+    /// It opens Samsung's normal account login in your browser and never asks
+    /// for or stores the Samsung password. The generated profile covers the
+    /// DUIDs passed with `--duid` (repeat or comma-separate the option).
+    Create {
+        /// Profile name (default: samsung).
+        #[arg(long, default_value = "samsung")]
+        name: String,
+        /// TV DUID(s), repeatable or comma-separated.
+        #[arg(long = "duid", value_delimiter = ',')]
+        duid: Vec<String>,
+        /// Samsung account email if the login response does not include it.
+        #[arg(long)]
+        email: Option<String>,
+        /// Do not open the browser; print the Samsung login URL.
+        #[arg(long)]
+        no_browser: bool,
+        /// Download fresh Samsung endpoints and CA certificates.
+        #[arg(long)]
+        refresh: bool,
+        /// Override the Samsung Certificate Extension ZIP URL.
+        #[arg(long)]
+        extension_url: Option<String>,
+        /// Seconds to wait for the browser login (default: 300).
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
     /// Import an author and a distributor PKCS#12 profile.
     Add {
         name: String,
@@ -180,6 +210,24 @@ pub fn run_sign(home: &Home, args: &SignArgs) -> i32 {
 
 fn run_profile(home: &Home, command: &TizenProfileCommand) -> i32 {
     match command {
+        TizenProfileCommand::Create {
+            name,
+            duid,
+            email,
+            no_browser,
+            refresh,
+            extension_url,
+            timeout,
+        } => create_samsung_profile(
+            home,
+            name,
+            duid,
+            email.as_deref(),
+            *no_browser,
+            *refresh,
+            extension_url.as_deref(),
+            *timeout,
+        ),
         TizenProfileCommand::Add {
             name,
             author,
@@ -309,6 +357,103 @@ fn run_profile(home: &Home, command: &TizenProfileCommand) -> i32 {
             }
         },
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_samsung_profile(
+    home: &Home,
+    name: &str,
+    duids: &[String],
+    email: Option<&str>,
+    no_browser: bool,
+    refresh: bool,
+    extension_url: Option<&str>,
+    timeout_seconds: u64,
+) -> i32 {
+    if timeout_seconds == 0 {
+        eprintln!("sign tizen profile create: --timeout must be greater than zero");
+        return EXIT_USAGE;
+    }
+    println!("Samsung TV certificate setup for profile '{name}'");
+    println!(
+        "This uses Samsung's normal account login in your browser. Impresario never sees or \
+         stores your Samsung password."
+    );
+
+    let mut duids = duids.to_vec();
+    if duids.iter().all(|duid| duid.trim().is_empty()) {
+        match prompt_line(
+            "TV DUID (from `impresario device check <name>` or the TV's Developer Mode screen): ",
+        ) {
+            Ok(value) if !value.is_empty() => duids.push(value),
+            Ok(_) => {
+                eprintln!("sign tizen profile create: a TV DUID is required");
+                return EXIT_USAGE;
+            }
+            Err(error) => {
+                eprintln!("sign tizen profile create: cannot read the TV DUID: {error}");
+                return EXIT_USAGE;
+            }
+        }
+    }
+
+    let email = match email {
+        Some(value) => Some(value.to_string()),
+        None => match prompt_line(
+            "Samsung account email (leave blank to use the email returned by the login): ",
+        ) {
+            Ok(value) if !value.is_empty() => Some(value),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("sign tizen profile create: cannot read the email: {error}");
+                return EXIT_USAGE;
+            }
+        },
+    };
+
+    let options = tizen_cert::CreateOptions {
+        profile_name: name.to_string(),
+        duids,
+        email,
+        refresh,
+        open_browser: !no_browser,
+        extension_url: extension_url.map(str::to_string),
+        login_timeout: std::time::Duration::from_secs(timeout_seconds),
+    };
+    match tizen_cert::create_profile(home, &options) {
+        Ok(record) => {
+            println!(
+                "created Tizen profile '{}' ({} DUID(s), distributor valid until {})",
+                record.name,
+                record.duids.len(),
+                record.distributor_not_after
+            );
+            println!(
+                "next: set auth.profile: {} on the Tizen device, then run the app check or play",
+                record.name
+            );
+            EXIT_OK
+        }
+        Err(error) => {
+            eprintln!("sign tizen profile create: {error}");
+            match error {
+                tizen_cert::CertError::Network(_)
+                | tizen_cert::CertError::Extension(_)
+                | tizen_cert::CertError::Io(_)
+                | tizen_cert::CertError::Zip(_) => EXIT_INFRA,
+                _ => EXIT_USAGE,
+            }
+        }
+    }
+}
+
+fn prompt_line(prompt: &str) -> std::io::Result<String> {
+    use std::io::Write as _;
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let mut value = String::new();
+    std::io::stdin().read_line(&mut value)?;
+    Ok(value.trim().to_string())
 }
 
 fn sign_package(
