@@ -17,10 +17,10 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 /// 0-based LSP line/character of the first occurrence of `needle`.
-fn position_of(source: &str, needle: &str) -> (u32, u32) {
+fn position_of(source: &str, needle: &str) -> (u64, u64) {
     let offset = source.find(needle).expect("needle");
-    let mut line = 0u32;
-    let mut col = 0u32;
+    let mut line = 0u64;
+    let mut col = 0u64;
     for ch in source.get(..offset).expect("prefix").chars() {
         if ch == '\n' {
             line += 1;
