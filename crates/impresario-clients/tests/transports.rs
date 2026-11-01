@@ -129,12 +129,12 @@ async fn adb_transport_reports_a_device_without_an_ip() {
     let dev = DeviceConfig::new("flagship_android", Platform::Android, "");
     let error = transport.prepare(&dev, None).await.expect_err("no device");
     match &error {
-        TransportError::DeviceUnavailable(message) => {
+        TransportError::Transport(message) => {
             assert!(message.contains("no IP"), "{message}");
         }
         other => panic!("unexpected error: {other}"),
     }
-    assert_eq!(error.to_wire().code.as_str(), "DEVICE_UNAVAILABLE");
+    assert_eq!(error.to_wire().code.as_str(), "TRANSPORT");
 }
 
 #[tokio::test]
