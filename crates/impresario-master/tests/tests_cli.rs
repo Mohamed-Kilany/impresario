@@ -17,13 +17,13 @@ const EXIT_INFRA: i32 = 3;
 const THEATRE: &str = r#"Theatre: Auth
 
 Stage: Login(user = 'x')
-    Platforms: web, android
+    Audience: web, android
     Scene: TestScreen
         Check: A
         Action: click => B
 
 Stage: WebOnly
-    Platforms: web
+    Audience: web
     Scene: TestScreen
         Check: A
 "#;
