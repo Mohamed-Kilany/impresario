@@ -15,7 +15,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 fn broken_play() -> String {
-    lsp::PLAY.replace("Check: UsernameInput", "Check: Ghost")
+    lsp::PLAY.replace("Perform: Navigate", "Perform: Ghost")
 }
 
 #[test]
@@ -31,8 +31,8 @@ fn open_reports_and_change_clears_diagnostics() {
         server.open(&play, &broken_play(), 1).await;
         let published = server.wait_version(&play, 1, mark).await;
         assert!(
-            lsp::codes(&published).contains(&"IMP-DSL-009".to_string()),
-            "the unknown piece is reported: {published}"
+            lsp::codes(&published).contains(&"IMP-DSL-031".to_string()),
+            "the unknown stage is reported: {published}"
         );
         let diagnostic = lsp::diagnostics(&published)
             .into_iter()
@@ -81,7 +81,7 @@ fn overlays_win_over_disk_and_close_restores_disk() {
         server.close(&play).await;
         let published = server.wait_diagnostics(&play, mark).await;
         assert!(
-            lsp::codes(&published).contains(&"IMP-DSL-009".to_string()),
+            lsp::codes(&published).contains(&"IMP-DSL-031".to_string()),
             "closing falls back to the broken disk text: {published}"
         );
     });
@@ -100,7 +100,7 @@ fn unopened_files_report_disk_diagnostics() {
         server.start_session(None).await;
         let published = server.wait_diagnostics(&play, mark).await;
         assert!(
-            lsp::codes(&published).contains(&"IMP-DSL-009".to_string()),
+            lsp::codes(&published).contains(&"IMP-DSL-031".to_string()),
             "{published}"
         );
         assert!(
@@ -122,7 +122,7 @@ fn a_burst_of_changes_converges_on_the_last_version() {
         let mark = server.mark();
         server.open(&play, &broken_play(), 1).await;
         let published = server.wait_version(&play, 1, mark).await;
-        assert!(lsp::codes(&published).contains(&"IMP-DSL-009".to_string()));
+        assert!(lsp::codes(&published).contains(&"IMP-DSL-031".to_string()));
 
         // Rapid fixes: the debounce coalesces the burst, the last version wins.
         let mark = server.mark();
@@ -243,6 +243,7 @@ Stage: S
 const PARTIAL_PLAY: &str = r#"Play: Partial
 
 Act: A
+Platforms: android, web
     Perform: S
 "#;
 
