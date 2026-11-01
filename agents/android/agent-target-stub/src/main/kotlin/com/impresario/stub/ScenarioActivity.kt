@@ -47,16 +47,5 @@ abstract class ScenarioActivity : Activity() {
 
     protected fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    protected fun actionButton(id: Int, label: String): Button = Button(this).apply {
-        this.id = id
-        text = label
-        textSize = 18f
-        minHeight = dp(48)
-        setPadding(dp(12), dp(6), dp(12), dp(6))
-        // TV themes force button labels to ALL CAPS; `getText()` then reports
-        // the uppercase form in the accessibility tree, which breaks exact
-        // `text` selectors that work on phones. Keep the fixture text stable
-        // across platforms (docs/DECISIONS.md I-64).
-        isAllCaps = false
-    }
+    protected fun actionButton(id: Int, label: String): Button = stubButton(id, label)
 }

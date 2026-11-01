@@ -1,5 +1,6 @@
 package com.impresario.stub
 
+import android.graphics.Color
 import android.text.Editable
 import android.text.TextWatcher
 import android.widget.EditText
@@ -21,6 +22,10 @@ class TextActivity : ScenarioActivity() {
             hint = "type here"
             textSize = 18f
             isSingleLine = true
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFF9E9E9E.toInt())
+            backgroundTintList = null
+            background = stubPanelBackground()
             setPadding(dp(12), dp(6), dp(12), dp(6))
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit

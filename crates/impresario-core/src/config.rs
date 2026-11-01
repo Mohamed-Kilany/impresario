@@ -1502,16 +1502,15 @@ fn validate_device(
 
     // name (optional label)
     let mut parsed_name: Option<String> = None;
-    match map.get("name") {
-        Some(value) => match value.as_str() {
+    if let Some(value) = map.get("name") {
+        match value.as_str() {
             Some(name) if valid_device_name(name) => parsed_name = Some(name.to_string()),
             Some(name) => diagnostics.push(invalid_here(
                 "name",
                 format!("'{name}' must match ^[a-z0-9][a-z0-9_-]{{0,62}}$"),
             )),
             None => diagnostics.push(invalid_here("name", "expected a string".to_string())),
-        },
-        None => {}
+        }
     }
 
     // type (exact spelling)

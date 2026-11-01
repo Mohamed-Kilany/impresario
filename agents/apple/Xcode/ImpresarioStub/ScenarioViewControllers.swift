@@ -177,6 +177,9 @@ final class TextScenarioViewController: ScenarioViewController {
         // the teal accent while editing and gray otherwise.
         input.backgroundColor = .clear
         input.borderStyle = .none
+        input.layer.cornerRadius = StubTheme.dp(6)
+        input.layer.borderWidth = StubTheme.dp(2)
+        input.layer.borderColor = StubTheme.inputIdleUnderline.cgColor
         input.heightAnchor.constraint(equalToConstant: StubTheme.dp(36.5)).isActive = true
         let padding = UIView(frame: CGRect(x: 0, y: 0, width: StubTheme.dp(12), height: 1))
         input.leftView = padding
@@ -215,11 +218,15 @@ final class TextScenarioViewController: ScenarioViewController {
     }
 
     @objc private func onInputFocus() {
-        inputUnderline.backgroundColor = StubTheme.inputUnderline
+        inputUnderline.backgroundColor = StubTheme.focusBackground
+        input.layer.borderWidth = StubTheme.dp(4)
+        input.layer.borderColor = StubTheme.focusBackground.cgColor
     }
 
     @objc private func onInputBlur() {
         inputUnderline.backgroundColor = StubTheme.inputIdleUnderline
+        input.layer.borderWidth = StubTheme.dp(2)
+        input.layer.borderColor = StubTheme.inputIdleUnderline.cgColor
     }
 }
 
@@ -243,6 +250,9 @@ final class ScrollScenarioViewController: UIViewController {
         statusLabel.accessibilityIdentifier = "stub_status"
         scroller.accessibilityIdentifier = "stub_scroller"
         scroller.showsVerticalScrollIndicator = true
+        scroller.layer.cornerRadius = StubTheme.dp(4)
+        scroller.layer.borderWidth = StubTheme.dp(2)
+        scroller.layer.borderColor = StubTheme.inputIdleUnderline.cgColor
         scroller.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.translatesAutoresizingMaskIntoConstraints = false

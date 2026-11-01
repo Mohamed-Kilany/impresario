@@ -2,189 +2,195 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Impresario Stub</title>
+<title>Impresario TV remote stub</title>
 <style>
-  html, body { width: 100%; min-height: 100%; }
-  body {
+  html, body {
+    width: 100%;
+    height: 100%;
     margin: 0;
-    background: #303030;
-    color: #c1c1c1;
-    font-family: sans-serif;
+    overflow: hidden;
+    background: #101010;
+    color: #f5f5f5;
+    font-family: Arial, Helvetica, sans-serif;
+    /* Remote-only: pointer input cannot move focus or activate anything. */
+    pointer-events: none;
+    cursor: default;
   }
-  button, input { font-family: inherit; }
-
-  /* Android's platform action bar: black, 48 dp at the TV's 2x density. */
-  #app-bar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 10;
-    height: 96px;
-    background: #000;
-    color: #fff;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  * { box-sizing: border-box; }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 44px 64px 36px 64px;
   }
-  #app-bar span {
-    display: block;
-    padding-left: 32px;
-    font-size: 28px;
-    line-height: 96px;
-    font-weight: 500;
+  #top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 32px;
   }
-
-  /* MainActivity/ScenarioActivity use 48 x 36 dp at 2x. */
-  #content {
-    box-sizing: border-box;
-    min-height: calc(100vh - 96px);
-    margin-top: 96px;
-    padding: 72px 96px;
-  }
-  #content.media-mode { padding: 40px 48px; }
-
   #stub_title {
     margin: 0;
-    color: #c1c1c1;
-    font-size: 48px;
-    line-height: 65px;
-    font-weight: bold;
+    font-size: 54px;
+    line-height: 1.1;
+    font-weight: 700;
   }
   #stub_subtitle {
-    margin: 0 0 12px 0;
-    color: #c1c1c1;
-    font-size: 30px;
-    line-height: 41px;
-    opacity: 0.8;
+    margin: 10px 0 0 0;
+    color: #b8b8b8;
+    font-size: 26px;
   }
-
-  .home-list { margin: 0; }
-  .stub-button {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    height: 96px;
-    min-height: 96px;
-    margin: 0;
-    padding: 12px 8px;
-    border: 0;
-    background: transparent;
-    color: #fff;
-    font-size: 36px;
-    line-height: 1;
-    cursor: pointer;
+  #key-panel {
+    min-width: 430px;
+    padding: 16px 20px;
+    border: 3px solid #4a4a4a;
+    border-radius: 12px;
+    background: #1c1c1c;
+    text-align: right;
   }
-  .stub-button .bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    width: 100%;
-    height: 72px;
-    border-radius: 4px;
-    background: #5a595b;
-  }
-  .stub-button:focus { outline: none; }
-  .stub-button:focus .bar { background: #646365; }
-  .stub-button[disabled] { cursor: default; }
-  .stub-button[disabled] .bar {
-    background: #3d3d3d;
-    color: #787878;
-  }
-  .home-list .stub-button { margin-bottom: 12px; }
-  .home-list .stub-button:last-child { margin-bottom: 0; }
-
-  #scenario-body { display: none; margin-top: 12px; }
-  .scenario-screen { display: none; }
-  .scenario-screen.active { display: block; }
-  .stack > * + * { margin-top: 12px; }
-
-  .label {
-    color: #c1c1c1;
-    font-size: 36px;
-    line-height: 49px;
-  }
-  .status {
-    margin-top: 12px;
-    color: #c1c1c1;
+  #stub_key_log {
+    color: #ffd54f;
     font-size: 32px;
-    line-height: 43px;
-    opacity: 0.85;
+    font-weight: 700;
   }
-
+  #stub_key_detail {
+    margin-top: 6px;
+    color: #b8b8b8;
+    font-size: 20px;
+    line-height: 1.35;
+  }
+  #screen-body {
+    flex: 1;
+    min-height: 0;
+    margin-top: 30px;
+    overflow: hidden;
+  }
+  .screen { display: none; height: 100%; overflow: auto; }
+  .screen.active { display: block; }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .focusable {
+    display: block;
+    width: 100%;
+    min-height: 78px;
+    padding: 16px 26px;
+    border: 4px solid #4a4a4a;
+    border-radius: 12px;
+    background: #262626;
+    color: #ffffff;
+    font-size: 32px;
+    line-height: 1.25;
+    text-align: left;
+  }
+  .focusable:focus {
+    outline: none;
+    border-color: #ffffff;
+    background: #ffd54f;
+    color: #111111;
+    box-shadow: 0 0 0 8px rgba(255, 213, 79, 0.38);
+  }
+  .focusable .hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 21px;
+    color: #b8b8b8;
+  }
+  .focusable:focus .hint { color: #3a2a00; }
+  .focusable[aria-disabled="true"] {
+    border-color: #333333;
+    background: #1a1a1a;
+    color: #707070;
+  }
+  .label {
+    margin-top: 18px;
+    color: #e0e0e0;
+    font-size: 30px;
+    line-height: 1.35;
+  }
+  .muted { color: #9d9d9d; }
+  .key-history {
+    margin-top: 18px;
+    color: #b8b8b8;
+    font-size: 24px;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .stack > * + * { margin-top: 16px; }
   #stub_input {
-    box-sizing: border-box;
+    display: block;
     width: 100%;
-    height: 73px;
-    padding: 0 24px;
-    border: 0;
-    border-bottom: 4px solid #6b6b6b;
-    border-radius: 0;
-    background: transparent;
-    color: #c1c1c1;
-    font-size: 36px;
-    line-height: 73px;
+    min-height: 78px;
+    padding: 16px 26px;
+    border: 4px solid #4a4a4a;
+    border-radius: 12px;
+    background: #262626;
+    color: #ffffff;
+    font-size: 32px;
     outline: none;
   }
-  #stub_input:focus { border-bottom-color: #80cbc4; }
-  #stub_input::placeholder { color: rgba(255, 255, 255, 0.6); }
-
-  /* ScrollActivity hardcodes a 10 dp gap above the scroller on television. */
+  #stub_input:focus {
+    border-color: #ffffff;
+    background: #2f2a1c;
+    box-shadow: 0 0 0 8px rgba(255, 213, 79, 0.38);
+  }
+  #stub_input::placeholder { color: #8f8f8f; }
   #stub_scroller {
-    box-sizing: border-box;
-    width: 100%;
-    height: calc(100vh - 96px - 144px - 65px - 20px - 12px - 43px);
-    margin-top: 8px;
+    height: 100%;
+    min-height: 300px;
     overflow-y: auto;
+    border: 4px solid #4a4a4a;
+    border-radius: 12px;
+    background: #1c1c1c;
     outline: none;
   }
-  #stub_list { display: block; }
+  #stub_scroller:focus {
+    border-color: #ffd54f;
+    box-shadow: 0 0 0 8px rgba(255, 213, 79, 0.38);
+  }
   .stub-row {
-    padding: 24px 0;
-    color: #c1c1c1;
-    font-size: 36px;
-    line-height: 49px;
+    padding: 18px 24px;
+    border-bottom: 1px solid #333333;
+    color: #d8d8d8;
+    font-size: 30px;
   }
-
-  #stub_hidden { visibility: hidden; }
-
-  /* MediaActivity uses 24 x 20 dp at 2x; the 4:3 video is 586 x 440. */
-  .media-screen { color: #c1c1c1; }
-  #stub_media_title {
-    margin: 0;
-    color: #c1c1c1;
-    font-size: 44px;
-    line-height: 60px;
-  }
+  #screen-media { overflow: hidden; }
   #stub_media_video {
     display: block;
-    width: 586px;
-    height: 440px;
-    margin-top: 24px;
-    background: #000;
+    width: 480px;
+    height: 270px;
+    background: #000000;
     object-fit: contain;
   }
   #stub_media_image {
     display: block;
-    width: 240px;
-    height: 240px;
-    margin-top: 24px;
+    width: 140px;
+    height: 140px;
+    margin-top: 14px;
     object-fit: contain;
   }
   #stub_media_broken {
     display: block;
-    width: 240px;
-    height: 120px;
-    margin-top: 24px;
+    width: 140px;
+    height: 70px;
+    margin-top: 14px;
     background: #202020;
   }
   #stub_media_status {
-    margin-top: 24px;
-    color: #c1c1c1;
-    font-size: 32px;
-    line-height: 43px;
+    margin-top: 16px;
+    color: #e0e0e0;
+    font-size: 28px;
   }
-
-  /* Android's AlertDialog: teal-tinted surface, 496 dp wide at 2x. */
+  #stub_status {
+    flex: 0 0 auto;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 2px solid #333333;
+    color: #cfcfcf;
+    font-size: 24px;
+  }
   #dialog-backdrop {
     position: fixed;
     top: 0;
@@ -195,130 +201,128 @@
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.72);
   }
   #dialog-card {
-    box-sizing: border-box;
-    width: 992px;
-    max-width: calc(100vw - 192px);
-    padding: 0 0 16px 0;
-    border-radius: 4px;
-    background: #324248;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+    width: 900px;
+    max-width: calc(100vw - 160px);
+    padding: 28px;
+    border: 4px solid #ffd54f;
+    border-radius: 16px;
+    background: #1f1f1f;
+    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.8);
   }
   #stub_dialog_title {
-    padding: 36px 48px 16px 48px;
-    color: #c8cbcc;
-    font-size: 48px;
-    line-height: 54px;
-    font-weight: 500;
+    margin-bottom: 18px;
+    color: #ffffff;
+    font-size: 38px;
+    font-weight: 700;
   }
-  .dialog-option {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    height: 96px;
-    padding: 0 48px;
-    border: 0;
-    background: transparent;
-    color: #fff;
-    font-size: 36px;
-    line-height: 96px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .dialog-option:focus {
-    outline: none;
-    background: #3f4e53;
+  #stub_focus {
+    color: #ffd54f;
   }
 </style>
 </head>
 <body>
-<header id="app-bar"><span>Impresario Stub</span></header>
+<div id="app">
+  <header id="top">
+    <div>
+      <h1 id="stub_title">Impresario remote stub</h1>
+      <p id="stub_subtitle">Move with the D-pad. Press OK. Every remote key is logged.</p>
+    </div>
+    <div id="key-panel">
+      <div id="stub_key_log">key=none</div>
+      <div id="stub_key_detail"><span id="stub_key_code">code=0</span> · <span id="stub_focus">focus=none</span></div>
+    </div>
+  </header>
 
-<main id="content">
-  <h1 id="stub_title">Impresario stub</h1>
-  <p id="stub_subtitle">One screen per test scenario.</p>
+  <main id="screen-body">
+    <section id="screen-home" class="screen active">
+      <div class="rows">
+        <div id="stub_scenario_basic" class="focusable" tabindex="-1" data-open="basic">Basic controls<span class="hint">OK activates; hold OK for a long press.</span></div>
+        <div id="stub_scenario_text" class="focusable" tabindex="-1" data-open="text">Text entry<span class="hint">Remote/IME text input and an echo label.</span></div>
+        <div id="stub_scenario_scroll" class="focusable" tabindex="-1" data-open="scroll">Scroller<span class="hint">D-pad up/down scrolls the 30-row list.</span></div>
+        <div id="stub_scenario_select" class="focusable" tabindex="-1" data-open="select">Selection<span class="hint">Remote-only dialog choices A/B/C.</span></div>
+        <div id="stub_scenario_flags" class="focusable" tabindex="-1" data-open="flags">Flags<span class="hint">Enabled, disabled, visible and hidden rows.</span></div>
+        <div id="stub_scenario_keys" class="focusable" tabindex="-1" data-open="keys">Key log<span class="hint">Log every remote key, including media and numpad.</span></div>
+        <div id="stub_scenario_info" class="focusable" tabindex="-1" data-open="info">Device info<span class="hint">Platform and model reported by the TV runtime.</span></div>
+        <div id="stub_scenario_media" class="focusable" tabindex="-1" data-open="media">Playback<span class="hint">Play, pause, stop, rewind and fast-forward keys.</span></div>
+      </div>
+    </section>
 
-  <div id="home-list" class="home-list">
-    <button id="stub_scenario_basic" class="stub-button" type="button"><span class="bar">Basic controls</span></button>
-    <button id="stub_scenario_text" class="stub-button" type="button"><span class="bar">Text entry</span></button>
-    <button id="stub_scenario_scroll" class="stub-button" type="button"><span class="bar">Scroller</span></button>
-    <button id="stub_scenario_select" class="stub-button" type="button"><span class="bar">Selection</span></button>
-    <button id="stub_scenario_flags" class="stub-button" type="button"><span class="bar">Flags</span></button>
-    <button id="stub_scenario_keys" class="stub-button" type="button"><span class="bar">Key log</span></button>
-    <button id="stub_scenario_info" class="stub-button" type="button"><span class="bar">Device info</span></button>
-    <button id="stub_scenario_media" class="stub-button" type="button"><span class="bar">Playback</span></button>
-  </div>
-
-  <div id="scenario-body">
-    <section id="screen-basic" class="scenario-screen">
-      <div class="stack">
-        <button id="stub_button" class="stub-button" type="button"><span class="bar">Tap me</span></button>
+    <section id="screen-basic" class="screen">
+      <div class="rows">
+        <div id="stub_button" class="focusable" tabindex="-1" data-act="basic">Tap me<span class="hint">Short OK increments the counter; a held OK logs a long press.</span></div>
         <div id="stub_counter" class="label">taps=0</div>
       </div>
     </section>
 
-    <section id="screen-text" class="scenario-screen">
+    <section id="screen-text" class="screen">
       <div class="stack">
-        <input id="stub_input" type="text" placeholder="type here" autocomplete="off" spellcheck="false">
+        <input id="stub_input" type="text" placeholder="type here" autocomplete="off" spellcheck="false" tabindex="-1">
         <div id="stub_echo" class="label">echo:</div>
       </div>
     </section>
 
-    <section id="screen-scroll" class="scenario-screen">
-      <div id="stub_scroller" tabindex="0">
+    <section id="screen-scroll" class="screen">
+      <div id="stub_scroller" tabindex="-1">
         <div id="stub_list"></div>
       </div>
     </section>
 
-    <section id="screen-select" class="scenario-screen">
-      <div class="stack">
-        <button id="stub_select" class="stub-button" type="button"><span class="bar">Choose</span></button>
+    <section id="screen-select" class="screen">
+      <div class="rows">
+        <div id="stub_select" class="focusable" tabindex="-1" data-act="dialog">Choose<span class="hint">OK opens the remote-only selection dialog.</span></div>
       </div>
     </section>
 
-    <section id="screen-flags" class="scenario-screen">
-      <div class="stack">
-        <button id="stub_enabled" class="stub-button" type="button"><span class="bar">Enabled</span></button>
-        <button id="stub_disabled" class="stub-button" type="button" disabled><span class="bar">Disabled</span></button>
+    <section id="screen-flags" class="screen">
+      <div class="rows">
+        <div id="stub_enabled" class="focusable" tabindex="-1" data-act="enabled">Enabled<span class="hint">OK reports enabled-clicked.</span></div>
+        <div id="stub_disabled" class="focusable" tabindex="-1" aria-disabled="true">Disabled<span class="hint">This row is skipped by the remote focus ring.</span></div>
         <div id="stub_visible" class="label">visible text</div>
-        <div id="stub_hidden" class="label" aria-hidden="true">hidden text</div>
+        <div id="stub_hidden" class="label muted" style="visibility:hidden" aria-hidden="true">hidden text</div>
       </div>
     </section>
 
-    <section id="screen-keys" class="scenario-screen">
+    <section id="screen-keys" class="screen">
+      <div class="rows">
+        <div id="stub_key_a" class="focusable" tabindex="-1" data-act="key" data-key="Alpha">Alpha</div>
+        <div id="stub_key_b" class="focusable" tabindex="-1" data-act="key" data-key="Bravo">Bravo</div>
+        <div id="stub_key_c" class="focusable" tabindex="-1" data-act="key" data-key="Charlie">Charlie</div>
+        <div id="stub_key_history" class="key-history">key history: none</div>
+      </div>
+    </section>
+
+    <section id="screen-info" class="screen">
+      <div class="rows">
+        <div id="stub_info" class="label">pkg=com.impresario.stub; sdk=web; model=web TV; tv=true</div>
+        <div id="stub_info_back" class="focusable" tabindex="-1" data-act="home">Back to home<span class="hint">The Back key also returns here.</span></div>
+      </div>
+    </section>
+
+    <section id="screen-media" class="screen">
       <div class="stack">
-        <button id="stub_key_a" class="stub-button" type="button"><span class="bar">Alpha</span></button>
-        <button id="stub_key_b" class="stub-button" type="button"><span class="bar">Bravo</span></button>
-        <button id="stub_key_c" class="stub-button" type="button"><span class="bar">Charlie</span></button>
-        <div id="stub_key_log" class="label">key=none</div>
+        <div id="stub_media_title" class="label">Playback fixture</div>
+        <video id="stub_media_video" src="media_sample.mp4" muted playsinline loop preload="auto"></video>
+        <img id="stub_media_image" src="sample_image.png" alt="poster image">
+        <div id="stub_media_broken" role="img" aria-label="missing image"></div>
+        <div id="stub_media_status">loading</div>
+        <div id="stub_media_toggle" class="focusable" tabindex="-1" data-act="media-toggle">Play / pause<span class="hint">Media keys control this video too.</span></div>
       </div>
     </section>
+  </main>
 
-    <section id="screen-info" class="scenario-screen">
-      <div id="stub_info" class="label">pkg=com.impresario.stub; sdk=web; model=web TV; tv=true</div>
-    </section>
-
-    <section id="screen-media" class="scenario-screen media-screen">
-      <div id="stub_media_title">Playback fixture</div>
-      <video id="stub_media_video" src="media_sample.mp4" muted playsinline loop preload="auto"></video>
-      <img id="stub_media_image" src="sample_image.png" alt="poster image">
-      <div id="stub_media_broken" role="img" aria-label="missing image"></div>
-      <div id="stub_media_status">loading</div>
-    </section>
-  </div>
-
-  <div id="stub_status" class="status">status=idle</div>
-</main>
+  <div id="stub_status">status=idle</div>
+</div>
 
 <div id="dialog-backdrop">
   <div id="dialog-card">
     <div id="stub_dialog_title">Pick one</div>
-    <div class="dialog-options">
-      <button id="stub_option_a" class="dialog-option" type="button">Option A</button>
-      <button id="stub_option_b" class="dialog-option" type="button">Option B</button>
-      <button id="stub_option_c" class="dialog-option" type="button">Option C</button>
+    <div class="rows">
+      <div id="stub_option_a" class="focusable" tabindex="-1" data-act="choose" data-option="A">Option A</div>
+      <div id="stub_option_b" class="focusable" tabindex="-1" data-act="choose" data-option="B">Option B</div>
+      <div id="stub_option_c" class="focusable" tabindex="-1" data-act="choose" data-option="C">Option C</div>
     </div>
   </div>
 </div>
@@ -329,78 +333,78 @@
   'use strict';
 
   function byId(id) { return document.getElementById(id); }
-  function keyCodeOf(event) { return event.keyCode || event.which || 0; }
-  function isOkKey(event) {
-    var key = event.key || '';
-    var code = keyCodeOf(event);
-    return key === 'Enter' || key === 'OK' || code === 13 || code === 23;
-  }
-  function isDownKey(event) {
-    var key = event.key || '';
-    return key === 'ArrowDown' || key === 'Down' || keyCodeOf(event) === 40;
-  }
-  function isUpKey(event) {
-    var key = event.key || '';
-    return key === 'ArrowUp' || key === 'Up' || keyCodeOf(event) === 38;
-  }
-  function isBackKey(event) {
-    var key = event.key || '';
-    var code = keyCodeOf(event);
-    return key === 'Back' || key === 'Escape' || key === 'GoBack' ||
-      key === 'BrowserBack' || code === 461 || code === 10009 || code === 27;
+  function codeOf(event) { return event.keyCode || event.which || 0; }
+
+  var PLATFORM = (function () {
+    var ua = navigator.userAgent || '';
+    if (ua.indexOf('Tizen') >= 0) { return 'tizen'; }
+    if (ua.indexOf('Web0S') >= 0 || ua.indexOf('webOS') >= 0) { return 'webos'; }
+    return 'web';
+  })();
+
+  function registerTizenKeys() {
+    if (typeof tizen === 'undefined' || !tizen.tvinputdevice) { return; }
+    var names = [
+      'Up', 'Down', 'Left', 'Right', 'Enter', 'Back', 'Exit', 'Home', 'Menu',
+      'MediaPlay', 'MediaPause', 'MediaStop', 'MediaRewind', 'MediaFastForward',
+      'MediaRecord', 'MediaPlayPause', 'VolumeUp', 'VolumeDown', 'Mute',
+      'ChannelUp', 'ChannelDown', 'ColorF0Red', 'ColorF1Green', 'ColorF2Yellow',
+      'ColorF3Blue', 'Info', 'Guide', 'Subtitle', 'Audio', 'Search', 'Settings',
+      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+    ];
+    for (var i = 0; i < names.length; i += 1) {
+      try { tizen.tvinputdevice.registerKey(names[i]); } catch (error) { /* unsupported key */ }
+    }
   }
 
-  var content = byId('content');
+  var KEY_BY_CODE = {
+    8: 'backspace', 13: 'ok', 19: 'pause', 27: 'exit', 36: 'home', 37: 'left',
+    38: 'up', 39: 'right', 40: 'down', 84: 'search', 93: 'menu', 176: 'settings',
+    179: 'playpause', 403: 'red', 404: 'green', 405: 'yellow', 406: 'blue',
+    412: 'rewind', 413: 'stop', 415: 'play', 416: 'record', 417: 'fastforward',
+    427: 'channelup', 428: 'channeldown', 447: 'volumeup', 448: 'volumedown',
+    449: 'mute', 457: 'info', 458: 'guide', 459: 'audio', 460: 'subtitle',
+    10009: 'back'
+  };
+  for (var digit = 0; digit < 10; digit += 1) {
+    KEY_BY_CODE[48 + digit] = 'num' + digit;
+    KEY_BY_CODE[96 + digit] = 'num' + digit;
+  }
+  // webOS Back and Tizen Exit share keyCode 461; use the platform name.
+  KEY_BY_CODE[461] = PLATFORM === 'webos' ? 'back' : 'exit';
+
+  var KEY_BY_NAME = {
+    Enter: 'ok', Escape: 'exit', Backspace: 'backspace', ArrowUp: 'up',
+    ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Home: 'home',
+    ContextMenu: 'menu', MediaPlay: 'play', MediaPause: 'pause',
+    MediaPlayPause: 'playpause', MediaStop: 'stop', MediaRewind: 'rewind',
+    MediaFastForward: 'fastforward', MediaRecord: 'record',
+    AudioVolumeUp: 'volumeup', AudioVolumeDown: 'volumedown',
+    AudioVolumeMute: 'mute', ChannelUp: 'channelup', ChannelDown: 'channeldown',
+    ColorF0Red: 'red', ColorF1Green: 'green', ColorF2Yellow: 'yellow',
+    ColorF3Blue: 'blue', Info: 'info', Guide: 'guide', Subtitle: 'subtitle',
+    Audio: 'audio', Search: 'search', Settings: 'settings', Back: 'back',
+    GoBack: 'back', BrowserBack: 'back', Exit: 'exit'
+  };
+
+  function keyName(event) {
+    var code = codeOf(event);
+    if (KEY_BY_CODE[code]) { return KEY_BY_CODE[code]; }
+    var key = event.key || '';
+    if (KEY_BY_NAME[key]) { return KEY_BY_NAME[key]; }
+    if (/^[0-9]$/.test(key)) { return 'num' + key; }
+    if (key === 'MediaPlayPause') { return 'playpause'; }
+    return 'unknown';
+  }
+
   var title = byId('stub_title');
   var subtitle = byId('stub_subtitle');
-  var homeList = byId('home-list');
-  var scenarioBody = byId('scenario-body');
   var status = byId('stub_status');
+  var keyLog = byId('stub_key_log');
+  var keyCode = byId('stub_key_code');
+  var focusLabel = byId('stub_focus');
   var backdrop = byId('dialog-backdrop');
   var dialogCard = byId('dialog-card');
-
-  var screens = {
-    basic: byId('screen-basic'),
-    text: byId('screen-text'),
-    scroll: byId('screen-scroll'),
-    select: byId('screen-select'),
-    flags: byId('screen-flags'),
-    keys: byId('screen-keys'),
-    info: byId('screen-info'),
-    media: byId('screen-media')
-  };
-  var scenarioTitles = {
-    basic: 'Basic controls',
-    text: 'Text entry',
-    scroll: 'Scroller',
-    select: 'Selection',
-    flags: 'Flags',
-    keys: 'Key log',
-    info: 'Device info',
-    media: 'Playback fixture'
-  };
-
-  var currentScreen = 'home';
-  var lastScenario = 'stub_scenario_basic';
-  var dialogOpen = false;
-
-  // Basic controls: Android's long-click is 500 ms; the DSL's longpress
-  // default is 1000 ms, so the timer fires before the key is released.
-  var basicTaps = 0;
-  var basicLongTimer = null;
-  var basicKeyHeld = false;
-  var basicKeyStarted = 0;
-  var basicMouseStarted = 0;
-  var basicSuppressClick = false;
-  var tapButton = byId('stub_button');
-  var counter = byId('stub_counter');
-
-  // Key log: Android logs onKeyDown; the focused button's click reports the
-  // selected label after the key.
-  var keyLog = byId('stub_key_log');
-  var keyButtons = [byId('stub_key_a'), byId('stub_key_b'), byId('stub_key_c')];
-  var keyIndex = 0;
-
   var input = byId('stub_input');
   var echo = byId('stub_echo');
   var scroller = byId('stub_scroller');
@@ -408,17 +412,19 @@
   var mediaVideo = byId('stub_media_video');
   var mediaStatus = byId('stub_media_status');
   var info = byId('stub_info');
+  var keyHistory = byId('stub_key_history');
 
-  function buildInfo() {
-    var ua = navigator.userAgent || '';
-    var sdk = 'web';
-    if (ua.indexOf('Tizen') >= 0) {
-      sdk = 'Tizen';
-    } else if (ua.indexOf('Web0S') >= 0 || ua.indexOf('webOS') >= 0) {
-      sdk = 'webOS';
-    }
-    return 'pkg=com.impresario.stub; sdk=' + sdk + '; model=' + sdk + ' TV; tv=true';
-  }
+  var screen = 'home';
+  var currentScreenEl = byId('screen-home');
+  var focusables = [];
+  var focused = 0;
+  var dialogOpen = false;
+  var basicTaps = 0;
+  var basicHoldTimer = null;
+  var basicHeld = false;
+  var basicLongFired = false;
+  var history = [];
+  var lastScenario = 'stub_scenario_basic';
 
   for (var row = 0; row < 30; row += 1) {
     var rowNode = document.createElement('div');
@@ -428,161 +434,249 @@
     list.appendChild(rowNode);
   }
 
-  function resetBasic() {
-    basicTaps = 0;
-    basicKeyHeld = false;
-    basicSuppressClick = false;
-    if (basicLongTimer) {
-      clearTimeout(basicLongTimer);
-      basicLongTimer = null;
-    }
-    counter.textContent = 'taps=0';
+  function platformLabel() {
+    if (PLATFORM === 'tizen') { return 'Tizen'; }
+    if (PLATFORM === 'webos') { return 'webOS'; }
+    return 'web';
   }
 
-  function basicTap() {
-    if (basicSuppressClick) {
-      basicSuppressClick = false;
-      return;
-    }
-    basicTaps += 1;
-    counter.textContent = 'taps=' + basicTaps;
-    status.textContent = 'status=clicked';
+  function buildInfo() {
+    return 'pkg=com.impresario.stub; sdk=' + platformLabel() +
+      '; model=' + platformLabel() + ' TV; tv=true';
   }
 
-  function startBasicLongPress() {
-    if (basicLongTimer) {
-      return;
-    }
-    basicLongTimer = setTimeout(function () {
-      basicLongTimer = null;
-      basicSuppressClick = true;
-      status.textContent = 'status=long-pressed';
-    }, 500);
+  function setStatus(text) {
+    status.textContent = 'status=' + text;
   }
 
-  function cancelBasicLongPress() {
-    if (basicLongTimer) {
-      clearTimeout(basicLongTimer);
-      basicLongTimer = null;
-    }
+  function setFocusLabel(element) {
+    var id = element && element.id ? element.id : 'none';
+    var text = element && element.getAttribute('data-key') ? ' ' + element.getAttribute('data-key') : '';
+    focusLabel.textContent = 'focus=' + id + text;
   }
 
-  tapButton.addEventListener('click', basicTap);
-  tapButton.addEventListener('mousedown', function (event) {
-    if (event.button !== 0) { return; }
-    basicMouseStarted = Date.now();
-    startBasicLongPress();
-  });
-  tapButton.addEventListener('mouseup', cancelBasicLongPress);
-  tapButton.addEventListener('mouseleave', cancelBasicLongPress);
-  tapButton.addEventListener('keydown', function (event) {
-    if (!isOkKey(event)) { return; }
-    // Stop the browser's immediate Enter click; keyup decides short/long.
-    event.preventDefault();
-    if (!basicKeyHeld) {
-      basicKeyHeld = true;
-      basicKeyStarted = Date.now();
-      startBasicLongPress();
-    }
-  });
-  tapButton.addEventListener('keyup', function (event) {
-    if (!isOkKey(event)) { return; }
-    event.preventDefault();
-    if (!basicKeyHeld) { return; }
-    var held = Date.now() - basicKeyStarted;
-    basicKeyHeld = false;
-    cancelBasicLongPress();
-    if (held < 500) {
-      basicTap();
+  function activeRoot() {
+    return dialogOpen ? dialogCard : currentScreenEl;
+  }
+
+  function collectFocusables() {
+    var root = activeRoot();
+    var nodes = root.querySelectorAll(
+      '.focusable:not([aria-disabled="true"]), #stub_scroller, #stub_input'
+    );
+    focusables = Array.prototype.slice.call(nodes);
+    focused = 0;
+    if (focusables.length > 0) {
+      focusAt(0);
     } else {
-      basicSuppressClick = false;
-    }
-  });
-
-  function resetKeys() {
-    keyLog.textContent = 'key=none';
-    keyIndex = 0;
-    keyButtons[0].focus();
-  }
-
-  // The TV connector scrolls `scrollto` with remote DPAD presses, matching
-  // the native Android/Apple fixtures. A focused web scroller does not
-  // reliably scroll itself in TV Chromium, so mirror a ScrollView's step here.
-  function scrollStep(direction) {
-    var step = Math.max(1, Math.floor(scroller.clientHeight * 0.8));
-    scroller.scrollTop += direction * step;
-  }
-
-  function focusKey(index) {
-    keyIndex = (index + keyButtons.length) % keyButtons.length;
-    keyButtons[keyIndex].focus();
-  }
-
-  function handleKeys(event) {
-    if (isDownKey(event)) {
-      keyLog.textContent = 'key=DPAD_DOWN';
-      focusKey(keyIndex + 1);
-      event.preventDefault();
-      return;
-    }
-    if (isUpKey(event)) {
-      keyLog.textContent = 'key=DPAD_UP';
-      focusKey(keyIndex - 1);
-      event.preventDefault();
-      return;
-    }
-    if (isOkKey(event)) {
-      keyLog.textContent = 'key=DPAD_CENTER';
-      event.preventDefault();
-      keyButtons[keyIndex].click();
+      setFocusLabel(null);
     }
   }
 
-  for (var i = 0; i < keyButtons.length; i += 1) {
-    (function (index) {
-      keyButtons[index].addEventListener('focus', function () {
-        keyIndex = index;
-      });
-      keyButtons[index].addEventListener('click', function () {
-        keyLog.textContent = 'clicked=' + keyButtons[index].textContent;
-      });
-    })(i);
+  function focusAt(index) {
+    if (focusables.length === 0) { return; }
+    focused = (index + focusables.length) % focusables.length;
+    focusables[focused].focus();
+    setFocusLabel(focusables[focused]);
   }
 
-  input.addEventListener('input', function () {
-    echo.textContent = 'echo:' + input.value;
-  });
+  function focusedElement() {
+    return focusables.length > 0 ? focusables[focused] : null;
+  }
+
+  function isTextInput() {
+    return document.activeElement === input;
+  }
+
+  function setScreen(next) {
+    var previousScenario = lastScenario;
+    if (basicHoldTimer) {
+      clearTimeout(basicHoldTimer);
+      basicHoldTimer = null;
+    }
+    basicHeld = false;
+    basicLongFired = false;
+    if (dialogOpen) {
+      dialogOpen = false;
+      backdrop.style.display = 'none';
+    }
+    if (screen === 'media' && next !== 'media') {
+      mediaVideo.pause();
+    }
+    screen = next;
+    currentScreenEl = byId('screen-' + next);
+    var all = document.querySelectorAll('.screen');
+    for (var i = 0; i < all.length; i += 1) {
+      all[i].className = 'screen';
+    }
+    currentScreenEl.className = 'screen active';
+    title.textContent = next === 'home' ? 'Impresario remote stub' : {
+      basic: 'Basic controls',
+      text: 'Text entry',
+      scroll: 'Scroller',
+      select: 'Selection',
+      flags: 'Flags',
+      keys: 'Key log',
+      info: 'Device info',
+      media: 'Playback fixture'
+    }[next];
+    subtitle.textContent = next === 'home'
+      ? 'Move with the D-pad. Press OK. Every remote key is logged.'
+      : 'Remote keys only: D-pad to move, OK to activate, Back to return.';
+    setStatus('idle');
+    if (next === 'basic') {
+      basicTaps = 0;
+      byId('stub_counter').textContent = 'taps=0';
+    } else if (next === 'text') {
+      input.value = '';
+      echo.textContent = 'echo:';
+    } else if (next === 'scroll') {
+      scroller.scrollTop = 0;
+    } else if (next === 'select') {
+      closeDialog(false);
+    } else if (next === 'keys') {
+      keyHistory.textContent = 'key history: ' + (history.length ? history.join(', ') : 'none');
+    } else if (next === 'info') {
+      info.textContent = buildInfo();
+    } else if (next === 'media') {
+      mediaVideo.currentTime = 0;
+      playMedia();
+    }
+    collectFocusables();
+    if (next === 'home') {
+      var last = byId(previousScenario);
+      var lastIndex = last ? focusables.indexOf(last) : -1;
+      if (lastIndex >= 0) { focusAt(lastIndex); }
+    }
+  }
+
+  function openScenario(name) {
+    lastScenario = 'stub_scenario_' + name;
+    setScreen(name);
+  }
 
   function openDialog() {
     dialogOpen = true;
     backdrop.style.display = 'flex';
-    byId('stub_option_a').focus();
+    collectFocusables();
   }
 
   function closeDialog(focusTrigger) {
     if (!dialogOpen) { return; }
     dialogOpen = false;
     backdrop.style.display = 'none';
+    collectFocusables();
     if (focusTrigger !== false) {
-      byId('stub_select').focus();
+      var trigger = byId('stub_select');
+      var index = focusables.indexOf(trigger);
+      if (index >= 0) { focusAt(index); }
     }
   }
 
   function chooseOption(option) {
-    status.textContent = 'chosen: ' + option;
-    closeDialog();
+    setStatus('chosen: Option ' + option);
+    closeDialog(true);
   }
 
-  byId('stub_select').addEventListener('click', openDialog);
-  byId('stub_option_a').addEventListener('click', function () { chooseOption('Option A'); });
-  byId('stub_option_b').addEventListener('click', function () { chooseOption('Option B'); });
-  byId('stub_option_c').addEventListener('click', function () { chooseOption('Option C'); });
-  backdrop.addEventListener('click', function () { closeDialog(); });
-  dialogCard.addEventListener('click', function (event) { event.stopPropagation(); });
+  function basicTap() {
+    basicTaps += 1;
+    byId('stub_counter').textContent = 'taps=' + basicTaps;
+    setStatus('clicked');
+  }
 
-  byId('stub_enabled').addEventListener('click', function () {
-    status.textContent = 'status=enabled-clicked';
-  });
+  function startBasicHold() {
+    if (basicHoldTimer) { return; }
+    basicHeld = true;
+    basicLongFired = false;
+    basicHoldTimer = setTimeout(function () {
+      basicHoldTimer = null;
+      if (basicHeld) {
+        basicLongFired = true;
+        setStatus('long-pressed');
+      }
+    }, 500);
+  }
+
+  function endBasicHold() {
+    if (basicHoldTimer) {
+      clearTimeout(basicHoldTimer);
+      basicHoldTimer = null;
+    }
+    var wasHeld = basicHeld;
+    var wasLong = basicLongFired;
+    basicHeld = false;
+    basicLongFired = false;
+    if (wasHeld && !wasLong) { basicTap(); }
+  }
+
+  function playMedia() {
+    mediaStatus.textContent = 'loading';
+    var started = mediaVideo.play();
+    if (started && started.catch) {
+      started.catch(function () {
+        mediaStatus.textContent = 'paused';
+        reportMedia();
+      });
+    }
+  }
+
+  function mediaAction(name) {
+    if (name === 'play') {
+      playMedia();
+    } else if (name === 'pause') {
+      mediaVideo.pause();
+      mediaStatus.textContent = 'paused';
+    } else if (name === 'playpause') {
+      if (mediaVideo.paused) { playMedia(); }
+      else { mediaVideo.pause(); mediaStatus.textContent = 'paused'; }
+    } else if (name === 'stop') {
+      mediaVideo.pause();
+      mediaVideo.currentTime = 0;
+      mediaStatus.textContent = 'stopped';
+    } else if (name === 'rewind') {
+      mediaVideo.currentTime = Math.max(0, mediaVideo.currentTime - 10);
+      mediaStatus.textContent = 'rewound';
+    } else if (name === 'fastforward') {
+      mediaVideo.currentTime = Math.min(mediaVideo.duration || 0, mediaVideo.currentTime + 10);
+      mediaStatus.textContent = 'fast-forwarded';
+    } else if (name === 'record') {
+      mediaStatus.textContent = 'record-key';
+    }
+    reportMedia();
+  }
+
+  function toggleMedia() {
+    mediaAction(mediaVideo.paused ? 'play' : 'pause');
+  }
+
+  function activate(element) {
+    if (!element) { return; }
+    var open = element.getAttribute('data-open');
+    if (open) { openScenario(open); return; }
+    var act = element.getAttribute('data-act');
+    if (act === 'home') { setScreen('home'); }
+    else if (act === 'basic') { basicTap(); }
+    else if (act === 'dialog') { openDialog(); }
+    else if (act === 'enabled') { setStatus('enabled-clicked'); }
+    else if (act === 'key') {
+      var selected = element.getAttribute('data-key') || '';
+      keyLog.textContent = 'clicked=' + selected;
+      keyHistory.textContent = 'key history: ' + (history.length ? history.join(', ') : 'none');
+      setStatus('key-selected');
+    }
+    else if (act === 'media-toggle') { toggleMedia(); }
+    else if (act === 'choose') { chooseOption(element.getAttribute('data-option')); }
+  }
+
+  function logKey(name, event) {
+    keyLog.textContent = 'key=' + name;
+    keyCode.textContent = 'code=' + codeOf(event);
+    history.unshift(name);
+    if (history.length > 12) { history.pop(); }
+    if (screen === 'keys') {
+      keyHistory.textContent = 'key history: ' + history.join(', ');
+    }
+  }
 
   function reportMedia() {
     var hook = window.ImpresarioHook;
@@ -605,22 +699,7 @@
       source: source,
       error: mediaVideo.error ? String(mediaVideo.error.code) : ''
     });
-    hook.showing({
-      decoded: decoded,
-      source: source,
-      piece: 'stub_media_video'
-    });
-  }
-
-  function playMedia() {
-    mediaStatus.textContent = 'loading';
-    var started = mediaVideo.play();
-    if (started && started.catch) {
-      started.catch(function () {
-        mediaStatus.textContent = 'paused';
-        reportMedia();
-      });
-    }
+    hook.showing({ decoded: decoded, source: source, piece: 'stub_media_video' });
   }
 
   mediaVideo.addEventListener('loadeddata', reportMedia);
@@ -639,134 +718,119 @@
   mediaVideo.addEventListener('timeupdate', reportMedia);
   setInterval(reportMedia, 250);
 
-  function resetScenario(name) {
-    status.textContent = 'status=idle';
-    if (name === 'basic') {
-      resetBasic();
-    } else if (name === 'text') {
-      input.value = '';
-      echo.textContent = 'echo:';
-    } else if (name === 'scroll') {
-      scroller.scrollTop = 0;
-    } else if (name === 'select') {
-      closeDialog(false);
-    } else if (name === 'keys') {
-      resetKeys();
-    } else if (name === 'info') {
-      info.textContent = buildInfo();
-    } else if (name === 'media') {
-      mediaStatus.textContent = 'loading';
-      mediaVideo.currentTime = 0;
-      reportMedia();
-    }
-  }
-
-  function showScreen(name) {
-    currentScreen = name;
-    var isHome = name === 'home';
-    var isMedia = name === 'media';
-
-    for (var key in screens) {
-      if (Object.prototype.hasOwnProperty.call(screens, key)) {
-        screens[key].className = 'scenario-screen';
-      }
-    }
-
-    if (isHome) {
-      title.textContent = 'Impresario stub';
-      title.style.display = '';
-      subtitle.style.display = '';
-      homeList.style.display = '';
-      scenarioBody.style.display = 'none';
-      status.style.display = 'none';
-      content.className = '';
-      var rowButton = byId(lastScenario);
-      if (rowButton) {
-        rowButton.focus();
-      }
-      return;
-    }
-
-    title.textContent = scenarioTitles[name];
-    title.style.display = isMedia ? 'none' : '';
-    subtitle.style.display = 'none';
-    homeList.style.display = 'none';
-    scenarioBody.style.display = 'block';
-    scenarioBody.style.marginTop = isMedia ? '0' : '12px';
-    status.style.display = isMedia ? 'none' : '';
-    content.className = isMedia ? 'media-mode' : '';
-    screens[name].className = 'scenario-screen active';
-
-    resetScenario(name);
-
-    if (name === 'basic') {
-      tapButton.focus();
-    } else if (name === 'text') {
-      input.focus();
-    } else if (name === 'scroll') {
-      scroller.focus();
-    } else if (name === 'select') {
-      byId('stub_select').focus();
-    } else if (name === 'flags') {
-      byId('stub_enabled').focus();
-    } else if (name === 'keys') {
-      keyButtons[0].focus();
-    } else if (name === 'media') {
-      playMedia();
-    }
-  }
-
-  function openScenario(name) {
-    lastScenario = 'stub_scenario_' + name;
-    showScreen(name);
-  }
-
-  var scenarioNames = ['basic', 'text', 'scroll', 'select', 'flags', 'keys', 'info', 'media'];
-  for (var n = 0; n < scenarioNames.length; n += 1) {
-    (function (name) {
-      byId('stub_scenario_' + name).addEventListener('click', function () {
-        openScenario(name);
-      });
-    })(scenarioNames[n]);
-  }
+  input.addEventListener('input', function () {
+    echo.textContent = 'echo:' + input.value;
+  });
 
   document.addEventListener('keydown', function (event) {
-    if (isBackKey(event)) {
-      if (dialogOpen) {
-        closeDialog();
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (currentScreen !== 'home') {
-        if (currentScreen === 'media') {
-          mediaVideo.pause();
-        }
-        showScreen('home');
-        event.preventDefault();
-        event.stopPropagation();
-        return;
+    var name = keyName(event);
+    logKey(name, event);
+
+    if (name === 'back') {
+      event.preventDefault();
+      if (dialogOpen) { closeDialog(true); }
+      else if (screen !== 'home') { setScreen('home'); }
+      else { setStatus('back-at-home'); }
+      return;
+    }
+    if (name === 'home') {
+      event.preventDefault();
+      setScreen('home');
+      return;
+    }
+    if (name === 'exit') {
+      event.preventDefault();
+      setStatus('exit-key');
+      return;
+    }
+    if (name === 'menu' || name === 'info' || name === 'guide' ||
+        name === 'subtitle' || name === 'audio' || name === 'search' ||
+        name === 'settings' || name === 'red' || name === 'green' ||
+        name === 'yellow' || name === 'blue') {
+      event.preventDefault();
+      setStatus('key=' + name);
+      return;
+    }
+    if (name === 'volumeup' || name === 'volumedown' || name === 'mute' ||
+        name === 'channelup' || name === 'channeldown') {
+      event.preventDefault();
+      setStatus('key=' + name);
+      return;
+    }
+    if (name === 'play' || name === 'pause' || name === 'playpause' ||
+        name === 'stop' || name === 'rewind' || name === 'fastforward' ||
+        name === 'record') {
+      event.preventDefault();
+      if (screen === 'media') { mediaAction(name); }
+      else { setStatus('key=' + name); }
+      return;
+    }
+
+    if (isTextInput()) {
+      // The system IME owns printable keys and cursor movement while the
+      // text field is active. Back and media keys were handled above.
+      return;
+    }
+
+    if (name === 'up' || name === 'down') {
+      event.preventDefault();
+      if (screen === 'scroll') {
+        var step = Math.max(1, Math.floor(scroller.clientHeight * 0.8));
+        scroller.scrollTop += (name === 'down' ? 1 : -1) * step;
+      } else {
+        focusAt(focused + (name === 'down' ? 1 : -1));
       }
       return;
     }
-    if (currentScreen === 'scroll') {
-      if (isDownKey(event)) {
-        scrollStep(1);
-        event.preventDefault();
-        return;
-      }
-      if (isUpKey(event)) {
-        scrollStep(-1);
-        event.preventDefault();
-        return;
-      }
+    if (name === 'left' || name === 'right') {
+      event.preventDefault();
+      focusAt(focused + (name === 'right' ? 1 : -1));
+      return;
     }
-    if (currentScreen === 'keys') {
-      handleKeys(event);
+    if (name === 'ok' || name === 'enter') {
+      event.preventDefault();
+      var element = focusedElement();
+      if (!element) { return; }
+      if (element.id === 'stub_button') {
+        if (!basicHeld) { startBasicHold(); }
+      } else {
+        activate(element);
+      }
+      return;
+    }
+    if (name === 'backspace') {
+      event.preventDefault();
+      setStatus('backspace');
     }
   });
 
-  showScreen('home');
+  document.addEventListener('keyup', function (event) {
+    var name = keyName(event);
+    if ((name === 'ok' || name === 'enter') && basicHeld) {
+      event.preventDefault();
+      endBasicHold();
+    }
+  });
+
+  // Focus events keep the ring index in sync when the platform moves focus.
+  document.addEventListener('focusin', function (event) {
+    var index = focusables.indexOf(event.target);
+    if (index >= 0) {
+      focused = index;
+      setFocusLabel(event.target);
+    }
+  }, true);
+
+  for (var i = 0; i < 8; i += 1) {
+    (function (name) {
+      var row = byId('stub_scenario_' + name);
+      row.addEventListener('focus', function () { lastScenario = row.id; });
+    })(['basic', 'text', 'scroll', 'select', 'flags', 'keys', 'info', 'media'][i]);
+  }
+
+  registerTizenKeys();
+  window.addEventListener('load', registerTizenKeys);
+  setScreen('home');
 })();
 </script>
 </body>

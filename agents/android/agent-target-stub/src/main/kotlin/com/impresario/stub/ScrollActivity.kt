@@ -25,6 +25,9 @@ class ScrollActivity : ScenarioActivity() {
         val scroller = ScrollView(this).apply {
             id = R.id.stub_scroller
             isFocusable = true
+            isFocusableInTouchMode = true
+            background = stubPanelBackground()
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             addView(list)
         }
         column.addView(

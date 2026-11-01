@@ -350,7 +350,11 @@ this are recorded in I-157). The shared fixture therefore uses package
 `impresario` and app id `impresario.stub`. A Tizen `.wgt` must not contain
 `appinfo.json`; a webOS `.ipk` must not contain `config.xml`. The fixture
 builder `fixtures/tv-stub/build.ps1` stages the shared HTML with only the
-platform manifest.
+platform manifest. The shared fixture is a remote-key-only TV app: D-pad moves
+focus, OK activates, Back returns home, and there are no click/mouse/touch
+handlers. Every non-IR key updates `stub_key_log`, and the focused row uses a
+high-contrast amber/white ring. Tizen registers the remote keys through
+`tizen.tvinputdevice` with the `tv.inputdevice` privilege.
 
 **What a run does**
 
@@ -741,7 +745,9 @@ What the suites prove on the TV (the class kdocs carry the full matrix):
   `com.impresario.stub:id/...` (I-58) and the agent declares
   `QUERY_ALL_PACKAGES` so it can see any app under test (I-62).
 - The stub is focus-first on every screen (all rows/buttons focusable, no
-  touch-only affordances), so one APK serves both phone and TV.
+  touch-only affordances), so one APK serves both phone and TV. Focus is drawn
+  explicitly with a bright amber fill and white border instead of the platform
+  theme's near-invisible grey-on-grey focus state.
 
 `docs/DECISIONS.md` I-62 records the architecture change that made this
 possible; the earlier in-process phone run is superseded (its host device
@@ -1357,7 +1363,9 @@ for good (I-88). Uninstall + reinstall does **not** reset that permission.
 Apple TV specifics: no USB path, so WLAN is the only way; Impresario Agent
 presses remote buttons through `XCUIRemote` (D-pad/Select/Menu/PlayPause;
 `home` = `XCUIDevice.press(.home)`), and the stub app's focused row is visible
-in its `stub_key_log`/`stub_status` labels while a play runs.
+in its `stub_key_log`/`stub_status` labels while a play runs. The tvOS/iOS
+fixture uses the same explicit amber/white focus ring as Android, including on
+the text field, scroller, and dialog rows.
 
 ### Playback probes and the Apple hook
 

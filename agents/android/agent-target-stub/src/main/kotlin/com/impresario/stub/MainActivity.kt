@@ -42,14 +42,7 @@ class MainActivity : Activity() {
         )
         var first: Button? = null
         for ((id, label, screen) in SCENARIOS) {
-            val row = Button(this).apply {
-                this.id = id
-                text = label
-                textSize = 18f
-                minHeight = dp(48)
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                // Stable fixture text on every theme (docs/DECISIONS.md I-64).
-                isAllCaps = false
+            val row = stubButton(id, label).apply {
                 setOnClickListener { startActivity(Intent(this@MainActivity, screen)) }
             }
             if (first == null) first = row

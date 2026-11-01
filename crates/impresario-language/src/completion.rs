@@ -394,11 +394,7 @@ impl Language {
                 .find(|p| p.as_str() == cell.trim())
         });
         if let Some(platform) = platform {
-            let inside = last_quote_is_open(prefix);
-            if inside {
-                return Some(selector_prefix_items(platform));
-            }
-            return Some(vec![simple("\"", "operator")]);
+            return Some(selector_prefix_items(platform));
         }
         Some(Vec::new())
     }
@@ -687,16 +683,6 @@ fn split_cells(prefix: &str) -> Vec<String> {
         .split('|')
         .map(|cell| cell.trim().to_string())
         .collect()
-}
-
-fn last_quote_is_open(prefix: &str) -> bool {
-    let mut open = false;
-    for ch in prefix.chars() {
-        if ch == '"' {
-            open = !open;
-        }
-    }
-    open
 }
 
 fn condition_items() -> Vec<CompletionItem> {

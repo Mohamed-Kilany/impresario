@@ -113,7 +113,7 @@ final class SelectionDialogViewController: UIViewController {
         updateFocusIfNeeded()
         // Android's ListView marks the first row selected as soon as the
         // dialog opens, before any D-pad movement.
-        firstOption?.backgroundColor = StubTheme.plainFocusedBackground
+        firstOption?.setFocusAppearance(true)
         #endif
     }
 

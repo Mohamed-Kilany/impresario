@@ -20,25 +20,32 @@ enum StubTheme {
     static func dp(_ value: CGFloat) -> CGFloat { value * scale }
 
     // Android Theme.DeviceDefault on this TCL TV: black action bar, #303030
-    // content, #C1C1C1 primary text, #5A595B button, #646365 focused button.
+    // content, #C1C1C1 primary text, #5A595B button. The platform's focused
+    // button (#646365) is only a few RGB steps away and is invisible at couch
+    // distance, so the fixture deliberately uses a bright amber focus fill and
+    // a white ring on every D-pad target.
     static let background = UIColor(white: 48.0 / 255.0, alpha: 1)
     static let appBarBackground = UIColor.black
     static let appBarForeground = UIColor.white
     static let foreground = UIColor(white: 193.0 / 255.0, alpha: 1)
-    // Exact pixels sampled from the Android TV reference screenshots. The
-    // platform Button is not neutral grey: the channels differ by one.
+    // Exact unfocused pixels sampled from the Android TV reference
+    // screenshots. The platform Button is not neutral grey: the channels
+    // differ by one.
     static let buttonBackground = UIColor(
         red: 90.0 / 255.0,
         green: 89.0 / 255.0,
         blue: 91.0 / 255.0,
         alpha: 1
     )
-    static let buttonFocusedBackground = UIColor(
-        red: 100.0 / 255.0,
-        green: 99.0 / 255.0,
-        blue: 101.0 / 255.0,
+    static let focusBackground = UIColor(
+        red: 255.0 / 255.0,
+        green: 213.0 / 255.0,
+        blue: 79.0 / 255.0,
         alpha: 1
     )
+    static let focusForeground = UIColor.black
+    static let focusRing = UIColor.white
+    static let buttonFocusedBackground = focusBackground
     static let buttonDisabledBackground = UIColor(white: 61.0 / 255.0, alpha: 1)
     /// Android's TV button label is pure white, unlike the #C1C1C1 text views.
     static let buttonTitle = UIColor.white
@@ -72,7 +79,7 @@ enum StubTheme {
         alpha: 1
     )
     static let mediaBrokenBackground = UIColor(white: 32.0 / 255.0, alpha: 1)
-    static let plainFocusedBackground = dialogFocusedBackground
+    static let plainFocusedBackground = focusBackground
 
     /// Android `MainActivity`/`ScenarioActivity` use 48 x 36 dp.
     static var horizontalInset: CGFloat { dp(48) }
@@ -412,9 +419,8 @@ final class StubButton: UIButton {
     ) {
         super.didUpdateFocus(in: context, with: coordinator)
         let focused = context.nextFocusedView === self
-        isFocusedState = focused
         coordinator.addCoordinatedAnimations({
-            self.applyFocusAppearance(focused)
+            self.setFocusAppearance(focused)
         }, completion: nil)
         if focused {
             onFocusBecame?()
@@ -423,23 +429,46 @@ final class StubButton: UIButton {
     #endif
 
     private func updateVisualState() {
+        if plainStyle {
+            if !isEnabled {
+                backgroundColor = .clear
+                layer.borderWidth = 0
+                setTitleColor(StubTheme.buttonDisabledTitle, for: .normal)
+            } else if isFocusedState {
+                backgroundColor = StubTheme.plainFocusedBackground
+                layer.borderWidth = StubTheme.dp(4)
+                layer.borderColor = StubTheme.focusRing.cgColor
+                setTitleColor(StubTheme.focusForeground, for: .normal)
+            } else {
+                backgroundColor = .clear
+                layer.borderWidth = 0
+                setTitleColor(StubTheme.buttonTitle, for: .normal)
+            }
+            return
+        }
         guard let stubBackgroundView else { return }
         if !isEnabled {
             stubBackgroundView.backgroundColor = StubTheme.buttonDisabledBackground
+            stubBackgroundView.layer.borderWidth = 0
+            setTitleColor(StubTheme.buttonDisabledTitle, for: .normal)
         } else if isFocusedState {
             stubBackgroundView.backgroundColor = StubTheme.buttonFocusedBackground
+            stubBackgroundView.layer.borderWidth = StubTheme.dp(4)
+            stubBackgroundView.layer.borderColor = StubTheme.focusRing.cgColor
+            setTitleColor(StubTheme.focusForeground, for: .normal)
         } else {
             stubBackgroundView.backgroundColor = StubTheme.buttonBackground
+            stubBackgroundView.layer.borderWidth = 0
+            setTitleColor(StubTheme.buttonTitle, for: .normal)
         }
     }
 
-    private func applyFocusAppearance(_ focused: Bool) {
-        if plainStyle {
-            backgroundColor = focused ? StubTheme.plainFocusedBackground : .clear
-            setTitleColor(StubTheme.buttonTitle, for: .normal)
-        } else {
-            updateVisualState()
-        }
+    /// Applies the fixture's high-contrast focus appearance. Exposed for the
+    /// selection dialog, which marks its first row selected before tvOS has
+    /// delivered a focus update.
+    func setFocusAppearance(_ focused: Bool) {
+        isFocusedState = focused
+        updateVisualState()
     }
 }
 
@@ -447,6 +476,26 @@ final class StubButton: UIButton {
 /// take focus, and D-pad up/down scroll it instead of moving focus away.
 final class FocusableScrollView: UIScrollView {
     override var canBecomeFocused: Bool { true }
+
+    private var isFocusedState = false
+
+    override func didUpdateFocus(
+        in context: UIFocusUpdateContext,
+        with coordinator: UIFocusAnimationCoordinator
+    ) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        isFocusedState = context.nextFocusedView === self
+        coordinator.addCoordinatedAnimations({
+            self.updateFocusRing()
+        }, completion: nil)
+    }
+
+    private func updateFocusRing() {
+        layer.borderWidth = isFocusedState ? StubTheme.dp(4) : StubTheme.dp(2)
+        layer.borderColor = (isFocusedState
+            ? StubTheme.focusBackground
+            : StubTheme.inputIdleUnderline).cgColor
+    }
 
     #if os(tvOS)
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
