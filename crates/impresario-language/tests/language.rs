@@ -247,21 +247,21 @@ fn every_renameable_symbol_kind_is_workspace_wide() {
 }
 
 #[test]
-fn scene_references_inside_play_stages_resolve_to_the_scene() {
-    let play_text = "Play: Login\n\nAct: A\n\nStage: Navigate\n    Scene: LoginScreen\n        Action: click => LoginButton\n";
+fn stage_scene_references_resolve_to_the_scene() {
+    let theatre = PathBuf::from("theatres/auth.theatre");
     let files = vec![
         SourceFile {
             path: scene(),
             text: SCENE.to_string(),
         },
         SourceFile {
-            path: play(),
-            text: play_text.to_string(),
+            path: theatre.clone(),
+            text: THEATRE.to_string(),
         },
     ];
     let language = Language::analyze(&files, &[], &[], Some(PathBuf::from(".")));
-    let position = caret(play_text, "LoginScreen") + Position::new(0, 2);
-    let definitions = language.definition(&play(), position);
+    let position = caret(THEATRE, "Scene: LoginScreen") + Position::new(0, 8);
+    let definitions = language.definition(&theatre, position);
     assert_eq!(definitions.len(), 1, "{definitions:?}");
     assert_eq!(definitions[0].file, scene());
 }
