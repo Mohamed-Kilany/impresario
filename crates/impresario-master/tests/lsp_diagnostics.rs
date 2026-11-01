@@ -271,8 +271,8 @@ fn device_warnings_follow_did_change_configuration() {
         let mut server = TestLsp::start(base).await;
         let mark = server.mark();
         server.start_session(None).await;
-        // The warning sits on the step that uses the piece.
-        let published = server.wait_diagnostics(&play, mark).await;
+        // The warning sits on the step in the theatre that uses the piece.
+        let published = server.wait_diagnostics(&theatre, mark).await;
         assert!(
             lsp::codes(&published).contains(&"IMP-DSL-012".to_string()),
             "a web device wants a web selector: {published}"
@@ -285,7 +285,7 @@ fn device_warnings_follow_did_change_configuration() {
                 "impresario": {"devices": "android.devices.config"}
             }))
             .await;
-        let published = server.wait_diagnostics(&play, mark).await;
+        let published = server.wait_diagnostics(&theatre, mark).await;
         assert!(
             lsp::diagnostics(&published).is_empty(),
             "android covers the piece: {published}"
@@ -298,7 +298,7 @@ fn device_warnings_follow_did_change_configuration() {
                 "impresario.devices": "impresario.devices.config"
             }))
             .await;
-        let published = server.wait_diagnostics(&play, mark).await;
+        let published = server.wait_diagnostics(&theatre, mark).await;
         assert!(
             lsp::codes(&published).contains(&"IMP-DSL-012".to_string()),
             "back on the web device set: {published}"
