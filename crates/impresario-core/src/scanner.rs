@@ -181,9 +181,9 @@ mod tests {
         assert_eq!(scanned.indent_unit, 4);
         assert_eq!(
             scanned.lines.iter().map(|l| l.depth).collect::<Vec<_>>(),
-            vec![0, 0, 0, 1]
+            vec![0, 0, 1]
         );
-        let piece = scanned.lines.get(3).expect("piece line");
+        let piece = scanned.lines.get(2).expect("piece line");
         assert_eq!(piece.col, 5);
         assert_eq!(piece.content, "One: web=\"#a\"");
     }
