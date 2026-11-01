@@ -412,7 +412,7 @@ fn scan_duplicate_headers(source: &SourceFile, text: &str, names: &mut Vec<Name>
     let mut table_header_seen = false;
     let mut table_separator_seen = false;
     let mut scene_name: Option<String> = None;
-    for (index, line) in scanned.lines.iter().enumerate() {
+    for line in &scanned.lines {
         let content = line.content.as_str();
         match extension(path) {
             "scene" => {
