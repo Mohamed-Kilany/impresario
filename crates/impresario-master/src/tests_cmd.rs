@@ -173,6 +173,16 @@ fn names(items: &[impresario_core::ast::Named]) -> Vec<String> {
     items.iter().map(|item| item.name.clone()).collect()
 }
 
+/// A stage's platform restriction: canonical `Audience:` first, then the
+/// legacy serialized `platforms` field.
+fn stage_platform_names(stage: &StageDecl) -> Vec<String> {
+    if stage.audience.is_empty() {
+        names(&stage.platforms)
+    } else {
+        names(&stage.audience)
+    }
+}
+
 fn scene_json(scene: &SceneFile) -> Value {
     let pieces: Vec<Value> = scene
         .pieces
@@ -229,7 +239,7 @@ fn stage_json(stage: &StageDecl) -> Value {
         "name": stage.name,
         "file": stage.name_span.file,
         "line": stage.name_span.line,
-        "platforms": names(&stage.platforms),
+        "platforms": stage_platform_names(stage),
         "params": stage.params.iter().map(|param| json!({
             "name": param.name,
             "required": param.default.is_none(),
@@ -451,7 +461,7 @@ fn print_tree(
         );
         for stage in &theatre.stages {
             let steps = stages.get(&stage.name).copied().unwrap_or(0);
-            let platforms = names(&stage.platforms);
+            let platforms = stage_platform_names(stage);
             println!(
                 "    stage {}  {}:{}  {} item(s), {steps} step(s){}",
                 stage.name,
@@ -572,23 +582,16 @@ fn act_matches(
         let applicable = act_stage_refs(act).iter().any(|(stage, _)| {
             if let Some(inline) = act.stages.iter().find(|decl| &decl.name == stage) {
                 // An inline stage with no platform restriction runs everywhere.
-                return inline.platforms.is_empty()
-                    || platforms.iter().any(|platform| {
-                        inline
-                            .platforms
-                            .iter()
-                            .any(|name| name.name == platform.as_str())
-                    });
+                let declared = stage_platform_names(inline);
+                return declared.is_empty()
+                    || platforms
+                        .iter()
+                        .any(|platform| declared.iter().any(|name| name == platform.as_str()));
             }
             loaded.theatres.iter().any(|theatre| {
                 theatre.stage(stage).is_some_and(|stage| {
-                    platforms.iter().any(|platform| {
-                        stage.platforms.is_empty()
-                            || stage
-                                .platforms
-                                .iter()
-                                .any(|name| name.name == platform.as_str())
-                    })
+                    let declared = theatre.stage_audience(stage);
+                    platforms.iter().any(|platform| declared.contains(platform))
                 })
             })
         });
