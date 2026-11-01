@@ -333,25 +333,20 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn default_platform() -> Platform {
-    Platform::Web
-}
-
 /// One device entry of a devices file. The only public fields are an optional
 /// label (`name`), the exact product `type`, and its `ip`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DeviceConfig {
     /// Optional label used by actors. When omitted it is derived from type+IP.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
     /// The exact product type (`web`, `webOS`, `tizenOS`, ...).
     #[serde(rename = "type")]
     pub device_type: DeviceType,
     /// The device's IP address. `127.0.0.1` means the local host.
     pub ip: String,
-    /// Internal platform family, filled by the parser from `device_type`.
-    #[serde(skip, default = "default_platform")]
+    /// Internal platform family, derived from `device_type`.
+    #[serde(skip)]
     pub platform: Platform,
     #[serde(skip)]
     pub connection: DeviceConnection,
@@ -361,6 +356,35 @@ pub struct DeviceConfig {
     pub labels: Vec<String>,
     #[serde(skip)]
     pub options: DeviceOptions,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceConfigWire {
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "type")]
+    device_type: DeviceType,
+    ip: String,
+}
+
+impl<'de> Deserialize<'de> for DeviceConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = DeviceConfigWire::deserialize(deserializer)?;
+        Ok(Self {
+            name: wire.name,
+            device_type: wire.device_type,
+            ip: wire.ip,
+            platform: wire.device_type.platform(),
+            connection: DeviceConnection::default(),
+            auth: DeviceAuth::default(),
+            labels: Vec::new(),
+            options: DeviceOptions::default(),
+        })
+    }
 }
 
 impl DeviceConfig {

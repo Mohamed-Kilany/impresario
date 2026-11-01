@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use impresario_core::config::{ImpresarioConfig, Reporter};
+use impresario_core::config::{DeviceOptions, ImpresarioConfig, Reporter};
 use impresario_core::home::Home;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -95,6 +95,11 @@ pub struct JobSpec {
     pub report_dir: PathBuf,
     pub config: ImpresarioConfig,
     pub plan: ExecutionPlan,
+    /// Test-only transport overrides keyed by device name. The public device
+    /// schema skips these fields, so a detached run must carry them across the
+    /// daemon socket separately from the plan.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub device_options: BTreeMap<String, DeviceOptions>,
     pub retries: u32,
     pub fail_fast: bool,
     pub token: Option<String>,
@@ -499,12 +504,25 @@ pub fn run_prepared(store: &JobStore, spec: &JobSpec, print_console: bool) -> Jo
         events: Some(sender),
     };
 
+    // Device options are skipped by the public device schema, so restore the
+    // test-only overrides that were carried alongside the plan.
+    let restored = (!spec.device_options.is_empty()).then(|| {
+        let mut plan = spec.plan.clone();
+        for device in &mut plan.devices {
+            if let Some(options) = spec.device_options.get(&device.device.name) {
+                device.device.options = options.clone();
+            }
+        }
+        plan
+    });
+    let plan = restored.as_ref().unwrap_or(&spec.plan);
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build();
     let outcome = match runtime {
         Ok(runtime) => {
-            let outcome = runtime.block_on(exec::execute(&spec.plan, &options));
+            let outcome = runtime.block_on(exec::execute(plan, &options));
             // The executor can leave log-stream tasks alive; dropping the
             // runtime closes their event senders so the writer can finish.
             drop(runtime);

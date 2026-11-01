@@ -2730,6 +2730,12 @@ pub(crate) fn run_workspace(
             report_dir: report_dir.clone(),
             config: config.clone(),
             plan: plan.clone(),
+            device_options: plan
+                .devices
+                .iter()
+                .filter(|device| !device.device.options.is_default())
+                .map(|device| (device.device.name.clone(), device.device.options.clone()))
+                .collect(),
             retries: args.retries.unwrap_or(config.retries),
             fail_fast: args.fail_fast,
             token: agent_token(),
