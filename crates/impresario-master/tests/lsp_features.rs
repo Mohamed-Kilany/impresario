@@ -73,7 +73,7 @@ fn completions_cover_every_documented_context() {
         server.wait_version(&edits, 1, mark).await; // both overlays indexed
 
         // `Scene:` offers the scenes of the workspace, with their platforms.
-        let items = server.at("textDocument/completion", &contexts, 4, 12).await;
+        let items = server.at("textDocument/completion", &contexts, 3, 11).await;
         assert_eq!(
             lsp::completion_labels(&items),
             vec!["LoginScreen", "Scratch"]
@@ -84,7 +84,7 @@ fn completions_cover_every_documented_context() {
         );
 
         // `Action:` offers the verbs and the string starter.
-        let verb_items = server.at("textDocument/completion", &contexts, 6, 17).await;
+        let verb_items = server.at("textDocument/completion", &contexts, 5, 16).await;
         let labels = lsp::completion_labels(&verb_items);
         assert!(labels.contains(&"click".to_string()), "{labels:?}");
         assert!(labels.contains(&"app background".to_string()), "{labels:?}");
@@ -98,7 +98,7 @@ fn completions_cover_every_documented_context() {
         assert_eq!(starter["insertText"], json!("''"));
 
         // `Action: click =>` offers the sorted pieces of the enclosing scene.
-        let pieces = server.at("textDocument/completion", &contexts, 7, 26).await;
+        let pieces = server.at("textDocument/completion", &contexts, 6, 25).await;
         assert_eq!(
             lsp::completion_labels(&pieces),
             vec!["LoginButton", "UsernameInput"]
@@ -109,12 +109,12 @@ fn completions_cover_every_documented_context() {
         );
 
         // `Check:` starts with pieces, then conditions.
-        let checks = server.at("textDocument/completion", &contexts, 8, 16).await;
+        let checks = server.at("textDocument/completion", &contexts, 7, 15).await;
         assert_eq!(
             lsp::completion_labels(&checks),
             vec!["LoginButton", "UsernameInput"]
         );
-        let conditions = server.at("textDocument/completion", &contexts, 9, 30).await;
+        let conditions = server.at("textDocument/completion", &contexts, 8, 29).await;
         assert_eq!(
             lsp::completion_labels(&conditions),
             vec![
@@ -131,13 +131,11 @@ fn completions_cover_every_documented_context() {
         );
 
         // `Tags:` offers the tags of the workspace.
-        let tags = server.at("textDocument/completion", &contexts, 1, 7).await;
+        let tags = server.at("textDocument/completion", &contexts, 1, 6).await;
         assert_eq!(lsp::completion_labels(&tags), vec!["smoke"]);
 
         // `Action: key` offers only what the configured web device supports.
-        let keys = server
-            .at("textDocument/completion", &contexts, 10, 21)
-            .await;
+        let keys = server.at("textDocument/completion", &contexts, 9, 20).await;
         let expected: Vec<String> = RemoteKey::ALL
             .iter()
             .filter(|key| support::key_support(Platform::Web, **key).is_supported())
@@ -152,7 +150,7 @@ fn completions_cover_every_documented_context() {
         );
 
         // A table cell offers the selector prefixes for its platform column.
-        let prefixes = server.at("textDocument/completion", &edits, 5, 17).await;
+        let prefixes = server.at("textDocument/completion", &edits, 5, 14).await;
         assert_eq!(
             lsp::completion_labels(&prefixes),
             vec!["id:", "text:", "textContains:", "desc:", "class:"]
