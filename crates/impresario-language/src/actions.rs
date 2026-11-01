@@ -301,7 +301,7 @@ impl Language {
     }
 
     fn extract_action(&self, path: &Path, doc: &Doc<'_>, from: u32, to: u32) -> Option<CodeAction> {
-        if self.play(path).is_none() || from >= to {
+        if (self.play(path).is_none() && self.theatre(path).is_none()) || from >= to {
             return None;
         }
         let selected = (from..=to).map(|line| doc.line(line)).collect::<Vec<_>>();
