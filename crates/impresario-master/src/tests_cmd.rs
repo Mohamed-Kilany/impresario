@@ -847,14 +847,14 @@ fn new_test(base: &Path, config_path: &Path, kind: &str, name: &str, force: bool
             &loaded.config.theatres_dir,
             "theatre",
             format!(
-                "Theatre: {name}\n\nStage: First\n    Scene: Sample\n        Check: Sample\n"
+                "Theatre: {name}\n\nStage: Main\n    Scene: Sample\n        Check: Sample\n"
             ),
         ),
         "play" => (
             &loaded.config.plays_dir,
             "play",
             format!(
-                "Play: {name}\nDescription: ''\n\nAct: First\n    Perform: First\n"
+                "Play: {name}\nDescription: ''\n\nAct: First\n    Perform: Main\n"
             ),
         ),
         other => {
