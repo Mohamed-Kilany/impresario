@@ -499,10 +499,11 @@ impl DeviceTransport for ConnectorTransport {
         };
 
         let binary = connector_binary().ok_or_else(|| {
-            TransportError::Transport(format!(
+            TransportError::Transport(
                 "impresario-connector was not found; build it \
                  (cargo build -p impresario-connector -p impresario-master)"
-            ))
+                    .to_string(),
+            )
         })?;
         let mut cmd = Command::new(binary);
         cmd.args(["serve", "--listen", address.as_str()]);
