@@ -6,5 +6,6 @@
   "main": "index.html",
   "title": "Impresario Stub",
   "icon": "icon.png",
-  "resolution": "1920x1080"
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true
 }

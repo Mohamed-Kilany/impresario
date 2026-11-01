@@ -85,7 +85,8 @@
     line-height: 1.25;
     text-align: left;
   }
-  .focusable:focus {
+  .focusable:focus,
+  .focusable.focused {
     outline: none;
     border-color: #ffffff;
     background: #ffd54f;
@@ -98,7 +99,8 @@
     font-size: 21px;
     color: #b8b8b8;
   }
-  .focusable:focus .hint { color: #3a2a00; }
+  .focusable:focus .hint,
+  .focusable.focused .hint { color: #3a2a00; }
   .focusable[aria-disabled="true"] {
     border-color: #333333;
     background: #1a1a1a;
@@ -131,7 +133,8 @@
     font-size: 32px;
     outline: none;
   }
-  #stub_input:focus {
+  #stub_input:focus,
+  #stub_input.focused {
     border-color: #ffffff;
     background: #2f2a1c;
     box-shadow: 0 0 0 8px rgba(255, 213, 79, 0.38);
@@ -146,8 +149,10 @@
     background: #1c1c1c;
     outline: none;
   }
-  #stub_scroller:focus {
-    border-color: #ffd54f;
+  #stub_scroller:focus,
+  #stub_scroller.focused {
+    border-color: #ffffff;
+    background: #2f2a1c;
     box-shadow: 0 0 0 8px rgba(255, 213, 79, 0.38);
   }
   .stub-row {
@@ -156,7 +161,7 @@
     color: #d8d8d8;
     font-size: 30px;
   }
-  #screen-media { overflow: hidden; }
+  #screen-media { overflow: auto; }
   #stub_media_video {
     display: block;
     width: 480px;
@@ -342,58 +347,74 @@
     return 'web';
   })();
 
+  var tizenKeysRegistered = false;
+
   function registerTizenKeys() {
+    if (tizenKeysRegistered) { return; }
     if (typeof tizen === 'undefined' || !tizen.tvinputdevice) { return; }
+    // D-pad, Enter and Back are mandatory and cannot be registered. The
+    // remaining names include both the documented Tizen spellings and the
+    // webOS aliases some firmware versions expose.
     var names = [
-      'Up', 'Down', 'Left', 'Right', 'Enter', 'Back', 'Exit', 'Home', 'Menu',
+      'Exit', 'Home', 'Menu',
       'MediaPlay', 'MediaPause', 'MediaStop', 'MediaRewind', 'MediaFastForward',
-      'MediaRecord', 'MediaPlayPause', 'VolumeUp', 'VolumeDown', 'Mute',
-      'ChannelUp', 'ChannelDown', 'ColorF0Red', 'ColorF1Green', 'ColorF2Yellow',
-      'ColorF3Blue', 'Info', 'Guide', 'Subtitle', 'Audio', 'Search', 'Settings',
+      'MediaRecord', 'MediaPlayPause', 'VolumeUp', 'VolumeDown', 'VolumeMute',
+      'Mute', 'ChannelUp', 'ChannelDown', 'ColorF0Red', 'ColorF1Green',
+      'ColorF2Yellow', 'ColorF3Blue', 'Info', 'Guide', 'Caption', 'Subtitle',
+      'MTS', 'Audio', 'Search', 'Settings',
       '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
     ];
     for (var i = 0; i < names.length; i += 1) {
       try { tizen.tvinputdevice.registerKey(names[i]); } catch (error) { /* unsupported key */ }
     }
+    tizenKeysRegistered = true;
   }
 
   var KEY_BY_CODE = {
-    8: 'backspace', 13: 'ok', 19: 'pause', 27: 'exit', 36: 'home', 37: 'left',
-    38: 'up', 39: 'right', 40: 'down', 84: 'search', 93: 'menu', 176: 'settings',
-    179: 'playpause', 403: 'red', 404: 'green', 405: 'yellow', 406: 'blue',
-    412: 'rewind', 413: 'stop', 415: 'play', 416: 'record', 417: 'fastforward',
-    427: 'channelup', 428: 'channeldown', 447: 'volumeup', 448: 'volumedown',
-    449: 'mute', 457: 'info', 458: 'guide', 459: 'audio', 460: 'subtitle',
-    10009: 'back'
+    8: 'backspace', 13: 'ok', 18: 'menu', 19: 'pause', 27: 'exit', 36: 'home',
+    37: 'left', 38: 'up', 39: 'right', 40: 'down', 84: 'search', 93: 'menu',
+    176: 'settings', 179: 'playpause', 403: 'red', 404: 'green',
+    405: 'yellow', 406: 'blue', 412: 'rewind', 413: 'stop', 415: 'play',
+    416: 'record', 417: 'fastforward', 427: 'channelup', 428: 'channeldown',
+    447: 'volumeup', 448: 'volumedown', 449: 'mute', 457: 'info', 458: 'guide',
+    459: 'audio', 460: 'subtitle', 10009: 'back', 10182: 'exit',
+    10195: 'audio', 10221: 'subtitle', 10225: 'search', 10252: 'playpause'
   };
   for (var digit = 0; digit < 10; digit += 1) {
     KEY_BY_CODE[48 + digit] = 'num' + digit;
     KEY_BY_CODE[96 + digit] = 'num' + digit;
   }
-  // webOS Back and Tizen Exit share keyCode 461; use the platform name.
+  // webOS Back and Exit both use 461, so `keyName` checks event.key before
+  // this fallback. Tizen uses 10009 for Back and 10182 for Exit.
   KEY_BY_CODE[461] = PLATFORM === 'webos' ? 'back' : 'exit';
 
   var KEY_BY_NAME = {
-    Enter: 'ok', Escape: 'exit', Backspace: 'backspace', ArrowUp: 'up',
-    ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Home: 'home',
-    ContextMenu: 'menu', MediaPlay: 'play', MediaPause: 'pause',
-    MediaPlayPause: 'playpause', MediaStop: 'stop', MediaRewind: 'rewind',
-    MediaFastForward: 'fastforward', MediaRecord: 'record',
-    AudioVolumeUp: 'volumeup', AudioVolumeDown: 'volumedown',
-    AudioVolumeMute: 'mute', ChannelUp: 'channelup', ChannelDown: 'channeldown',
-    ColorF0Red: 'red', ColorF1Green: 'green', ColorF2Yellow: 'yellow',
-    ColorF3Blue: 'blue', Info: 'info', Guide: 'guide', Subtitle: 'subtitle',
-    Audio: 'audio', Search: 'search', Settings: 'settings', Back: 'back',
-    GoBack: 'back', BrowserBack: 'back', Exit: 'exit'
+    Enter: 'ok', OK: 'ok', Select: 'ok', DPAD_CENTER: 'ok',
+    Escape: 'exit', Backspace: 'backspace', ArrowUp: 'up', DPAD_UP: 'up',
+    ArrowDown: 'down', DPAD_DOWN: 'down', ArrowLeft: 'left',
+    DPAD_LEFT: 'left', ArrowRight: 'right', DPAD_RIGHT: 'right',
+    Home: 'home', Menu: 'menu', ContextMenu: 'menu', MediaPlay: 'play',
+    MediaPause: 'pause', MediaPlayPause: 'playpause', MediaStop: 'stop',
+    MediaRewind: 'rewind', MediaFastForward: 'fastforward',
+    MediaRecord: 'record', AudioVolumeUp: 'volumeup', VolumeUp: 'volumeup',
+    AudioVolumeDown: 'volumedown', VolumeDown: 'volumedown',
+    AudioVolumeMute: 'mute', VolumeMute: 'mute', Mute: 'mute',
+    ChannelUp: 'channelup', ChannelDown: 'channeldown', ColorF0Red: 'red',
+    ColorF1Green: 'green', ColorF2Yellow: 'yellow', ColorF3Blue: 'blue',
+    Info: 'info', Guide: 'guide', Caption: 'subtitle', Subtitle: 'subtitle',
+    MTS: 'audio', Audio: 'audio', Search: 'search', Settings: 'settings',
+    Back: 'back', GoBack: 'back', BrowserBack: 'back', Exit: 'exit'
   };
 
   function keyName(event) {
     var code = codeOf(event);
-    if (KEY_BY_CODE[code]) { return KEY_BY_CODE[code]; }
     var key = event.key || '';
+    if (PLATFORM === 'webos' && code === 461) {
+      return key === 'Exit' ? 'exit' : 'back';
+    }
+    if (KEY_BY_CODE[code]) { return KEY_BY_CODE[code]; }
     if (KEY_BY_NAME[key]) { return KEY_BY_NAME[key]; }
     if (/^[0-9]$/.test(key)) { return 'num' + key; }
-    if (key === 'MediaPlayPause') { return 'playpause'; }
     return 'unknown';
   }
 
@@ -418,6 +439,7 @@
   var currentScreenEl = byId('screen-home');
   var focusables = [];
   var focused = 0;
+  var focusedNode = null;
   var dialogOpen = false;
   var basicTaps = 0;
   var basicHoldTimer = null;
@@ -459,6 +481,30 @@
     return dialogOpen ? dialogCard : currentScreenEl;
   }
 
+  function setFocusedElement(element) {
+    if (focusedNode && focusedNode !== element && focusedNode.classList) {
+      focusedNode.classList.remove('focused');
+    }
+    focusedNode = element || null;
+    if (focusedNode && focusedNode.classList) {
+      focusedNode.classList.add('focused');
+    }
+  }
+
+  function ensureVisible(element) {
+    var root = activeRoot();
+    if (!root || !element || !element.getBoundingClientRect) { return; }
+    var rect = element.getBoundingClientRect();
+    var rootRect = root.getBoundingClientRect();
+    var margin = 12;
+    if (rect.height > rootRect.height - margin * 2) { return; }
+    if (rect.top < rootRect.top + margin) {
+      root.scrollTop += rect.top - rootRect.top - margin;
+    } else if (rect.bottom > rootRect.bottom - margin) {
+      root.scrollTop += rect.bottom - rootRect.bottom + margin;
+    }
+  }
+
   function collectFocusables() {
     var root = activeRoot();
     var nodes = root.querySelectorAll(
@@ -469,6 +515,7 @@
     if (focusables.length > 0) {
       focusAt(0);
     } else {
+      setFocusedElement(null);
       setFocusLabel(null);
     }
   }
@@ -476,8 +523,11 @@
   function focusAt(index) {
     if (focusables.length === 0) { return; }
     focused = (index + focusables.length) % focusables.length;
-    focusables[focused].focus();
-    setFocusLabel(focusables[focused]);
+    var element = focusables[focused];
+    try { element.focus(); } catch (error) { /* focus can fail while hidden */ }
+    setFocusedElement(element);
+    ensureVisible(element);
+    setFocusLabel(element);
   }
 
   function focusedElement() {
@@ -812,13 +862,22 @@
     }
   });
 
-  // Focus events keep the ring index in sync when the platform moves focus.
+  // Focus events keep the ring index and explicit `.focused` class in sync
+  // when the platform moves focus. The class is a fallback for TV browsers
+  // that do not paint `:focus` when the app window lacks OS focus.
   document.addEventListener('focusin', function (event) {
     var index = focusables.indexOf(event.target);
     if (index >= 0) {
       focused = index;
+      setFocusedElement(event.target);
       setFocusLabel(event.target);
     }
+  }, true);
+  document.addEventListener('focusout', function (event) {
+    if (event.target && event.target.classList) {
+      event.target.classList.remove('focused');
+    }
+    if (focusedNode === event.target) { focusedNode = null; }
   }, true);
 
   for (var i = 0; i < 8; i += 1) {
@@ -829,7 +888,19 @@
   }
 
   registerTizenKeys();
-  window.addEventListener('load', registerTizenKeys);
+  window.addEventListener('load', function () {
+    registerTizenKeys();
+    // The TV browser can move focus to the body while the document loads.
+    // Restore the app's own ring so the first D-pad press always has a target.
+    if (!document.activeElement || document.activeElement === document.body) {
+      focusAt(focused);
+    }
+  });
+  window.addEventListener('focus', function () {
+    if (!document.activeElement || document.activeElement === document.body) {
+      focusAt(focused);
+    }
+  });
   setScreen('home');
 })();
 </script>

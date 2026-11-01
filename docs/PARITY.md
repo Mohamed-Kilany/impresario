@@ -159,7 +159,10 @@ Every ✖ combination fails loudly; nothing is a silent no-op:
   touch). Both also fail at runtime (see above).
 - `key <k>` cells: the spec 6.2 dispatch table (keyCodes/constants) is
   mirrored by per-executor key tables with unit tests; the planner enforces
-  the same ✅/✖ split shown here.
+  the same ✅/✖ split shown here. Tizen uses its native remote codes for
+  `exit` (10182), `playpause` (10252), `subtitle`/Caption (10221),
+  `audio`/MTS (10195) and `search` (10225); webOS uses 461 for both Back and
+  Exit, which the TV fixture distinguishes by `event.key`.
 
 Apple (`ios`, `tvos`) specifics:
 

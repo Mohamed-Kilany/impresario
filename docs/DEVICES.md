@@ -353,8 +353,12 @@ builder `fixtures/tv-stub/build.ps1` stages the shared HTML with only the
 platform manifest. The shared fixture is a remote-key-only TV app: D-pad moves
 focus, OK activates, Back returns home, and there are no click/mouse/touch
 handlers. Every non-IR key updates `stub_key_log`, and the focused row uses a
-high-contrast amber/white ring. Tizen registers the remote keys through
-`tizen.tvinputdevice` with the `tv.inputdevice` privilege.
+high-contrast amber/white ring that is also driven by an explicit `.focused`
+class. Tizen registers the remote keys through `tizen.tvinputdevice` with the
+`tv.inputdevice` feature/privilege and handles the native Exit 10182,
+MediaPlayPause 10252, Caption 10221, MTS 10195, Search 10225 and Menu 18 codes;
+webOS uses `disableBackHistoryAPI` and distinguishes Back/Exit (both 461) by
+`event.key`.
 
 **What a run does**
 

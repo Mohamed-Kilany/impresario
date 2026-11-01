@@ -104,6 +104,23 @@ mod tests {
         let back = web_key(Platform::Tizen, RemoteKey::Back).expect("back");
         assert_eq!(back.key_code, 10009);
 
+        let playpause = web_key(Platform::Tizen, RemoteKey::PlayPause).expect("playpause");
+        assert_eq!(playpause.key_code, 10252);
+        assert_eq!(playpause.key, "MediaPlayPause");
+        let exit = web_key(Platform::Tizen, RemoteKey::Exit).expect("exit");
+        assert_eq!(exit.key_code, 10182);
+        let subtitle = web_key(Platform::Tizen, RemoteKey::Subtitle).expect("subtitle");
+        assert_eq!(subtitle.key_code, 10221);
+        assert_eq!(subtitle.key, "Caption");
+        let audio = web_key(Platform::Tizen, RemoteKey::Audio).expect("audio");
+        assert_eq!(audio.key_code, 10195);
+        assert_eq!(audio.key, "MTS");
+        let search = web_key(Platform::Tizen, RemoteKey::Search).expect("search");
+        assert_eq!(search.key_code, 10225);
+        let mute = web_key(Platform::Tizen, RemoteKey::Mute).expect("mute");
+        assert_eq!(mute.key_code, 449);
+        assert_eq!(mute.key, "VolumeMute");
+
         assert!(web_key(Platform::Web, RemoteKey::Back).is_none());
         assert!(web_key(Platform::Web, RemoteKey::Play).is_some());
         assert!(web_key(Platform::WebOs, RemoteKey::Play).is_some());

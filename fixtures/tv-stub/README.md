@@ -8,7 +8,9 @@ remote key is logged, including the numpad, media, colour, volume, channel,
 info, guide, subtitle, audio, search and settings keys.
 
 The UI intentionally uses a high-contrast focus ring (amber fill, white border)
-so the focused row is obvious in a screenshot and at couch distance. Stable
+so the focused row is obvious in a screenshot and at couch distance. The ring is
+painted by both `:focus` and an explicit `.focused` class, and the focus helper
+scrolls the active screen so the focused row stays visible on 720p panels. Stable
 `#stub_*` ids remain available for scene selectors; `#stub_key_log`,
 `#stub_focus`, and `#stub_status` report the last key, the focused element and
 the current scenario status.
@@ -22,9 +24,12 @@ The Tizen package id is exactly ten characters. A Samsung TV rejects longer
 package ids at install time with `[118, -4] Load archive info fail`, even though
 the same `.wgt` installs on the emulator. Keep the package id at ten characters
 and make the app id `<package>.<suffix>`. The Tizen manifest declares the
-`http://tizen.org/privilege/tv.inputdevice` privilege and `index.html` registers
-the remote keys through `tizen.tvinputdevice`; webOS delivers the same keydown
-events without a manifest privilege.
+`http://tizen.org/feature/tv.inputdevice` feature and the
+`http://tizen.org/privilege/tv.inputdevice` privilege; `index.html` registers the
+remote keys through `tizen.tvinputdevice`. webOS delivers the same keydown
+events without a manifest privilege, and `appinfo.json` sets
+`disableBackHistoryAPI` so the Back key reaches the app instead of the platform
+history.
 
 ## Remote-only behaviour
 
@@ -36,6 +41,14 @@ events without a manifest privilege.
 - Playback: play, pause, play/pause, stop, rewind and fast-forward remote keys
   control the local video. The media keys are registered on Tizen.
 - Every key press updates `#stub_key_log` and the in-app key history.
+
+The key table recognises the native TV codes as well as the desktop DOM codes.
+Tizen uses `Exit` 10182, `MediaPlayPause` 10252, `Caption` (subtitle) 10221,
+`MTS` (audio) 10195, `Search` 10225 and `Menu` 18. webOS uses 461 for both Back
+and Exit, so the stub checks `event.key` to distinguish them. The Tizen key
+registration uses the documented `VolumeMute`, `Caption` and `MTS` names (with
+the webOS aliases as fallbacks), and the mandatory D-pad/Enter/Back keys are not
+registered because the platform delivers them automatically.
 
 ## Build
 

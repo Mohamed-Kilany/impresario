@@ -159,11 +159,15 @@ impl RemoteKey {
         RemoteKey::ALL.iter().copied().find(|k| k.as_str() == name)
     }
 
-    /// The web DOM `keyCode` for `web`, `webos` and `tizen` per table 6.2,
-    /// with the DOM `key`/`code` names used for CDP dispatch.
+    /// The web DOM `keyCode` for `web`, `webos` and `tizen`, with the DOM
+    /// `key`/`code` names used for CDP dispatch. Most codes are shared, but
+    /// Tizen assigns native remote codes to `exit` (10182), `playpause`
+    /// (10252), `subtitle`/Caption (10221), `audio`/MTS (10195) and `search`
+    /// (10225); those must match the events a physical Samsung remote emits.
     #[must_use]
     pub fn web(self, platform: Platform) -> Option<WebKey> {
         let is_plain_web = matches!(platform, Platform::Web);
+        let is_tizen = matches!(platform, Platform::Tizen);
         let named = |key_code: u32, key: &'static str, code: &'static str| WebKey {
             key_code,
             key,
@@ -189,6 +193,9 @@ impl RemoteKey {
             RemoteKey::Menu if is_plain_web => Some(named(93, "ContextMenu", "ContextMenu")),
             RemoteKey::Play => Some(named(415, "MediaPlay", "MediaPlay")),
             RemoteKey::Pause => Some(named(19, "MediaPause", "MediaPause")),
+            RemoteKey::PlayPause if is_tizen => {
+                Some(named(10252, "MediaPlayPause", "MediaPlayPause"))
+            }
             RemoteKey::PlayPause => Some(named(179, "MediaPlayPause", "MediaPlayPause")),
             RemoteKey::Rewind => Some(named(412, "MediaRewind", "MediaRewind")),
             RemoteKey::FastForward => Some(named(417, "MediaFastForward", "MediaFastForward")),
@@ -208,17 +215,24 @@ impl RemoteKey {
             RemoteKey::Num7 => digit(7, "7", "Digit7"),
             RemoteKey::Num8 => digit(8, "8", "Digit8"),
             RemoteKey::Num9 => digit(9, "9", "Digit9"),
+            RemoteKey::VolumeUp if is_tizen => Some(named(447, "VolumeUp", "VolumeUp")),
             RemoteKey::VolumeUp => Some(named(447, "AudioVolumeUp", "AudioVolumeUp")),
+            RemoteKey::VolumeDown if is_tizen => Some(named(448, "VolumeDown", "VolumeDown")),
             RemoteKey::VolumeDown => Some(named(448, "AudioVolumeDown", "AudioVolumeDown")),
+            RemoteKey::Mute if is_tizen => Some(named(449, "VolumeMute", "VolumeMute")),
             RemoteKey::Mute => Some(named(449, "AudioVolumeMute", "AudioVolumeMute")),
             RemoteKey::ChannelUp => Some(named(427, "ChannelUp", "")),
             RemoteKey::ChannelDown => Some(named(428, "ChannelDown", "")),
             RemoteKey::Info => Some(named(457, "Info", "")),
             RemoteKey::Guide => Some(named(458, "Guide", "")),
             RemoteKey::Exit if is_plain_web => Some(named(27, "Escape", "Escape")),
+            RemoteKey::Exit if is_tizen => Some(named(10182, "Exit", "")),
             RemoteKey::Exit => Some(named(461, "Exit", "")),
+            RemoteKey::Subtitle if is_tizen => Some(named(10221, "Caption", "")),
             RemoteKey::Subtitle => Some(named(460, "Subtitle", "")),
+            RemoteKey::Audio if is_tizen => Some(named(10195, "MTS", "")),
             RemoteKey::Audio => Some(named(459, "Audio", "")),
+            RemoteKey::Search if is_tizen => Some(named(10225, "Search", "Search")),
             RemoteKey::Search => Some(named(84, "Search", "Search")),
             RemoteKey::Settings => Some(named(176, "Settings", "Settings")),
             _ => None,
@@ -385,7 +399,22 @@ mod tests {
         expect(RemoteKey::Menu, Some(93), None);
         expect(RemoteKey::Play, Some(415), Some(415));
         expect(RemoteKey::Pause, Some(19), Some(19));
-        expect(RemoteKey::PlayPause, Some(179), Some(179));
+        assert_eq!(
+            RemoteKey::PlayPause.web(Platform::Web).map(|k| k.key_code),
+            Some(179)
+        );
+        assert_eq!(
+            RemoteKey::PlayPause
+                .web(Platform::WebOs)
+                .map(|k| k.key_code),
+            Some(179)
+        );
+        assert_eq!(
+            RemoteKey::PlayPause
+                .web(Platform::Tizen)
+                .map(|k| k.key_code),
+            Some(10252)
+        );
         expect(RemoteKey::Rewind, Some(412), Some(412));
         expect(RemoteKey::FastForward, Some(417), Some(417));
         expect(RemoteKey::Red, Some(403), Some(403));
@@ -402,15 +431,72 @@ mod tests {
         expect(RemoteKey::Record, Some(416), Some(416));
         expect(RemoteKey::Info, Some(457), Some(457));
         expect(RemoteKey::Guide, Some(458), Some(458));
-        expect(RemoteKey::Exit, Some(27), Some(461));
-        expect(RemoteKey::Subtitle, Some(460), Some(460));
-        expect(RemoteKey::Audio, Some(459), Some(459));
-        expect(RemoteKey::Search, Some(84), Some(84));
+        assert_eq!(
+            RemoteKey::Exit.web(Platform::Web).map(|k| k.key_code),
+            Some(27)
+        );
+        assert_eq!(
+            RemoteKey::Exit.web(Platform::WebOs).map(|k| k.key_code),
+            Some(461)
+        );
+        assert_eq!(
+            RemoteKey::Exit.web(Platform::Tizen).map(|k| k.key_code),
+            Some(10182)
+        );
+        assert_eq!(
+            RemoteKey::Subtitle.web(Platform::Tizen).map(|k| k.key_code),
+            Some(10221)
+        );
+        assert_eq!(
+            RemoteKey::Subtitle.web(Platform::WebOs).map(|k| k.key_code),
+            Some(460)
+        );
+        assert_eq!(
+            RemoteKey::Audio.web(Platform::Tizen).map(|k| k.key_code),
+            Some(10195)
+        );
+        assert_eq!(
+            RemoteKey::Audio.web(Platform::WebOs).map(|k| k.key_code),
+            Some(459)
+        );
+        assert_eq!(
+            RemoteKey::Search.web(Platform::Tizen).map(|k| k.key_code),
+            Some(10225)
+        );
+        assert_eq!(
+            RemoteKey::Search.web(Platform::WebOs).map(|k| k.key_code),
+            Some(84)
+        );
         expect(RemoteKey::Settings, Some(176), Some(176));
-        // tizen back differs from webos
+        // Tizen back differs from webos.
         assert_eq!(
             RemoteKey::Back.web(Platform::Tizen).map(|k| k.key_code),
             Some(10009)
+        );
+        // Tizen key names must match the names physical remotes emit.
+        assert_eq!(
+            RemoteKey::PlayPause.web(Platform::Tizen).map(|k| k.key),
+            Some("MediaPlayPause")
+        );
+        assert_eq!(
+            RemoteKey::Subtitle.web(Platform::Tizen).map(|k| k.key),
+            Some("Caption")
+        );
+        assert_eq!(
+            RemoteKey::Audio.web(Platform::Tizen).map(|k| k.key),
+            Some("MTS")
+        );
+        assert_eq!(
+            RemoteKey::VolumeUp.web(Platform::Tizen).map(|k| k.key),
+            Some("VolumeUp")
+        );
+        assert_eq!(
+            RemoteKey::VolumeDown.web(Platform::Tizen).map(|k| k.key),
+            Some("VolumeDown")
+        );
+        assert_eq!(
+            RemoteKey::Mute.web(Platform::Tizen).map(|k| k.key),
+            Some("VolumeMute")
         );
     }
 
