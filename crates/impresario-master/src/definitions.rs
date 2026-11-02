@@ -361,7 +361,7 @@ fn read_webos_passphrase_from_stdin() -> Result<zeroize::Zeroizing<String>, Stri
     let mut line = zeroize::Zeroizing::new(String::new());
     std::io::stdin()
         .lock()
-        .read_line(&mut *line)
+        .read_line(&mut line)
         .map_err(|error| format!("cannot read the passphrase from stdin: {error}"))?;
     let passphrase = line.trim_end_matches(['\r', '\n']).to_string();
     if passphrase.is_empty() {
