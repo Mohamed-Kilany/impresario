@@ -44,6 +44,13 @@ const DEFAULT_INSPECTOR_PORT: u16 = 9998;
 const REMOTE_TEMP_DIR: &str = "/media/developer/temp";
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long to keep reading an install subscription after its initial
+/// acknowledgement when the firmware has not sent a terminal state yet.
+const INSTALL_ACK_GRACE: Duration = Duration::from_secs(60);
+/// How long `listApps` is given to reflect the version reported by a
+/// completed install. The install service can report `installed` before the
+/// application manager has refreshed its catalogue.
+const INSTALL_VERIFY_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_KEY_BYTES: usize = 1024 * 1024;
 
 /// webOS-specific failures. Every path that claims success performs the
@@ -437,7 +444,7 @@ impl WebOsSession {
         .to_string();
         let url = luna_url("com.webos.appInstallService", Some("dev"), "install");
         let command = format!("luna-send-pub -i -f {url} {}", shell_quote(&payload));
-        let result = self.install_subscription(&command, was_installed).await;
+        let result = self.install_subscription(&command).await;
         // The reference installer removes its temporary upload; this is not a
         // reason to turn a successful install into a failure.
         if let Err(error) = self.exec(&format!("rm -f {}", shell_quote(&remote))).await {
@@ -454,7 +461,7 @@ impl WebOsSession {
         app_id: &str,
         expected_version: &str,
     ) -> Result<(), WebOsError> {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + INSTALL_VERIFY_TIMEOUT;
         loop {
             if let Ok(apps) = self.list_app_versions().await {
                 if apps
@@ -474,11 +481,7 @@ impl WebOsSession {
         }
     }
 
-    async fn install_subscription(
-        &self,
-        command: &str,
-        wait_for_terminal: bool,
-    ) -> Result<(), WebOsError> {
+    async fn install_subscription(&self, command: &str) -> Result<(), WebOsError> {
         let future = async {
             let mut channel = self
                 .handle
@@ -521,22 +524,17 @@ impl WebOsSession {
                                 terminal = Some(found);
                                 break 'install;
                             }
-                            // This firmware acknowledges the subscription but
-                            // never sends a terminal state on a first install.
-                            // The caller verifies the requested version through
-                            // listApps, so the ack only ends the wait; it is not
-                            // success alone. Updates do send progress and a
-                            // terminal, so give them a bounded grace period.
-                            if install_accepted_without_terminal(&reply) {
-                                if wait_for_terminal {
-                                    if terminal_deadline.is_none() {
-                                        terminal_deadline = Some(
-                                            tokio::time::Instant::now() + Duration::from_secs(30),
-                                        );
-                                    }
-                                } else {
-                                    break 'install;
-                                }
+                            // Some firmware acknowledges the subscription but
+                            // never sends a terminal state; others take a while
+                            // to move from that ack to the `installed` state.
+                            // Keep reading for a bounded grace period, then let
+                            // `listApps` prove the requested version.
+                            if install_accepted_without_terminal(&reply)
+                                && terminal_deadline.is_none()
+                            {
+                                terminal_deadline = Some(
+                                    tokio::time::Instant::now() + INSTALL_ACK_GRACE,
+                                );
                             }
                         }
                     }
