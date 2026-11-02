@@ -59,11 +59,13 @@ P0 record.
 
 ## 1.0.0 pre-release validation (2026-11-02)
 
-The `refactor/pre-release-1.0.0` branch carries the breaking 1.0.0 reset. GitHub
-`CI` run `41407990532` at `9e6ee4b` passed all five jobs (Rust `fmt --check`,
-clippy with `-D warnings`, workspace tests; Android JVM tests and APK build;
-editor; Apple Swift package; Windows release binaries). The Windows artifact
-from that run was used for the final checks below.
+The `refactor/pre-release-1.0.0` branch carries the breaking 1.0.0 reset. Final
+code `CI` run `41426450410` at `e15b5d9` passed all five jobs (Rust `fmt
+--check`, clippy with `-D warnings`, workspace tests; Android JVM tests and APK
+build; editor; Apple Swift package; Windows release binaries). The Windows
+artifact from that run was used for the fresh-install webOS check. The earlier
+local/remote web, Tizen and Apple runs used the `9e6ee4b` artifact; the only
+code change since then is the webOS install-wait fix.
 
 - Local web: `run 20261102-084218-98bd` passed 17/17 steps in 2.68 s.
 - Remote web: `run 20261102-084225-e87a` passed 17/17 steps in 6.30 s against
@@ -79,14 +81,19 @@ from that run was used for the final checks below.
   `drawable-xhdpi-v4/ic_banner.png`; the Skyworth/STC Appwatch service still
   removes `com.impresario.stub` within seconds, so launcher rendering and a
   full install/run remain unverified on that TV.
-- webOS: the new `device passphrase` command saved, reported and cleared a
-  throwaway value through Windows Credential Manager. The same `keyring` v1
-  path selects Windows Credential Manager, macOS Keychain, or Linux Secret
-  Service; Windows was exercised here, Linux compiles in CI (runtime needs a
-  session Secret Service), and macOS was not run because this host has no Mac.
-  Headless Linux fails explicitly and can use `IMPRESARIO_WEBOS_PASSPHRASE`.
-  The real LG passphrase has not been supplied, so the 1.0.0 webOS smoke is
-  still pending.
+- webOS: the real LG passphrase was saved with `device passphrase` and resolved
+  by the final CLI. After `dev/remove`, the final CLI uploaded and installed
+  `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in
+  29.3 s (`20261102-102503-0dc9`), including long press, native keys and media.
+  The install wait now keeps the subscription open for a terminal `installed`
+  state (60 s acknowledgement grace) and gives `listApps` 90 s to refresh; the
+  previous code closed the subscription on the ack and allowed only 30 s for
+  `listApps`, aborting first installs. The
+  `keyring` v1 store is Windows Credential Manager, macOS Keychain, or Linux
+  Secret Service; Windows was exercised here, Linux compiles in CI (runtime
+  needs a session Secret Service), and macOS was not run because this host has
+  no Mac. Headless Linux fails explicitly and can use
+  `IMPRESARIO_WEBOS_PASSPHRASE`.
 
 Physical tvOS was the P0 blocker and its execution path is now proven. On
 2026-10-26 the Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS 26.1 build `23J582`,

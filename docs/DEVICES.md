@@ -242,10 +242,11 @@ entry for one process and is never persisted by a run.
 tears down; it does not install or launch. It reports a warning if luna cannot
 answer rather than inventing device details. This LG TV rejects SFTP writes, so
 the transport's exec `cat > /media/developer/temp/...` fallback is the live
-upload path. Install success is the luna terminal `returnValue:true,
-subscribed:true` plus a `dev/listApps` version match; an update closes the app
-first, waits for a terminal state (30 s grace) and then verifies the requested
-version within 30 s.
+upload path. Install success is the luna terminal `installed` state plus a
+`dev/listApps` version match. Some firmware only acknowledges the subscription;
+the transport keeps reading for a 60 s grace, then gives `listApps` 90 s to
+report the requested version. The subscription is not closed on the initial
+ack, because that aborted first installs on this TV.
 
 **Hardware verification (HD-3, HD-7 — passed 2026-10-29)**
 
@@ -255,7 +256,8 @@ through the native transport:
 - the Developer Mode passphrase is saved per device name in the OS credential
   store (`impresario device passphrase <name>`); the 2026-10-29 run used the
   session-only `IMPRESARIO_WEBOS_PASSPHRASE` override before that command
-  existed;
+  existed. On 2026-11-02 the real passphrase was saved for `lg_webos` and
+  resolved by the 1.0.0 CLI;
 - SFTP writes are rejected by this TV, so the SSH `cat >
   /media/developer/temp/...` fallback carried the IPK;
 - `com.impresario.stub` 1.0.1 -> 1.0.2 passed 105/105 steps
@@ -476,9 +478,13 @@ needs older hardware.
   `apple doctor` reported `ready` with the DDI mounted, and the 1.0.0 smoke
   passed 104/104 steps in 3m22s (`20261102-084322-7f1a`), including the long
   press and native key log. The existing profiles expire `2026-11-04`.
-- **webOS** — the save/status/clear command was verified with a throwaway value
-  in Windows Credential Manager; no real LG passphrase was available, so the
-  1.0.0 webOS smoke remains pending.
+- **webOS** — the real LG passphrase was saved under `impresario.webos` /
+  `lg_webos` in Windows Credential Manager. After removing the previous app,
+  the final CLI installed `com.impresario.stub` 1.0.0 from a clean state and
+  passed 106/106 steps in 29.3 s (`20261102-102503-0dc9`), including the long
+  press, native key log and media screen. The install path now waits for the
+  terminal `installed` state and allows 90 s for `listApps` to refresh, fixing
+  first-install aborts after the ack.
 - **Android TV** — both rebuilt APKs declare the adaptive/legacy launcher icon
   and `ic_banner`; the vendor Appwatch service still removes
   `com.impresario.stub` within seconds, so a launcher/install run remains
