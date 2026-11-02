@@ -245,27 +245,8 @@ fn webos_passphrase(
     from_stdin: bool,
     workspace_path: &Path,
 ) -> i32 {
-    let outcome = config::load_devices_merged(workspace_path);
-    render_all(&outcome.diagnostics);
-    let Some(devices) = outcome.config else {
-        eprintln!("device passphrase: configuration errors");
-        return EXIT_USAGE;
-    };
-    let Some(device) = devices.devices.iter().find(|item| item.name == name) else {
-        eprintln!(
-            "device passphrase: device '{name}' does not exist in {}",
-            workspace_path.display()
-        );
-        return EXIT_USAGE;
-    };
-    if device.platform != Platform::WebOs {
-        eprintln!(
-            "device passphrase: '{name}' is {}; only webOS devices have a Developer Mode passphrase",
-            device.device_type.as_str()
-        );
-        return EXIT_USAGE;
-    }
-
+    // `--clear` and `--status` operate on the keychain entry alone, so they
+    // still work after a device was removed or renamed.
     if clear {
         return match impresario_clients::webos::clear_webos_passphrase(name) {
             Ok(true) => {
@@ -297,6 +278,27 @@ fn webos_passphrase(
                 EXIT_INFRA
             }
         };
+    }
+
+    let outcome = config::load_devices_merged(workspace_path);
+    render_all(&outcome.diagnostics);
+    let Some(devices) = outcome.config else {
+        eprintln!("device passphrase: configuration errors");
+        return EXIT_USAGE;
+    };
+    let Some(device) = devices.devices.iter().find(|item| item.name == name) else {
+        eprintln!(
+            "device passphrase: device '{name}' does not exist in {}",
+            workspace_path.display()
+        );
+        return EXIT_USAGE;
+    };
+    if device.platform != Platform::WebOs {
+        eprintln!(
+            "device passphrase: '{name}' is {}; only webOS devices have a Developer Mode passphrase",
+            device.device_type.as_str()
+        );
+        return EXIT_USAGE;
     }
 
     let passphrase = if from_stdin {
