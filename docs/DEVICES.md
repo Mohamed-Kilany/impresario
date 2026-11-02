@@ -463,6 +463,27 @@ needs older hardware.
   short-id bundles now have profiles (expiry 2026-11-04) and passed the ordinary
   host/no-stub run and the full 105-step stub play; see `docs/STATUS.md` HD-1.
 
+**Hardware access log (2026-11-02, 1.0.0 pre-release)**
+
+- **Tizen** — the 1.0.0 reset smoke passed 106/106 steps in 33.1 s
+  (`20261102-084244-477b`) against the rebuilt `fixtures/tv-stub/build/stub.wgt`.
+  It exercised the 700 ms long press (`status=long-pressed` with the counter
+  unchanged), focus/visibility, native D-pad/back, numpad/media keys and the
+  media screen. `device check` still reports Tizen 9.0, DUID
+  `P7CIFS3MU3C26`, profile `samsung` valid to 2027-10-29.
+- **Apple TV** — the rebuilt short-id products from `88dc852` (including the
+  `chosen: Option B` status fix) were imported as `apple/products/current`.
+  `apple doctor` reported `ready` with the DDI mounted, and the 1.0.0 smoke
+  passed 104/104 steps in 3m22s (`20261102-084322-7f1a`), including the long
+  press and native key log. The existing profiles expire `2026-11-04`.
+- **webOS** — the save/status/clear command was verified with a throwaway value
+  in Windows Credential Manager; no real LG passphrase was available, so the
+  1.0.0 webOS smoke remains pending.
+- **Android TV** — both rebuilt APKs declare the adaptive/legacy launcher icon
+  and `ic_banner`; the vendor Appwatch service still removes
+  `com.impresario.stub` within seconds, so a launcher/install run remains
+  unverified there.
+
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; key dispatch and the raw CDP backend
 are internal defaults (I-46, D-03). A native run always hands the connector its
