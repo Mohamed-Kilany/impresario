@@ -393,7 +393,7 @@ final class SelectScenarioViewController: ScenarioViewController {
     @objc private func onChoose() {
         let options = ["Option A", "Option B", "Option C"]
         let dialog = SelectionDialogViewController(title: "Pick one", options: options) { [weak self] option in
-            self?.statusLabel.text = "chosen: \(option)"
+            self?.statusLabel.text = "status=chosen: \(option)"
         }
         dialog.modalPresentationStyle = .overFullScreen
         dialog.modalTransitionStyle = .crossDissolve

@@ -326,7 +326,7 @@ class DriverInstrumentedTest {
         var status = ""
         while (SystemClock.uptimeMillis() < deadline) {
             status = textOf("stub_status")
-            if (status == "chosen: Option B") return
+            if (status == "status=chosen: Option B") return
             SystemClock.sleep(100)
         }
         fail("the dialog choice did not land (status: '$status')")

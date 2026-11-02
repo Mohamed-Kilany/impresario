@@ -13,7 +13,7 @@ class SelectActivity : ScenarioActivity() {
             setOnClickListener {
                 AlertDialog.Builder(this@SelectActivity)
                     .setTitle("Pick one")
-                    .setItems(options) { _, which -> status.text = "chosen: ${options[which]}" }
+                    .setItems(options) { _, which -> status.text = "status=chosen: ${options[which]}" }
                     .show()
             }
         }

@@ -449,7 +449,7 @@ class AgentServerInstrumentedTest {
             requests.onNext(selectCommand("a56", androidId("stub_select"), "Option B"))
             assertOk(collector.awaitResult("a56"), "select")
             requests.onNext(
-                checkCommand("a57", CheckKind.TEXT_EQUALS, androidId("stub_status"), expectedText = "chosen: Option B"),
+                checkCommand("a57", CheckKind.TEXT_EQUALS, androidId("stub_status"), expectedText = "status=chosen: Option B"),
             )
             assertOk(collector.awaitResult("a57"), "status after select")
             requests.onNext(backCommand("a58"))

@@ -14,7 +14,9 @@
         android:required="false" />
 
     <application
+        android:icon="@mipmap/ic_launcher"
         android:label="Impresario Stub"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault">
         <activity
             android:name=".MainActivity"
