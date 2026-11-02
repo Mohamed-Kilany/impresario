@@ -60,12 +60,13 @@ P0 record.
 ## 1.0.0 pre-release validation (2026-11-02)
 
 The `refactor/pre-release-1.0.0` branch carries the breaking 1.0.0 reset. Final
-code `CI` run `41426450410` at `e15b5d9` passed all five jobs (Rust `fmt
+code `CI` run `41436848993` at `5b27873` passed all five jobs (Rust `fmt
 --check`, clippy with `-D warnings`, workspace tests; Android JVM tests and APK
-build; editor; Apple Swift package; Windows release binaries). The Windows
-artifact from that run was used for the fresh-install webOS check. The earlier
+build; editor; Apple Swift package; Windows release binaries). The webOS
+fresh-install and Android TV runs below used the `e15b5d9` artifacts; the only
+later code change is the Android launcher-icon scale in `5b27873`. The earlier
 local/remote web, Tizen and Apple runs used the `9e6ee4b` artifact; the only
-code change since then is the webOS install-wait fix.
+later code changes are the webOS install-wait fix and the Android icon scale.
 
 - Local web: `run 20261102-084218-98bd` passed 17/17 steps in 2.68 s.
 - Remote web: `run 20261102-084225-e87a` passed 17/17 steps in 6.30 s against
@@ -85,7 +86,17 @@ code change since then is the webOS install-wait fix.
   `adb`; the code and resources are the CI artifacts. `aapt2 dump badging`
   confirms both expose version 1.0.0, the adaptive/legacy launcher icons and
   `drawable-xhdpi-v4/ic_banner.png`. The Skyworth/STC Appwatch unit at .135
-  still removes `com.impresario.stub`; the phones remain unauthorized.
+  still removes `com.impresario.stub`; the other phones remain unauthorized.
+- Android phone: after the host ADB key was lost, `device pair` regenerated
+  `.impresario/keys/adbkey` and authorized the Galaxy A51 (`a51nsxx`, Android
+  13, `192.168.93.76`). Its wireless connect port is 46699, so the run used a
+  host 5555 bridge (test-only; the 1.0.0 schema hardcodes ADB 5555) and a
+  debug-only fixed `agent_port` sidecar plus host relay; no `adb` binary was
+  used. `run 20261102-121015-2219` on the `5b27873` APKs passed 3/3 steps in
+  24.7 s, installing and launching the smaller-icon agent/stub and checking
+  the stub home title. The launcher-drawer screenshot was blocked by the phone
+  lock screen; the foreground bbox is verified in the APK at `167,88-263,342`
+  (`97x255`, 59% of the 432x432 canvas).
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in
