@@ -24,7 +24,7 @@ facts only).
 | `portable-pty` | 0.9.0 | MIT | ConPTY/PTY-based acceptance tests (dev-dependency only) | chosen, shipped — I-92/I-128 |
 | `getrandom` | 0.4.3 | MIT OR Apache-2.0 | daemon socket token (OS CSPRNG) | chosen — I-126 |
 | `libc` | 0.2.190 | MIT OR Apache-2.0 | Unix pid liveness and daemon `setsid` (Unix-only dependency) | chosen — I-126 |
-| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets: webOS Developer Mode passphrase, Tizen PKCS#12 passwords (Windows Credential Manager/Secret Service) | chosen, shipped — I-99/I-141 |
+| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets: webOS Developer Mode passphrase keyed by device name, Tizen PKCS#12 passwords (Windows Credential Manager/Secret Service) | chosen, shipped — I-99/I-141/I-160 |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | display-width math (tables, reports) | chosen |
 | `inquire` | 0.9.4 | MIT | interactive wizards | candidate — not adopted; Phase 4 wizard/prompt is line-based |
 | `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate — not adopted |
@@ -62,7 +62,7 @@ facts only).
 | `tar` | =0.4.46 | MIT OR Apache-2.0 | deterministic ustar for webOS `.ipk` | chosen — I-139 |
 | `ar` | =0.9.0 | MIT | deterministic `ar` archive for webOS `.ipk` | chosen — I-139 |
 | `p12-keystore` | =0.4.1 | MIT OR Apache-2.0 | import Tizen author/distributor PKCS#12 profiles; local Apple signing identity | chosen — I-141/I-150 |
-| `rpassword` | =7.4.0 | Apache-2.0 | hidden Apple ID password prompt (one-shot, never stored) | chosen - I-151 |
+| `rpassword` | =7.4.0 | Apache-2.0 | hidden Apple ID password prompt (one-shot, never stored) and hidden webOS Developer Mode passphrase prompt (saved only on explicit `device passphrase`) | chosen - I-151/I-160 |
 | `zeroize` | =1.9.1 | Apache-2.0 OR MIT | wipe the Apple ID password buffer after login | chosen - I-151 |
 | `reqwest` | 0.13.5 | MIT OR Apache-2.0 | GrandSlam/anisette/developer HTTPS; `rustls` + `ring` on every platform (no SChannel TLS, no OpenSSL) | chosen - I-151 |
 | `srp` | 0.7.0-rc.3 (patched) | MIT OR Apache-2.0 | Apple ID SRP-6a authentication | chosen, local patch - I-151; four `.as_slice()` coercions for `subtle` 2.6 |

@@ -27,6 +27,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use zeroize::Zeroizing;
 
 use crate::agent_client::DeviceInfo;
 use crate::log::{unix_ms_now, LogBuffer, LogLevel, LogRecord};
@@ -37,6 +38,8 @@ use crate::transport::{
 
 const SSH_USER: &str = "prisoner";
 const KEY_SERVICE_PORT: u16 = 9991;
+/// OS credential-store service for the per-device Developer Mode passphrase.
+pub const WEBOS_KEYRING_SERVICE: &str = "impresario.webos";
 const DEFAULT_INSPECTOR_PORT: u16 = 9998;
 const REMOTE_TEMP_DIR: &str = "/media/developer/temp";
 const EXEC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1203,17 +1206,18 @@ async fn load_or_fetch_key(
 
     let encrypted = text.contains("ENCRYPTED") || text.contains("DEK-Info:");
     let passphrase = if encrypted {
-        Some(webos_passphrase()?)
+        Some(webos_passphrase(device)?)
     } else {
         None
     };
-    if let Ok(key) = decode_secret_key(&text, passphrase.as_deref()) {
+    let passphrase_text = passphrase.as_ref().map(|value| value.as_str());
+    if let Ok(key) = decode_secret_key(&text, passphrase_text) {
         return Ok(key);
     }
     // russh's OpenSSL PEM reader rejects some padded base64 bodies; try the
     // same input without padding before falling back to the DEK decipher.
     let stripped = strip_pem_base64_padding(&text);
-    if let Ok(key) = decode_secret_key(&stripped, passphrase.as_deref()) {
+    if let Ok(key) = decode_secret_key(&stripped, passphrase_text) {
         return Ok(key);
     }
     let passphrase = passphrase.ok_or_else(|| {
@@ -1222,21 +1226,78 @@ async fn load_or_fetch_key(
             path.display()
         ))
     })?;
-    let der = decrypt_legacy_pem(&text, &passphrase)?;
+    let der = decrypt_legacy_pem(&text, passphrase.as_str())?;
     private_key_from_pkcs1_der(&der).map_err(|error| WebOsError::Passphrase(error.to_string()))
 }
 
-fn webos_passphrase() -> Result<String, WebOsError> {
+/// Resolve the Developer Mode passphrase for one device. The environment
+/// variable is a one-process override; otherwise the OS keychain entry is
+/// keyed by the configured device name.
+fn webos_passphrase(device: &DeviceConfig) -> Result<Zeroizing<String>, WebOsError> {
     if let Ok(value) = std::env::var("IMPRESARIO_WEBOS_PASSPHRASE") {
         if !value.is_empty() {
-            return Ok(value);
+            return Ok(Zeroizing::new(value));
         }
     }
-    Err(WebOsError::Passphrase(
-        "no Developer Mode passphrase for this session; set IMPRESARIO_WEBOS_PASSPHRASE \
-         (the passphrase is never stored)"
-            .to_string(),
-    ))
+    match keyring_get(WEBOS_KEYRING_SERVICE, &device.name) {
+        Ok(value) if !value.is_empty() => Ok(Zeroizing::new(value)),
+        Ok(_) => Err(WebOsError::Passphrase(format!(
+            "the saved Developer Mode passphrase for '{}' is empty; run \
+             `impresario device passphrase {}` to replace it",
+            device.name, device.name
+        ))),
+        Err(keyring::Error::NoEntry) => Err(WebOsError::Passphrase(format!(
+            "no Developer Mode passphrase saved for '{}'; run \
+             `impresario device passphrase {}` or set IMPRESARIO_WEBOS_PASSPHRASE",
+            device.name, device.name
+        ))),
+        Err(error) => Err(WebOsError::Passphrase(format!(
+            "cannot read the saved Developer Mode passphrase for '{}': {error}",
+            device.name
+        ))),
+    }
+}
+
+/// Save the Developer Mode passphrase in the OS credential store. The account
+/// name is the configured device name, so the secret follows the device across
+/// workspaces without entering any YAML file.
+pub fn store_webos_passphrase(device_name: &str, passphrase: &str) -> Result<(), WebOsError> {
+    if passphrase.is_empty() {
+        return Err(WebOsError::Passphrase(
+            "the Developer Mode passphrase cannot be empty".to_string(),
+        ));
+    }
+    keyring::Entry::new(WEBOS_KEYRING_SERVICE, device_name)
+        .and_then(|entry| entry.set_password(passphrase))
+        .map_err(|error| {
+            WebOsError::Passphrase(format!(
+                "cannot save the passphrase for '{device_name}' in the OS credential store: {error}"
+            ))
+        })
+}
+
+/// Remove one saved passphrase. `Ok(false)` means there was nothing to remove.
+pub fn clear_webos_passphrase(device_name: &str) -> Result<bool, WebOsError> {
+    match keyring::Entry::new(WEBOS_KEYRING_SERVICE, device_name)
+        .and_then(|entry| entry.delete_credential())
+    {
+        Ok(()) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(error) => Err(WebOsError::Passphrase(format!(
+            "cannot remove the passphrase for '{device_name}' from the OS credential store: {error}"
+        ))),
+    }
+}
+
+/// Whether a passphrase is saved for the device. Never returns the value.
+pub fn webos_passphrase_saved(device_name: &str) -> Result<bool, WebOsError> {
+    match keyring_get(WEBOS_KEYRING_SERVICE, device_name) {
+        Ok(value) => Ok(!value.is_empty()),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(error) => Err(WebOsError::Passphrase(format!(
+            "cannot read the passphrase state for '{device_name}': {error}"
+        ))),
+    }
 }
 
 fn keyring_get(service: &str, user: &str) -> Result<String, keyring::Error> {

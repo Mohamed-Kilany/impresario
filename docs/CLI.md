@@ -204,6 +204,22 @@ capabilities, DUID and app list. Both are read-only (no install, launch or
 sign) and print warnings for luna/SDB/profile problems; see `docs/DEVICES.md`
 §1.3/§1.4 for setup and the deferred hardware runbooks.
 
+### webOS passphrase (global)
+
+The six-character LG Developer Mode passphrase is saved once per device name in
+the OS credential store (`impresario.webos`), not in any workspace file:
+
+```powershell
+impresario device passphrase living_room_tv          # hidden prompt
+impresario device passphrase living_room_tv --status # saved / not saved
+impresario device passphrase living_room_tv --clear
+Get-Content .\passphrase.txt | impresario device passphrase living_room_tv --stdin
+```
+
+`IMPRESARIO_WEBOS_PASSPHRASE` overrides the saved entry for one process. The
+passphrase is never printed or written to YAML; only the OS credential store
+holds it.
+
 ## Apple ID account (global, sign in once)
 
 The Apple ID used for free provisioning is machine-global, not per workspace.

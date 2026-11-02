@@ -16,7 +16,9 @@ addition to their fixture/replay coverage. The Tizen TV rejected a temporary
 self-signed certificate chain at install and then accepted a native
 Samsung-issued, DUID-bound profile created without Tizen Studio; the shared
 105-step stub installed, launched and passed on both TVs. The webOS Developer
-Mode passphrase was supplied for the session only. Hardware steps below are
+Mode passphrase is saved per device name in the OS credential store; the
+2026-10-29 run used the session-only `IMPRESARIO_WEBOS_PASSPHRASE` override.
+Hardware steps below are
 claimed only where the run is recorded; `HD-3`, `HD-4` and `HD-7` are closed in
 `docs/STATUS.md`.
 

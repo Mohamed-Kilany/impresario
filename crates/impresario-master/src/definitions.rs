@@ -94,6 +94,20 @@ pub enum DeviceCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Save, inspect or clear the webOS Developer Mode passphrase (global).
+    Passphrase {
+        /// Device name from the merged device configuration.
+        name: String,
+        /// Remove the saved passphrase.
+        #[arg(long, conflicts_with_all = ["status", "stdin"])]
+        clear: bool,
+        /// Report whether a passphrase is saved (never prints the value).
+        #[arg(long, conflicts_with_all = ["clear", "stdin"])]
+        status: bool,
+        /// Read the passphrase from standard input instead of prompting.
+        #[arg(long, conflicts_with_all = ["clear", "status"])]
+        stdin: bool,
+    },
     /// Interactive wizard with discovery, pairing, preview and scope choice.
     Wizard(crate::wizard::WizardArgs),
 }
@@ -198,6 +212,12 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
         DeviceCommand::Pair { target, code, json } => {
             crate::wizard::run_pair(home, target, code, *json)
         }
+        DeviceCommand::Passphrase {
+            name,
+            clear,
+            status,
+            stdin,
+        } => webos_passphrase(name, *clear, *status, *stdin, workspace_path),
         DeviceCommand::Wizard(args) => crate::wizard::run(args, home, workspace_path),
         DeviceCommand::Show { name } => show_device(name, home, workspace_path),
         DeviceCommand::Check { names } => {
@@ -213,6 +233,139 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
             export_devices(home, workspace_path, !scope.workspace, *merged)
         }
     }
+}
+
+/// Save, inspect or clear the global webOS Developer Mode passphrase. The OS
+/// credential-store account is the device name, so the secret is shared by
+/// every workspace that uses the same device definition.
+fn webos_passphrase(
+    name: &str,
+    clear: bool,
+    status: bool,
+    from_stdin: bool,
+    workspace_path: &Path,
+) -> i32 {
+    let outcome = config::load_devices_merged(workspace_path);
+    render_all(&outcome.diagnostics);
+    let Some(devices) = outcome.config else {
+        eprintln!("device passphrase: configuration errors");
+        return EXIT_USAGE;
+    };
+    let Some(device) = devices.devices.iter().find(|item| item.name == name) else {
+        eprintln!(
+            "device passphrase: device '{name}' does not exist in {}",
+            workspace_path.display()
+        );
+        return EXIT_USAGE;
+    };
+    if device.platform != Platform::WebOs {
+        eprintln!(
+            "device passphrase: '{name}' is {}; only webOS devices have a Developer Mode passphrase",
+            device.device_type.as_str()
+        );
+        return EXIT_USAGE;
+    }
+
+    if clear {
+        return match impresario_clients::webos::clear_webos_passphrase(name) {
+            Ok(true) => {
+                println!("cleared the webOS passphrase for '{name}'");
+                EXIT_OK
+            }
+            Ok(false) => {
+                println!("no webOS passphrase is saved for '{name}'");
+                EXIT_OK
+            }
+            Err(error) => {
+                eprintln!("device passphrase: {error}");
+                EXIT_INFRA
+            }
+        };
+    }
+    if status {
+        return match impresario_clients::webos::webos_passphrase_saved(name) {
+            Ok(true) => {
+                println!("webOS passphrase saved for '{name}'");
+                EXIT_OK
+            }
+            Ok(false) => {
+                println!("no webOS passphrase is saved for '{name}'");
+                EXIT_OK
+            }
+            Err(error) => {
+                eprintln!("device passphrase: {error}");
+                EXIT_INFRA
+            }
+        };
+    }
+
+    let passphrase = if from_stdin {
+        match read_webos_passphrase_from_stdin() {
+            Ok(passphrase) => passphrase,
+            Err(message) => {
+                eprintln!("device passphrase: {message}");
+                return EXIT_USAGE;
+            }
+        }
+    } else if let Ok(value) = std::env::var("IMPRESARIO_WEBOS_PASSPHRASE") {
+        if value.is_empty() {
+            eprintln!("device passphrase: IMPRESARIO_WEBOS_PASSPHRASE is empty");
+            return EXIT_USAGE;
+        }
+        zeroize::Zeroizing::new(value)
+    } else {
+        match prompt_webos_passphrase(name) {
+            Ok(passphrase) => passphrase,
+            Err(message) => {
+                eprintln!("device passphrase: {message}");
+                return EXIT_USAGE;
+            }
+        }
+    };
+
+    match impresario_clients::webos::store_webos_passphrase(name, passphrase.as_str()) {
+        Ok(()) => {
+            println!("saved the webOS passphrase for '{name}' in the OS credential store");
+            EXIT_OK
+        }
+        Err(error) => {
+            eprintln!("device passphrase: {error}");
+            EXIT_INFRA
+        }
+    }
+}
+
+fn prompt_webos_passphrase(name: &str) -> Result<zeroize::Zeroizing<String>, String> {
+    let passphrase = rpassword::prompt_password(format!(
+        "Developer Mode passphrase for {name} (not echoed): "
+    ))
+    .map_err(|error| format!("cannot read the passphrase: {error}"))?;
+    let passphrase = zeroize::Zeroizing::new(passphrase);
+    if passphrase.is_empty() {
+        return Err("the passphrase cannot be empty".to_string());
+    }
+    let confirm = rpassword::prompt_password("Confirm passphrase: ")
+        .map_err(|error| format!("cannot read the confirmation: {error}"))?;
+    let confirm = zeroize::Zeroizing::new(confirm);
+    if passphrase.as_str() != confirm.as_str() {
+        return Err("the passphrases do not match".to_string());
+    }
+    Ok(passphrase)
+}
+
+fn read_webos_passphrase_from_stdin() -> Result<zeroize::Zeroizing<String>, String> {
+    use std::io::BufRead as _;
+
+    let mut line = zeroize::Zeroizing::new(String::new());
+    std::io::stdin()
+        .lock()
+        .read_line(&mut *line)
+        .map_err(|error| format!("cannot read the passphrase from stdin: {error}"))?;
+    let passphrase = line.trim_end_matches(['\r', '\n']).to_string();
+    if passphrase.is_empty() {
+        return Err("the passphrase read from stdin is empty".to_string());
+    }
+    Ok(zeroize::Zeroizing::new(passphrase))
 }
 
 fn add_device(args: &DeviceAddArgs, home: &Home, workspace_path: &Path, replace: bool) -> i32 {

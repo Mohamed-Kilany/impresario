@@ -183,9 +183,11 @@ devices:
 
 - SSH is derived for `webOS` and always uses port `9922`.
 - The first connection fetches `http://<tv>:9991/webos_rsa` and stores the
-  encrypted key at `~/.impresario/keys/webos/<host>.pem`; the TV passphrase is
-  read from `IMPRESARIO_WEBOS_PASSPHRASE` for the current process only. It is
-  never written to a device file or the OS keychain.
+  encrypted key at `~/.impresario/keys/webos/<host>.pem`.
+- Save the six-character Developer Mode passphrase once in the OS credential
+  store; the entry is keyed by the configured device name and is global across
+  workspaces. It is never written to a device or workspace YAML file.
+  `IMPRESARIO_WEBOS_PASSPHRASE` overrides the saved value for one process.
 - The first host key is remembered in `keys/webos_known_hosts`; a later change
   is rejected. Host-key pins and private-key overrides are internal
   test/wizard state, not public device fields.
@@ -222,9 +224,16 @@ produces the same package explicitly.
    `package`, the transport attaches to an already-installed app.
 
 ```powershell
+impresario device passphrase living_room_tv   # prompt once; saved in the OS keychain
+impresario device passphrase living_room_tv --status
+impresario device passphrase living_room_tv --clear
 impresario device check living_room_tv
 impresario run --play plays/smoke.play --device living_room_tv --app shop
 ```
+
+`--stdin` reads the passphrase from standard input instead of prompting, for a
+password manager; `IMPRESARIO_WEBOS_PASSPHRASE` takes precedence over the saved
+entry for one process and is never persisted by a run.
 
 `device check` is read-only: it connects, queries `deviceInfo`/`listApps`, and
 tears down; it does not install or launch. It reports a warning if luna cannot
@@ -240,8 +249,10 @@ version within 30 s.
 The LG TV at `192.168.93.116` (SSH 9922, key server 9991) is hardware-verified
 through the native transport:
 
-- the Developer Mode passphrase was supplied only for the session through
-  `IMPRESARIO_WEBOS_PASSPHRASE` (not stored);
+- the Developer Mode passphrase is saved per device name in the OS credential
+  store (`impresario device passphrase <name>`); the 2026-10-29 run used the
+  session-only `IMPRESARIO_WEBOS_PASSPHRASE` override before that command
+  existed;
 - SFTP writes are rejected by this TV, so the SSH `cat >
   /media/developer/temp/...` fallback carried the IPK;
 - `com.impresario.stub` 1.0.1 -> 1.0.2 passed 105/105 steps
@@ -432,8 +443,8 @@ needs older hardware.
 - **webOS** — `192.168.93.116`. TCP 9922 and 9991 are reachable. The key server
   served `/webos_rsa`; the encrypted key is
   `~/.impresario/keys/webos/192.168.93.116.pem`. The Developer Mode passphrase
-  was supplied for the 2026-10-29 session through
-  `IMPRESARIO_WEBOS_PASSPHRASE` (not stored). Native SSH install/update,
+  is saved per device name in the OS credential store; the 2026-10-29 session
+  used `IMPRESARIO_WEBOS_PASSPHRASE` before the save command existed. Native SSH install/update,
   launch, forwarding and the 105-step play passed (`20261029-082618-7cc3`);
   SFTP writes are rejected, so the exec `cat` fallback carried the IPK. The
   2026-10-21 four-device run used the web connector path, not `WebOsTransport`.

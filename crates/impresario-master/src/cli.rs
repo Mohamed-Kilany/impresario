@@ -113,7 +113,7 @@ pub enum Command {
     Account(crate::account::AccountArgs),
     /// Apple TV pairing, signing, products, DDI and agent sessions (global setup).
     Apple(crate::apple::AppleArgs),
-    /// Device definitions: add, edit, list, check, import, export.
+    /// Device definitions: add, edit, list, check, credentials, import, export.
     #[command(alias = "devices")]
     Device {
         #[command(subcommand)]
