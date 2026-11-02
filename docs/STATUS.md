@@ -76,11 +76,16 @@ code change since then is the webOS install-wait fix.
   keys.
 - Apple TV: `run 20261102-084322-7f1a` passed 104/104 steps in 3m22s against
   the rebuilt `88dc852` product set, including the same long-press checks.
-- Android: `aapt2 dump badging` confirms both rebuilt APKs expose the adaptive
-  launcher icon (`mipmap-anydpi-v26/ic_launcher.xml`), the legacy mipmaps and
-  `drawable-xhdpi-v4/ic_banner.png`; the Skyworth/STC Appwatch service still
-  removes `com.impresario.stub` within seconds, so launcher rendering and a
-  full install/run remain unverified on that TV.
+- Android TV: `run 20261102-110017-7459` on `G03_4K_GB` (`192.168.93.84`,
+  Android 11) passed 118/118 steps in 1m51s through the native ADB transport,
+  with no `adb` binary. It covered the long press, D-pad focus, text entry,
+  selection, flags, native key log, numpad/media keys and media screen. The
+  `e15b5d9` Android APKs were re-signed with the host debug key so `-r` could
+  replace the already-installed agent without uninstalling it through external
+  `adb`; the code and resources are the CI artifacts. `aapt2 dump badging`
+  confirms both expose version 1.0.0, the adaptive/legacy launcher icons and
+  `drawable-xhdpi-v4/ic_banner.png`. The Skyworth/STC Appwatch unit at .135
+  still removes `com.impresario.stub`; the phones remain unauthorized.
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in

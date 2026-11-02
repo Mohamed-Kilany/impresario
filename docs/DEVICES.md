@@ -485,10 +485,13 @@ needs older hardware.
   press, native key log and media screen. The install path now waits for the
   terminal `installed` state and allows 90 s for `listApps` to refresh, fixing
   first-install aborts after the ack.
-- **Android TV** — both rebuilt APKs declare the adaptive/legacy launcher icon
-  and `ic_banner`; the vendor Appwatch service still removes
-  `com.impresario.stub` within seconds, so a launcher/install run remains
-  unverified there.
+- **Android TV** — the final `e15b5d9` APKs (re-signed with the host debug key
+  to match the installed agent) were installed over the native ADB transport on
+  `G03_4K_GB` at `192.168.93.84`; `run 20261102-110017-7459` passed 118/118
+  steps in 1m51s, including long press, D-pad focus, text entry, selection,
+  flags, native key log, numpad/media keys and media. No `adb` binary was used.
+  Both APKs expose version 1.0.0, the adaptive/legacy launcher icons and
+  `ic_banner`. The .135 unit's vendor Appwatch still removes the stub.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; key dispatch and the raw CDP backend
@@ -659,12 +662,12 @@ You can confirm both packages with
 
 ### 2.5 Real Android TV (verified on this host)
 
-Device: **Smart TV Pro** (`G03_4K_GB` / `BeyondTV4`), currently
-`adb` serial `10.102.93.233:5555` (adb itself over TCP; the port/address
-follow the network), Android 11 (SDK 30), armeabi-v7a,
-`ro.build.characteristics=nosdcard,tv`. The 2026-10-18 commands below used
-`192.168.93.84:5555`; substitute the current serial. There is no USB
-connection; `adb connect` first:
+Device: **Smart TV Pro** (`G03_4K_GB` / `BeyondTV4`), Android 11 (SDK 30),
+armeabi-v7a, `ro.build.characteristics=nosdcard,tv`. The 2026-11-02 1.0.0 run
+reached it at `192.168.93.84:5555` through the product's pure-Rust ADB
+transport, with no `adb` binary (see the hardware log above). The commands
+below are the earlier 2026-10-18 setup notes that used external `adb`; they are
+not the product path. There is no USB connection:
 
 ```powershell
 $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
