@@ -14,7 +14,7 @@ use impresario_core::diag::Diagnostics;
 use impresario_core::home::Home;
 use impresario_core::platforms::{DeviceType, Platform};
 
-use crate::cli::{EXIT_OK, EXIT_USAGE};
+use crate::cli::{EXIT_INFRA, EXIT_OK, EXIT_USAGE};
 
 /// Definitions live in the global layer by default (`~/.impresario/{devices,apps}.yaml`);
 /// `--workspace` scopes the edit to the workspace file (TASK-2 4.3).
