@@ -188,6 +188,9 @@ devices:
   store; the entry is keyed by the configured device name and is global across
   workspaces. It is never written to a device or workspace YAML file.
   `IMPRESARIO_WEBOS_PASSPHRASE` overrides the saved value for one process.
+  The store is the native one: Windows Credential Manager, macOS Keychain, or
+  Linux Secret Service (GNOME Keyring/KWallet). A headless Linux host with no
+  Secret Service fails explicitly; use the environment override there.
 - The first host key is remembered in `keys/webos_known_hosts`; a later change
   is rejected. Host-key pins and private-key overrides are internal
   test/wizard state, not public device fields.

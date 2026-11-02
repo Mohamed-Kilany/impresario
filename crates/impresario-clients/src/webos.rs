@@ -1252,8 +1252,9 @@ fn webos_passphrase(device: &DeviceConfig) -> Result<Zeroizing<String>, WebOsErr
             device.name, device.name
         ))),
         Err(error) => Err(WebOsError::Passphrase(format!(
-            "cannot read the saved Developer Mode passphrase for '{}': {error}",
-            device.name
+            "cannot read the saved Developer Mode passphrase for '{}': {error}{}",
+            device.name,
+            keyring_backend_hint()
         ))),
     }
 }
@@ -1271,7 +1272,9 @@ pub fn store_webos_passphrase(device_name: &str, passphrase: &str) -> Result<(),
         .and_then(|entry| entry.set_password(passphrase))
         .map_err(|error| {
             WebOsError::Passphrase(format!(
-                "cannot save the passphrase for '{device_name}' in the OS credential store: {error}"
+                "cannot save the passphrase for '{device_name}' in the OS credential store: \
+                 {error}{}",
+                keyring_backend_hint()
             ))
         })
 }
@@ -1284,7 +1287,9 @@ pub fn clear_webos_passphrase(device_name: &str) -> Result<bool, WebOsError> {
         Ok(()) => Ok(true),
         Err(keyring::Error::NoEntry) => Ok(false),
         Err(error) => Err(WebOsError::Passphrase(format!(
-            "cannot remove the passphrase for '{device_name}' from the OS credential store: {error}"
+            "cannot remove the passphrase for '{device_name}' from the OS credential store: \
+             {error}{}",
+            keyring_backend_hint()
         ))),
     }
 }
@@ -1295,8 +1300,18 @@ pub fn webos_passphrase_saved(device_name: &str) -> Result<bool, WebOsError> {
         Ok(value) => Ok(!value.is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
         Err(error) => Err(WebOsError::Passphrase(format!(
-            "cannot read the passphrase state for '{device_name}': {error}"
+            "cannot read the passphrase state for '{device_name}': {error}{}",
+            keyring_backend_hint()
         ))),
+    }
+}
+
+fn keyring_backend_hint() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "; on Linux, start a Secret Service provider (GNOME Keyring or KWallet) or set \
+         IMPRESARIO_WEBOS_PASSPHRASE for this session"
+    } else {
+        ""
     }
 }
 

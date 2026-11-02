@@ -218,7 +218,9 @@ Get-Content .\passphrase.txt | impresario device passphrase living_room_tv --std
 
 `IMPRESARIO_WEBOS_PASSPHRASE` overrides the saved entry for one process. The
 passphrase is never printed or written to YAML; only the OS credential store
-holds it.
+holds it. The native stores are Windows Credential Manager, macOS Keychain and
+Linux Secret Service (GNOME Keyring/KWallet); a headless Linux host without a
+Secret Service fails explicitly, so use the environment override there.
 
 ## Apple ID account (global, sign in once)
 
