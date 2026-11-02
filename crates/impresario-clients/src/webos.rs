@@ -532,9 +532,8 @@ impl WebOsSession {
                             if install_accepted_without_terminal(&reply)
                                 && terminal_deadline.is_none()
                             {
-                                terminal_deadline = Some(
-                                    tokio::time::Instant::now() + INSTALL_ACK_GRACE,
-                                );
+                                terminal_deadline =
+                                    Some(tokio::time::Instant::now() + INSTALL_ACK_GRACE);
                             }
                         }
                     }
