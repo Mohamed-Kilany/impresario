@@ -94,9 +94,13 @@ later code changes are the webOS install-wait fix and the Android icon scale.
   debug-only fixed `agent_port` sidecar plus host relay; no `adb` binary was
   used. `run 20261102-121015-2219` on the `5b27873` APKs passed 3/3 steps in
   24.7 s, installing and launching the smaller-icon agent/stub and checking
-  the stub home title. The launcher-drawer screenshot was blocked by the phone
-  lock screen; the foreground bbox is verified in the APK at `167,88-263,342`
-  (`97x255`, 59% of the 432x432 canvas).
+  the stub home title. `run 20261102-132538-fd58` then unlocked the locked
+  screen with a node-level `swipe up => Screen` and captured the app drawer
+  (`screenshots/android_phone_76_remote/screen-swipe-2.png`); both Impresario
+  Agent and Impresario Stub show the scaled foreground. The screen-level
+  `swipe up` fallback is still inverted (it opened quick settings); the
+  element/node path is correct. The foreground bbox is verified in the APK at
+  `167,88-263,342` (`97x255`, 59% of the 432x432 canvas).
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in
