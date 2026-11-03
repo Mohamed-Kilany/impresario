@@ -499,15 +499,6 @@ impl Index {
             for actor in &act.actors {
                 self.actor_ref(actor);
             }
-            if let Some(filter) = act
-                .examples
-                .as_ref()
-                .and_then(|examples| examples.filter.as_ref())
-            {
-                for actor in &filter.actors {
-                    self.actor_ref(actor);
-                }
-            }
             for tag in &act.tags {
                 self.tags.insert(tag.name.clone());
             }

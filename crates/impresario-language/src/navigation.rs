@@ -132,7 +132,7 @@ impl Language {
                     stage.signature,
                     instances.len()
                 );
-                for (theatre, implementation) in &instances {
+                for &(theatre, implementation) in &instances {
                     out.push_str(&format!(
                         "| {} | {} | `{}` |\n",
                         theatre.name,
@@ -396,7 +396,7 @@ impl Language {
                 .workspace
                 .stage_instances(&perform.stage_name)
                 .into_iter()
-                .find(|(theatre, stage)| theatre.stage_audience(stage).contains(&device.platform));
+                .find(|&(theatre, stage)| theatre.stage_audience(stage).contains(&device.platform));
             match implementation {
                 Some((theatre, stage)) => out.push_str(&format!(
                     "| {} | {} | `{}.{}` | {} |\n",
