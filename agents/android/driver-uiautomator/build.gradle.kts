@@ -39,4 +39,6 @@ dependencies {
     // `com.google.protobuf.ProtocolMessageEnum` must be on this compile
     // classpath as well (agent-core keeps it `implementation`-scoped).
     implementation("com.google.protobuf:protobuf-java:4.36.2")
+
+    testImplementation("junit:junit:4.13.2")
 }

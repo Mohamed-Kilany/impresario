@@ -28,6 +28,57 @@ import impresario.v1.Impresario.SelectorStrategy
 import java.io.ByteArrayOutputStream
 import org.json.JSONObject
 
+/** Screen-gesture endpoints in device pixels. */
+internal data class SwipePath(
+    val startX: Int,
+    val startY: Int,
+    val endX: Int,
+    val endY: Int,
+)
+
+/**
+ * `swipe <dir>` names the finger direction (docs/DSL.md 5). `UP` therefore
+ * starts below the centre and ends above it; the horizontal mapping is the
+ * mirror image.
+ */
+internal fun fingerSwipePath(
+    direction: Direction,
+    width: Int,
+    height: Int,
+    fraction: Float,
+): SwipePath {
+    val centerX = width / 2
+    val centerY = height / 2
+    val travel = when (direction) {
+        Direction.UP, Direction.DOWN -> (height * fraction / 2).toInt()
+        Direction.LEFT, Direction.RIGHT -> (width * fraction / 2).toInt()
+    }
+    return when (direction) {
+        Direction.UP -> SwipePath(centerX, centerY + travel, centerX, centerY - travel)
+        Direction.DOWN -> SwipePath(centerX, centerY - travel, centerX, centerY + travel)
+        Direction.RIGHT -> SwipePath(centerX - travel, centerY, centerX + travel, centerY)
+        Direction.LEFT -> SwipePath(centerX + travel, centerY, centerX - travel, centerY)
+    }
+}
+
+/**
+ * `scroll <dir>` names the content direction (docs/DSL.md 5), so its screen
+ * fallback moves the finger the opposite way.
+ */
+internal fun scrollSwipePath(
+    direction: Direction,
+    width: Int,
+    height: Int,
+    fraction: Float,
+): SwipePath = fingerSwipePath(direction.opposite(), width, height, fraction)
+
+private fun Direction.opposite(): Direction = when (this) {
+    Direction.UP -> Direction.DOWN
+    Direction.DOWN -> Direction.UP
+    Direction.LEFT -> Direction.RIGHT
+    Direction.RIGHT -> Direction.LEFT
+}
+
 /** An [ElementHandle] backed by a UiAutomator node snapshot. */
 class UiHandle(internal val object2: UiObject2) : ElementHandle
 
@@ -132,7 +183,9 @@ class UiAutomatorDriver(
             if (node == null || !tolerant(false) { node.isScrollable }) {
                 // Nothing scrollable to drive: fall back to a blind screen
                 // swipe, whose effect this driver cannot observe (I-75).
-                screenSwipe(dir, SCROLL_PERCENT)
+                // `scroll` names the content direction, so the finger moves
+                // the other way.
+                screenSwipe(scrollSwipePath(dir, device.displayWidth, device.displayHeight, SCROLL_PERCENT))
                 moved = true
                 return@repeat
             }
@@ -158,7 +211,9 @@ class UiAutomatorDriver(
         if (node != null && !node.visibleBounds.isEmpty) {
             node.swipe(direction(dir), SWIPE_PERCENT)
         } else {
-            screenSwipe(dir, SWIPE_PERCENT)
+            // `swipe` names the finger direction (DSL 5); keep the same
+            // endpoint mapping as UiObject2.swipe for the screen fallback.
+            screenSwipe(fingerSwipePath(dir, device.displayWidth, device.displayHeight, SWIPE_PERCENT))
         }
     }
 
@@ -579,22 +634,8 @@ class UiAutomatorDriver(
     private fun primaryScrollable(): UiObject2? =
         device.findObjects(By.scrollable(true)).firstOrNull { !it.visibleBounds.isEmpty }
 
-    private fun screenSwipe(dir: Direction, fraction: Float) {
-        val width = device.displayWidth
-        val height = device.displayHeight
-        val centerX = width / 2
-        val centerY = height / 2
-        val travel = when (dir) {
-            Direction.DOWN, Direction.UP -> (height * fraction / 2).toInt()
-            Direction.LEFT, Direction.RIGHT -> (width * fraction / 2).toInt()
-        }
-        val steps = SWIPE_STEPS
-        when (dir) {
-            Direction.DOWN -> device.swipe(centerX, centerY + travel, centerX, centerY - travel, steps)
-            Direction.UP -> device.swipe(centerX, centerY - travel, centerX, centerY + travel, steps)
-            Direction.RIGHT -> device.swipe(centerX - travel, centerY, centerX + travel, centerY, steps)
-            Direction.LEFT -> device.swipe(centerX + travel, centerY, centerX - travel, centerY, steps)
-        }
+    private fun screenSwipe(path: SwipePath) {
+        device.swipe(path.startX, path.startY, path.endX, path.endY, SWIPE_STEPS)
     }
 
     private fun crashDialogVisible(): Boolean =

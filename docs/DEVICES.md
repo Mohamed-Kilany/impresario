@@ -887,9 +887,11 @@ apps:
   Realme RMX3997, Android 16 (SDK 36), 720x1604 @ 2.0, and SM-A515F,
   Android 13 (SDK 33), 1080x2400 @ 420 dpi.
 - Touch semantics on this path: `click`/`longpress` tap the element,
-  `scroll`/`swipe` are real gestures, `scrollto` searches down and reverses
-  as soon as the container stops moving (I-75: the driver reports movement
-  from uiautomator's scroll-finished signal), `key backspace`/`back`/`home`
+  `scroll`/`swipe` are real gestures; `scroll` names the content direction
+  and `swipe` the finger direction, including the no-container screen
+  fallback (I-161). `scrollto` searches down and reverses as soon as the
+  container stops moving (I-75: the driver reports movement from
+  uiautomator's scroll-finished signal), `key backspace`/`back`/`home`
   dispatch KeyEvents, `app background` presses HOME.
 - Keep the screen unlocked for a run (the app must be visible); the stock
   10-minute screen-off timeout is ample for a ≈2-minute play.

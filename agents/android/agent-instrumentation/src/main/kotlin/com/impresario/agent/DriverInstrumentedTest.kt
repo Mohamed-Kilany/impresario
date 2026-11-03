@@ -408,6 +408,27 @@ class DriverInstrumentedTest {
         awaitTitle("Scroller")
     }
 
+    @Test
+    fun screenSwipeUsesFingerDirection() {
+        assumeFalse("touch-only path (swipe)", isTv)
+        openScenario(2)
+        val first = spec(SelectorStrategy.TEXT, "row 0")
+        assertTrue(driver.find(first, 1_000).any { driver.isVisible(it) })
+
+        driver.swipe(null, Direction.UP)
+        assertTrue(
+            "row 0 still visible after a screen swipe up",
+            driver.find(first, 1_000).none { driver.isVisible(it) },
+        )
+
+        driver.swipe(null, Direction.DOWN)
+        assertTrue(
+            "row 0 not visible after a screen swipe down",
+            driver.find(first, 1_000).any { driver.isVisible(it) },
+        )
+        awaitTitle("Scroller")
+    }
+
     // ------------------------------------------------------------------
     // lifecycle, screenshots, device info
     // ------------------------------------------------------------------
