@@ -157,4 +157,5 @@ fn audience_completion_offers_platforms() {
         &theatre(),
     );
     assert!(labels.contains(&"web".to_string()), "{labels:?}");
+    assert!(labels.contains(&"cross-platform".to_string()), "{labels:?}");
 }

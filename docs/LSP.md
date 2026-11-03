@@ -45,7 +45,7 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 | file headers | keywords valid for the file kind (`Play:`/`Theatre:`/`Scene:`, `Act:`, `Stage:`, `Description:`, `Tags:`, `Actors:`, `Audience:`, `Platforms:`, `App:`, `Var:`, `Examples:`, `Timeout:`, `Perform:`, `Action:`, `Check:`) |
 | `Scene: ` inside a Stage | scene names with their platforms in `detail` |
 | `Actors: ` in a play/act | configured device names and `@group` names, with platform or members in `detail` |
-| `Audience: ` in a theatre/stage | platform names |
+| `Audience: ` in a theatre/stage | platform names and `cross-platform` |
 | `Perform For [` / `Perform Except [` | configured device names and `@group` names; after `]: `, stage names and their parameters |
 | `Perform: ` (play or theatre) | stage names, with signature/theatre in `detail` |
 | `Perform: Stage(` before `)` | that stage's parameters, with default or `required` in `detail`; qualified `Theatre.Stage` names resolve too |

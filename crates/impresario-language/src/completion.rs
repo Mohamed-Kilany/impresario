@@ -172,7 +172,7 @@ impl Language {
             return self.actor_items();
         }
         if trimmed.starts_with("Audience:") && is_theatre {
-            return self.platform_items(false);
+            return self.platform_items(true);
         }
         if trimmed.starts_with("Platforms:") {
             return self.platform_items(is_scene);
