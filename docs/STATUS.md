@@ -56,11 +56,12 @@ the LG/Tizen native install, launch, CDP and player-probe checks (HD-3/HD-4/
 HD-7; see the hardware log below). The TASK-3 Phase 2 actor/group/audience/
 stage-resolution slice is closed by I-162: the implementation was already on
 `master`; focused core tests, the two-device mock E2E, the golden corpus and
-the DSL/CLI/DEVICES/ERRORS documentation now cover it. The next priority is
-the remaining deferred hardware items (HD-1/HD-2 deeper probes, HD-5 USB,
-HD-6 non-Windows Chromium, HD-8 four-device rerun). Before another Apple TV
-run, refresh the Apple signing profiles, which expire 2026-11-04. The tvOS
-narrative below remains the detailed P0 record.
+the DSL/CLI/DEVICES/ERRORS documentation now cover it. CI run `41614462116` at
+`97e5bff` passed all five jobs (Rust, Android, editor, Apple, Windows). The
+next priority is the remaining deferred hardware items (HD-1/HD-2 deeper
+probes, HD-5 USB, HD-6 non-Windows Chromium, HD-8 four-device rerun). Before
+another Apple TV run, refresh the Apple signing profiles, which expire
+2026-11-04. The tvOS narrative below remains the detailed P0 record.
 
 ## 1.0.0 pre-release validation (2026-11-02)
 
