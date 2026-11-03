@@ -73,6 +73,7 @@ pub fn add_app_diagnostics(
 pub fn analyze_sources(
     sources: &[SourceFile],
     devices: &[DeviceRef],
+    groups: &BTreeMap<String, Vec<String>>,
 ) -> (
     Workspace,
     Diagnostics,
@@ -110,7 +111,7 @@ pub fn analyze_sources(
         }
         all.extend(diagnostics);
     }
-    let semantic = validation::validate(&workspace, devices);
+    let semantic = validation::validate_with_actors(&workspace, devices, groups);
     for diagnostic in &semantic {
         if let Some(span) = &diagnostic.span {
             push_core(&mut by_file, diagnostic, span.file());

@@ -84,6 +84,11 @@ pub fn analyze(
             .collect(),
         None => Vec::new(),
     };
+    let groups = devices_outcome
+        .config
+        .as_ref()
+        .map(|devices| devices.groups.clone())
+        .unwrap_or_default();
 
     let scenes_dir = resolve(
         base,
@@ -169,7 +174,7 @@ pub fn analyze(
         theatres,
         plays,
     };
-    let semantic = validation::validate(&workspace, &devices);
+    let semantic = validation::validate_with_actors(&workspace, &devices, &groups);
     absorb(&mut raw, &semantic, None);
 
     if let Some(app_list) = &apps_outcome.config {
@@ -220,16 +225,18 @@ pub fn analyze(
         })
         .collect::<Vec<_>>();
     let language = if apps_authoritative {
-        EditorLanguage::analyze_with_apps(
+        EditorLanguage::analyze_with_apps_and_groups(
             &editor_sources,
             &devices,
+            &groups,
             &app_infos,
             Some(base.to_path_buf()),
         )
     } else {
-        EditorLanguage::analyze(
+        EditorLanguage::analyze_with_groups(
             &editor_sources,
             &devices,
+            &groups,
             &app_infos,
             Some(base.to_path_buf()),
         )

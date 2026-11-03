@@ -237,27 +237,30 @@ fn with_language_workspace(
 
 fn analyze(request: &Request) -> Result<Value, String> {
     let mut diagnostics = std::collections::BTreeMap::new();
-    let devices = match (&request.devices_yaml, request.devices_path.as_deref()) {
+    let (devices, groups) = match (&request.devices_yaml, request.devices_path.as_deref()) {
         (Some(source), path) => {
             let path = PathBuf::from(path.unwrap_or("impresario.devices.config"));
             let outcome = config::parse_devices(source, &path);
             collect_core(&mut diagnostics, &outcome.diagnostics, &path);
-            outcome
-                .config
-                .map(|config| device_refs(&config))
-                .unwrap_or_default()
+            outcome.config.map_or_else(
+                || (Vec::new(), std::collections::BTreeMap::new()),
+                |config| (device_refs(&config), config.groups.clone()),
+            )
         }
-        _ => request
-            .devices
-            .iter()
-            .filter_map(|device| {
-                device
-                    .platform
-                    .parse::<Platform>()
-                    .ok()
-                    .map(|platform| DeviceRef::new(device.name.clone(), platform))
-            })
-            .collect(),
+        _ => (
+            request
+                .devices
+                .iter()
+                .filter_map(|device| {
+                    device
+                        .platform
+                        .parse::<Platform>()
+                        .ok()
+                        .map(|platform| DeviceRef::new(device.name.clone(), platform))
+                })
+                .collect(),
+            std::collections::BTreeMap::new(),
+        ),
     };
     let (apps, check_apps) = match (&request.apps_yaml, request.apps_path.as_deref()) {
         (Some(source), path) => {
@@ -290,9 +293,9 @@ fn analyze(request: &Request) -> Result<Value, String> {
         .collect::<Vec<_>>();
     let root = request.root.clone().map(PathBuf::from);
     let language = if check_apps {
-        Language::analyze_with_apps(&sources, &devices, &apps, root)
+        Language::analyze_with_apps_and_groups(&sources, &devices, &groups, &apps, root)
     } else {
-        Language::analyze(&sources, &devices, &apps, root)
+        Language::analyze_with_groups(&sources, &devices, &groups, &apps, root)
     };
     for (path, infos) in &language.diagnostics {
         diagnostics

@@ -59,6 +59,43 @@ fn open_reports_and_change_clears_diagnostics() {
 }
 
 #[test]
+fn actor_groups_from_devices_config_are_resolved() {
+    runtime().block_on(async {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base = temp.path();
+        lsp::write(&base.join("impresario.config"), lsp::config_text());
+        lsp::write(
+            &base.join("impresario.devices.config"),
+            "devices:\n  - name: web1\n    type: web\n    ip: 127.0.0.1\ngroups:\n  both:\n    - web1\n",
+        );
+        let scene = base.join("scenes/LoginScreen.scene");
+        let play = base.join("plays/login.play");
+        let theatre = base.join("theatres/login.theatre");
+        lsp::write(&scene, lsp::SCENE);
+        lsp::write(
+            &play,
+            "Play: Login\nActors: @both\n\nAct: Successful Login\n    Perform: Navigate\n",
+        );
+        lsp::write(
+            &theatre,
+            "Theatre: Login\nAudience: web\n\nStage: Navigate\n    Scene: LoginScreen\n        Action: click => LoginButton\n        Check: UsernameInput\n",
+        );
+
+        let mut server = TestLsp::start(base).await;
+        let mark = server.mark();
+        server.start_session(None).await;
+        let published = server.wait_diagnostics(&play, mark).await;
+        let codes = lsp::codes(&published);
+        assert!(
+            !codes.iter().any(|code| code == "IMP-DSL-044"
+                || code == "IMP-DSL-045"
+                || code == "IMP-DSL-047"),
+            "the configured group must resolve: {published}"
+        );
+    });
+}
+
+#[test]
 fn overlays_win_over_disk_and_close_restores_disk() {
     runtime().block_on(async {
         let temp = tempfile::tempdir().expect("tempdir");

@@ -22,7 +22,7 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 
 | Feature | Behaviour |
 |---|---|
-| **Diagnostics** | Every parser and semantic diagnostic of `impresario-core` plus the per-device warnings, published with their stable `IMP-...` codes, related locations and the `impresario` source. Debounced 150 ms after `didOpen`/`didChange`/`didSave` and after file-watch bursts. Open buffers carry their document `version`. |
+| **Diagnostics** | Every parser and semantic diagnostic of `impresario-core` plus the per-device warnings, published with their stable `IMP-...` codes, related locations and the `impresario` source. Actor and group references are resolved against the configured devices and `groups:`, so `Actors: @group` and `Perform For/Except` do not produce false unknown-actor diagnostics. Debounced 150 ms after `didOpen`/`didChange`/`didSave` and after file-watch bursts. Open buffers carry their document `version`. |
 | **Completion** | Computed from the line prefix, the nearest enclosing `Scene:`/`Act:` block and the workspace index; it keeps working while other parts of the file have errors. Trigger characters: `:`, ` `, `'`, `>`. Contexts are listed below. |
 | **Hover** | Piece declarations and piece references show the resolved selector for every platform, including fallback rows. `Perform:`/`Stage:` show the signature, theatre, description and reference count. |
 | **Go to definition** | `Scene:` to its declaration, pieces to their table/entry row, `Perform: Stage` and `Theatre.Stage` to the stage declaration, variables/parameters to their declarations. Works for unsaved buffers. A single result is returned as a scalar `Location`; multiple results as an array. |
@@ -42,8 +42,11 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 
 | Context (line prefix) | Suggestions |
 |---|---|
-| file headers | keywords valid for the file kind (`Play:`/`Theatre:`/`Scene:`, `Act:`, `Stage:`, `Description:`, `Tags:`, `Platforms:`, `App:`, `Var:`, `Examples:`, `Timeout:`, `Perform:`, `Action:`, `Check:`) |
+| file headers | keywords valid for the file kind (`Play:`/`Theatre:`/`Scene:`, `Act:`, `Stage:`, `Description:`, `Tags:`, `Actors:`, `Audience:`, `Platforms:`, `App:`, `Var:`, `Examples:`, `Timeout:`, `Perform:`, `Action:`, `Check:`) |
 | `Scene: ` inside a Stage | scene names with their platforms in `detail` |
+| `Actors: ` in a play/act | configured device names and `@group` names, with platform or members in `detail` |
+| `Audience: ` in a theatre/stage | platform names |
+| `Perform For [` / `Perform Except [` | configured device names and `@group` names; after `]: `, stage names and their parameters |
 | `Perform: ` (play or theatre) | stage names, with signature/theatre in `detail` |
 | `Perform: Stage(` before `)` | that stage's parameters, with default or `required` in `detail`; qualified `Theatre.Stage` names resolve too |
 | `Examples:` header row | parameters of every stage performed by the enclosing act, with defaults |
@@ -70,8 +73,10 @@ through `workspace/didChangeConfiguration` (`settings`), in three shapes:
 
 Relative paths resolve against the workspace root. Changing `devices`
 re-analyses the workspace at once, so device warnings follow
-`impresario.devices.config` without a restart. The **device set** for warnings
-and `key` completion is every device in the devices file.
+`impresario.devices.config` without a restart. The **device set** for warnings,
+`Actors:`/`For`/`Except` completion and `key` completion is every device in the
+devices file, and the `groups:` map is available to actor validation and
+completion.
 
 ## VS Code
 

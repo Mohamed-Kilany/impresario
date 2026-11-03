@@ -192,6 +192,8 @@ pub struct Language {
     pub index: Index,
     pub sources: BTreeMap<PathBuf, String>,
     pub devices: Vec<DeviceInfo>,
+    /// Named actor groups from `impresario.devices.config`.
+    pub groups: BTreeMap<String, Vec<String>>,
     pub apps: Vec<AppInfo>,
     pub diagnostics: BTreeMap<PathBuf, Vec<DiagnosticInfo>>,
     pub root: Option<PathBuf>,
@@ -210,7 +212,7 @@ impl Language {
         apps: &[AppInfo],
         root: Option<PathBuf>,
     ) -> Self {
-        Self::analyze_inner(sources, devices, apps, root, false)
+        Self::analyze_inner(sources, devices, &BTreeMap::new(), apps, root, false)
     }
 
     /// Like [`Self::analyze`], but every `App:` name must be in `apps`.
@@ -221,17 +223,44 @@ impl Language {
         apps: &[AppInfo],
         root: Option<PathBuf>,
     ) -> Self {
-        Self::analyze_inner(sources, devices, apps, root, true)
+        Self::analyze_inner(sources, devices, &BTreeMap::new(), apps, root, true)
+    }
+
+    /// Like [`Self::analyze`], with the configured actor groups available for
+    /// `Actors:` and `Perform For/Except` validation and completion.
+    #[must_use]
+    pub fn analyze_with_groups(
+        sources: &[SourceFile],
+        devices: &[DeviceRef],
+        groups: &BTreeMap<String, Vec<String>>,
+        apps: &[AppInfo],
+        root: Option<PathBuf>,
+    ) -> Self {
+        Self::analyze_inner(sources, devices, groups, apps, root, false)
+    }
+
+    /// Like [`Self::analyze_with_groups`], but every `App:` name must be in
+    /// `apps`.
+    #[must_use]
+    pub fn analyze_with_apps_and_groups(
+        sources: &[SourceFile],
+        devices: &[DeviceRef],
+        groups: &BTreeMap<String, Vec<String>>,
+        apps: &[AppInfo],
+        root: Option<PathBuf>,
+    ) -> Self {
+        Self::analyze_inner(sources, devices, groups, apps, root, true)
     }
 
     fn analyze_inner(
         sources: &[SourceFile],
         devices: &[DeviceRef],
+        groups: &BTreeMap<String, Vec<String>>,
         apps: &[AppInfo],
         root: Option<PathBuf>,
         check_apps: bool,
     ) -> Self {
-        let (workspace, _all, mut diagnostics) = analyze_sources(sources, devices);
+        let (workspace, _all, mut diagnostics) = analyze_sources(sources, devices, groups);
         if check_apps {
             crate::diagnostics::add_app_diagnostics(&workspace, apps, &mut diagnostics);
         }
@@ -250,6 +279,7 @@ impl Language {
                     platform: device.platform,
                 })
                 .collect(),
+            groups: groups.clone(),
             apps: apps.to_vec(),
             diagnostics,
             root,

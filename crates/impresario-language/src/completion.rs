@@ -44,6 +44,8 @@ const KEYWORDS: &[&str] = &[
     "App:",
     "Var:",
     "Tags:",
+    "Actors:",
+    "Audience:",
     "Platforms:",
     "Timeout:",
     "Examples:",
@@ -101,6 +103,26 @@ impl Language {
             return self.stage_items();
         }
 
+        if let Some(rest) = trimmed
+            .strip_prefix("Perform For [")
+            .or_else(|| trimmed.strip_prefix("Perform Except ["))
+        {
+            let Some((_, after)) = rest.split_once(']') else {
+                return self.actor_items();
+            };
+            let after = after.trim_start();
+            let Some(after) = after.strip_prefix(':') else {
+                return self.actor_items();
+            };
+            let after = after.trim_start();
+            if let Some((stage_name, arguments)) = after.split_once('(') {
+                if !arguments.contains(')') {
+                    return self.stage_param_items(path, stage_name.trim());
+                }
+            }
+            return self.stage_items();
+        }
+
         if let Some(rest) = trimmed.strip_prefix("Scene:") {
             if is_scene {
                 return Vec::new();
@@ -145,6 +167,12 @@ impl Language {
 
         if trimmed.starts_with("Tags:") {
             return self.tag_items();
+        }
+        if trimmed.starts_with("Actors:") && is_play {
+            return self.actor_items();
+        }
+        if trimmed.starts_with("Audience:") && is_theatre {
+            return self.platform_items(false);
         }
         if trimmed.starts_with("Platforms:") {
             return self.platform_items(is_scene);
@@ -290,6 +318,35 @@ impl Language {
             .iter()
             .map(|tag| simple(tag, "value"))
             .collect()
+    }
+
+    fn actor_items(&self) -> Vec<CompletionItem> {
+        let mut items: Vec<CompletionItem> = self
+            .devices
+            .iter()
+            .map(|device| CompletionItem {
+                label: device.name.clone(),
+                kind: "actor".to_string(),
+                detail: Some(device.platform.as_str().to_string()),
+                insert_text: None,
+                sort_text: None,
+                filter_text: None,
+                documentation: None,
+                replace: None,
+            })
+            .collect();
+        items.extend(self.groups.iter().map(|(name, members)| CompletionItem {
+            label: format!("@{name}"),
+            kind: "actor".to_string(),
+            detail: Some(format!("group: {}", members.join(", "))),
+            insert_text: None,
+            sort_text: None,
+            filter_text: None,
+            documentation: None,
+            replace: None,
+        }));
+        items.sort_by(|left, right| left.label.cmp(&right.label));
+        items
     }
 
     fn platform_items(&self, is_scene: bool) -> Vec<CompletionItem> {
@@ -586,10 +643,10 @@ fn keyword_items(is_scene: bool, is_play: bool, is_theatre: bool) -> Vec<Complet
         available.extend(["Scene:", "Platforms:"]);
     }
     if is_play {
-        available.extend(["Play:", "App:", "Var:", "Act:"]);
+        available.extend(["Play:", "App:", "Actors:", "Var:", "Act:"]);
     }
     if is_theatre {
-        available.extend(["Theatre:", "Stage:"]);
+        available.extend(["Theatre:", "Audience:", "Stage:"]);
     }
     available
         .into_iter()
