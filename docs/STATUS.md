@@ -120,7 +120,11 @@ Android icon scale and the Android screen-swipe direction fix.
   finger-direction rule; the old mapping moved the finger down and opened
   quick settings. `ScreenSwipeTest` pins both the finger-direction swipe and
   the content-direction scroll fallback, and the instrumented driver test
-  checks the scroller; the next hardware pass re-checks it on the phone.
+  checks the scroller. The phone hardware re-check passed with the latest
+  CI-built agent: `run 20261103-103808-5771` completed 5/5 steps in 15.1 s,
+  and the no-selector `swipe up` moved the home screen to the app drawer
+  instead of opening quick settings (`screenshots/phone/before.png` and
+  `after.png`).
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in
