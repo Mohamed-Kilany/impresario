@@ -99,7 +99,7 @@ fn labels_at(source: &str, path: &Path) -> Vec<String> {
     let files = files()
         .into_iter()
         .map(|mut file| {
-            if file.path == path {
+            if file.path.as_path() == path {
                 file.text = clean.clone();
             }
             file
