@@ -491,7 +491,11 @@ needs older hardware.
   steps in 1m51s, including long press, D-pad focus, text entry, selection,
   flags, native key log, numpad/media keys and media. No `adb` binary was used.
   Both APKs expose version 1.0.0, the adaptive/legacy launcher icons and
-  `ic_banner`. The .135 unit's vendor Appwatch still removes the stub.
+  `ic_banner`. The 2026-11-03 icon refresh (`run 20261103-065133-f053`)
+  installed the smaller black-backed assets and captured the TCL Google TV
+  Apps row; both tiles render the reduced mark with a black surround. The
+  banner content is 175x130 on opaque black. The .135 unit's vendor Appwatch
+  still removes the stub.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; key dispatch and the raw CDP backend
@@ -935,6 +939,16 @@ apps:
   transport, with the same expected `pm clear` WARN. A fresh Impresario key
   paired through the wireless-debugging pairing-code screen in the wizard and
   then passed `device check` (see 2.9).
+- Launcher icon refresh (2026-11-03): the final 1.0.0 assets use a 73x191
+  foreground bbox at `(179,120,252,311)` (44% of the 432x432 canvas; 66% of
+  the visible 72dp tile), an opaque black adaptive background, opaque-black
+  legacy icons with the mark at 55% of the tile, and 175x130 banner content on
+  opaque black. After removing the old debug-signed packages and installing
+  the new APKs with the regenerated debug keystore,
+  `run 20261103-064807-e673` passed 9/9 steps in 26.7 s and
+  `run 20261103-064847-4122` captured the clean app drawer
+  (`screenshots/android_phone_76_remote/launcher-drawer.png`); both Agent and
+  Stub show the smaller mark with black surround.
 
 ### 2.8 Platform notes
 

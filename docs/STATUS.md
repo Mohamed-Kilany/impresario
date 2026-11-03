@@ -63,10 +63,11 @@ The `refactor/pre-release-1.0.0` branch carries the breaking 1.0.0 reset. Final
 code `CI` run `41436848993` at `5b27873` passed all five jobs (Rust `fmt
 --check`, clippy with `-D warnings`, workspace tests; Android JVM tests and APK
 build; editor; Apple Swift package; Windows release binaries). The webOS
-fresh-install and Android TV runs below used the `e15b5d9` artifacts; the only
-later code change is the Android launcher-icon scale in `5b27873`. The earlier
-local/remote web, Tizen and Apple runs used the `9e6ee4b` artifact; the only
-later code changes are the webOS install-wait fix and the Android icon scale.
+fresh-install and Android TV runs below used the `e15b5d9` artifacts; the
+Android launcher icon was later scaled in `5b27873` and refined again on
+2026-11-03 (resources only). The earlier local/remote web, Tizen and Apple runs
+used the `9e6ee4b` artifact; the only later code changes are the webOS
+install-wait fix and the Android icon scale.
 
 - Local web: `run 20261102-084218-98bd` passed 17/17 steps in 2.68 s.
 - Remote web: `run 20261102-084225-e87a` passed 17/17 steps in 6.30 s against
@@ -85,25 +86,29 @@ later code changes are the webOS install-wait fix and the Android icon scale.
   replace the already-installed agent without uninstalling it through external
   `adb`; the code and resources are the CI artifacts. `aapt2 dump badging`
   confirms both expose version 1.0.0, the adaptive/legacy launcher icons and
-  `drawable-xhdpi-v4/ic_banner.png`. The Skyworth/STC Appwatch unit at .135
-  still removes `com.impresario.stub`; the other phones remain unauthorized.
+  `drawable-xhdpi-v4/ic_banner.png`. The 2026-11-03 icon refresh (`run
+  20261103-065133-f053`, 3/3 steps in 32.8 s) installed the rebuilt APKs and
+  captured the TCL Google TV Apps row; both the Agent and Stub tiles show the
+  smaller foreground with a black surround. The banner content is 175x130 on an
+  opaque black 320x180 image. The Skyworth/STC Appwatch unit at .135 still
+  removes `com.impresario.stub`; the other phones remain unauthorized.
 - Android phone: after the host ADB key was lost, `device pair` regenerated
   `.impresario/keys/adbkey` and authorized the Galaxy A51 (`a51nsxx`, Android
   13, `192.168.93.76`). Its wireless connect port is 46699, so the run used a
   host 5555 bridge (test-only; the 1.0.0 schema hardcodes ADB 5555) and a
   debug-only fixed `agent_port` sidecar plus host relay; no `adb` binary was
-  used. `run 20261102-121015-2219` on the `5b27873` APKs passed 3/3 steps in
-  24.7 s, installing and launching the smaller-icon agent/stub and checking
-  the stub home title. The 2026-11-03 rerun `run 20261103-055703-e0bf` passed
-  9/9 steps in 19.4 s against the same installed 1.0.0 APKs, covering unlock,
-  stub launch, home-title check and launcher capture. `run
-  20261103-055745-77a3` captured a clean app drawer
-  (`screenshots/android_phone_76_remote/launcher-drawer.png`); both Impresario
-  Agent and Impresario Stub show the scaled foreground. The screen-level
-  `swipe up` fallback is still inverted (it opened quick settings); the
-  node-level `swipe up => Screen` path is correct. The foreground bbox is
-  verified in the APK at `167,88-263,342` (`97x255`, 59% of the 432x432
-  canvas).
+  used. The regenerated debug keystore required removing the old debug-signed
+  packages before installing the icon build. The final assets use a 73x191
+  foreground bbox at `(179,120,252,311)` (44% of the 432x432 canvas, 66% of
+  the visible 72dp tile), an opaque black adaptive background, opaque-black
+  legacy icons with the mark at 55% of the tile, and 175x130 banner content on
+  an opaque black image. After the fresh install, `run 20261103-064807-e673`
+  passed 9/9 steps in 26.7 s, covering unlock, stub launch, home-title check
+  and launcher capture. `run 20261103-064847-4122` captured the clean app
+  drawer (`screenshots/android_phone_76_remote/launcher-drawer.png`); both
+  Impresario Agent and Impresario Stub show the smaller mark with black
+  surround. The screen-level `swipe up` fallback is still inverted (it opened
+  quick settings); the node-level `swipe up => Screen` path is correct.
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in
