@@ -127,10 +127,10 @@ Android icon scale and the Android screen-swipe direction fix.
   CI-built agent: `run 20261103-103808-5771` completed 5/5 steps in 15.1 s,
   and the no-selector `swipe up` moved the home screen to the app drawer
   instead of opening quick settings (`screenshots/phone/before.png` and
-  `after.png`). The temporary host bridge, Python relays, debug CLI and
-  downloaded validation-only binaries were removed after the check; the
-  scratch play now uses the product's no-selector fallback, and no external
-  tool is part of the product or CI gate.
+  `after.png`). The temporary host bridge, Python relays, debug CLI and the
+  downloaded artifacts used only for that re-check were removed afterwards;
+  the scratch play now uses the product's no-selector fallback, and no
+  external tool is part of the product or CI gate.
 - webOS: the real LG passphrase was saved with `device passphrase` and resolved
   by the final CLI. After `dev/remove`, the final CLI uploaded and installed
   `com.impresario.stub` 1.0.0 from a clean state and passed 106/106 steps in

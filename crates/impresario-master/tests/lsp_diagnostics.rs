@@ -71,11 +71,10 @@ fn actor_groups_from_devices_config_are_resolved() {
         let scene = base.join("scenes/LoginScreen.scene");
         let play = base.join("plays/login.play");
         let theatre = base.join("theatres/login.theatre");
+        let play_text =
+            "Play: Login\nActors: @both\n\nAct: Successful Login\n    Perform: Navigate\n";
         lsp::write(&scene, lsp::SCENE);
-        lsp::write(
-            &play,
-            "Play: Login\nActors: @both\n\nAct: Successful Login\n    Perform: Navigate\n",
-        );
+        lsp::write(&play, play_text);
         lsp::write(
             &theatre,
             "Theatre: Login\nAudience: web\n\nStage: Navigate\n    Scene: LoginScreen\n        Action: click => LoginButton\n        Check: UsernameInput\n",
@@ -84,6 +83,9 @@ fn actor_groups_from_devices_config_are_resolved() {
         let mut server = TestLsp::start(base).await;
         let mark = server.mark();
         server.start_session(None).await;
+        // A clean file is not published on the initial scan; opening it forces
+        // a publish, so the assertion also covers the "no diagnostics" case.
+        server.open(&play, play_text, 1).await;
         let published = server.wait_diagnostics(&play, mark).await;
         let codes = lsp::codes(&published);
         assert!(
