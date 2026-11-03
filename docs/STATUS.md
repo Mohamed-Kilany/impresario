@@ -48,26 +48,31 @@ the Android/iOS hardware probe paths, Android USB and a fresh four-device
 matrix remain open. Reachability alone closes no HD item; the 2026-10-29 runs
 are native install/launch/CDP and player-state probe acceptances.
 
-## Current priority and parked work (2026-10-29)
+## Current priority and parked work (2026-11-03)
 
-The 2026-10-29 TV hardware window closed the LG/Tizen native install, launch,
-CDP and player-probe checks (HD-3/HD-4/HD-7; see the hardware log below). The
-next priority is the parked TASK-3 Phase 2 actors/groups work and the remaining
-deferred hardware items (HD-1/HD-2 deeper probes, HD-5 USB, HD-6 non-Windows
-Chromium, HD-8 four-device rerun). The tvOS narrative below remains the detailed
-P0 record.
+The breaking 1.0.0 pre-release is merged to `master` and its final code CI is
+green (see the 1.0.0 section below). The 2026-10-29 TV hardware window closed
+the LG/Tizen native install, launch, CDP and player-probe checks (HD-3/HD-4/
+HD-7; see the hardware log below). The next priority is the parked TASK-3
+Phase 2 actors/groups work and the remaining deferred hardware items (HD-1/
+HD-2 deeper probes, HD-5 USB, HD-6 non-Windows Chromium, HD-8 four-device
+rerun). Before another Apple TV run, refresh the Apple signing profiles, which
+expire 2026-11-04. The tvOS narrative below remains the detailed P0 record.
 
 ## 1.0.0 pre-release validation (2026-11-02)
 
-The `refactor/pre-release-1.0.0` branch carries the breaking 1.0.0 reset. Final
-`CI` run `41592964975` at `9256ebe` passed all five jobs (Rust `fmt --check`,
-clippy with `-D warnings`, workspace tests; Android JVM tests and APK build;
-editor; Apple Swift package; Windows release binaries). The webOS fresh-install
-and Android TV runs below used the `e15b5d9` artifacts; the Android launcher
-icon was later scaled in `5b27873` and refined again in `9256ebe` (resources
-only). The earlier local/remote web, Tizen and Apple runs used the `9e6ee4b`
-artifact; the only later code changes are the webOS install-wait fix and the
-Android icon scale.
+The breaking 1.0.0 reset is merged to `master` at `303c4a0` (fast-forward
+from `refactor/pre-release-1.0.0`). Final `CI` run `41598571858` at `303c4a0`
+passed all five jobs (Rust `fmt --check`, clippy with `-D warnings`, workspace
+tests; Android JVM tests and APK build; editor; Apple Swift package; Windows
+release binaries). The earlier asset-only run `41592964975` at `9256ebe` also
+passed all five jobs; `303c4a0` adds the Android screen-swipe direction
+correction and its tests on top of `5ed68f7`. The webOS fresh-install and
+Android TV runs below used the `e15b5d9` artifacts; the Android launcher icon
+was later scaled in `5b27873` and refined again in `9256ebe` (resources only).
+The earlier local/remote web, Tizen and Apple runs used the `9e6ee4b`
+artifact; the only later code changes are the webOS install-wait fix, the
+Android icon scale and the Android screen-swipe direction fix.
 
 - Local web: `run 20261102-084218-98bd` passed 17/17 steps in 2.68 s.
 - Remote web: `run 20261102-084225-e87a` passed 17/17 steps in 6.30 s against
