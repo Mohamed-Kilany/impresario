@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use impresario_core::ast::{
-    ActDecl, ParamDecl, PerformDecl, PieceDecl, PlayFile, SceneBlock, SceneColumn, SceneFile,
-    StageDecl, StageItem, Step, StepKind, TheatreFile, VarDecl,
+    ActDecl, Named, ParamDecl, PerformDecl, PieceDecl, PlayFile, SceneBlock, SceneColumn,
+    SceneFile, StageDecl, StageItem, Step, StepKind, TheatreFile, VarDecl,
 };
 use impresario_core::ast::{ActionVerb, CheckCondition, PieceSelector};
 use impresario_core::platforms::{Platform, ScenePlatforms};
@@ -200,6 +200,10 @@ pub enum SymbolKey {
         name: String,
     },
     App(String),
+    /// A device configured in `impresario.devices.config`.
+    Actor(String),
+    /// A named actor group from `impresario.devices.config`.
+    Group(String),
 }
 
 /// One occurrence of a symbol, either a declaration or a reference.
@@ -425,6 +429,22 @@ impl Index {
         );
     }
 
+    /// Index an actor or group reference from a play, act or perform filter.
+    /// The declaration itself lives in `impresario.devices.config`, outside
+    /// the DSL workspace, so these are references rather than definitions.
+    fn actor_ref(&mut self, actor: &Named) {
+        let key = if let Some(group) = actor.name.strip_prefix('@') {
+            SymbolKey::Group(group.to_string())
+        } else {
+            SymbolKey::Actor(actor.name.clone())
+        };
+        self.occurrences.push(Occurrence {
+            key,
+            span: actor.span.clone(),
+            definition: false,
+        });
+    }
+
     fn index_play(&mut self, play: &PlayFile) {
         let play_key = play.path.display().to_string();
         self.occurrences.push(Occurrence {
@@ -444,6 +464,9 @@ impl Index {
                 span: app.span.clone(),
                 definition: false,
             });
+        }
+        for actor in &play.actors {
+            self.actor_ref(actor);
         }
         let mut vars = Vec::new();
         for var in &play.var_decls {
@@ -473,6 +496,18 @@ impl Index {
         }
         let mut acts = Vec::new();
         for act in &play.acts {
+            for actor in &act.actors {
+                self.actor_ref(actor);
+            }
+            if let Some(filter) = act
+                .examples
+                .as_ref()
+                .and_then(|examples| examples.filter.as_ref())
+            {
+                for actor in &filter.actors {
+                    self.actor_ref(actor);
+                }
+            }
             for tag in &act.tags {
                 self.tags.insert(tag.name.clone());
             }
@@ -717,6 +752,11 @@ impl Index {
     }
 
     fn perform_refs(&mut self, perform: &PerformDecl, context: RefContext<'_>) {
+        if let Some(filter) = &perform.filter {
+            for actor in &filter.actors {
+                self.actor_ref(actor);
+            }
+        }
         let target = self.stage(&perform.stage_name).cloned();
         if let Some(stage) = &target {
             let span = if perform.stage_name == stage.name {
@@ -949,7 +989,9 @@ impl Index {
             | SymbolKey::Scene(name)
             | SymbolKey::Stage(name)
             | SymbolKey::Theatre(name)
-            | SymbolKey::App(name) => name.clone(),
+            | SymbolKey::App(name)
+            | SymbolKey::Actor(name)
+            | SymbolKey::Group(name) => name.clone(),
             SymbolKey::Piece { name, .. } => name.clone(),
             SymbolKey::Act { name, .. } => name.clone(),
             SymbolKey::Var { name, .. }
@@ -965,9 +1007,11 @@ impl Index {
             SymbolKey::Play(_) | SymbolKey::Scene(_) | SymbolKey::Theatre(_) => "namespace",
             SymbolKey::Act { .. } | SymbolKey::Stage(_) => "function",
             SymbolKey::Piece { .. } => "property",
-            SymbolKey::Var { .. } | SymbolKey::Param { .. } | SymbolKey::ExampleColumn { .. } => {
-                "variable"
-            }
+            SymbolKey::Var { .. }
+            | SymbolKey::Param { .. }
+            | SymbolKey::ExampleColumn { .. }
+            | SymbolKey::Actor(_)
+            | SymbolKey::Group(_) => "variable",
             SymbolKey::App(_) => "class",
         }
     }

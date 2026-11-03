@@ -4,7 +4,14 @@
     "path": "plays/login.play",
     "line": 8,
     "col": 19,
-    "contains": ["**Fill**", "stage in theatre `Auth`", "4 references"]
+    "contains": ["**Fill**", "implementation(s)", "Auth", "4 references"]
+  },
+  {
+    "op": "hover",
+    "path": "plays/actors.play",
+    "line": 4,
+    "col": 9,
+    "contains": ["**web1**", "actor", "web"]
   },
   {
     "op": "hover",

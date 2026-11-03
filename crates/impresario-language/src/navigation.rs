@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use impresario_core::ast::{
-    ActDecl, ActionVerb, CheckCondition, PlayFile, SceneBlock, SceneFile, StageDecl, StageItem,
-    TheatreFile,
+    ActDecl, ActionVerb, CheckCondition, PerformDecl, PlayFile, SceneBlock, SceneFile, StageDecl,
+    StageItem, TheatreFile,
 };
 use impresario_core::platforms::Platform;
 use impresario_core::scanner;
@@ -34,7 +34,11 @@ impl Language {
     #[must_use]
     pub fn hover(&self, path: &Path, position: Position) -> Option<HoverResult> {
         if let Some(occurrence) = self.symbol_at(path, position) {
-            let markdown = self.markdown_for_key(&occurrence.key);
+            let markdown = match &occurrence.key {
+                SymbolKey::Actor(name) => self.actor_markdown(name, Some(&occurrence.span)),
+                SymbolKey::Group(name) => self.group_markdown(name, Some(&occurrence.span)),
+                _ => self.markdown_for_key(&occurrence.key),
+            };
             return Some(HoverResult {
                 markdown,
                 span: Some(occurrence.span.clone()),
@@ -116,14 +120,27 @@ impl Language {
                 out
             }
             SymbolKey::Stage(name) => {
-                let Some(stage) = self.index.stages.get(name) else {
+                let instances = self.workspace.stage_instances(name);
+                let Some(stage) = self.index.stage(name) else {
                     return format!("**{name}**\n\nStage not found.");
                 };
                 let uses = self.index.references(key, false).len();
                 let mut out = format!(
-                    "**{}** — stage in theatre `{}`\n\n```text\n{}\n```\n\n{} references",
-                    stage.name, stage.theatre, stage.signature, uses
+                    "**{}** — stage\n\nSignature: `{}`\n\n{} implementation(s):\n\n\
+                     | Theatre | Audience | File |\n|---|---|---|\n",
+                    stage.name,
+                    stage.signature,
+                    instances.len()
                 );
+                for (theatre, implementation) in &instances {
+                    out.push_str(&format!(
+                        "| {} | {} | `{}` |\n",
+                        theatre.name,
+                        audience_summary(theatre, implementation),
+                        theatre.path.display()
+                    ));
+                }
+                out.push_str(&format!("\n{} references", uses));
                 if let Some(description) = &stage.description {
                     out.push_str("\n\n");
                     out.push_str(description);
@@ -260,7 +277,167 @@ impl Language {
                         .unwrap_or("Configured app")
                 )
             }
+            SymbolKey::Actor(name) => self.actor_markdown(name, None),
+            SymbolKey::Group(name) => self.group_markdown(name, None),
         }
+    }
+
+    fn actor_markdown(&self, name: &str, occurrence: Option<&Span>) -> String {
+        let mut out = format!("**{name}** — actor\n\n");
+        match self.devices.iter().find(|device| device.name == name) {
+            Some(device) => out.push_str(&format!(
+                "Configured device platform: `{}`.\n",
+                device.platform.as_str()
+            )),
+            None => {
+                out.push_str("Not configured in `impresario.devices.config` for this workspace.\n")
+            }
+        }
+        let groups = self.groups_containing(name);
+        if !groups.is_empty() {
+            out.push_str(&format!(
+                "\nGroups: {}\n",
+                groups
+                    .iter()
+                    .map(|group| format!("`@{group}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(perform) = occurrence.and_then(|span| self.perform_at_filter_span(span)) {
+            out.push_str(&self.stage_resolution_markdown(perform, name));
+        }
+        out
+    }
+
+    fn group_markdown(&self, name: &str, occurrence: Option<&Span>) -> String {
+        let Some(members) = self.groups.get(name) else {
+            return format!(
+                "**@{name}** — actor group\n\nNot configured in `impresario.devices.config`."
+            );
+        };
+        let resolved = self.expand_group(name);
+        let direct = if members.is_empty() {
+            "none".to_string()
+        } else {
+            members
+                .iter()
+                .map(|member| format!("`{member}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let devices = if resolved.is_empty() {
+            "none".to_string()
+        } else {
+            resolved
+                .iter()
+                .map(|device| format!("`{device}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut out = format!(
+            "**@{name}** — actor group\n\nDirect members: {direct}\n\nResolved devices: {devices}\n"
+        );
+        if let Some(perform) = occurrence.and_then(|span| self.perform_at_filter_span(span)) {
+            out.push_str(&self.stage_resolution_markdown(perform, &format!("@{name}")));
+        }
+        out
+    }
+
+    fn groups_containing(&self, actor: &str) -> Vec<String> {
+        self.groups
+            .keys()
+            .filter(|group| self.expand_group(group.as_str()).contains(actor))
+            .cloned()
+            .collect()
+    }
+
+    fn expand_group(&self, name: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        self.expand_group_into(name, &mut out, &mut Vec::new());
+        out
+    }
+
+    fn expand_group_into(&self, name: &str, out: &mut BTreeSet<String>, stack: &mut Vec<String>) {
+        if stack.iter().any(|item| item == name) {
+            return;
+        }
+        let Some(members) = self.groups.get(name) else {
+            return;
+        };
+        stack.push(name.to_string());
+        for member in members {
+            if let Some(group) = member.strip_prefix('@') {
+                self.expand_group_into(group, out, stack);
+            } else {
+                out.insert(member.clone());
+            }
+        }
+        stack.pop();
+    }
+
+    fn stage_resolution_markdown(&self, perform: &PerformDecl, reference: &str) -> String {
+        let resolved = if let Some(group) = reference.strip_prefix('@') {
+            self.expand_group(group)
+        } else {
+            BTreeSet::from([reference.to_string()])
+        };
+        let mut out = format!(
+            "\n\nStage resolution for `Perform: {}`:\n\n\
+             | Actor | Platform | Implementation | Audience |\n|---|---|---|---|\n",
+            perform.stage_name
+        );
+        for actor in resolved {
+            let Some(device) = self.devices.iter().find(|device| device.name == actor) else {
+                out.push_str(&format!("| {actor} | unknown | not configured | - |\n"));
+                continue;
+            };
+            let implementation = self
+                .workspace
+                .stage_instances(&perform.stage_name)
+                .into_iter()
+                .find(|(theatre, stage)| theatre.stage_audience(stage).contains(&device.platform));
+            match implementation {
+                Some((theatre, stage)) => out.push_str(&format!(
+                    "| {} | {} | `{}.{}` | {} |\n",
+                    actor,
+                    device.platform.as_str(),
+                    theatre.name,
+                    stage.name,
+                    audience_summary(theatre, stage)
+                )),
+                None => out.push_str(&format!(
+                    "| {} | {} | missing | - |\n",
+                    actor,
+                    device.platform.as_str()
+                )),
+            }
+        }
+        out
+    }
+
+    fn perform_at_filter_span(&self, span: &Span) -> Option<&PerformDecl> {
+        for play in &self.workspace.plays {
+            for act in &play.acts {
+                for perform in &act.performs {
+                    if filter_contains(perform, span) {
+                        return Some(perform);
+                    }
+                }
+            }
+        }
+        for theatre in &self.workspace.theatres {
+            for stage in &theatre.stages {
+                for item in &stage.items {
+                    if let StageItem::Perform(perform) = item {
+                        if filter_contains(perform, span) {
+                            return Some(perform);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn support_markdown(&self, verb: StepVerb) -> String {
@@ -319,7 +496,10 @@ impl Language {
     #[must_use]
     pub fn prepare_rename(&self, path: &Path, position: Position) -> Option<PrepareRename> {
         let occurrence = self.symbol_at(path, position)?;
-        if matches!(occurrence.key, SymbolKey::Play(_)) {
+        if matches!(
+            occurrence.key,
+            SymbolKey::Play(_) | SymbolKey::Actor(_) | SymbolKey::Group(_)
+        ) {
             return None;
         }
         Some(PrepareRename {
@@ -340,6 +520,9 @@ impl Language {
             .ok_or_else(|| "no renameable symbol at this position".to_string())?;
         if matches!(occurrence.key, SymbolKey::Play(_)) {
             return Err("plays are renamed by their file".to_string());
+        }
+        if matches!(occurrence.key, SymbolKey::Actor(_) | SymbolKey::Group(_)) {
+            return Err("actors and groups are renamed in impresario.devices.config".to_string());
         }
         validate_name(new_name)?;
         let mut edit = WorkspaceEdit::default();
@@ -756,6 +939,26 @@ impl Language {
         }
         None
     }
+}
+
+fn audience_summary(theatre: &TheatreFile, stage: &StageDecl) -> String {
+    let audience = theatre.stage_audience(stage);
+    if audience.is_empty() {
+        "none".to_string()
+    } else {
+        audience
+            .iter()
+            .map(|platform| platform.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn filter_contains(perform: &PerformDecl, span: &Span) -> bool {
+    perform
+        .filter
+        .as_ref()
+        .is_some_and(|filter| filter.actors.iter().any(|actor| actor.span == *span))
 }
 
 fn doc_line_path(_doc: &Doc<'_>, _line: u32, path: PathBuf) -> PathBuf {
