@@ -130,7 +130,7 @@ describe("Impresario standalone extension", function () {
       .flatMap((hover) => hover.contents)
       .map((content) => (typeof content === "string" ? content : content.value))
       .join("\n");
-    for (const needle of ["**Fill**", "stage in theatre `Auth`", "4 references"]) {
+    for (const needle of ["**Fill**", "implementation(s)", "Auth", "4 references"]) {
       assert.ok(
         markdown.includes(needle),
         `hover lacks ${JSON.stringify(needle)}: ${markdown}`
