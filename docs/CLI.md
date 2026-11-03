@@ -76,11 +76,18 @@ impresario rm <id>                       # remove a finished job's state and log
 
 **Selectors** are repeatable and combine as documented in `docs/DSL.md` /
 `docs/CONFIG.md`: `--play` (file, directory, glob or bare name), `--act`,
-`--tag`, `--exclude-tag`, `--device` (repeatable or `all`), `--platform`,
-`--app`, `--var K=V`, `--arg ACT.PARAM=VALUE`, `--timeout`, `--retries`,
+`--tag`, `--exclude-tag`, `--device` (visible alias `--actor`; repeatable,
+`all`, a configured device name, or `@group`), `--platform`, `--app`,
+`--var K=V`, `--arg ACT.PARAM=VALUE`, `--timeout`, `--retries`,
 `--unverifiable fail|warn`, `--reporter`, `--fail-fast`, `--only-failed`.
 `--exclude-tag` wins over `--tag`. Inline platform filtering treats an act
 stage with no explicit platform restriction as applicable (I-129).
+
+`@group` references expand recursively from the top-level `groups:` map in
+`impresario.devices.config`; unknown groups and cycles fail before any device
+is leased. The play-level/act-level `Actors:` list and `Perform For/Except`
+use the same expansion. Selecting a group does not force every member to run:
+each play still intersects the selected devices with its effective actors.
 
 `--unverifiable` overrides `unverifiable_policy` for one run. Probes (`Check:
 Showing`, `Check: Player`) are tri-state: a claim that cannot reach the required

@@ -5,19 +5,24 @@
 
 mod common;
 
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use common::{
     build_test_plan, build_test_plan_with, device, exec_options, test_config, with_app_reset,
-    TestAgent, PLAY_BASIC, PLAY_HANG, PLAY_RECONNECT, PLAY_SHOT, PLAY_TAGGED, PLAY_TWO_ACTS,
+    TestAgent, PLAY_BASIC, PLAY_HANG, PLAY_RECONNECT, PLAY_SHOT, PLAY_TAGGED, PLAY_TWO_ACTS, SCENE,
+    THEATRE,
 };
 use impresario_clients::log::{LogLevel, LogRecord};
 use impresario_clients::testing::{MockAgentBuilder, MockScript};
 use impresario_core::command::WireErrorCode;
-use impresario_core::config::AppReset;
+use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
+use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::platforms::Platform;
+use impresario_core::workspace::Workspace;
 use impresario_master::exec::{execute, ExecOutcome};
-use impresario_master::plan::Selection;
+use impresario_master::plan::{self, ExecutionPlan, PlanInput, Selection};
 use impresario_master::report::{
     ActReport, AttemptReport, DeviceReport, RunReport, RunStatus, Status,
 };
@@ -96,6 +101,47 @@ async fn run_play_in(
     execute(&plan, &options).await
 }
 
+/// Compile a play with an explicit multi-device actor/group view. The shared
+/// `build_test_plan` helper intentionally has no groups, so actor E2E tests
+/// build their plan directly.
+fn build_actor_plan(
+    config: &ImpresarioConfig,
+    devices: &[DeviceConfig],
+    groups: &BTreeMap<String, Vec<String>>,
+    play_source: &str,
+) -> ExecutionPlan {
+    let scene = parse_scene(SCENE, Path::new("scenes/TestScreen.scene"))
+        .ast
+        .expect("test scene parses");
+    let theatre = parse_theatre(THEATRE, Path::new("theatres/test.theatre"))
+        .ast
+        .expect("test theatre parses");
+    let play = parse_play(play_source, Path::new("plays/actors.play"))
+        .ast
+        .expect("test play parses");
+    let workspace = Workspace {
+        scenes: vec![scene],
+        theatres: vec![theatre],
+        plays: vec![play.clone()],
+    };
+    plan::build_plan(&PlanInput {
+        config,
+        workspace: &workspace,
+        base: Path::new("."),
+        devices,
+        all_devices: devices,
+        groups,
+        apps: &[],
+        cli_app: None,
+        plays: std::slice::from_ref(&play),
+        selection: &Selection::default(),
+        cli_vars: &BTreeMap::new(),
+        cli_args: &BTreeMap::new(),
+        cli_timeout: None,
+    })
+    .expect("actor plan builds")
+}
+
 #[tokio::test]
 async fn passing_play_exits_zero() {
     let agent = TestAgent::start(MockAgentBuilder::new());
@@ -133,6 +179,55 @@ async fn passing_play_exits_zero() {
     assert_eq!(agent.state.sessions(), 1);
     assert_eq!(agent.state.shutdowns(), 1);
     assert!(!options.run_dir().join("screenshots").exists());
+}
+
+#[tokio::test]
+async fn actor_groups_and_for_except_send_only_the_selected_stages() {
+    let first = TestAgent::start(MockAgentBuilder::new());
+    let second = TestAgent::start(MockAgentBuilder::new());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let config = test_config("");
+    let devices = vec![
+        device("web1", &first.address),
+        device("web2", &second.address),
+    ];
+    let groups = BTreeMap::from([(
+        "both".to_string(),
+        vec!["web1".to_string(), "web2".to_string()],
+    )]);
+    let play_source = r#"Play: Actors
+Actors: @both
+
+Act: Split
+    Perform For [web1]: First
+    Perform Except [web1]: Second
+"#;
+    let plan = build_actor_plan(&config, &devices, &groups, play_source);
+
+    let stages = |index: usize| {
+        plan.devices[index].plays[0].acts[0]
+            .stages
+            .iter()
+            .map(|stage| stage.name.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(stages(0), ["First"]);
+    assert_eq!(stages(1), ["Second"]);
+
+    let options = exec_options(&temp, config, "run-actors");
+    let outcome = execute(&plan, &options).await;
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.report.status, RunStatus::Passed);
+    assert_eq!(
+        device_of(&outcome.report, "web1").plays[0].acts[0].name,
+        "Split"
+    );
+    assert_eq!(
+        device_of(&outcome.report, "web2").plays[0].acts[0].name,
+        "Split"
+    );
+    assert_eq!(kinds(&first), "validate_check,run_action");
+    assert_eq!(kinds(&second), "validate_check");
 }
 
 #[tokio::test]

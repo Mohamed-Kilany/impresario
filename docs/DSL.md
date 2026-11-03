@@ -45,8 +45,9 @@ diagnostic has a stable code documented in [ERRORS.md](ERRORS.md).
   scenes and pieces (warning `IMP-DSL-020`).
 - **Free text** (`Play:`, `Description:`, `Act:`, `Stage:` values): the rest
   of the line, trimmed, 1..=200 characters.
-- **Keywords are case-sensitive**: `Scene Platforms Play Description App Var Act
-  Tags Theatre Stage Timeout Perform Examples Action Check`.
+- **Keywords are case-sensitive**: `Scene Platforms Play Description App Actors
+  Audience Var Act Tags Theatre Stage Timeout Perform For Except Examples
+  Action Check`.
 
 ---
 
@@ -123,20 +124,39 @@ form in a play — it is rejected with `IMP-DSL-005`.
 
 Structure:
 
-- Depth 0: `Play`, `Description`, `App`, `Var`, `Act`, `Tags`, `Platforms`.
-- Depth 1 (inside an Act): `Examples` and `Perform`.
+- Depth 0: `Play`, `Description`, `App`, `Tags`, `Actors`, `Var`, `Act`.
+- Depth 1 (inside an Act): `Tags`, `Actors`, `Platforms`, `Examples` and
+  `Perform`.
 - `Play:` is the first non-comment line. `Description:` may follow directly.
   `App: <name>` may follow `Play:`/`Description:` and must precede the first
   `Var:`; it binds the play to an app from `impresario.apps.config` (or the
   global layer). `--app` overrides it; two selected plays binding different
   apps is `IMP-APP-004` unless `--app` resolves it.
+- Play-level `Tags:` and `Actors:` follow `App:` in either order, before the
+  first `Var:`/`Act:`. Act-level `Tags:` and `Actors:` must directly follow
+  the `Act:` line, in either order; `Platforms:` follows them.
 - `Var:` declarations follow before the first `Act:`.
-- `Tags:` and `Platforms:` must directly follow their `Act:` line.
 - An Act has at least one `Perform:` call. Act names are unique within the
   play (`IMP-DSL-016`).
 - `Tags:` is a comma list of `[a-z0-9_-]+` used by `run --tag/--exclude-tag`.
+  Duplicate tags in one list are `IMP-DSL-049`; a play-level tag list is
+  inherited by every Act, and Act tags are additive.
+- `Actors:` is a comma list of configured device names and/or `@group`
+  references. It sets the default actors for the whole play; an Act-level
+  `Actors:` replaces the play list. An omitted list means every device
+  selected for the run; an explicit `Actors:` line must list at least one
+  actor. The run selection (`--device`, visible alias `--actor`) narrows the
+  set: an actor that is not selected is not planned. Unknown actors/groups are
+  `IMP-DSL-044`; a group cycle is `IMP-DSL-045`; group definitions live under
+  `groups:` in `impresario.devices.config` (nested groups are allowed, see
+  [DEVICES.md](DEVICES.md)).
 - `Platforms:` is a comma list of platform names. When present, the Act runs
   only on devices of those platforms and is reported `skipped` elsewhere.
+- `Perform For [a, @group]: Stage` runs that stage only for the listed actors;
+  `Perform Except [a, @group]: Stage` runs it for every effective actor except
+  them. The two forms cannot be combined, and every filter actor must belong
+  to the Act's effective actor set (`IMP-DSL-047`). A filter on a nested stage
+  `Perform:` is evaluated against the running Act's effective actors.
 - `Var: NAME = 'value'` defines a play variable (a string: interpolation and
   escapes apply). `--var NAME=value` on the command line overrides it. A
   duplicate `Var:` for the same name keeps the **last** declaration (I-04).
@@ -145,13 +165,24 @@ Structure:
 
 ### 3.1 Theatres and stages
 
-Reusable stages live in `.theatre` files. Stage names are globally unique
-across the workspace; theatre names are unique as well. A stage may mix Scene
-blocks and nested `Perform:` calls in source order. `Timeout:` (optional, at
-most once, before the first Scene block) is the default poll timeout for the
-steps of its scene blocks. `Audience:` (optional, theatre or stage level) is a
-comma list of platforms, or `cross-platform`, that narrows where the stage is
-available. The old stage-level `Platforms:` spelling is rejected.
+Reusable stages live in `.theatre` files. Theatre names are unique across the
+workspace. A stage name is an implicit interface: several theatres may
+implement `Stage: Open` when their audiences do not overlap (`IMP-DSL-040`),
+and every implementation of that name must have the same parameter signature
+(`IMP-DSL-041`). A stage may mix Scene blocks and nested `Perform:` calls
+in source order. `Timeout:` (optional, at most once, before the first Scene
+block) is the default poll timeout for the steps of its scene blocks.
+`Audience:` (optional, theatre or stage level) is a comma list of platforms,
+or `cross-platform` (alias `all`), that narrows where the stage is available.
+An omitted theatre audience means every platform. An omitted stage audience
+inherits its theatre's audience; `cross-platform`/`all` on a stage is parsed
+as an empty list and therefore also inherits rather than widening. Matching is
+**exact**: `webos` does not imply `web`. A stage may only narrow its theatre's
+audience; repeating a platform or widening the theatre's audience is
+`IMP-DSL-046` (`IMP-DSL-004` for an unknown platform name). Every effective
+actor after `For`/`Except` must have an implementation of the stage for its
+platform, otherwise validation reports `IMP-DSL-042` before any device is
+touched. The old stage-level `Platforms:` spelling is rejected.
 
 ```text
 Theatre: User Authentication Feature stages
@@ -196,8 +227,9 @@ Platforms: android, ios, webos
   default. `Perform: Stage(name = 'value', ...)` binds parameters by name.
 - A stage reference may be written unqualified (`Login`) or
   theatre-qualified (`Authentication.Login`); an exact stage name containing
-  a dot wins, otherwise the theatre and stage must both exist. Stage names
-  remain globally unique, so qualification is for readability only (I-117).
+  a dot wins, otherwise the theatre and stage must both exist. One stage name
+  may have several implementations with disjoint audiences; qualification
+  selects a particular theatre's implementation when needed (I-117).
 - `${param.NAME}` interpolates a stage/Act parameter. `${example.NAME}`
   interpolates the current `Examples:` cell (play Acts only). `${var.NAME}`
   and `${env.NAME}` work as before.
@@ -206,7 +238,7 @@ Platforms: android, ios, webos
 - A stage called from another stage sees its own parameters; arguments are
   checked for unknown names (`IMP-DSL-032`) and missing required parameters
   (`IMP-DSL-037`). Cycles (`IMP-DSL-034`) and nesting deeper than 64
-  (`IMP-DSL-041`) are rejected before any device is touched.
+  (`IMP-DSL-052`) are rejected before any device is touched.
 - A stage whose referenced scene does not apply to the current device is
   skipped as a whole; no partial stage prefix runs.
 - Interpolation is defined for quoted strings only: action text, `Perform:`
@@ -263,21 +295,34 @@ header-row    = "|" , text , { "|" , text } , "|" , EOL ;
 data-row      = "|" , text , { "|" , text } , "|" , EOL ;
 scene-table   = table ;  (* first header cell is "Piece", then platform keys *)
 
-theatre-file  = "Theatre:" , text , EOL , [ "Description:" , text , EOL ] , stage , { stage } ;
+theatre-file  = "Theatre:" , text , EOL , { theatre-option } , stage , { stage } ;
+theatre-option= audience-line | tags-line ;  (* each at most once *)
 stage         = "Stage:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
-              , INDENT , [ "Timeout:" , duration , EOL ]
+              , INDENT , { stage-option }
               , { ( scene-block | perform-line ) } , DEDENT ;
+stage-option  = ( "Description:" , text , EOL ) | audience-line | tags-line
+              | ( "Timeout:" , duration , EOL ) ; (* each at most once *)
 param         = ident , [ "=" , string ] ;
-perform-line  = "Perform:" , text , [ "(" , argument , { "," , argument } , ")" ] , EOL ;
+perform-line  = "Perform:" , text , [ "(" , argument , { "," , argument } , ")" ] , EOL
+              | "Perform" , ( "For" | "Except" ) , "[" , actor-list , "]" , ":" , text
+                , [ "(" , argument , { "," , argument } , ")" ] , EOL ;
 argument      = ident , "=" , string ;
+actor-list    = actor , { "," , actor } ;
+actor         = ident | ( "@" , ident ) ;
+tag-list      = tag , { "," , tag } ;
+audience-line = "Audience:" , ( "cross-platform" | "all" | platform , { "," , platform } ) , EOL ;
+tags-line     = "Tags:" , tag-list , EOL ;
 
-play-file     = "Play:" , text , EOL , [ "Description:" , text , EOL ] , [ "App:" , ident , EOL ] , { var-decl } , act , { act } ;
+play-file     = "Play:" , text , EOL , [ "Description:" , text , EOL ] , [ "App:" , ident , EOL ]
+              , { play-option } , { var-decl } , act , { act } ;
+play-option   = tags-line | ( "Actors:" , actor-list , EOL ) ; (* each at most once *)
 var-decl      = "Var:" , ident , "=" , string , EOL ;
 act           = "Act:" , text , [ "(" , param , { "," , param } , ")" ] , EOL
-              , [ "Tags:" , tag , { "," , tag } , EOL ]
+              , { act-option }
               , [ platforms-line ]
               , [ examples ]
               , perform-line , { perform-line } ;
+act-option    = tags-line | ( "Actors:" , actor-list , EOL ) ; (* each at most once *)
 examples      = "Examples:" , EOL , INDENT , table , DEDENT ;
 
 scene-block   = "Scene:" , ident , EOL , INDENT , step , { step } , DEDENT ;
@@ -321,8 +366,9 @@ piece        = ident ;
 The table header and separator cells may be padded for readability; the
 formatter pads them to display width. Every data row must have the same
 number of cells (`IMP-DSL-039`); duplicate columns are `IMP-DSL-038` and an
-unknown `${example.X}` column is `IMP-DSL-040`. A stage/theatre name defined
-twice is `IMP-DSL-030`/`IMP-DSL-033`.
+unknown `${example.X}` column is `IMP-DSL-051`. A duplicate theatre name is
+`IMP-DSL-033`; overlapping stage implementations are `IMP-DSL-040` and
+signature mismatches are `IMP-DSL-041`.
 
 An unknown verb is `IMP-DSL-010` (with a hint); an unknown key name is
 `IMP-DSL-018`. `tmo` is not allowed on `key`, `back`, `wait`, `screenshot`
@@ -441,20 +487,20 @@ Errors prevent execution; lints are warnings:
 | `IMP-DSL-019` | lint: fixed wait (prefer a check with a timeout) |
 | `IMP-DSL-020` | lint: scene/piece name is not UpperCamelCase |
 | `IMP-DSL-021` | lint: scene name does not match the file name |
-| `IMP-DSL-042` | lint: scene is never used by a stage |
-| `IMP-DSL-043` | lint: piece is never used by a step |
-| `IMP-DSL-044` | lint: stage is never performed by an Act |
-| `IMP-DSL-045` | lint: theatre has no stage reachable from an Act |
-| `IMP-DSL-046` | lint: duplicate `Audience:` declaration (the last one wins) |
+| `IMP-DSL-043` | lint: near-duplicate tag (case/separator variant) |
+| `IMP-DSL-053` | lint: scene is never used by a stage |
+| `IMP-DSL-054` | lint: piece is never used by a step |
+| `IMP-DSL-055` | lint: stage is never performed by an Act |
+| `IMP-DSL-056` | lint: theatre has no stage reachable from an Act |
 | `IMP-DSL-057` | lint: variable is never referenced |
-| `IMP-DSL-047` | lint: `Examples:` column is never used |
-| `IMP-DSL-048` | lint: duplicate `Var:` declaration (the last one wins) |
-| `IMP-DSL-049` | lint: Act without `Platforms:` uses a piece with no selector for a configured platform (add `Platforms:` or selectors) |
-| `IMP-DSL-050` | lint: required stage parameter is omitted by every `Perform:` call |
+| `IMP-DSL-058` | lint: `Examples:` column is never used |
+| `IMP-DSL-059` | lint: duplicate `Var:` declaration (the last one wins) |
+| `IMP-DSL-060` | lint: Act without `Platforms:` uses a piece with no selector for a configured platform (add `Platforms:` or selectors) |
+| `IMP-DSL-061` | lint: required stage parameter is omitted by every `Perform:` call |
 
-The “Act without `Platforms:` that uses a piece unavailable on a configured
-platform” rule is enforced as the existing per-platform `IMP-DSL-012` error,
-which is stronger than a lint and names the device/platform.
+The "Act without `Platforms:` that uses a piece unavailable on a configured
+platform" rule is also enforced as the per-platform `IMP-DSL-012` error,
+which is stronger than the lint and names the device/platform.
 
 The complete code catalog (including the configuration and runtime codes) is
 in [ERRORS.md](ERRORS.md). Examples for every code live in the parser test

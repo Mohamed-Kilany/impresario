@@ -14,6 +14,8 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 | `IMP-CFG-004` | duplicate device name | `impresario-core::config` |
 | `IMP-CFG-005` | invalid device address for its type | `impresario-core::config` |
 | `IMP-CFG-006` | duplicate app name (within the merged app layers) | `impresario-core::apps` |
+| `IMP-CFG-007` | a group references an unknown device or group | `impresario-core::config` |
+| `IMP-CFG-008` | a group membership cycle | `impresario-core::config` |
 
 ## Apps (`IMP-APP-*`)
 
@@ -78,31 +80,45 @@ overrides.
 | `IMP-DSL-037` | required stage parameter is not supplied | `Stage: Fill(user)` called as `Fill()` |
 | `IMP-DSL-038` | duplicate `Examples:` column | `| user | user |` |
 | `IMP-DSL-039` | `Examples:` row has a different cell count than the header | header 2 cells, row 3 cells |
-| `IMP-DSL-040` | unknown `${example.X}` column | `X` not in the Act's `Examples:` header |
-| `IMP-DSL-041` | stage nesting deeper than 64 | recursive stage composition |
-| `IMP-DSL-042` | lint: scene is never used by a stage | unused `.scene` |
-| `IMP-DSL-043` | lint: piece is never used by a step | unused table row |
-| `IMP-DSL-044` | lint: stage is never reachable from an Act | unreferenced `.theatre` stage |
-| `IMP-DSL-045` | lint: theatre has no stage reachable from an Act | unreferenced theatre |
-| `IMP-DSL-046` | lint: duplicate `Audience:` declaration (last wins) | two `Audience:` lines |
+| `IMP-DSL-040` | duplicate stage implementation for an overlapping audience/platform | two theatres implement `Stage: Open` for `web` |
+| `IMP-DSL-041` | implementations of one stage disagree on parameter names/defaults | `Stage: Open(user)` and `Stage: Open(account)` |
+| `IMP-DSL-042` | a stage has no implementation for an effective actor's platform | `Perform: TvOnly` on an Android actor |
+| `IMP-DSL-043` | lint: near-duplicate tag (case/separator variant) | `smoke` and `Smoke` |
+| `IMP-DSL-044` | unknown actor/group, or an invalid actor reference | `Actors: tv1, missing` |
+| `IMP-DSL-045` | actor group membership cycle | `@a -> @b -> @a` |
+| `IMP-DSL-046` | duplicate/invalid audience, or a stage audience outside its theatre | `Audience: web, web`; stage `Audience: ios` under theatre `Audience: web` |
+| `IMP-DSL-047` | invalid `Perform For/Except`: syntax, or an actor outside the Act's effective actors | `Perform For [tv2]: Open` when the Act actors are `tv1` |
+| `IMP-DSL-048` | duplicate actor/group in one `Actors:`/filter list | `Actors: tv1, tv1` |
+| `IMP-DSL-049` | duplicate tag in one `Tags:` list | `Tags: smoke, smoke` |
+| `IMP-DSL-051` | unknown `${example.X}` column | `X` not in the Act's `Examples:` header |
+| `IMP-DSL-052` | stage nesting deeper than 64 | recursive stage composition |
+| `IMP-DSL-053` | lint: scene is never used by a stage | unused `.scene` |
+| `IMP-DSL-054` | lint: piece is never used by a step | unused table row |
+| `IMP-DSL-055` | lint: stage is never reachable from an Act | unreferenced `.theatre` stage |
+| `IMP-DSL-056` | lint: theatre has no stage reachable from an Act | unreferenced theatre |
 | `IMP-DSL-057` | lint: variable is never referenced | unused `Var:` |
-| `IMP-DSL-047` | lint: `Examples:` column is never used | column not bound to a parameter or `${example.*}` |
-| `IMP-DSL-048` | lint: duplicate `Var:` declaration (last wins) | two `Var: USER` lines |
-| `IMP-DSL-049` | lint: Act has no `Platforms:` but a used piece has no selector for a configured platform | Android-only piece in an Act planned for web and Android |
-| `IMP-DSL-050` | lint: required stage parameter is omitted by every `Perform:` call | `Stage: Fill(user)` called as `Perform: Fill` everywhere |
+| `IMP-DSL-058` | lint: `Examples:` column is never used | column not bound to a parameter or `${example.*}` |
+| `IMP-DSL-059` | lint: duplicate `Var:` declaration (last wins) | two `Var: USER` lines |
+| `IMP-DSL-060` | lint: Act has no `Platforms:` but a used piece has no selector for a configured platform | Android-only piece in an Act planned for web and Android |
+| `IMP-DSL-061` | lint: required stage parameter is omitted by every `Perform:` call | `Stage: Fill(user)` called as `Perform: Fill` everywhere |
 
 ## Notes
 
-- `IMP-DSL-019..021` and `IMP-DSL-042..050` are warnings; everything else is an error.
-- `IMP-DSL-049` is additive context for `IMP-DSL-012`: the latter still fails the
+- `IMP-DSL-019..021`, `IMP-DSL-043` and `IMP-DSL-053..061` are warnings;
+  everything else is an error.
+- `IMP-DSL-044..048` are the actor/audience family. `IMP-CFG-007`/`008` report
+  the equivalent problems in the `groups:` configuration itself.
+- `IMP-DSL-060` is additive context for `IMP-DSL-012`: the latter still fails the
   step on the affected device, while the warning points at the Act and lists
   every missing piece so the author can add `Platforms:` or selectors.
-- `IMP-DSL-050` is additive context for `IMP-DSL-037`: the first omitted
+- `IMP-DSL-061` is additive context for `IMP-DSL-037`: the first omitted
   argument is the error, and the warning highlights the declaration when no
   call site ever supplies it.
-- `IMP-DSL-012`, `IMP-DSL-013` and `IMP-DSL-017` need the configured devices;
-  they are raised by `validate` per device platform and again by the planner
-  before any device is touched (I-05 in `docs/DECISIONS.md`).
+- The actor/device-dependent parts of `IMP-DSL-012`, `013`, `017`, `042`, `044`,
+  `045` and `047` need the configured devices/groups; they are raised by
+  `validate` and again by the planner before any device is touched (I-05 in
+  `docs/DECISIONS.md`). Their syntax/duplicate counterparts (`046`, `048`,
+  `049`) are structural and can be reported from the text alone.
 - Runtime failures (element not found, check failed, transport errors) use the
   protocol error codes in `proto/impresario/v1/impresario.proto`
   (`ErrorCode`), not the `IMP-*` catalog.

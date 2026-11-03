@@ -24,8 +24,8 @@ handshake → `Shutdown` (no `Session` stream). `devices check` remains an alias
 **Devices and apps are separate** (D-21, TASK-2 §5). A device owns how to reach
 the hardware; an app owns what runs on it.
 
-The public device schema has exactly three fields: an optional `name`, the
-exact product `type`, and the device `ip`.
+The public device schema has exactly three fields per device: an optional
+`name`, the exact product `type`, and the device `ip`.
 
 ```yaml
 # impresario.devices.config (workspace) / ~/.impresario/devices.yaml (global)
@@ -33,9 +33,30 @@ devices:
   - name: living_room_tv   # optional; derived as <type-slug>-<ip> when omitted
     type: webOS            # web | webOS | tizenOS | android | androidtv | iOS | tvOS
     ip: 192.168.1.50
-  - type: android
+  - name: pocket_phone
+    type: android
     ip: 192.168.1.61
+  - type: android
+    ip: 192.168.1.62
+
+# Optional top-level actor groups. Members are device names or nested
+# `@group` references; the workspace group list replaces a global one by name.
+groups:
+  living_room: [living_room_tv]
+  phones: [pocket_phone, @spare_phones]
+  spare_phones: [android-192-168-1-62]
+  all_screens: [@living_room, @phones]
 ```
+
+`groups:` is separate from the three-field device entries. Group names use the
+same rule as device names (`[a-z0-9][a-z0-9_-]{0,62}`). Expansion is recursive
+and de-duplicated; an unknown member is `IMP-CFG-007` and a membership cycle is
+`IMP-CFG-008`. Global and workspace layers merge group-by-group (workspace
+wins), and a group may reference devices or other groups from either layer
+after the merge. Groups are accepted anywhere an actor list is accepted:
+`Actors:`, `Perform For/Except`, `--device @group` and its visible alias
+`--actor @group`. A run selection narrows a play's actor set; members of a
+selected group that the play does not use simply do not run.
 
 Transport, protocol ports, pairing, signing and credential references are
 derived during planning; they are not part of the file:

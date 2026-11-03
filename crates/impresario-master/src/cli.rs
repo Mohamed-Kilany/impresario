@@ -3476,6 +3476,25 @@ mod tests {
     }
 
     #[test]
+    fn select_devices_expands_actor_groups() {
+        let device = |name: &str| {
+            let mut device = DeviceConfig::new(name, Platform::Web, "127.0.0.1");
+            device.connection.serial = Some("web".to_string());
+            device
+        };
+        let devices = vec![device("a"), device("b"), device("c")];
+        let groups = BTreeMap::from([("pair".to_string(), vec!["a".to_string(), "c".to_string()])]);
+
+        let chosen = select_devices_with_groups(&devices, &groups, &["@pair".to_string()])
+            .expect("group expands");
+        assert_eq!(
+            chosen.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+        assert!(select_devices_with_groups(&devices, &groups, &["@missing".to_string()]).is_err());
+    }
+
+    #[test]
     fn play_patterns_are_glob_expanded() {
         let dir = temp_workspace("play-glob");
         assert_eq!(

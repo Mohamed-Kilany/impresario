@@ -2480,5 +2480,5 @@ profiles and a short-id hardware run, hardware-proven pure-Rust pairing
 creation, physical iOS, the one-time local-network prompt, the deeper media
 probes (`Showing`/decoder/DRM/position hook), and hiding the runner in the
 drawer (no supported tvOS API found). The old profiles expire 2026-11-02. The
-actors/groups/audience Phase 2 work is parked, not abandoned, on `master`
-(merged 2026-10-27).
+actors/groups/audience/stage-resolution slice was parked after the 2026-10-27
+merge and is closed by I-162 (2026-11-03); no device work was involved.

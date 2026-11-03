@@ -1,4 +1,5 @@
 {
+  "plays/actors.play": [],
   "plays/broken.play": [
     {
       "code": "IMP-DSL-057",
@@ -53,6 +54,7 @@
       "related": []
     }
   ],
+  "scenes/ActorScreen.scene": [],
   "scenes/Ghost.scene": [
     {
       "code": "IMP-DSL-006",
@@ -131,6 +133,7 @@
       "related": []
     }
   ],
+  "theatres/actors.theatre": [],
   "theatres/auth.theatre": [],
   "theatres/ghost-copy.theatre": [
     {

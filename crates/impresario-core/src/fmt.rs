@@ -223,7 +223,14 @@ fn canonical_keyword(content: &str) -> String {
         return content.trim_end().to_string();
     };
     let token = content.get(..colon).unwrap_or("").trim();
-    if token.eq_ignore_ascii_case("Perform") {
+    // A filtered `Perform For [...]`/`Perform Except [...]` line has the
+    // filter before the colon, so its pre-colon token is not exactly
+    // `Perform`. Let `canonical_perform` handle every Perform spelling and
+    // preserve its existing behavior for unfiltered lines.
+    if token
+        .get(.."Perform".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Perform"))
+    {
         return canonical_perform(content, colon);
     }
     match KEYWORDS
@@ -248,10 +255,14 @@ fn canonical_perform(content: &str, colon: usize) -> String {
         let rest = content.get(colon + 1..).unwrap_or("");
         return format!("Perform:{rest}");
     }
-    let lower = after_keyword.to_ascii_lowercase();
-    let kind = if lower.starts_with("for") {
+    let is_filter = |keyword: &str| {
+        after_keyword
+            .strip_prefix(keyword)
+            .is_some_and(|rest| rest.chars().next().is_some_and(char::is_whitespace))
+    };
+    let kind = if is_filter("For") {
         Some("For")
-    } else if lower.starts_with("except") {
+    } else if is_filter("Except") {
         Some("Except")
     } else {
         None

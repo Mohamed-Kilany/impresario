@@ -1,0 +1,8 @@
+Play: Actors
+Description: actor filters
+App: shop
+Actors: web1, android1
+
+Act: Filtered
+    Perform For [web1]: ActorStage
+    Perform Except [web1]: ActorStage

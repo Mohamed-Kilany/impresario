@@ -1,0 +1,6 @@
+Scene: ActorScreen
+Platforms: cross-platform
+
+| Piece       | web    | android  |
+|-------------|--------|----------|
+| ActorButton | #actor | id:actor |
