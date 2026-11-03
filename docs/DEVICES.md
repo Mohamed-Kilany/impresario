@@ -491,11 +491,10 @@ needs older hardware.
   steps in 1m51s, including long press, D-pad focus, text entry, selection,
   flags, native key log, numpad/media keys and media. No `adb` binary was used.
   Both APKs expose version 1.0.0, the adaptive/legacy launcher icons and
-  `ic_banner`. The 2026-11-03 icon refresh (`run 20261103-065133-f053`)
-  installed the smaller black-backed assets and captured the TCL Google TV
-  Apps row; both tiles render the reduced mark with a black surround. The
-  banner content is 175x130 on opaque black. The .135 unit's vendor Appwatch
-  still removes the stub.
+  `ic_banner`. After the 2026-11-03 fresh install, `run 20261103-065133-f053`
+  captured the TCL Google TV Apps row; both tiles render the reduced mark with
+  a black surround. The banner content is 175x130 on opaque black. The .135
+  unit's vendor Appwatch still removes the stub.
 
 In both TV cases the D-pad verbs (`key`, `focus`, `scroll`) are supported
 through the connector's JS key dispatch; key dispatch and the raw CDP backend
