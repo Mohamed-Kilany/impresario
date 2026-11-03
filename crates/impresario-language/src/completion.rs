@@ -4,6 +4,7 @@
 //! or `Act:` line, and the workspace index. It deliberately does not require
 //! the rest of the file to parse, so it keeps working while the user types.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use impresario_core::keys::RemoteKey;
@@ -100,27 +101,20 @@ impl Language {
                     return self.stage_param_items(path, stage_name.trim());
                 }
             }
-            return self.stage_items();
+            return self.stage_items_for(path, &doc, position, None);
         }
 
-        if let Some(rest) = trimmed
-            .strip_prefix("Perform For [")
-            .or_else(|| trimmed.strip_prefix("Perform Except ["))
-        {
-            let Some((_, after)) = rest.split_once(']') else {
-                return self.actor_items();
-            };
-            let after = after.trim_start();
-            let Some(after) = after.strip_prefix(':') else {
-                return self.actor_items();
-            };
-            let after = after.trim_start();
-            if let Some((stage_name, arguments)) = after.split_once('(') {
-                if !arguments.contains(')') {
-                    return self.stage_param_items(path, stage_name.trim());
-                }
-            }
-            return self.stage_items();
+        if let Some(rest) = trimmed.strip_prefix("Perform For [") {
+            return self.stage_items_after_filter(path, &doc, position, rest, StageFilterKind::For);
+        }
+        if let Some(rest) = trimmed.strip_prefix("Perform Except [") {
+            return self.stage_items_after_filter(
+                path,
+                &doc,
+                position,
+                rest,
+                StageFilterKind::Except,
+            );
         }
 
         if let Some(rest) = trimmed.strip_prefix("Scene:") {
@@ -236,6 +230,189 @@ impl Language {
                 replace: None,
             })
             .collect()
+    }
+
+    fn stage_items_after_filter(
+        &self,
+        path: &Path,
+        doc: &Doc<'_>,
+        position: Position,
+        rest: &str,
+        kind: StageFilterKind,
+    ) -> Vec<CompletionItem> {
+        let Some((actors, after)) = rest.split_once(']') else {
+            return self.actor_items();
+        };
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix(':') else {
+            return self.actor_items();
+        };
+        let after = after.trim_start();
+        if let Some((stage_name, arguments)) = after.split_once('(') {
+            if !arguments.contains(')') {
+                return self.stage_param_items(path, stage_name.trim());
+            }
+        }
+        self.stage_items_for(path, doc, position, Some((kind, actors)))
+    }
+
+    /// Stage completion narrowed by the act's effective actors and the optional
+    /// `Perform For/Except` filter. Stages without any effective implementation
+    /// are omitted; stages missing at least one actor are retained and marked.
+    fn stage_items_for(
+        &self,
+        path: &Path,
+        doc: &Doc<'_>,
+        position: Position,
+        filter: Option<(StageFilterKind, &str)>,
+    ) -> Vec<CompletionItem> {
+        let Some(devices) = self.effective_actor_devices(path, doc, position, filter) else {
+            return self.stage_items();
+        };
+        if devices.is_empty() {
+            return self.stage_items();
+        }
+        let total = devices.len();
+        let mut items = self
+            .index
+            .stages
+            .iter()
+            .filter_map(|(name, info)| {
+                let missing = devices
+                    .iter()
+                    .filter(|device| self.workspace.stage_for(name, device.platform).is_none())
+                    .collect::<Vec<_>>();
+                let covered = total.saturating_sub(missing.len());
+                if covered == 0 {
+                    return None;
+                }
+                let coverage = if missing.is_empty() {
+                    format!("all {total} actor(s)")
+                } else {
+                    format!("partial: {covered}/{total} actors")
+                };
+                let mut documentation = info.description.clone().unwrap_or_default();
+                if !missing.is_empty() {
+                    if !documentation.is_empty() {
+                        documentation.push_str("\n\n");
+                    }
+                    documentation.push_str("Missing stage implementations for: ");
+                    documentation.push_str(
+                        &missing
+                            .iter()
+                            .map(|device| format!("{} ({})", device.name, device.platform.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                Some(CompletionItem {
+                    label: name.clone(),
+                    kind: "function".to_string(),
+                    detail: Some(format!(
+                        "{} ({}) · {coverage}",
+                        info.signature, info.theatre
+                    )),
+                    insert_text: None,
+                    sort_text: Some(if missing.is_empty() { "0" } else { "1" }.to_string()),
+                    filter_text: None,
+                    documentation: if documentation.is_empty() {
+                        None
+                    } else {
+                        Some(documentation)
+                    },
+                    replace: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.sort_text
+                .cmp(&right.sort_text)
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        items
+    }
+
+    fn effective_actor_devices(
+        &self,
+        path: &Path,
+        doc: &Doc<'_>,
+        position: Position,
+        filter: Option<(StageFilterKind, &str)>,
+    ) -> Option<Vec<&crate::model::DeviceInfo>> {
+        let act_name = enclosing_act(doc, position.line)?;
+        let play = self.play(path)?;
+        let act = play
+            .acts
+            .iter()
+            .find(|candidate| candidate.name == act_name)?;
+        let references = play.effective_actors(act);
+        let mut effective = BTreeSet::new();
+        if references.is_empty() {
+            effective.extend(self.devices.iter().map(|device| device.name.clone()));
+        } else {
+            for named in references {
+                self.expand_actor_name_into(&named.name, &mut effective, &mut Vec::new());
+            }
+        }
+        if effective.is_empty() {
+            return None;
+        }
+        if let Some((kind, actors)) = filter {
+            let mut selected = BTreeSet::new();
+            for reference in actors.split(',') {
+                let reference = reference.trim();
+                if !reference.is_empty() {
+                    self.expand_actor_name_into(reference, &mut selected, &mut Vec::new());
+                }
+            }
+            if selected.is_empty() {
+                return None;
+            }
+            match kind {
+                StageFilterKind::For => effective.retain(|actor| selected.contains(actor)),
+                StageFilterKind::Except => effective.retain(|actor| !selected.contains(actor)),
+            }
+        }
+        let act_platforms = act
+            .platforms
+            .iter()
+            .filter_map(|named| named.name.parse::<Platform>().ok())
+            .collect::<BTreeSet<_>>();
+        let devices = self
+            .devices
+            .iter()
+            .filter(|device| {
+                effective.contains(&device.name)
+                    && (act_platforms.is_empty() || act_platforms.contains(&device.platform))
+            })
+            .collect::<Vec<_>>();
+        if devices.is_empty() {
+            None
+        } else {
+            Some(devices)
+        }
+    }
+
+    fn expand_actor_name_into(
+        &self,
+        reference: &str,
+        out: &mut BTreeSet<String>,
+        stack: &mut Vec<String>,
+    ) {
+        if let Some(group) = reference.strip_prefix('@') {
+            if stack.iter().any(|item| item == group) {
+                return;
+            }
+            if let Some(members) = self.groups.get(group) {
+                stack.push(group.to_string());
+                for member in members {
+                    self.expand_actor_name_into(member, out, stack);
+                }
+                stack.pop();
+            }
+        } else if self.devices.iter().any(|device| device.name == reference) {
+            out.insert(reference.to_string());
+        }
     }
 
     fn stage_param_items(&self, path: &Path, stage_name: &str) -> Vec<CompletionItem> {
@@ -816,6 +993,12 @@ fn selector_prefix_items(key: Platform) -> Vec<CompletionItem> {
         .iter()
         .map(|prefix| simple(*prefix, "enumMember"))
         .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StageFilterKind {
+    For,
+    Except,
 }
 
 fn extension(path: &Path) -> &str {

@@ -61,9 +61,12 @@ the DSL/CLI/DEVICES/ERRORS documentation now cover it. CI run `41614462116` at
 follow-up editor slice (I-163/I-164) passes `groups:` into LSP/WASM diagnostics,
 adds actor/group/audience/`For`/`Except` completion, and adds actor/group
 hover plus stage implementation/audience hover; CI run `41629361789` at
-`ed16a23` passed all five jobs (Rust, Android, editor, Apple, Windows). Full
-section 10 code-action, code-lens, TUI and MCP parity remains open. The next
-priority is the
+`ed16a23` passed all five jobs (Rust, Android, editor, Apple, Windows). The
+stage code-lens slice (implementation count and audience coverage) passed CI
+run `41635032282` at `62cb329`, again all five jobs. Full section 10
+code-action, TUI and MCP parity remains open; actor-aware stage completion
+filtering and coverage quick-fixes are the next editor slice. The next
+priority after that is the
 remaining deferred hardware items (HD-1/HD-2 deeper
 probes, HD-5 USB, HD-6 non-Windows Chromium, HD-8 four-device rerun). Before
 another Apple TV run, refresh the Apple signing profiles, which expire

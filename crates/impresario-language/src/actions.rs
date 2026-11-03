@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use impresario_core::ast::{ActDecl, ActorFilterKind, PerformDecl, PlayFile, StageItem};
 use impresario_core::diag::suggest;
+use impresario_core::platforms::Platform;
 use impresario_core::span::Span;
 
 use crate::diagnostics::DiagnosticInfo;
@@ -180,12 +182,14 @@ impl Language {
                     }
                 }
             }
-            "IMP-DSL-042" | "IMP-DSL-043" | "IMP-DSL-044" | "IMP-DSL-045" | "IMP-DSL-046"
-            | "IMP-DSL-047" => {
+            "IMP-DSL-042" => {
+                self.coverage_actions(path, doc, diagnostic, actions);
+            }
+            "IMP-DSL-043" | "IMP-DSL-044" | "IMP-DSL-045" | "IMP-DSL-046" | "IMP-DSL-047" => {
                 let mut edit = WorkspaceEdit::default();
-                if matches!(diagnostic.code.as_str(), "IMP-DSL-042" | "IMP-DSL-045") {
+                if diagnostic.code == "IMP-DSL-045" {
                     edit.delete_files.push(path.display().to_string());
-                } else if matches!(diagnostic.code.as_str(), "IMP-DSL-044") {
+                } else if diagnostic.code == "IMP-DSL-044" {
                     delete_block(doc, path, line, &mut edit);
                 } else {
                     edit.add(TextEdit {
@@ -300,6 +304,130 @@ impl Language {
         })
     }
 
+    fn coverage_actions(
+        &self,
+        path: &Path,
+        doc: &Doc<'_>,
+        diagnostic: &DiagnosticInfo,
+        actions: &mut Vec<CodeAction>,
+    ) {
+        let names = quoted_names(&diagnostic.message);
+        let Some(stage) = names.first() else {
+            return;
+        };
+        let Some(actor) = names.get(1) else {
+            return;
+        };
+        let Some(platform) = names.get(2) else {
+            return;
+        };
+        if let Some(action) =
+            self.create_stage_implementation_action(path, stage, platform, diagnostic)
+        {
+            actions.push(action);
+        }
+        let line = diagnostic.span.line;
+        if let Some(perform) = self.coverage_perform(path, line, stage) {
+            if let Some(action) = add_except_action(doc, path, perform, actor, diagnostic) {
+                actions.push(action);
+            }
+        }
+        if let Some(play) = self.play(path) {
+            if let Some(act) = play.acts.iter().find(|act| {
+                act.performs
+                    .iter()
+                    .any(|perform| perform.stage_span.line == line && perform.stage_name == *stage)
+            }) {
+                if let Some(action) = remove_actor_action(play, act, doc, path, actor, diagnostic) {
+                    actions.push(action);
+                }
+            }
+        }
+    }
+
+    fn coverage_perform(&self, path: &Path, line: usize, stage_name: &str) -> Option<&PerformDecl> {
+        for play in &self.workspace.plays {
+            if play.path != path {
+                continue;
+            }
+            for act in &play.acts {
+                if let Some(perform) = act.performs.iter().find(|perform| {
+                    perform.stage_span.line == line && perform.stage_name == stage_name
+                }) {
+                    return Some(perform);
+                }
+            }
+        }
+        for theatre in &self.workspace.theatres {
+            if theatre.path != path {
+                continue;
+            }
+            for stage in &theatre.stages {
+                for item in &stage.items {
+                    if let StageItem::Perform(perform) = item {
+                        if perform.stage_span.line == line && perform.stage_name == stage_name {
+                            return Some(perform);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn create_stage_implementation_action(
+        &self,
+        path: &Path,
+        stage_name: &str,
+        platform_name: &str,
+        diagnostic: &DiagnosticInfo,
+    ) -> Option<CodeAction> {
+        let platform = Platform::ALL
+            .iter()
+            .copied()
+            .find(|platform| platform.as_str() == platform_name)?;
+        let stage = self.index.stage(stage_name)?;
+        let mut theatre_name = format!("{stage_name}{}Theatre", title_case(platform.as_str()));
+        let mut suffix = 2u32;
+        while self.index.theatres.contains_key(&theatre_name) {
+            theatre_name = format!(
+                "{stage_name}{}Theatre{suffix}",
+                title_case(platform.as_str())
+            );
+            suffix += 1;
+        }
+        let mut file_name = format!("{stage_name}.{}.theatre", platform.as_str());
+        let mut file = self.root_for(path).join("theatres").join(&file_name);
+        let mut file_suffix = 2u32;
+        while self.sources.contains_key(&file) {
+            file_name = format!("{stage_name}.{}{file_suffix}.theatre", platform.as_str());
+            file = self.root_for(path).join("theatres").join(&file_name);
+            file_suffix += 1;
+        }
+        Some(CodeAction {
+            title: format!(
+                "Create stage '{}' implementation for {}",
+                stage_name,
+                platform.as_str()
+            ),
+            kind: "quickfix".to_string(),
+            diagnostics: vec![diagnostic.code.clone()],
+            edit: Some(WorkspaceEdit {
+                create_files: vec![CreateFile {
+                    path: file.display().to_string(),
+                    text: format!(
+                        "Theatre: {theatre_name}\nAudience: {}\n\n{}\n    Description: TODO\n",
+                        platform.as_str(),
+                        stage.signature
+                    ),
+                    overwrite: false,
+                }],
+                ..WorkspaceEdit::default()
+            }),
+            command: None,
+        })
+    }
+
     fn extract_action(&self, path: &Path, doc: &Doc<'_>, from: u32, to: u32) -> Option<CodeAction> {
         if (self.play(path).is_none() && self.theatre(path).is_none()) || from >= to {
             return None;
@@ -361,6 +489,121 @@ impl Language {
                     || play.acts.iter().any(|act| act.name == name)
             })
     }
+}
+
+fn add_except_action(
+    doc: &Doc<'_>,
+    path: &Path,
+    perform: &PerformDecl,
+    actor: &str,
+    diagnostic: &DiagnosticInfo,
+) -> Option<CodeAction> {
+    let line = u32::try_from(perform.stage_span.line).ok()?;
+    let content = doc.line(line);
+    let (span, new_text) = match &perform.filter {
+        None => {
+            let start = content.find("Perform")?;
+            let col = content.get(..start)?.chars().count() + 1;
+            (
+                Span::new(path, line as usize, col, "Perform".chars().count()),
+                format!("Perform Except [{actor}]"),
+            )
+        }
+        Some(filter) if filter.kind == ActorFilterKind::Except => {
+            if filter.actors.iter().any(|named| named.name == actor) {
+                return None;
+            }
+            let close = content.rfind(']')?;
+            let inside = content.get(content.find('[')? + 1..close)?.trim();
+            let insertion = if inside.is_empty() {
+                actor.to_string()
+            } else {
+                format!(", {actor}")
+            };
+            (
+                Span::new(
+                    path,
+                    line as usize,
+                    content.get(..close)?.chars().count() + 1,
+                    0,
+                ),
+                insertion,
+            )
+        }
+        _ => return None,
+    };
+    let mut edit = WorkspaceEdit::default();
+    edit.add(TextEdit { span, new_text });
+    Some(CodeAction {
+        title: format!("Add `Except [{actor}]`"),
+        kind: "quickfix".to_string(),
+        diagnostics: vec![diagnostic.code.clone()],
+        edit: Some(edit),
+        command: None,
+    })
+}
+
+fn remove_actor_action(
+    play: &PlayFile,
+    act: &ActDecl,
+    doc: &Doc<'_>,
+    path: &Path,
+    actor: &str,
+    diagnostic: &DiagnosticInfo,
+) -> Option<CodeAction> {
+    let source = if act.actors.is_empty() {
+        &play.actors
+    } else {
+        &act.actors
+    };
+    let named = source.iter().find(|named| named.name == actor)?;
+    let remaining = source
+        .iter()
+        .filter(|named| named.name != actor)
+        .map(|named| named.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if remaining.is_empty() {
+        return None;
+    }
+    let mut edit = WorkspaceEdit::default();
+    if act.actors.is_empty() {
+        let header_line = u32::try_from(act.name_span.line).ok()?;
+        let indent = doc
+            .line(header_line)
+            .chars()
+            .take_while(|ch| *ch == ' ')
+            .collect::<String>();
+        edit.add(TextEdit {
+            span: Span::new(path, header_line as usize + 1, 1, 0),
+            new_text: format!("{indent}    Actors: {remaining}\n"),
+        });
+    } else {
+        let line = u32::try_from(named.span.line).ok()?;
+        let indent = doc
+            .line(line)
+            .chars()
+            .take_while(|ch| *ch == ' ')
+            .collect::<String>();
+        edit.add(TextEdit {
+            span: line_span_with_newline(doc, path, line),
+            new_text: format!("{indent}Actors: {remaining}\n"),
+        });
+    }
+    Some(CodeAction {
+        title: format!("Remove actor '{actor}' from act '{}'", act.name),
+        kind: "quickfix".to_string(),
+        diagnostics: vec![diagnostic.code.clone()],
+        edit: Some(edit),
+        command: None,
+    })
+}
+
+fn title_case(value: &str) -> String {
+    let mut chars = value.chars();
+    chars.next().map_or_else(String::new, |first| {
+        format!("{}{}", first.to_ascii_uppercase(), chars.as_str())
+    })
 }
 
 fn did_you_mean(diagnostic: &DiagnosticInfo) -> Option<String> {

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use impresario_core::platforms::Platform;
 use impresario_core::validation::DeviceRef;
 use impresario_language::model::SourceFile;
-use impresario_language::service::Language;
+use impresario_language::service::{CompletionItem, Language};
 use impresario_language::text::Position;
 
 const SCENE: &str = r#"Scene: ActorScene
@@ -92,6 +92,39 @@ fn language_with_play(text: &str) -> Language {
         &[],
         Some(PathBuf::from(".")),
     )
+}
+
+fn two_device_language(play_text: &str) -> Language {
+    let files = files()
+        .into_iter()
+        .map(|mut file| {
+            if file.path == play() {
+                file.text = play_text.to_string();
+            }
+            file
+        })
+        .collect::<Vec<_>>();
+    Language::analyze_with_groups(
+        &files,
+        &[
+            DeviceRef::new("web1", Platform::Web),
+            DeviceRef::new("android1", Platform::Android),
+        ],
+        &BTreeMap::from([(
+            "both".to_string(),
+            vec!["web1".to_string(), "android1".to_string()],
+        )]),
+        &[],
+        Some(PathBuf::from(".")),
+    )
+}
+
+fn play_completion_items(source: &str) -> Vec<CompletionItem> {
+    let offset = source.rfind('|').expect("caret");
+    let mut clean = source.to_string();
+    clean.remove(offset);
+    let position = position_at(&clean, offset);
+    two_device_language(&clean).completion(&play(), position)
 }
 
 fn position_of(text: &str, needle: &str) -> Position {
@@ -181,6 +214,88 @@ fn audience_completion_offers_platforms() {
     );
     assert!(labels.contains(&"web".to_string()), "{labels:?}");
     assert!(labels.contains(&"cross-platform".to_string()), "{labels:?}");
+}
+
+#[test]
+fn stage_completion_marks_actor_coverage_and_honours_filters() {
+    let items = play_completion_items("Play: ActorPlay\nActors: @both\n\nAct: A\n    Perform: |\n");
+    let login = items
+        .iter()
+        .find(|item| item.label == "Login")
+        .expect("stage completion");
+    let detail = login.detail.as_deref().unwrap_or_default();
+    assert!(detail.contains("partial: 1/2 actors"), "{detail}");
+    assert!(
+        login
+            .documentation
+            .as_deref()
+            .unwrap_or_default()
+            .contains("android1"),
+        "{login:?}"
+    );
+
+    let items = play_completion_items(
+        "Play: ActorPlay\nActors: @both\n\nAct: A\n    Perform For [web1]: |\n",
+    );
+    let login = items
+        .iter()
+        .find(|item| item.label == "Login")
+        .expect("filtered stage completion");
+    let detail = login.detail.as_deref().unwrap_or_default();
+    assert!(detail.contains("all 1 actor(s)"), "{detail}");
+}
+
+#[test]
+fn coverage_diagnostics_offer_stage_scaffold_and_actor_fixes() {
+    let source = "Play: ActorPlay\nActors: @both\n\nAct: A\n    Perform: Login\n";
+    let language = two_device_language(source);
+    let actions = language.code_actions(&play(), Position::new(5, 1), Position::new(5, 40));
+    let create = actions
+        .iter()
+        .find(|action| action.title.contains("implementation for android"))
+        .expect("stage implementation quick fix");
+    let created = &create.edit.as_ref().expect("create edit").create_files[0];
+    assert!(
+        created.text.contains("Audience: android"),
+        "{}",
+        created.text
+    );
+    assert!(created.text.contains("Stage: Login"), "{}", created.text);
+
+    let except = actions
+        .iter()
+        .find(|action| action.title == "Add `Except [android1]`")
+        .expect("Except quick fix");
+    let edit = except.edit.as_ref().expect("Except edit");
+    let changes = edit
+        .changes
+        .get(&play().display().to_string())
+        .expect("play edit");
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.new_text.contains("Perform Except [android1]")),
+        "{changes:?}"
+    );
+
+    let source = "Play: ActorPlay\nActors: web1, android1\n\nAct: A\n    Perform: Login\n";
+    let language = two_device_language(source);
+    let actions = language.code_actions(&play(), Position::new(5, 1), Position::new(5, 40));
+    let remove = actions
+        .iter()
+        .find(|action| action.title.contains("Remove actor 'android1'"))
+        .expect("remove actor quick fix");
+    let edit = remove.edit.as_ref().expect("remove edit");
+    let changes = edit
+        .changes
+        .get(&play().display().to_string())
+        .expect("play edit");
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.new_text.contains("Actors: web1")),
+        "{changes:?}"
+    );
 }
 
 #[test]
