@@ -872,6 +872,44 @@ impl Language {
                         ],
                     },
                 });
+                let instances = self.workspace.stage_instances(&stage.name);
+                let implementations = instances
+                    .iter()
+                    .map(|&(theatre, implementation)| {
+                        json!({
+                            "path": theatre.path.display().to_string(),
+                            "line": implementation.name_span.line.saturating_sub(1),
+                            "column": implementation.name_span.col.saturating_sub(1),
+                            "theatre": theatre.name.as_str(),
+                            "audience": audience_summary(theatre, implementation),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let platforms = instances
+                    .iter()
+                    .flat_map(|&(theatre, implementation)| theatre.stage_audience(implementation))
+                    .collect::<BTreeSet<_>>();
+                let arguments = vec![json!(stage.name.as_str()), json!(implementations)];
+                lenses.push(CodeLens {
+                    span: stage.name_span.clone(),
+                    command: Command {
+                        title: format!("{} implementation(s)", instances.len()),
+                        command: "impresario.showStageImplementations".to_string(),
+                        arguments: arguments.clone(),
+                    },
+                });
+                lenses.push(CodeLens {
+                    span: stage.name_span.clone(),
+                    command: Command {
+                        title: format!(
+                            "audience coverage: {}/{} platforms",
+                            platforms.len(),
+                            Platform::ALL.len()
+                        ),
+                        command: "impresario.showStageImplementations".to_string(),
+                        arguments,
+                    },
+                });
             }
         }
         if let Some(scene) = self.scene(path) {

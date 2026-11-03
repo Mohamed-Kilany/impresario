@@ -56,6 +56,14 @@ const TOKEN_TYPES = [
 const TOKEN_MODIFIERS = ["declaration"];
 const LEGEND = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIFIERS);
 
+interface StageImplementation {
+  path: string;
+  line: number;
+  column: number;
+  theatre: string;
+  audience: string;
+}
+
 let client: LanguageClient | undefined;
 let standalone: Standalone | undefined;
 let status: vscode.StatusBarItem | undefined;
@@ -1160,6 +1168,39 @@ function registerCommands(): void {
         terminal.show();
         terminal.sendText(
           `${command} run --play "${file.replace(/"/g, '\\"')}" --act "${act.replace(/"/g, '\\"')}"`
+        );
+      }
+    ),
+    vscode.commands.registerCommand(
+      "impresario.showStageImplementations",
+      async (stage?: string, implementations?: StageImplementation[]) => {
+        if (!stage || !implementations || implementations.length === 0) {
+          return;
+        }
+        const selected = await vscode.window.showQuickPick(
+          implementations.map((implementation) => ({
+            label: implementation.theatre,
+            description: implementation.audience,
+            detail: implementation.path,
+            implementation,
+          })),
+          { placeHolder: `Implementations of ${stage}` }
+        );
+        if (!selected) {
+          return;
+        }
+        const document = await vscode.workspace.openTextDocument(
+          vscode.Uri.file(selected.implementation.path)
+        );
+        const editor = await vscode.window.showTextDocument(document);
+        const position = new vscode.Position(
+          selected.implementation.line,
+          selected.implementation.column
+        );
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter
         );
       }
     ),

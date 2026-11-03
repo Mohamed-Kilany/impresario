@@ -87,6 +87,10 @@ fn scene() -> PathBuf {
     PathBuf::from("scenes/LoginScreen.scene")
 }
 
+fn theatre() -> PathBuf {
+    PathBuf::from("theatres/auth.theatre")
+}
+
 fn caret(text: &str, marker: &str) -> Position {
     let offset = text.find(marker).expect("marker");
     position_at(text, offset)
@@ -398,6 +402,14 @@ fn symbols_folding_tokens_inlay_hints_and_lenses_are_present() {
     assert!(lenses
         .iter()
         .any(|lens| lens.command.command == "impresario.showReferences"));
+    let stage_lenses = language.code_lenses(&theatre());
+    assert!(stage_lenses
+        .iter()
+        .any(|lens| lens.command.title == "1 implementation(s)"));
+    assert!(stage_lenses.iter().any(|lens| {
+        lens.command.title == "audience coverage: 7/7 platforms"
+            && lens.command.command == "impresario.showStageImplementations"
+    }));
     let help = language.workspace_symbols("login");
     assert!(help.iter().any(|symbol| symbol.name == "LoginScreen"));
 }

@@ -32,7 +32,7 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 | **Folding / semantic tokens** | Folding ranges for plays, acts, stages, scenes and tables; semantic tokens for namespaces, functions, properties, variables, classes and keywords. |
 | **Signature help** | Inside `Perform: Stage(`: stage signature, documentation and the active parameter (including defaults). |
 | **Code actions** | Did-you-mean fixes, create missing scene/stage/piece, add a missing platform column, change an unknown stage parameter, make duplicates unique, remove unused declarations, and extract selected steps into a stage. |
-| **Inlay hints / code lenses** | Resolved parameter hints on `Perform:` calls; "Run act ..." and reference-count lenses. |
+| **Inlay hints / code lenses** | Resolved parameter hints on `Perform:` calls; "Run act ..." and reference-count lenses; stage lenses show the implementation count and audience coverage, and open a quick pick of every implementation (theatre, audience and file). |
 | **Unsaved buffers** | Full-sync overlays; an open buffer wins over disk for parsing and for the index - an edited-but-unsaved scene is indexed immediately. |
 | **File watching** | `notify`, debounced 200 ms, recursive: `scenes_dir`, `theatres_dir`, `plays_dir` and the config/devices/apps files. If a directory does not exist yet, its parent is watched until it appears. Editor temp/swap files (`.swp`, `~`, `#...#`, `.tmp`, ...) are ignored. |
 | **Position encoding** | `utf-8` when the client offers it, otherwise `utf-16` (the LSP default). Spans from `impresario-core` are Unicode scalar values and are converted per encoding, surrogate pairs included. |

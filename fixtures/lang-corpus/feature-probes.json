@@ -122,6 +122,11 @@
     "contains": ["Run act Successful Login", "reference(s)"]
   },
   {
+    "op": "codeLenses",
+    "path": "theatres/auth.theatre",
+    "contains": ["implementation(s)", "audience coverage: 7/7 platforms"]
+  },
+  {
     "op": "rangeFormatting",
     "path": "scenes/LoginScreen.scene",
     "start": { "line": 4, "col": 1 },
