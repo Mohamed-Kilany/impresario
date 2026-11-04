@@ -425,7 +425,7 @@ impl CronExpr {
                             return Some(first);
                         }
                     }
-                    LocalResult::Single(_) | LocalResult::Ambiguous(_, _) | LocalResult::None => {}
+                    LocalResult::Single(_) | LocalResult::None => {}
                 }
             }
             local += Duration::minutes(1);

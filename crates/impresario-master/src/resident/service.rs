@@ -946,7 +946,7 @@ fn prune_watcher_reports(base: &Path, watcher: &Watcher) -> std::io::Result<()> 
 }
 
 fn directory_size(path: &Path) -> u64 {
-    let mut total = 0;
+    let mut total = 0_u64;
     let Ok(read) = std::fs::read_dir(path) else {
         return 0;
     };
