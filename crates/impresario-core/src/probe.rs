@@ -98,6 +98,40 @@ impl EvidenceSource {
         }
     }
 
+    /// The documented evidence class of this source (TASK-3 section 3.1).
+    /// This is the strongest class a single observation from the source can
+    /// carry; the reached confidence still depends on corroboration.
+    #[must_use]
+    pub fn evidence_class(&self) -> EvidenceClass {
+        match self {
+            EvidenceSource::HtmlMedia
+            | EvidenceSource::EmeHook
+            | EvidenceSource::AvPlayHook
+            | EvidenceSource::MediaSession
+            | EvidenceSource::AudioPlayback
+            | EvidenceSource::MediaDrm
+            | EvidenceSource::ScreenshotRegion
+            | EvidenceSource::Dom
+            | EvidenceSource::AppHook => EvidenceClass::Authoritative,
+            EvidenceSource::A11yTree | EvidenceSource::NowPlayingUi | EvidenceSource::Other(_) => {
+                EvidenceClass::Heuristic
+            }
+            EvidenceSource::SurfaceFlinger
+            | EvidenceSource::MediaCodec
+            | EvidenceSource::LogcatTag
+            | EvidenceSource::NetFlow
+            | EvidenceSource::LunaMedia
+            | EvidenceSource::DvtSysmon
+            | EvidenceSource::DvtGraphics
+            | EvidenceSource::DvtNetwork
+            | EvidenceSource::Syslog
+            | EvidenceSource::Pcapd
+            | EvidenceSource::AudioSession
+            | EvidenceSource::PlatformLog
+            | EvidenceSource::DecoderLog => EvidenceClass::System,
+        }
+    }
+
     #[must_use]
     pub fn parse(value: &str) -> Self {
         match value {
@@ -137,6 +171,17 @@ pub enum EvidenceClass {
     Heuristic,
     System,
     Authoritative,
+}
+
+impl EvidenceClass {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EvidenceClass::Heuristic => "heuristic",
+            EvidenceClass::System => "system",
+            EvidenceClass::Authoritative => "authoritative",
+        }
+    }
 }
 
 /// The confidence actually reached for a claim.
@@ -941,6 +986,17 @@ impl ProbeSupport {
     pub fn source(&self, source: &EvidenceSource) -> Option<&SourceSupport> {
         self.sources.iter().find(|item| &item.source == source)
     }
+
+    /// The strongest evidence class among the reachable sources.
+    #[must_use]
+    pub fn strongest_class(&self) -> EvidenceClass {
+        self.sources
+            .iter()
+            .filter(|source| source.available)
+            .map(|source| source.source.evidence_class())
+            .max()
+            .unwrap_or(EvidenceClass::Heuristic)
+    }
 }
 
 const COMMON_API_PROPERTIES: &[ProbeProperty] = &[
@@ -1353,6 +1409,34 @@ mod tests {
             assert!(!row.properties.is_empty(), "{} has no properties", platform);
             assert!(!row.sources.is_empty(), "{} has no sources", platform);
         }
+    }
+
+    #[test]
+    fn evidence_sources_expose_classes_and_strongest_source() {
+        assert_eq!(
+            EvidenceSource::HtmlMedia.evidence_class(),
+            EvidenceClass::Authoritative
+        );
+        assert_eq!(
+            EvidenceSource::Dom.evidence_class(),
+            EvidenceClass::Authoritative
+        );
+        assert_eq!(
+            EvidenceSource::MediaDrm.evidence_class(),
+            EvidenceClass::Authoritative
+        );
+        assert_eq!(
+            EvidenceSource::A11yTree.evidence_class(),
+            EvidenceClass::Heuristic
+        );
+        assert_eq!(
+            support(Platform::Web).strongest_class(),
+            EvidenceClass::Authoritative
+        );
+        assert_eq!(
+            support(Platform::Android).strongest_class(),
+            EvidenceClass::Authoritative
+        );
     }
 
     #[test]

@@ -60,7 +60,7 @@ overrides.
 | `IMP-DSL-010` | unknown action verb | `Action: tap => P` |
 | `IMP-DSL-011` | invalid selector for its key | `id:` with no value; android without prefix |
 | `IMP-DSL-012` | piece has no selector for the device platform (after the D-07 fallback chain) | missing `android` selector |
-| `IMP-DSL-013` | action, key or check not supported on the device platform (section 6.1/6.2) | `swipe` on `webos` |
+| `IMP-DSL-013` | action, key or check not supported on the device platform (section 6.1/6.2), including an unsupported probe, DRM provider, `with` property or `source~` option (section 6 and the probe matrix) | `swipe` on `webos`; `Player => Video DRM-enabled FairPlay` on Android; `Showing => Video with source~".m3u8"` on Android |
 | `IMP-DSL-014` | undefined `${var.X}` | `X` not declared by any `Var:` |
 | `IMP-DSL-015` | invalid duration | `0ms`, `11m`, `5x` |
 | `IMP-DSL-016` | duplicate Act/Stage name | two `Stage: Login` under one Act |

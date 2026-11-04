@@ -9,6 +9,7 @@ use impresario_core::ast::{
     StageItem, TheatreFile,
 };
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{self, Confidence};
 use impresario_core::scanner;
 use impresario_core::span::Span;
 use impresario_core::support::{self, Verb};
@@ -464,6 +465,52 @@ impl Language {
                 }
             };
             out.push_str(&format!("| {} | {} |\n", platform.as_str(), verdict));
+        }
+        if let StepVerb::Check(condition) = &verb {
+            if matches!(
+                condition,
+                CheckCondition::Showing(_) | CheckCondition::Player(_)
+            ) {
+                out.push_str(
+                    "\n| Platform | Probe | Evidence class | Expected confidence | Available sources |\n\
+                     |---|---|---|---|---|\n",
+                );
+                for platform in self.platforms() {
+                    let matrix = probe::support(platform);
+                    let supported = match condition {
+                        CheckCondition::Showing(_) => matrix.showing,
+                        CheckCondition::Player(_) => matrix.player,
+                        _ => false,
+                    };
+                    if !supported {
+                        out.push_str(&format!(
+                            "| {} | not supported | — | — | — |\n",
+                            platform.as_str()
+                        ));
+                        continue;
+                    }
+                    let sources = matrix
+                        .sources
+                        .iter()
+                        .filter(|source| source.available)
+                        .map(|source| {
+                            format!(
+                                "{} ({})",
+                                source.source.as_str(),
+                                source.source.evidence_class().as_str()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "| {} | supported | {} | {} | {} |\n",
+                        platform.as_str(),
+                        matrix.strongest_class().as_str(),
+                        Confidence::Corroborated.as_str(),
+                        sources
+                    ));
+                }
+            }
         }
         out.push_str("\nUnsupported combinations are rejected by `IMP-DSL-013`.");
         out

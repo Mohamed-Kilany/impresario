@@ -119,12 +119,61 @@ fn two_device_language(play_text: &str) -> Language {
     )
 }
 
+fn theatre_language(theatre_text: &str) -> Language {
+    let files = files()
+        .into_iter()
+        .map(|mut file| {
+            if file.path == theatre() {
+                file.text = theatre_text.to_string();
+            }
+            file
+        })
+        .collect::<Vec<_>>();
+    Language::analyze_with_groups(
+        &files,
+        &[DeviceRef::new("web1", Platform::Web)],
+        &groups(),
+        &[],
+        Some(PathBuf::from(".")),
+    )
+}
+
 fn play_completion_items(source: &str) -> Vec<CompletionItem> {
     let offset = source.rfind('|').expect("caret");
     let mut clean = source.to_string();
     clean.remove(offset);
     let position = position_at(&clean, offset);
     two_device_language(&clean).completion(&play(), position)
+}
+
+fn theatre_completion_items(source: &str) -> Vec<CompletionItem> {
+    let offset = source.rfind('|').expect("caret");
+    let mut clean = source.to_string();
+    clean.remove(offset);
+    let position = position_at(&clean, offset);
+    let files = files()
+        .into_iter()
+        .map(|mut file| {
+            if file.path == theatre() {
+                file.text = clean.clone();
+            }
+            file
+        })
+        .collect::<Vec<_>>();
+    Language::analyze_with_groups(
+        &files,
+        &[
+            DeviceRef::new("web1", Platform::Web),
+            DeviceRef::new("android1", Platform::Android),
+        ],
+        &BTreeMap::from([(
+            "both".to_string(),
+            vec!["web1".to_string(), "android1".to_string()],
+        )]),
+        &[],
+        Some(PathBuf::from(".")),
+    )
+    .completion(&theatre(), position)
 }
 
 fn position_of(text: &str, needle: &str) -> Position {
@@ -243,6 +292,159 @@ fn stage_completion_marks_actor_coverage_and_honours_filters() {
         .expect("filtered stage completion");
     let detail = login.detail.as_deref().unwrap_or_default();
     assert!(detail.contains("all 1 actor(s)"), "{detail}");
+}
+
+#[test]
+fn check_completion_offers_probe_forms_and_filters_providers() {
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: |\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"Showing"), "{labels:?}");
+    assert!(labels.contains(&"Player"), "{labels:?}");
+    assert!(labels.contains(&"not"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Player => Login |\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"Playing"), "{labels:?}");
+    assert!(labels.contains(&"DRM-enabled"), "{labels:?}");
+    assert!(labels.contains(&"with"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Player => Login DRM-enabled |\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"Widevine"), "{labels:?}");
+    assert!(!labels.contains(&"FairPlay"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Player => Login with |\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"position"), "{labels:?}");
+    assert!(!labels.contains(&"fullscreen"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Player => Login with position>=|\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"30s"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Player => Login with muted=|\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"true"), "{labels:?}");
+    assert!(labels.contains(&"false"), "{labels:?}");
+
+    let items = theatre_completion_items(
+        "Theatre: ActorTheatre\nAudience: web, android\n\nStage: Login\n    Scene: ActorScene\n        Check: Showing => Login with |\n",
+    );
+    let labels = items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"coverage>=50%"), "{labels:?}");
+    assert!(labels.contains(&"decoded"), "{labels:?}");
+    assert!(
+        !labels.iter().any(|label| label.starts_with("source~")),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn unsupported_probe_options_report_imp_dsl_013() {
+    let scene_path = scene();
+    let theatre_path = theatre();
+    let files = vec![
+        SourceFile {
+            path: scene_path,
+            text: "Scene: ActorScene\nPlatforms: web, android\n\n| Piece | web | android |\n|---|---|---|\n| Button | css:#button | id:button |\n".to_string(),
+        },
+        SourceFile {
+            path: theatre_path.clone(),
+            text: "Theatre: ProbeTheatre\nAudience: web, android\n\nStage: Probe\n    Scene: ActorScene\n        Check: Showing => Button with source~\".m3u8\"\n        Check: Player => Button DRM-enabled FairPlay\n        Check: Player => Button with fullscreen\n".to_string(),
+        },
+        SourceFile {
+            path: PathBuf::from("plays/probe.play"),
+            text: "Play: ProbePlay\nActors: web1, android1\n\nAct: A\n    Perform: Probe\n".to_string(),
+        },
+    ];
+    let language = Language::analyze_with_groups(
+        &files,
+        &[
+            DeviceRef::new("web1", Platform::Web),
+            DeviceRef::new("android1", Platform::Android),
+        ],
+        &BTreeMap::new(),
+        &[],
+        Some(PathBuf::from(".")),
+    );
+    let diagnostics = language.diagnostics_for(&theatre_path);
+    let messages = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "IMP-DSL-013")
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages.iter().any(|message| message.contains("source")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains("FairPlay")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("fullscreen")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn probe_check_hover_shows_evidence_class_and_confidence() {
+    let language = theatre_language(
+        "Theatre: ActorTheatre\nAudience: web\n\nStage: Login\n    Scene: ActorScene\n        Check: Showing => Button\n",
+    );
+    let hover = language
+        .hover(&theatre(), Position::new(6, 9))
+        .expect("probe hover");
+    assert!(
+        hover.markdown.contains("Evidence class"),
+        "{}",
+        hover.markdown
+    );
+    assert!(
+        hover.markdown.contains("authoritative"),
+        "{}",
+        hover.markdown
+    );
+    assert!(
+        hover.markdown.contains("corroborated"),
+        "{}",
+        hover.markdown
+    );
 }
 
 #[test]

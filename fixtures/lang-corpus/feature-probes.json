@@ -21,6 +21,13 @@
     "contains": ["UsernameInput", "fallback from web", "android"]
   },
   {
+    "op": "hover",
+    "path": "theatres/actors.theatre",
+    "line": 7,
+    "col": 9,
+    "contains": ["Evidence class", "authoritative", "corroborated"]
+  },
+  {
     "op": "definition",
     "path": "plays/login.play",
     "line": 8,

@@ -1126,6 +1126,19 @@ fn unsupported_step(step: &Step, platform: Platform, device: &str) -> Option<Dia
             }
         },
         StepKind::Check(check) => {
+            if let Some((kind, name)) = unsupported_probe(&check.condition, platform) {
+                return Some(
+                    Diagnostic::error(
+                        Code::DslUnsupportedActionOnPlatform,
+                        format!(
+                            "{kind} '{name}' is not supported on platform '{platform}' \
+                             (device '{device}')"
+                        ),
+                    )
+                    .with_span(check.span.clone())
+                    .with_help("see docs/PARITY.md for the support matrix"),
+                );
+            }
             if support::check_support(platform, check_verb_of(&check.condition)).is_supported() {
                 return None;
             }
@@ -1141,6 +1154,52 @@ fn unsupported_step(step: &Step, platform: Platform, device: &str) -> Option<Dia
                 .with_help("see docs/PARITY.md for the support matrix"),
             )
         }
+    }
+}
+
+/// Probe-matrix details for `IMP-DSL-013`: a supported check can still name a
+/// provider, property or Showing option the platform cannot expose.
+fn unsupported_probe(
+    condition: &CheckCondition,
+    platform: Platform,
+) -> Option<(&'static str, String)> {
+    let matrix = crate::probe::support(platform);
+    match condition {
+        CheckCondition::Showing(showing) => {
+            if !matrix.showing {
+                return Some(("check", "Showing".to_string()));
+            }
+            for option in &showing.options {
+                if matches!(option, crate::ast::ShowingOption::Source { .. })
+                    && !matches!(platform, Platform::Web | Platform::WebOs | Platform::Tizen)
+                {
+                    return Some(("Showing option", "source".to_string()));
+                }
+            }
+            None
+        }
+        CheckCondition::Player(player) => {
+            if !matrix.player {
+                return Some(("check", "Player".to_string()));
+            }
+            if let Some(drm) = &player.drm {
+                if !matrix.drm {
+                    return Some(("check", "Player DRM".to_string()));
+                }
+                if let Some(provider) = drm.provider {
+                    if !matrix.supports_provider(provider) {
+                        return Some(("DRM provider", provider.as_str().to_string()));
+                    }
+                }
+            }
+            for assertion in &player.assertions {
+                if !matrix.supports_property(assertion.property) {
+                    return Some(("player property", assertion.property.as_str().to_string()));
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 

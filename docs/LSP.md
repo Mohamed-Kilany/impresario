@@ -22,9 +22,9 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 
 | Feature | Behaviour |
 |---|---|
-| **Diagnostics** | Every parser and semantic diagnostic of `impresario-core` plus the per-device warnings, published with their stable `IMP-...` codes, related locations and the `impresario` source. Actor and group references are resolved against the configured devices and `groups:`, so `Actors: @group` and `Perform For/Except` do not produce false unknown-actor diagnostics. Debounced 150 ms after `didOpen`/`didChange`/`didSave` and after file-watch bursts. Open buffers carry their document `version`. |
+| **Diagnostics** | Every parser and semantic diagnostic of `impresario-core` plus the per-device warnings, published with their stable `IMP-...` codes, related locations and the `impresario` source. Actor and group references are resolved against the configured devices and `groups:`, so `Actors: @group` and `Perform For/Except` do not produce false unknown-actor diagnostics. `IMP-DSL-013` names the exact unsupported check detail - a DRM provider, a `with` property, a non-web `source~` option or the probe itself - against the effective platform/device. Debounced 150 ms after `didOpen`/`didChange`/`didSave` and after file-watch bursts. Open buffers carry their document `version`. |
 | **Completion** | Computed from the line prefix, the nearest enclosing `Scene:`/`Act:` block and the workspace index; it keeps working while other parts of the file have errors. Trigger characters: `:`, ` `, `'`, `>`. Contexts are listed below. |
-| **Hover** | Piece declarations and piece references show the resolved selector for every platform, including fallback rows. Stages show the signature, every implementation with its theatre, audience and file, description and reference count. Actors show their configured device/platform and groups; inside `Perform For`/`Except`, actors and groups also show the implementation selected for each resolved device. |
+| **Hover** | Piece declarations and piece references show the resolved selector for every platform, including fallback rows. Stages show the signature, every implementation with its theatre, audience and file, description and reference count. Actors show their configured device/platform and groups; inside `Perform For`/`Except`, actors and groups also show the implementation selected for each resolved device. Showing/Player checks add the probe-matrix row for each configured platform: verdict, strongest available evidence class, expected confidence (`corroborated` by default) and the reachable evidence sources. |
 | **Go to definition** | `Scene:` to its declaration, pieces to their table/entry row, `Perform: Stage` and `Theatre.Stage` to the stage declaration, variables/parameters to their declarations. Works for unsaved buffers. A single result is returned as a scalar `Location`; multiple results as an array. |
 | **References / rename** | Workspace-wide references for pieces, scenes, stages, theatres, variables, parameters, actors and groups. Prepare-rename/rename covers pieces, scenes, stages, theatres, variables and parameters; actor/group declarations live in `impresario.devices.config`, so their rename is intentionally not offered in DSL files. Rename returns a `WorkspaceEdit` covering every file. |
 | **Symbols** | Document outline (`Play -> Act -> Perform/Stage -> Scene`, `Theatre -> Stage -> Scene`, `Scene -> Piece`) with full block ranges. Workspace symbols filter all indexed declarations. |
@@ -52,7 +52,7 @@ crate through WASM. `.play`, `.scene` and `.theatre` are equally supported.
 | `Examples:` header row | parameters of every stage performed by the enclosing act, with defaults |
 | `Action: <anything> => ` | pieces of the enclosing scene, sorted, with selector `detail` |
 | `Action: ` (start) | action verbs and `'` string starter; `wait ` offers durations; `app ` offers app operations |
-| `Check: ` | pieces; then `is visible/hidden/enabled/disabled/focused`, `text`, `textContains`, `count`, `timeout`; durations where a timeout is accepted |
+| `Check: ` | pieces; then `Showing`/`Player`/`not` and the classic `is visible/hidden/enabled/disabled/focused`, `text`, `textContains`, `count`, `timeout` forms (a quoted value or count is offered after the keyword). After `Player => Piece`: statuses, `not`, `DRM-enabled/disabled`, `with`, `timeout`; after `DRM-…` only providers supported by every effective platform. After `with`: platform-supported properties (and `not`), typed operators and values/units/enums; after `Showing` options: `coverage>=N%`, `decoded`, and `source~"…"` only on web/webOS/Tizen. Durations are offered where a timeout is accepted. |
 | `key ` | key names, filtered to the configured devices' platforms when known |
 | `Tags: ` | tags already used in the workspace |
 | `Platforms: ` | platform names (plus `cross-platform` in scenes), with configured device names in `detail` |
@@ -203,7 +203,8 @@ The server has an in-process test client over a real duplex stream and real
   and rename, workspace symbols, folding, semantic tokens, signature help,
   code actions, range/on-type formatting, inlay hints and code lenses;
 - `tests/lsp_corpus.rs` - the shared `fixtures/lang-corpus/` files and feature
-  probes through real JSON-RPC framing;
+  probes (including check completion and probe-matrix hover) through real
+  JSON-RPC framing;
 - `tests/lsp_watch.rs` - external edits, a `scenes` directory created after
   start, editor noise never triggering an analysis;
 - `tests/lsp_cli.rs` - the real binary on real stdio.

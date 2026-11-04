@@ -9,6 +9,7 @@ use std::path::Path;
 
 use impresario_core::keys::RemoteKey;
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{self, DrmProvider, PlayerStatus, ProbeProperty};
 use impresario_core::support::{self, CheckVerb, Verb};
 
 use crate::service::{CompletionItem, Language};
@@ -149,14 +150,7 @@ impl Language {
         }
 
         if let Some(rest) = trimmed.strip_prefix("Check:") {
-            let after = rest.trim_start();
-            let words = after.split_whitespace().count();
-            let trailing = after.chars().last().is_some_and(char::is_whitespace);
-            if words >= 2 || (words == 1 && trailing) {
-                return condition_items();
-            }
-            return enclosing_scene(&doc, position.line, position.col)
-                .map_or_else(Vec::new, |scene| self.piece_items(&scene));
+            return self.check_items(path, &doc, position, rest);
         }
 
         if trimmed.starts_with("Tags:") {
@@ -413,6 +407,164 @@ impl Language {
         } else if self.devices.iter().any(|device| device.name == reference) {
             out.insert(reference.to_string());
         }
+    }
+
+    fn check_items(
+        &self,
+        path: &Path,
+        doc: &Doc<'_>,
+        position: Position,
+        after: &str,
+    ) -> Vec<CompletionItem> {
+        let platforms = self.effective_platforms(path, doc, position);
+        let pieces = enclosing_scene(doc, position.line, position.col)
+            .map_or_else(Vec::new, |scene| self.piece_items(&scene));
+        let trimmed = after.trim_start();
+        if let Some(rest) = after_keyword(trimmed, "not") {
+            let rest = rest.trim_start();
+            if let Some(showing) = after_keyword(rest, "Showing") {
+                return self.showing_items(showing, pieces, &platforms);
+            }
+            return vec![simple("Showing", "keyword")];
+        }
+        if let Some(rest) = after_keyword(trimmed, "Showing") {
+            return self.showing_items(rest, pieces, &platforms);
+        }
+        if let Some(rest) = after_keyword(trimmed, "Player") {
+            return self.player_items(rest, pieces, &platforms);
+        }
+        if trimmed.is_empty() || !trimmed.contains(char::is_whitespace) {
+            let mut items = pieces;
+            items.push(simple("Showing", "keyword"));
+            items.push(simple("Player", "keyword"));
+            items.push(simple("not", "keyword"));
+            return items;
+        }
+        condition_after_piece(trimmed)
+    }
+
+    fn effective_platforms(&self, path: &Path, doc: &Doc<'_>, position: Position) -> Vec<Platform> {
+        let mut platforms = BTreeSet::new();
+        if let Some(devices) = self.effective_actor_devices(path, doc, position, None) {
+            platforms.extend(devices.iter().map(|device| device.platform));
+        }
+        if platforms.is_empty() {
+            if let Some(theatre) = self.theatre(path) {
+                let line = position.line as usize;
+                if let Some(stage) = theatre
+                    .stages
+                    .iter()
+                    .rev()
+                    .find(|stage| stage.name_span.line <= line)
+                {
+                    platforms.extend(theatre.stage_audience(stage));
+                } else {
+                    platforms.extend(
+                        theatre
+                            .audience
+                            .iter()
+                            .filter_map(|named| named.name.parse::<Platform>().ok()),
+                    );
+                }
+            }
+        }
+        if platforms.is_empty() {
+            platforms.extend(self.platforms());
+        }
+        platforms.into_iter().collect()
+    }
+
+    fn showing_items(
+        &self,
+        rest: &str,
+        pieces: Vec<CompletionItem>,
+        platforms: &[Platform],
+    ) -> Vec<CompletionItem> {
+        let rest = rest.trim_start();
+        let Some(after) = rest.strip_prefix("=>") else {
+            return vec![simple("=>", "operator")];
+        };
+        let after = after.trim_start();
+        if after.is_empty() || !after.contains(char::is_whitespace) {
+            return pieces;
+        }
+        let (_, tail) = split_first_token(after);
+        let tail = tail.trim_start();
+        if tail.is_empty() {
+            return vec![simple("with", "keyword"), simple("timeout", "keyword")];
+        }
+        if let Some(content) = after_keyword(tail, "with") {
+            return with_items(content, platforms, true);
+        }
+        if let Some(content) = after_keyword(tail, "timeout") {
+            return timeout_items(content);
+        }
+        if "with".starts_with(tail) || "timeout".starts_with(tail) {
+            return vec![simple("with", "keyword"), simple("timeout", "keyword")];
+        }
+        let mut items = vec![simple(",", "operator"), simple("timeout", "keyword")];
+        items.extend(showing_option_items(platforms));
+        items
+    }
+
+    fn player_items(
+        &self,
+        rest: &str,
+        pieces: Vec<CompletionItem>,
+        platforms: &[Platform],
+    ) -> Vec<CompletionItem> {
+        let rest = rest.trim_start();
+        let Some(after) = rest.strip_prefix("=>") else {
+            return vec![simple("=>", "operator")];
+        };
+        let after = after.trim_start();
+        if after.is_empty() || !after.contains(char::is_whitespace) {
+            return pieces;
+        }
+        let (_, tail) = split_first_token(after);
+        let tail = tail.trim_start();
+        if tail.is_empty() {
+            return player_tail_items(true, true);
+        }
+        if let Some(index) = find_keyword(tail, "with") {
+            return with_items(&tail[index + "with".len()..], platforms, false);
+        }
+        if let Some(index) = find_keyword(tail, "timeout") {
+            return timeout_items(&tail[index + "timeout".len()..]);
+        }
+        let trailing = tail.chars().last().is_some_and(char::is_whitespace);
+        let drm = ["DRM-enabled", "DRM-disabled"]
+            .into_iter()
+            .filter_map(|keyword| find_keyword(tail, keyword).map(|index| (index, keyword)))
+            .max_by_key(|(index, _)| *index);
+        if let Some((index, keyword)) = drm {
+            let after_drm = tail[index + keyword.len()..].trim_start();
+            let provider_context = match after_drm.split_whitespace().collect::<Vec<_>>().as_slice()
+            {
+                [] | ["not"] => true,
+                [provider] | ["not", provider] => {
+                    !trailing && DrmProvider::parse(provider).is_none()
+                }
+                _ => false,
+            };
+            if provider_context {
+                let mut items = provider_items(platforms);
+                items.extend(player_tail_items(!player_has_status(tail), false));
+                return items;
+            }
+            return player_tail_items(!player_has_status(tail), false);
+        }
+        let tokens = tail.split_whitespace().collect::<Vec<_>>();
+        if tokens.last() == Some(&"not") {
+            return status_items();
+        }
+        if tokens
+            .iter()
+            .any(|token| PlayerStatus::parse(token).is_some())
+        {
+            return player_tail_items(false, true);
+        }
+        player_tail_items(!player_has_status(tail), !player_has_drm(tail))
     }
 
     fn stage_param_items(&self, path: &Path, stage_name: &str) -> Vec<CompletionItem> {
@@ -917,6 +1069,426 @@ fn split_cells(prefix: &str) -> Vec<String> {
         .split('|')
         .map(|cell| cell.trim().to_string())
         .collect()
+}
+
+fn after_keyword<'a>(value: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = value.strip_prefix(keyword)?;
+    if rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace) {
+        Some(rest)
+    } else {
+        None
+    }
+}
+
+fn find_keyword(value: &str, keyword: &str) -> Option<usize> {
+    value.match_indices(keyword).find_map(|(index, _)| {
+        let before = value[..index].chars().next_back();
+        let after = value[index + keyword.len()..].chars().next();
+        (before.is_none_or(char::is_whitespace) && after.is_none_or(char::is_whitespace))
+            .then_some(index)
+    })
+}
+
+fn split_first_token(value: &str) -> (&str, &str) {
+    match value.find(char::is_whitespace) {
+        Some(index) => (&value[..index], value[index..].trim_start()),
+        None => (value, ""),
+    }
+}
+
+fn condition_after_piece(trimmed: &str) -> Vec<CompletionItem> {
+    let (_, tail) = split_first_token(trimmed);
+    let tail = tail.trim_start();
+    if let Some(rest) = after_keyword(tail, "is") {
+        let rest = rest.trim_start();
+        if rest.is_empty() || !rest.contains(char::is_whitespace) {
+            return ["visible", "hidden", "enabled", "disabled", "focused"]
+                .into_iter()
+                .map(|condition| simple(condition, "enumMember"))
+                .collect();
+        }
+    }
+    if let Some(rest) = after_keyword(tail, "text") {
+        if rest.chars().next().is_some_and(char::is_whitespace) && rest.trim().is_empty() {
+            let mut item = simple("\"\"", "snippet");
+            item.insert_text = Some("\"\"".to_string());
+            return vec![item];
+        }
+    }
+    if let Some(rest) = after_keyword(tail, "textContains") {
+        if rest.chars().next().is_some_and(char::is_whitespace) && rest.trim().is_empty() {
+            let mut item = simple("\"\"", "snippet");
+            item.insert_text = Some("\"\"".to_string());
+            return vec![item];
+        }
+    }
+    if let Some(rest) = after_keyword(tail, "count") {
+        if rest.chars().next().is_some_and(char::is_whitespace) && rest.trim().is_empty() {
+            return ["1", "2", "3"]
+                .into_iter()
+                .map(|count| simple(count, "value"))
+                .collect();
+        }
+    }
+    condition_items()
+}
+
+fn status_items() -> Vec<CompletionItem> {
+    PlayerStatus::ALL
+        .iter()
+        .map(|status| {
+            let mut item = simple(status.as_str(), "enumMember");
+            item.detail = Some("player status".to_string());
+            item
+        })
+        .collect()
+}
+
+fn player_has_status(tail: &str) -> bool {
+    tail.split_whitespace()
+        .any(|word| PlayerStatus::parse(word).is_some())
+}
+
+fn player_has_drm(tail: &str) -> bool {
+    tail.split_whitespace()
+        .any(|word| word == "DRM-enabled" || word == "DRM-disabled")
+}
+
+fn player_tail_items(status: bool, drm: bool) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    if status {
+        items.extend(status_items());
+        items.push(simple("not", "keyword"));
+    }
+    if drm {
+        items.push(simple("DRM-enabled", "keyword"));
+        items.push(simple("DRM-disabled", "keyword"));
+    }
+    items.push(simple("with", "keyword"));
+    items.push(simple("timeout", "keyword"));
+    items
+}
+
+fn supported_providers(platforms: &[Platform]) -> Vec<DrmProvider> {
+    let Some((first, rest)) = platforms.split_first() else {
+        return DrmProvider::ALL.to_vec();
+    };
+    let mut providers = probe::support(*first).providers;
+    for platform in rest {
+        let support = probe::support(*platform);
+        providers.retain(|provider| support.supports_provider(*provider));
+    }
+    providers
+}
+
+fn provider_items(platforms: &[Platform]) -> Vec<CompletionItem> {
+    supported_providers(platforms)
+        .into_iter()
+        .map(|provider| {
+            let mut item = simple(provider.as_str(), "enumMember");
+            item.detail = Some("DRM provider".to_string());
+            item
+        })
+        .collect()
+}
+
+fn supported_properties(platforms: &[Platform]) -> Vec<ProbeProperty> {
+    let Some((first, rest)) = platforms.split_first() else {
+        return ProbeProperty::ALL.to_vec();
+    };
+    let mut properties = probe::support(*first).properties;
+    for platform in rest {
+        let support = probe::support(*platform);
+        properties.retain(|property| support.supports_property(*property));
+    }
+    properties
+}
+
+fn property_items(platforms: &[Platform]) -> Vec<CompletionItem> {
+    supported_properties(platforms)
+        .into_iter()
+        .map(|property| {
+            let mut item = simple(property.as_str(), "property");
+            item.detail = Some("player property".to_string());
+            item.documentation = Some(property_value_help(property).to_string());
+            item
+        })
+        .collect()
+}
+
+fn property_items_after_not(platforms: &[Platform]) -> Vec<CompletionItem> {
+    let mut items = vec![simple("not", "keyword")];
+    items.extend(property_items(platforms));
+    items
+}
+
+fn property_value_help(property: ProbeProperty) -> &'static str {
+    match property {
+        ProbeProperty::Position | ProbeProperty::Duration | ProbeProperty::Buffered => {
+            "duration value, e.g. `30s` or `1m`"
+        }
+        ProbeProperty::Rate => "playback rate, e.g. `1.0` or `0.5`",
+        ProbeProperty::Volume => "volume from 0.0 to 1.0",
+        ProbeProperty::Muted
+        | ProbeProperty::Live
+        | ProbeProperty::Looping
+        | ProbeProperty::Fullscreen
+        | ProbeProperty::Secure => "boolean value: `true` or `false`",
+        ProbeProperty::Width | ProbeProperty::Height => "pixel value, e.g. `1920`",
+        ProbeProperty::Resolution => "resolution, e.g. `1080p` or `2160p`",
+        ProbeProperty::Bitrate => "bitrate, e.g. `5000kbps`",
+        ProbeProperty::Framerate => "frames per second, e.g. `60`",
+        ProbeProperty::DroppedFrames => "dropped-frame count, e.g. `0` or `50`",
+        ProbeProperty::VideoCodec => "video codec, e.g. `h264` or `h265`",
+        ProbeProperty::AudioCodec => "audio codec, e.g. `aac` or `opus`",
+        ProbeProperty::Decoder => "decoder kind: `hardware` or `software`",
+        ProbeProperty::AudioTrack | ProbeProperty::SubtitleTrack => "track language tag",
+        ProbeProperty::Error => "error text or `none`",
+        ProbeProperty::License => "license state, e.g. `active`",
+        ProbeProperty::KeyStatus => "key status, e.g. `usable`",
+        ProbeProperty::SecurityLevel => "security level, e.g. `L1`",
+        ProbeProperty::KeySystem => "EME key system id",
+        ProbeProperty::Hdcp => "HDCP version, e.g. `HDCP-2.2`",
+    }
+}
+
+fn operator_items(property: ProbeProperty) -> Vec<CompletionItem> {
+    let operators: &[&str] = match property {
+        ProbeProperty::Muted
+        | ProbeProperty::Live
+        | ProbeProperty::Looping
+        | ProbeProperty::Fullscreen
+        | ProbeProperty::Secure => &["=", "!="],
+        ProbeProperty::VideoCodec
+        | ProbeProperty::AudioCodec
+        | ProbeProperty::Decoder
+        | ProbeProperty::AudioTrack
+        | ProbeProperty::SubtitleTrack
+        | ProbeProperty::Error
+        | ProbeProperty::License
+        | ProbeProperty::KeyStatus
+        | ProbeProperty::SecurityLevel
+        | ProbeProperty::KeySystem
+        | ProbeProperty::Hdcp => &["=", "!=", "~"],
+        _ => &[">", ">=", "<", "<=", "=", "!="],
+    };
+    let mut items = operators
+        .iter()
+        .map(|operator| simple(*operator, "operator"))
+        .collect::<Vec<_>>();
+    items.push(simple(",", "operator"));
+    items.push(simple("timeout", "keyword"));
+    items
+}
+
+fn property_value_items(property: ProbeProperty) -> Vec<CompletionItem> {
+    let values: &[&str] = match property {
+        ProbeProperty::Position | ProbeProperty::Duration | ProbeProperty::Buffered => {
+            &["30s", "10s", "0s"]
+        }
+        ProbeProperty::Rate => &["1.0", "0.5", "2.0"],
+        ProbeProperty::Volume => &["1.0", "0.5", "0.0"],
+        ProbeProperty::Muted
+        | ProbeProperty::Live
+        | ProbeProperty::Looping
+        | ProbeProperty::Fullscreen
+        | ProbeProperty::Secure => &["true", "false"],
+        ProbeProperty::Width | ProbeProperty::Height => &["1920", "1080"],
+        ProbeProperty::Resolution => &["1080p", "720p", "2160p"],
+        ProbeProperty::Bitrate => &["5000kbps", "300kbps"],
+        ProbeProperty::Framerate => &["60", "30"],
+        ProbeProperty::DroppedFrames => &["0", "50"],
+        ProbeProperty::VideoCodec => &["h264", "h265", "av1", "vp9"],
+        ProbeProperty::AudioCodec => &["aac", "opus", "ac3", "eac3"],
+        ProbeProperty::Decoder => &["hardware", "software"],
+        ProbeProperty::AudioTrack | ProbeProperty::SubtitleTrack => &["en", "de"],
+        ProbeProperty::Error => &["none"],
+        ProbeProperty::License => &["active", "expired", "none"],
+        ProbeProperty::KeyStatus => &["usable", "expired", "output-restricted"],
+        ProbeProperty::SecurityLevel => &["L1", "L2", "L3"],
+        ProbeProperty::KeySystem => &[
+            "com.widevine.alpha",
+            "com.microsoft.playready",
+            "com.apple.fps",
+        ],
+        ProbeProperty::Hdcp => &["HDCP-1.4", "HDCP-2.2", "none"],
+    };
+    values
+        .iter()
+        .map(|value| {
+            let mut item = simple(*value, "value");
+            item.detail = Some(format!("{} value", property.as_str()));
+            item
+        })
+        .collect()
+}
+
+fn leading_operator(value: &str) -> Option<(&str, &str)> {
+    for operator in [">=", "<=", "!=", "=", ">", "<", "~"] {
+        if let Some(rest) = value.strip_prefix(operator) {
+            return Some((operator, rest));
+        }
+    }
+    None
+}
+
+fn with_items(after_with: &str, platforms: &[Platform], showing: bool) -> Vec<CompletionItem> {
+    let content = after_with.trim_start();
+    let segment = match content.rfind(',') {
+        Some(index) => content.get(index + 1..).unwrap_or("").trim_start(),
+        None => content,
+    };
+    if showing {
+        showing_with_items(segment, platforms)
+    } else {
+        player_with_items(segment, platforms)
+    }
+}
+
+fn with_next_items(platforms: &[Platform], showing: bool) -> Vec<CompletionItem> {
+    let mut items = vec![simple(",", "operator"), simple("timeout", "keyword")];
+    if showing {
+        items.extend(showing_option_items(platforms));
+    } else {
+        items.extend(property_items_after_not(platforms));
+    }
+    items
+}
+
+fn showing_with_items(segment: &str, platforms: &[Platform]) -> Vec<CompletionItem> {
+    let trailing = segment.chars().last().is_some_and(char::is_whitespace);
+    let body = segment.trim_end();
+    if body.is_empty() {
+        return showing_option_items(platforms);
+    }
+    if let Some(value) = body.strip_prefix("coverage>=") {
+        let value = value.trim_start();
+        if !value.contains('%') {
+            return ["50%", "80%", "100%"]
+                .into_iter()
+                .map(|percent| simple(percent, "value"))
+                .collect();
+        }
+        return with_next_items(platforms, true);
+    }
+    if "coverage".starts_with(body) {
+        let mut item = simple("coverage>=50%", "snippet");
+        item.insert_text = Some("coverage>=50%".to_string());
+        return vec![item];
+    }
+    if let Some(value) = body.strip_prefix("source~") {
+        let value = value.trim_start();
+        if !value.starts_with('"') || (!value.ends_with('"') && value.len() > 1) {
+            let mut item = simple("\"\"", "snippet");
+            item.insert_text = Some("\"\"".to_string());
+            return vec![item];
+        }
+        return with_next_items(platforms, true);
+    }
+    if "source".starts_with(body) {
+        let mut item = simple("source~\"\"", "snippet");
+        item.insert_text = Some("source~\"\"".to_string());
+        return vec![item];
+    }
+    if body == "decoded" && trailing {
+        return with_next_items(platforms, true);
+    }
+    if "decoded".starts_with(body) {
+        return vec![simple("decoded", "keyword")];
+    }
+    with_next_items(platforms, true)
+}
+
+fn player_with_items(segment: &str, platforms: &[Platform]) -> Vec<CompletionItem> {
+    let trailing = segment.chars().last().is_some_and(char::is_whitespace);
+    let body = segment.trim_end();
+    if body.is_empty() || body == "not" {
+        return property_items_after_not(platforms);
+    }
+    let body = if let Some(rest) = after_keyword(body, "not") {
+        rest.trim_start()
+    } else {
+        body
+    };
+    player_assertion_items(body, platforms, trailing)
+}
+
+fn split_property(body: &str) -> Option<(ProbeProperty, &str)> {
+    for property in ProbeProperty::ALL {
+        let name = property.as_str();
+        let Some(rest) = body.strip_prefix(name) else {
+            continue;
+        };
+        if rest.is_empty()
+            || rest.starts_with(char::is_whitespace)
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|ch| matches!(ch, '>' | '<' | '=' | '!' | '~'))
+        {
+            return Some((property, rest));
+        }
+    }
+    None
+}
+
+fn player_assertion_items(
+    body: &str,
+    platforms: &[Platform],
+    trailing: bool,
+) -> Vec<CompletionItem> {
+    let Some((property, rest)) = split_property(body) else {
+        return property_items(platforms);
+    };
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        if body.contains(char::is_whitespace) || trailing {
+            return operator_items(property);
+        }
+        return property_items(platforms);
+    }
+    if let Some((_, value)) = leading_operator(rest) {
+        if value.trim_start().is_empty() {
+            return property_value_items(property);
+        }
+        if trailing {
+            return with_next_items(platforms, false);
+        }
+        return property_value_items(property);
+    }
+    property_value_items(property)
+}
+
+fn showing_option_items(platforms: &[Platform]) -> Vec<CompletionItem> {
+    if !platforms
+        .iter()
+        .all(|platform| probe::support(*platform).showing)
+    {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    let mut coverage = simple("coverage>=50%", "snippet");
+    coverage.insert_text = Some("coverage>=50%".to_string());
+    items.push(coverage);
+    items.push(simple("decoded", "keyword"));
+    if platforms
+        .iter()
+        .all(|platform| matches!(platform, Platform::Web | Platform::WebOs | Platform::Tizen))
+    {
+        let mut source = simple("source~\"\"", "snippet");
+        source.insert_text = Some("source~\"\"".to_string());
+        items.push(source);
+    }
+    items
+}
+
+fn timeout_items(content: &str) -> Vec<CompletionItem> {
+    let content = content.trim_start();
+    if content.is_empty() || !content.contains(char::is_whitespace) {
+        duration_items()
+    } else {
+        Vec::new()
+    }
 }
 
 fn condition_items() -> Vec<CompletionItem> {

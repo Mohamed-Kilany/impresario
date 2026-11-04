@@ -63,10 +63,15 @@ adds actor/group/audience/`For`/`Except` completion, and adds actor/group
 hover plus stage implementation/audience hover; CI run `41629361789` at
 `ed16a23` passed all five jobs (Rust, Android, editor, Apple, Windows). The
 stage code-lens slice (implementation count and audience coverage) passed CI
-run `41635032282` at `62cb329`, again all five jobs. Full section 10
-code-action, TUI and MCP parity remains open; actor-aware stage completion
-filtering and coverage quick-fixes are the next editor slice. The next
-priority after that is the
+run `41635032282` at `62cb329`, again all five jobs. The actor-aware stage
+completion/coverage-quick-fix slice is committed at `3612faa`; CI run
+`41638545622` passed all five jobs. The next editor slice adds `Check:`
+probe completion (statuses, platform-filtered DRM providers/properties and
+typed values), probe-matrix hover (evidence class, expected confidence and
+reachable sources) and detailed `IMP-DSL-013` provider/property/`source~`
+diagnostics; its CI result is recorded after the run. Full section 10
+code-action, TUI and MCP parity remains open. The next priority after the
+editor slices is the
 remaining deferred hardware items (HD-1/HD-2 deeper
 probes, HD-5 USB, HD-6 non-Windows Chromium, HD-8 four-device rerun). Before
 another Apple TV run, refresh the Apple signing profiles, which expire

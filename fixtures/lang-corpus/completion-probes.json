@@ -85,5 +85,26 @@
       "user",
       "password"
     ]
+  },
+  {
+    "path": "theatres/actors.theatre",
+    "line": 7,
+    "col": 16,
+    "contains": [
+      "Showing",
+      "Player",
+      "not",
+      "ActorButton"
+    ]
+  },
+  {
+    "path": "theatres/actors.theatre",
+    "line": 7,
+    "col": 45,
+    "contains": [
+      "DRM-enabled",
+      "with",
+      "timeout"
+    ]
   }
 ]

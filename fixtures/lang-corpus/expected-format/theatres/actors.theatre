@@ -4,3 +4,4 @@ Audience: web, android
 Stage: ActorStage
     Scene: ActorScreen
         Check: ActorButton is visible
+        Check: Player => ActorButton Playing
