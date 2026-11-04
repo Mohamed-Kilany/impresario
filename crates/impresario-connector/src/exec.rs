@@ -3424,4 +3424,51 @@ mod tests {
         let error = editable_failure(&sel, EnterMode::Clear, &missing);
         assert_eq!(error.code, WireErrorCode::ElementNotFound);
     }
+
+    fn encode_rgba_png(width: u32, height: u32, pixel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("png header");
+            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+            for y in 0..height {
+                for x in 0..width {
+                    pixels.extend_from_slice(&pixel(x, y));
+                }
+            }
+            writer.write_image_data(&pixels).expect("png data");
+        }
+        bytes
+    }
+
+    #[test]
+    fn uniform_region_scores_zero_coverage_and_patterned_region_is_painted() {
+        let viewport = ProbeViewport {
+            width: 8.0,
+            height: 8.0,
+        };
+        let rect = ProbeRect {
+            x: 0.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+        };
+        let blank = encode_rgba_png(8, 8, |_, _| [0, 0, 0, 255]);
+        assert_eq!(analyze_png_region(&blank, rect, viewport), Some(0.0));
+
+        let patterned = encode_rgba_png(8, 8, |x, y| {
+            if (x + y) % 2 == 0 {
+                [255, 255, 255, 255]
+            } else {
+                [0, 0, 0, 255]
+            }
+        });
+        let coverage = analyze_png_region(&patterned, rect, viewport).expect("coverage");
+        assert!(
+            coverage >= 50.0,
+            "patterned region should be painted, got {coverage}"
+        );
+    }
 }
