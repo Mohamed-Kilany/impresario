@@ -577,9 +577,10 @@ pub fn parse_settings(source: &str, path: &Path) -> SettingsFile {
 }
 
 fn flatten<'a>(prefix: &str, value: &'a Value, out: &mut Vec<(String, &'a Value)>) {
-    // `profiles:` is a structured, user-editable section owned by
-    // `impresario profile`, not a scalar setting. It is validated there.
-    if prefix == "profiles" {
+    // Structured sections are user-editable and owned by their own command:
+    // `profiles` by `impresario profile`, `schedules`/`watchers` by the
+    // resident runner. They are validated by those front ends, not as scalars.
+    if matches!(prefix, "profiles" | "schedules" | "watchers") {
         return;
     }
     if !prefix.is_empty() && definition(prefix).is_some() {
@@ -790,6 +791,8 @@ impl EffectiveSettings {
             command_grace_ms: u64::try_from(int("command_grace_ms")).unwrap_or(2_000),
             reporters,
             unverifiable_policy,
+            schedules: Vec::new(),
+            watchers: Vec::new(),
         }
     }
 }

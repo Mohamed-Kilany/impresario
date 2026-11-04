@@ -137,6 +137,12 @@ pub struct ImpresarioConfig {
     /// Tri-state probe policy (TASK-3 D-26): `fail` (default) or `warn`.
     #[serde(default)]
     pub unverifiable_policy: crate::probe::UnverifiablePolicy,
+    /// Resident schedules (TASK.md section 8.2).
+    #[serde(default)]
+    pub schedules: Vec<crate::resident::Schedule>,
+    /// Always-on watchers (TASK.md section 8.3).
+    #[serde(default)]
+    pub watchers: Vec<crate::resident::Watcher>,
 }
 
 fn parallel_default() -> u32 {
@@ -656,6 +662,8 @@ const CONFIG_KEYS: &[&str] = &[
     "command_grace_ms",
     "reporters",
     "unverifiable_policy",
+    "schedules",
+    "watchers",
 ];
 
 const DEVICE_KEYS: &[&str] = &["name", "type", "ip"];
@@ -1021,10 +1029,30 @@ pub fn parse_config(source: &str, path: &Path) -> ConfigOutcome<ImpresarioConfig
         };
     }
     match serde_yaml_ng::from_value::<ImpresarioConfig>(value) {
-        Ok(config) => ConfigOutcome {
-            config: Some(config),
-            diagnostics,
-        },
+        Ok(config) => {
+            let sections = crate::resident::ResidentSections {
+                schedules: config.schedules.clone(),
+                watchers: config.watchers.clone(),
+            };
+            match sections.validate() {
+                Ok(()) => ConfigOutcome {
+                    config: Some(config),
+                    diagnostics,
+                },
+                Err(errors) => {
+                    for error in errors {
+                        diagnostics.push(
+                            Diagnostic::error(Code::CfgInvalidValue, error)
+                                .with_span(Span::new(path, 1, 1, 0)),
+                        );
+                    }
+                    ConfigOutcome {
+                        config: None,
+                        diagnostics,
+                    }
+                }
+            }
+        }
         Err(err) => {
             diagnostics.push(Diagnostic::error(
                 Code::CfgInvalidValue,

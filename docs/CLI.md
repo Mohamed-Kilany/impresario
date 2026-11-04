@@ -154,6 +154,73 @@ Any number of jobs can run concurrently on different devices. Within one job,
 devices run in parallel up to `parallel_devices`; fail-fast, retries and
 per-device reporters are unchanged.
 
+## Schedules, watchers and the resident runner
+
+The resident runner is a per-user background process, so closing the CLI or the
+TUI never stops scheduled work. It is a client of the installed executable and
+does not shell out to platform tools.
+
+```powershell
+impresario service install        # logon autostart for this user only
+impresario service start          # detach the runner for this workspace
+impresario service status --json
+impresario service pause
+impresario service resume
+impresario service logs -f
+impresario service stop
+impresario service uninstall --purge   # --purge also deletes state/logs
+```
+
+`service run` is the foreground loop used by the hooks. State, events and the
+log live under `~/.impresario/service/` (`state.json`, `events.jsonl`,
+`service.log`, rotated to `service.log.1` at 10 MiB). `service install` writes a
+Windows Startup `.cmd`, a macOS LaunchAgent plist or a Linux `systemd --user`
+unit; `uninstall` removes only that hook unless `--purge` is given. `service
+status` reports the pid, pause state and per-schedule/per-watcher counters even
+when the runner is stopped.
+
+Schedules and watchers are optional `schedules:`/`watchers:` sections in the
+workspace config. Global `config.yaml` sections with the same names are merged
+by name and the workspace wins. Mutating commands target the workspace layer by
+default; `--global` targets `~/.impresario/config.yaml`. The CLI edits YAML
+losslessly (comments and untouched bytes survive) and re-parses the complete
+prospective file before writing, so a bad edit cannot leave the workspace
+unparsable.
+
+```powershell
+impresario schedule list [--json]
+impresario schedule add nightly --when "kind: daily, at: '02:30'" --play smoke.play --tag smoke
+impresario schedule next nightly --count 5
+impresario schedule edit nightly --file nightly.yaml
+impresario schedule disable nightly     # enable, rm, show, run-now
+impresario watch add soak --play smoke.play --gap 30s
+impresario watch list|show|status [--json]|dumps
+impresario watch start|stop|pause|resume soak
+impresario watch run-now soak
+```
+
+`add` and `edit` also accept full YAML with `--yaml` or `--file`; `--when` is
+the short one-line `when` mapping. Names are 1..=64 ASCII letters, digits, `.`,
+`-` or `_` and may not start with `.`.
+
+Wall-clock schedules use host-local time. `once`, `daily`, `weekly`, cron and
+`interval` are supported; cron accepts `*`, `n`, `a-b`, comma lists and `/step`
+with month/weekday names. Fall-back times fire once at the first occurrence,
+spring-forward times that do not exist are skipped, and a past `once` runs when
+the service observed its time or `on_missed: run_once`, otherwise it is marked
+missed and disabled. A schedule fire is a normal supervised job, so reports,
+logs and device leases are unchanged. `on_busy` is `queue` (retry while the
+previous occurrence is still running), `skip` or `fail`.
+
+Watchers take a per-iteration device lease and release it between iterations;
+`pacing.mode` is `back_to_back` or `min_gap` with `gap`. `on_failure` configures
+the dump, throttle and notification channels. The current slice records
+notification events and copies the full run tree into
+`reports/watch/<name>/<timestamp>/` with a `dump.json`; OS toast/webhook
+delivery and deduplication/throttling are not yet wired. The TUI Resident
+screen and resident MCP tools are also not yet implemented, and D-39 no-gap
+lifetime leases are not available (see `docs/STATUS.md` gap 21).
+
 ## Packaging and signing
 
 Packaging and signing are local, deterministic and pure Rust (D-19). They do

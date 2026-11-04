@@ -31,6 +31,7 @@ pub mod redact;
 pub mod render;
 pub mod report;
 pub mod reporters;
+pub mod resident;
 pub mod tests_cmd;
 pub mod time_fmt;
 pub mod tools_cmd;

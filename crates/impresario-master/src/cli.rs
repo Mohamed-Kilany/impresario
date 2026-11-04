@@ -143,6 +143,12 @@ pub enum Command {
     Run(RunArgs),
     /// Save and inspect reusable run profiles (`profiles:` in config.yaml).
     Profile(crate::profile_cmd::ProfileArgs),
+    /// Schedules for unattended runs (resident runner).
+    Schedule(crate::resident::ScheduleArgs),
+    /// Always-on watcher runs (resident runner).
+    Watch(crate::resident::WatchArgs),
+    /// Resident runner lifecycle (run, install, start, stop, status, logs).
+    Service(crate::resident::ServiceArgs),
     /// List active jobs, or every job with `--all`.
     Jobs(crate::jobs_cmd::JobsArgs),
     /// Attach to a running job (Ctrl-C detaches, `--stop` stops it).
@@ -465,6 +471,15 @@ pub fn run_with(argv: &[String]) -> i32 {
             cli.no_color,
         ),
         Command::Profile(args) => crate::profile_cmd::run(&home, args),
+        Command::Schedule(args) => {
+            crate::resident::run_schedule(args, &home, &base, &config_path, &devices_path)
+        }
+        Command::Watch(args) => {
+            crate::resident::run_watch(args, &home, &base, &config_path, &devices_path)
+        }
+        Command::Service(args) => {
+            crate::resident::run_service(args, &home, &base, &config_path, &devices_path)
+        }
         Command::Jobs(args) => crate::jobs_cmd::run_jobs(&home, args),
         Command::Attach(args) => crate::jobs_cmd::attach(&home, args),
         Command::Logs(args) => crate::jobs_cmd::logs(&home, args),

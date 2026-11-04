@@ -16,8 +16,10 @@ winnow.workspace = true
 regex.workspace = true
 unicode-width.workspace = true
 url.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+chrono-tz = "0.10"

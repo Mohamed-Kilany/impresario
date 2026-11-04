@@ -70,3 +70,12 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 | `ui.theme` | global + workspace | string | `auto` | TUI color theme (`auto`, `dark`, `light` or a theme name). |
 | `ui.history_size` | global + workspace | integer 100..=100000 | `1000` | Number of interactive prompt entries kept. |
 <!-- END GENERATED CONFIG -->
+
+## Resident sections
+
+`config.yaml` and the workspace `impresario.config` may also contain the
+structured `schedules:` and `watchers:` lists described in TASK.md §8. They are
+not scalar settings: the settings loader and the generated table above
+deliberately ignore them, while the `schedule`, `watch` and `service` commands
+parse and validate the owning sections. See `docs/CLI.md` for the commands and
+the schedule/watcher fields.

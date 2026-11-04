@@ -15,6 +15,8 @@ facts only).
 | Crate | Version | License | Used for | Status |
 |---|---|---|---|---|
 | `yaml-edit` | 0.3.2 | Apache-2.0 | lossless YAML config editing (rowan syntax tree) | chosen — I-91 |
+| `chrono` | 0.4.45 | MIT OR Apache-2.0 | resident schedule arithmetic and host-local timestamps | chosen — I-169 |
+| `chrono-tz` | 0.10.4 | MIT OR Apache-2.0 | deterministic DST tests for schedules (dev-dependency only) | chosen — I-169 |
 | `toml_edit` | 0.25.17 | MIT OR Apache-2.0 | recorded fallback if `yaml-edit` rots | chosen as fallback — I-91 |
 | `ratatui` | 0.30.2 | MIT | TUI (snapshot-testable via `TestBackend`) | chosen, shipped — I-92/I-125 |
 | `crossterm` | 0.29.0 | MIT | terminal I/O backend | chosen, shipped — I-92/I-125 |

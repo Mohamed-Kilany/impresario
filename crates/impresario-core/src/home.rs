@@ -135,6 +135,30 @@ impl Home {
         self.root.join("jobs")
     }
 
+    /// `service/` - resident runner state, events, control markers and logs.
+    #[must_use]
+    pub fn service_dir(&self) -> PathBuf {
+        self.root.join("service")
+    }
+
+    /// `service/state.json` - crash-safe resident snapshot.
+    #[must_use]
+    pub fn service_state_path(&self) -> PathBuf {
+        self.service_dir().join("state.json")
+    }
+
+    /// `service/events.jsonl` - append-only resident event stream.
+    #[must_use]
+    pub fn service_events_path(&self) -> PathBuf {
+        self.service_dir().join("events.jsonl")
+    }
+
+    /// `service/service.log` - resident diagnostics.
+    #[must_use]
+    pub fn service_log_path(&self) -> PathBuf {
+        self.service_dir().join("service.log")
+    }
+
     /// `cache/` - re-signing and packaging caches.
     #[must_use]
     pub fn cache_dir(&self) -> PathBuf {
@@ -178,6 +202,7 @@ impl Home {
             self.jobs_dir(),
             self.cache_dir(),
             self.signing_dir(),
+            self.service_dir(),
             self.logs_dir(),
         ] {
             std::fs::create_dir_all(&path).map_err(|source| HomeError::Create {
