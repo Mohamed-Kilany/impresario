@@ -80,7 +80,9 @@ media-probe portion of HD-1 was closed on `master` at `640d645` with the
 Windows CLI from CI and the Apple Xcode artifact `41794616426`; the follow-up
 coverage test and evidence docs are at `c999958`, green in `CI` `41811761100`
 and `Apple Xcode` `41811761234`; I-168 and the Apple hardware log record the
-evidence. Full section 10 code-action, TUI and
+evidence. The docs-only follow-up `10ab84f` is green in `CI` `41815172834`;
+`Apple Xcode` is path-filtered to `agents/apple/**`, so it does not run for
+docs-only commits. Full section 10 code-action, TUI and
 MCP parity remains open. The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
 four-device rerun, plus iOS hardware, paused playback, the local-network
