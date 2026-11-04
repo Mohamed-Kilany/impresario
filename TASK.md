@@ -2343,7 +2343,8 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
   stub play passed on 2026-10-27 with the long bundle ids (`20261027-063121-00d6`,
   `docs/STATUS.md` HD-1); the ordinary actual-agent/no-stub path passed on
   2026-10-28 (`20261028-060832-b7cc`, 2/2 steps, 59.6 s, `agent-host.png`). The
-  short-id `master` build and the deeper media probes remain open. The HD
+  short-id `master` build and the deeper media probes were exercised on
+  2026-10-28 and 2026-11-04 respectively (I-156/I-168). The HD
   ledger (`HD-1`...`HD-8`, `I-133`) stays deferred for the unproven rows, and
   reachability alone is never reported as hardware verification.
 - No local macOS/Xcode host is attached. Apple simulator execution is out of
@@ -2352,9 +2353,10 @@ binding decisions, recorded as D-34...D-43 in `docs/DECISIONS.md`.
   pure-Rust RemotePairing/RSD, DDI, signing, installation, XCUITest and Apple
   developer provisioning. The full 105-step stub play passed on 2026-10-27
   (`20261027-063121-00d6`, long tvOS ids). The short-id `master` bundles, fresh
-  provisioned profiles, live Apple ID login/2FA and the deeper media probes
-  remain open (HD-1/I-150...I-153). WSL Swift builds and the unsigned `Apple
-  Xcode` CI job remain build/unit-test evidence only.
+  provisioned profiles, live Apple ID login/2FA and hardware-proven pure-Rust
+  pairing creation were exercised on 2026-10-28; the deeper media probes
+  followed on 2026-11-04 (HD-1/I-150...I-153/I-168). WSL Swift builds and the
+  unsigned `Apple Xcode` CI job remain build/unit-test evidence only.
 
 ---
 
@@ -2475,10 +2477,9 @@ name or `pyatv`); an existing portal device is renamed through
 by name for `doctor` without mounting or installing, and teardown removes the
 runner and any session-installed stub while leaving the host.
 
-Still open: live Apple ID login/2FA, live `updateDevice`, fresh short-id tvOS
-profiles and a short-id hardware run, hardware-proven pure-Rust pairing
-creation, physical iOS, the one-time local-network prompt, the deeper media
-probes (`Showing`/decoder/DRM/position hook), and hiding the runner in the
-drawer (no supported tvOS API found). The old profiles expire 2026-11-02. The
+Still open: physical iOS, the one-time local-network prompt, a fresh
+personalized DDI mount, paused playback with a stub control, and hiding the
+runner in the drawer (no supported tvOS API found). The short-id tvOS profiles
+expire 2026-11-04, so refresh them before another Apple TV run. The
 actors/groups/audience/stage-resolution slice was parked after the 2026-10-27
 merge and is closed by I-162 (2026-11-03); no device work was involved.
