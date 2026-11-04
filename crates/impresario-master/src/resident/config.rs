@@ -222,7 +222,11 @@ pub fn append(path: &Path, kind: Kind, yaml: &str) -> Result<(), String> {
         Some(sequence) if sequence.is_empty() => {
             let range = sequence.byte_range();
             let mut replace_start = range.start as usize;
-            while replace_start > 0 && matches!(source.as_bytes()[replace_start - 1], b' ' | b'\t')
+            while replace_start > 0
+                && source
+                    .as_bytes()
+                    .get(replace_start - 1)
+                    .is_some_and(|byte| matches!(*byte, b' ' | b'\t'))
             {
                 replace_start -= 1;
             }
