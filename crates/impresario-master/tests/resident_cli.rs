@@ -150,6 +150,71 @@ fn schedule_and_watch_editing_preserves_the_workspace_file() {
 }
 
 #[test]
+fn a_second_schedule_and_edit_preserve_existing_entries_and_comments() {
+    let home = tempfile::tempdir().expect("home");
+    let workspace = tempfile::tempdir().expect("workspace");
+    write_workspace(workspace.path(), "", &[], &[]);
+    let config = workspace.path().join("impresario.config");
+
+    let first = run(
+        home.path(),
+        Some(workspace.path()),
+        &[
+            "schedule",
+            "add",
+            "nightly",
+            "--when",
+            "kind: daily, at: '02:30'",
+            "--play",
+            "smoke.play",
+        ],
+    );
+    assert_eq!(first.code, EXIT_OK, "stderr={}", first.stderr);
+    let text = std::fs::read_to_string(&config).expect("config after first add");
+    std::fs::write(&config, format!("{text}# keep this comment\n")).expect("comment");
+
+    let second = run(
+        home.path(),
+        Some(workspace.path()),
+        &[
+            "schedule",
+            "add",
+            "weekly",
+            "--when",
+            "kind: weekly, days: [mon], at: '03:00'",
+            "--play",
+            "smoke.play",
+        ],
+    );
+    assert_eq!(second.code, EXIT_OK, "stderr={}", second.stderr);
+    let text = std::fs::read_to_string(&config).expect("config after second add");
+    assert!(text.contains("# keep this comment"), "{text}");
+    let value: Value = serde_yaml_ng::from_str(&text).expect("valid YAML");
+    let schedules = value["schedules"].as_sequence().expect("schedules");
+    assert_eq!(schedules.len(), 2);
+    assert_eq!(schedules[0]["name"], "nightly");
+    assert_eq!(schedules[1]["name"], "weekly");
+
+    let edited = run(
+        home.path(),
+        Some(workspace.path()),
+        &[
+            "schedule",
+            "edit",
+            "weekly",
+            "--yaml",
+            "name: weekly\nwhen: { kind: weekly, days: [tue], at: '04:00' }\nrun: { plays: [smoke.play] }\n",
+        ],
+    );
+    assert_eq!(edited.code, EXIT_OK, "stderr={}", edited.stderr);
+    let text = std::fs::read_to_string(&config).expect("config after edit");
+    assert!(text.contains("# keep this comment"), "{text}");
+    let value: Value = serde_yaml_ng::from_str(&text).expect("valid YAML");
+    assert_eq!(value["schedules"][1]["name"], "weekly");
+    assert_eq!(value["schedules"][1]["when"]["days"][0], "tue");
+}
+
+#[test]
 fn yaml_add_uses_the_command_name_when_the_document_omits_it() {
     let home = tempfile::tempdir().expect("home");
     let workspace = tempfile::tempdir().expect("workspace");
