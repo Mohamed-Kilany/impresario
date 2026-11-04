@@ -108,11 +108,11 @@ fn completions_cover_every_documented_context() {
             json!("android=\"id:login_button\", web=\"#login\"")
         );
 
-        // `Check:` starts with pieces, then conditions.
+        // `Check:` starts with pieces, then the probe forms and `not`.
         let checks = server.at("textDocument/completion", &contexts, 7, 15).await;
         assert_eq!(
             lsp::completion_labels(&checks),
-            vec!["LoginButton", "UsernameInput"]
+            vec!["LoginButton", "UsernameInput", "Showing", "Player", "not"]
         );
         let conditions = server.at("textDocument/completion", &contexts, 8, 29).await;
         assert_eq!(
