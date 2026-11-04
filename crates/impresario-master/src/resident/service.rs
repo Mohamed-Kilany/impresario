@@ -365,7 +365,7 @@ fn reconcile_schedules(
             }
             let observed = started_at
                 .as_ref()
-                .is_some_and(|start| at >= start.clone() - chrono::Duration::minutes(1));
+                .is_some_and(|start| at >= *start - chrono::Duration::minutes(1));
             if !observed && matches!(schedule.on_missed, MissedPolicy::Skip) {
                 append_event(
                     home,
@@ -374,7 +374,7 @@ fn reconcile_schedules(
                 mark_once_disabled(state, &schedule.name);
                 continue;
             }
-            now.clone()
+            now
         } else {
             let next = match last.as_ref() {
                 Some(last) => match schedule.next_after(last) {
@@ -410,7 +410,7 @@ fn reconcile_schedules(
         if paused {
             continue;
         }
-        let missed = last.is_some() && (now.clone() - &due) > chrono::Duration::minutes(1);
+        let missed = last.is_some() && (now - due) > chrono::Duration::minutes(1);
         if missed && matches!(schedule.on_missed, MissedPolicy::Skip) {
             update_last_fire(state, &schedule.name, &now);
             append_event(
