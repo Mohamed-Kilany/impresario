@@ -62,9 +62,13 @@ it is not a probe.
 | `system` | A system signal that strongly implies the fact. | secure codec held, system audio, syslog/dlog transition, a foreign session that was not attributed. |
 | `heuristic` | UI or visual inference that needs corroboration. | Accessibility labels, player-control text, black protected region alone. |
 
-A missing piece is authoritative evidence that no media exists there. A present piece
-with no observable media is **not** a failure; it stays unverifiable unless another
-source supplies enough evidence.
+A missing piece is authoritative evidence that no media exists there, so `Showing`
+FAILs (and `not Showing` PASSes). A present piece whose selected region is
+uniform/blank is also authoritative not-showing evidence for the coverage rule (a
+solid frame is indistinguishable from background), so bare `Showing` FAILs and
+`not Showing` PASSes. A present piece that is painted but has missing media facts
+(no decoded/source/decoder/DRM observation) is **not** a failure; it stays
+unverifiable unless another source supplies enough evidence.
 
 ### Verdict rules (implemented once in core)
 
@@ -170,9 +174,15 @@ The Apple agent therefore does not invent player or DRM state:
 - The Apple stub ships local H.264/AAC media, a still image, an intentionally empty image
   slot and Apple's public BipBop HLS stream. It reports through the Swift hook when the
   runner is listening.
+- On 2026-11-04 the hook path ran on the physical Apple TV `RAMA (4)` (`AppleTV5,3`, tvOS
+  26.1 `23J582`): `Showing` coverage+decoded and `Player` playing/position/duration/muted/
+  resolution passed; `decoder=hardware` and `DRM-disabled` stayed `unverifiable` because
+  the Apple collector has no decoder observation and the stub does not report DRM. A
+  uniform empty slot correctly failed bare `Showing` and passed `not Showing`
+  (`docs/DEVICES.md` §3.3).
 - Host-assisted DVT/syslog/pcapd collectors described in TASK.md are not implemented and
-  remain unverified. An Apple TV HD (`AppleTV5,3`, build `23J582`) is reachable on the LAN,
-  but no local macOS/Xcode host is paired with it, so no runner has executed there.
+  remain unverified. The Apple TV HD has run the agent and stub over the pure-Rust
+  direct-RSD path; iOS hardware and the one-time local-network prompt remain untested.
 
 ### Own apps: in-app hook
 
@@ -287,19 +297,23 @@ The web fixture is exercised by
 `crates/impresario-connector/tests/fixtures_suite.rs::media_probes_collect_showing_player_and_drm_evidence`;
 the optional hook contract is exercised by
 `web_app_hook_supplies_authoritative_player_evidence`. The Android and Apple fixture apps
-compile in their own toolchains but hardware playback acceptance is deferred (`HD-1`,
-`HD-5`, `HD-8`). Web probes on other managed Chromium archives are part of `HD-6`;
-real-TV CDP and the `Player` probe are hardware-verified on LG/Tizen (2026-10-29).
+compile in their own toolchains; Android hardware playback acceptance is deferred (`HD-5`,
+`HD-8`). The Apple TV hook/position/resolution path and the uniform empty-slot control ran
+on hardware on 2026-11-04, while Apple decoder/DRM claims remain unverifiable (`HD-1`). Web
+probes on other managed Chromium archives are part of `HD-6`; real-TV CDP and the `Player`
+probe are hardware-verified on LG/Tizen (2026-10-29).
 
 ## Unverified work
 
 - LG webOS and Samsung Tizen TVs were hardware-verified on 2026-10-29: native
   install/update, launch, forwarded CDP and the `Player => Video Playing` probe
-  passed on both (105/105 steps). Deeper `Showing`/decoder/DRM/position probes and
-  the Android/Apple hardware paths remain fixture-only. The Apple TV has the P0
-  UI/media step and 105-step play, but not the loopback hook/decoder/DRM evidence.
-- Apple host-side DVT/syslog/pcapd evidence and the in-app hook over loopback are not
-  hardware-tested.
+  passed on both (105/105 steps). Deeper `Showing`/decoder/DRM/position probes remain
+  fixture-only on Android. On the Apple TV the hook/position/resolution path and
+  `Showing` coverage ran on 2026-11-04; decoder/DRM stayed unverifiable.
+- Apple host-side DVT/syslog/pcapd evidence remains unimplemented. The in-app hook
+  over loopback is now hardware-tested (2026-11-04), including honest `unverifiable`
+  decoder/DRM results. Paused playback, iOS hardware and the local-network prompt
+  remain unverified.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are
   vendor/API-level dependent; only conservative parsers are shipped.
 - Public stream URLs can change; local fixtures are authoritative for CI.

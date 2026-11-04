@@ -225,7 +225,7 @@ piece remains authoritative evidence that no media exists there. There is no
 | `android` | live E2E on a real phone (`run 20261018-103702-ee29`: 86 steps, 0 failed) incl. touch `scroll`/`swipe`, text entry, keys, app lifecycle | ✅ Galaxy A51, Android 13 (Wi-Fi) |
 | `androidtv` | live E2E on a real TV (`run 20261018-104405-4f10`: 89 steps, 0 failed, D-pad `scrollto`, key hold, app lifecycle) + the on-device driver/wire test classes (26/26, 2/2) | ✅ TCL Android TV, Android 11 (Wi-Fi) |
 | `ios` | `AgentCore`/`AgentService` are exercised by `swift test` on Linux (executor + dispatcher + focus navigator against fakes; the full wire protocol over loopback gRPC); the XCUITest layer (`XCUIDriver`, `ImpresarioAgentTests`) is compiled unsigned by `Apple Xcode` but its actions have not run on iOS hardware | none: no iOS hardware evidence |
-| `tvos` | executor/session behavior under `swift test`; the short-id 105-step stub play passed on the physical Apple TV (`20261028-110828-b477`), and the actual-agent no-stub path passed (`20261028-112028-80fd`); deeper media probes remain limited by the optional app hook | ✅ Apple TV, 105-step stub play and actual-agent run (I-156) |
+| `tvos` | executor/session behavior under `swift test`; the short-id 105-step stub play passed on the physical Apple TV (`20261028-110828-b477`), and the actual-agent no-stub path passed (`20261028-112028-80fd`); the 2026-11-04 deeper-probe runs exercised the hook, uniform empty slot, and honest decoder/DRM unverifiable results (`20261104-093812-6688`, `20261104-094544-4063`, `20261104-094934-4728`) | ✅ Apple TV, 105-step stub play, actual-agent run and deeper probes (I-156/I-168) |
 
 Hardware details, run ids and case-by-case evidence: `docs/DEVICES.md` and
 `docs/STATUS.md`.

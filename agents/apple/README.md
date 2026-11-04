@@ -245,8 +245,9 @@ D-19 forbids the host tools that could.
 
 The host app and the test bundle declare `NSLocalNetworkUsageDescription` and
 `_impresario._tcp`. iOS may show a permission prompt on first run. On tvOS the
-`SystemAlerts` workarounds are compiled out: accept the prompt once with the
-Apple TV remote. The permission is remembered afterwards. The agent binds
+`SystemAlerts` workarounds are compiled out: if the prompt appears, accept it
+once with the Apple TV remote; the permission is remembered afterwards.
+Whether or when the tvOS prompt appears is still unverified. The agent binds
 `0.0.0.0`, publishes `_impresario._tcp` when Bonjour is available, and prints
 its addresses in the device log.
 
@@ -262,17 +263,27 @@ its addresses in the device log.
   `2,3,5,7,8,9,10,11`).
 * The same path was repeated through the productized `AppleTransport`
   (`impresario device check`) with the pre-rename old bundle ids.
-* The product rename to `com.impresario.agent` / `com.impresario.agent.tests` /
-  `com.impresario.stub` is implemented in `project.yml`; those new bundles have
-  **not** yet been signed and installed on hardware because their profiles must
-  be generated after the rename.
-* Still unverified on hardware: the full action/check matrix, `XCUIRemote`
-  focus, local-network prompt handling, `HookReceiver`, playback/probes, and
-  clean-state reinstall via `reset_app_data`.
-* The pair record used for the evidence came from an earlier pymobiledevice3
-  setup; `impresario apple pair` has not yet produced a hardware-verified pair.
-* The Apple ID wizard is implemented and unit-tested offline; no live Apple
-  login/2FA has been exercised.
+* The short-id product rename (`com.impresario.agent` /
+  `com.impresario.agent.tests` / `com.impresario.stub`) was signed and
+  installed on 2026-10-28; the host/no-stub path passed (`20261028-100103-b9ab`,
+  2/2) and the full 105-step stub play passed (`20261028-110828-b477`,
+  105/105, 5m51s).
+* On 2026-11-04 the deeper media probes ran on the same Apple TV: core
+  `20261104-093812-6688` passed 11/11 (`Showing` coverage+decoded, `Player`
+  playing/position/duration/muted/resolution, poster coverage); positive
+  control `20261104-094544-4063` correctly failed bare `Showing => Broken` on
+  the uniform empty slot; and `20261104-094934-4728` passed `not Showing =>
+  Broken` while recording decoder/DRM as unverifiable (no Apple decoder
+  observation and no stub DRM report). See `docs/DEVICES.md` §3.3.
+* Still unverified on hardware: iOS, paused playback, local-network prompt
+  handling, real FairPlay/DRM, and clean-state reinstall via
+  `reset_app_data`.
+* The P0 pair record came from an earlier pymobiledevice3 setup. On 2026-10-28
+  the pure-Rust manual-pairing path re-paired `RAMA (4)`, displayed
+  `impresario`, and saved the record under the device UDID; the later hardware
+  runs reused that machine-global record.
+* The free-team Apple ID login/2FA completed on 2026-10-28 (I-156); the
+  optional paid-team API-key path remains unexercised.
 
 ## 7. Troubleshooting
 

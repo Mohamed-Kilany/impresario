@@ -1067,8 +1067,10 @@ assume):
   `dumpsys media.drm` is not proof (another app's session is never
   attributed). `DRM-enabled` on a third-party app needs an active session
   naming the target package or the hook; otherwise UNVERIFIABLE.
-- A `Check: Showing => NoSuchPiece` is a FAIL (authoritative absence), while a
-  present surface with missing media facts is UNVERIFIABLE, not FAIL.
+- A `Check: Showing => NoSuchPiece` is a FAIL (authoritative absence). A present
+  but uniform/blank selected region is also authoritative not-showing evidence,
+  so bare `Showing` FAILs; use `Check: not Showing` to assert it. A painted
+  surface with missing media facts stays UNVERIFIABLE, not FAIL.
 
 The Android TV reference run `20261027-040844-6a42` passed all 105 stub smoke
 steps, including the Media stage (`Video`, `Poster`, `Missing` and
@@ -1097,9 +1099,12 @@ Three layers, with different reachability:
   `agent-host.png`) and then with the `master` short ids and fresh profiles
   (`run 20261028-100103-b9ab`, 2/2 steps, 35.4 s, `agent-host-shortid.png`).
   The full short-id 105-step stub play also passed
-  (`20261028-110828-b477`: 105/105, 5m51s, 13 screenshots). iOS on hardware is
-  still unverified. GitHub-hosted runners cannot reach the LAN, so the device
-  run is local.
+  (`20261028-110828-b477`: 105/105, 5m51s, 13 screenshots). On 2026-11-04 the
+  deeper media probes ran on the same TV: `Showing` coverage+decoded and
+  `Player` playing/position/duration/muted/resolution passed, while
+  decoder/DRM stayed honestly unverifiable (`§3.3`). iOS on hardware is still
+  unverified. GitHub-hosted runners cannot reach the LAN, so the device run is
+  local.
 
 ### 3.1 Verified here: build and unit-test the agent package (Linux/macOS)
 
@@ -1349,8 +1354,9 @@ device ID `B6:FD:1D:0C:99:3C`, build `23J582`; its LAN address is dynamic (the
 address. Developer Mode is enabled and the device trusted the host. On
 2026-10-28 the pairing was recreated with the pure-Rust path and the TV
 displayed `impresario`; the wide-icon product set was imported and installed.
-The first start asks for local-network access; tvOS has no XCTest `tap`, so
-grant that one prompt with the remote. The permission is remembered after that.
+The first start may ask for local-network access; tvOS has no XCTest `tap`, so
+if the prompt appears, grant it with the remote. The permission is remembered
+after that; whether and when the prompt actually appears is still unverified.
 
 Master side:
 
@@ -1438,11 +1444,13 @@ run (`20261028-134722-2be7`, 2/2 steps, 36.3 s) showed **2** Impresario apps
 wide `impresario` logo on black without stretching; the runner keeps the
 default white XCUITest icon.
 
-First physical run after an install: iOS/tvOS ask for local-network permission.
-The host app and test bundle declare the usage description and Bonjour service.
-On iOS the test bundle tries an interruption monitor + SpringBoard poll; on
-tvOS those calls are compiled out and one human press on the remote grants it
-for good (I-88). Uninstall + reinstall does **not** reset that permission.
+First physical run after an install: iOS/tvOS may ask for local-network
+permission. The host app and test bundle declare the usage description and
+Bonjour service. On iOS the test bundle tries an interruption monitor +
+SpringBoard poll; on tvOS those calls are compiled out and, if the prompt
+appears, one human press on the remote grants it for good (I-88). Uninstall +
+reinstall does **not** reset that permission. Whether the tvOS prompt appears
+on a given install is still unverified.
 
 Apple TV specifics: no USB path, so WLAN is the only way; Impresario Agent
 presses remote buttons through `XCUIRemote` (D-pad/Select/Menu/PlayPause;
@@ -1454,15 +1462,13 @@ the text field, scroller, and dialog rows.
 ### Playback probes and the Apple hook
 
 The Xcode layer is **not compiled on this host** (no Xcode); the macOS GitHub
-Actions job compiles both the tvOS and iOS targets unsigned (run
-`40460826743` at `d3b60c8` built the P0 artifact). The physical 105-step run
-`20261027-063121-00d6` executed the full `XCUIDriver` action matrix (focus,
-click/Select, key, scroll, text/keyboard, long-press, media checks, back) and
-the media `Player => Video Playing` probe on the Apple TV. `ProbeCollector`,
-`HookReceiver` and the deeper decoder/DRM/position assertions were not
-independently exercised by that play. In this host's WSL only `swift test`
-runs; `XCUIDriver`/`HookReceiver` depend on XCTest and need a real device to
-execute.
+Actions job compiles both the tvOS and iOS targets unsigned. The physical
+105-step run `20261027-063121-00d6` executed the full `XCUIDriver` action
+matrix (focus, click/Select, key, scroll, text/keyboard, long-press, media
+checks, back) and the UI `Player => Video Playing` probe on the Apple TV, but
+not the loopback hook or the deeper assertions. In this host's WSL only
+`swift test` runs; `XCUIDriver`/`HookReceiver` depend on XCTest and need a real
+device to execute.
 
 XCUITest cannot read another app's `AVPlayer`, decoder or FairPlay session.
 The stub `MediaViewController` therefore opens a local H.264/AAC video, a
@@ -1470,12 +1476,50 @@ decoded PNG, an empty image slot and Apple's public BipBop HLS stream; the app
 links `ImpresarioHook` and reports player/showing state every 250 ms to
 `http://127.0.0.1:47831/hook`, where `HookReceiver` keeps the newest JSON
 snapshot. Without that listener `start()` is a no-op and the probe correctly
-stays UNVERIFIABLE. Run the media scenario from the stub home screen and
-exercise `Showing`, `Player` (playing/paused/position/resolution) and
-DRM-disabled; record whether the local-network permission allowed loopback.
-The stub media screen and the UI `Player => Video Playing` check are
-hardware-verified by `20261027-063121-00d6`; the hook/decoder/DRM/position
-probes remain HD-1 work.
+stays UNVERIFIABLE.
+
+**2026-11-04 - deeper media probes (master `640d645`).** A scratch workspace
+(`%TEMP%\impresario-apple-media`) bound the stub `com.impresario.stub` on
+`RAMA (4)` and drove the Media screen. The Windows CLI came from CI run
+`41784834960`; the unsigned Apple products came from `Apple Xcode` run
+`41794616426`, both at `640d645`.
+`impresario apple doctor --host 192.168.93.19 --signing default --products current --plain`
+reported `DDI: mounted` and `Apple doctor: ready.` The DDI was already mounted; the local
+`~/.impresario/apple/ddi/23J582` asset check was satisfied with zero-byte
+placeholder assets, so this run does **not** prove a fresh DDI mount or a
+personalized DDI download.
+
+- Core run `20261104-093515-ffdc` passed 10/10 steps in 1m58s; the extended
+  run `20261104-093812-6688` passed 11/11 steps in 1m19s. The hook was active:
+  `Showing => Video with coverage>=50%, decoded`,
+  `Player => Video Playing` with `position>1s`, `duration>1s`, `muted`,
+  `width>=320`, `height>=240`, `resolution>=240p`, and
+  `Showing => Poster with coverage>=50%` all passed. The screenshot
+  `media-core.png` is a valid 1920x1080 capture of the colour-bar video,
+  poster and empty slot. These checks prove the hook contract and a painted
+  video region; they are not a hardware decoder counter.
+- Positive control `20261104-094544-4063` failed at `Showing => Broken` with
+  `CHECK_FAILED: probe failed: showing=present=fail`. The deliberately empty
+  slot is a uniform region, so screenshot coverage is authoritative evidence
+  that it is not painted; this is a FAIL, not UNVERIFIABLE.
+- Negative-control/unverifiable run `20261104-094934-4728` completed 9/9 steps
+  in 1m33s with `--unverifiable warn` (exit 0; act status `unverifiable`).
+  `not Showing => Broken` passed. `Player => Video Playing with
+  decoder=hardware` returned `state=Playing=pass, property.decoder=unverifiable`
+  because the Apple `ProbeCollector` has no decoder observation (`decoder`
+  maps to nil); `Player => Video DRM-disabled` returned
+  `drm.enabled=false=unverifiable` because the stub does not call
+  `ImpresarioHook.drm`, so no DRM snapshot exists. `media-unverifiable.png`
+  is a valid 1920x1080 capture of the same screen.
+- Paused playback was not exercised: the stub exposes no pause control and a
+  plain `AVPlayer` does not handle the remote Play/Pause button in this
+  fixture. No paused claim is made.
+
+The Apple TV therefore has hardware evidence for the hook/position/resolution
+path, the `Showing` coverage path and the uniform empty-slot negative control,
+plus honest UNVERIFIABLE decoder/DRM results. iOS hardware, paused playback,
+the one-time local-network prompt and a real FairPlay/DRM sample remain
+unverified (HD-1).
 
 ---
 
