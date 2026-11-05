@@ -1165,18 +1165,18 @@ fn apply_failure_window(
     throttle: chrono::Duration,
 ) -> FailureDecision {
     let event = event_name(event);
-    if let Some(window) = window.as_mut() {
-        let duplicate = window.signature.as_str() == signature
+    let duplicate = window.as_ref().is_some_and(|window| {
+        window.signature.as_str() == signature
             && window.event.as_str() == event
-            && parse_local(&window.started_at).is_some_and(|started| now - started <= throttle);
-        if duplicate {
+            && parse_local(&window.started_at).is_some_and(|started| now - started <= throttle)
+    });
+    if duplicate {
+        let count = window.as_mut().map_or(1, |window| {
             window.last_at = now.to_rfc3339();
             window.count = window.count.saturating_add(1);
-            return FailureDecision {
-                send: false,
-                count: window.count,
-            };
-        }
+            window.count
+        });
+        return FailureDecision { send: false, count };
     }
     *window = Some(FailureWindow {
         signature: signature.to_string(),
