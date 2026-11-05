@@ -214,10 +214,17 @@ previous occurrence is still running), `skip` or `fail`.
 
 Watchers take a per-iteration device lease and release it between iterations;
 `pacing.mode` is `back_to_back` or `min_gap` with `gap`. `on_failure` configures
-the dump, throttle and notification channels. The current slice records
-notification events and copies the full run tree into
-`reports/watch/<name>/<timestamp>/` with a `dump.json`; OS toast/webhook
-delivery and deduplication/throttling are not yet wired. The TUI Resident
+the dump, throttle and notification channels. Notification events are routed
+per watcher and schedule: identical watcher failures (same
+device/play/act/stage/step/code signature, with example suffixes ignored)
+inside `throttle.same_failure_window` produce one `watch_notify` event and
+then `watch_notify_suppressed` events carrying an increasing count; a recovered
+watcher emits one `watch_notify` recovery event, and schedules emit
+`schedule_notify` only for the events listed in `notify.on`, including recovery
+after consecutive failures. The current slice records rather than delivers:
+OS toast/webhook delivery, quiet hours and per-channel rate limits are not yet
+wired. Dumps copy the full run tree into
+`reports/watch/<name>/<timestamp>/` with a `dump.json`. The TUI Resident
 screen and resident MCP tools are also not yet implemented, and D-39 no-gap
 lifetime leases are not available (see `docs/STATUS.md` gap 21).
 

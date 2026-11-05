@@ -12,16 +12,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Local, TimeZone as _};
+use impresario_core::command::WireErrorCode;
 use impresario_core::home::Home;
 use impresario_core::resident::{
-    parse_once, BusyPolicy, MissedPolicy, Pacing, ResidentSections, RunSelection, Schedule,
-    ScheduleWhen, Watcher,
+    parse_once, parse_span, BusyPolicy, FailureClass, MissedPolicy, NotifyEvent, NotifySpec,
+    Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen, Watcher,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cli::{self, RunArgs, EXIT_INFRA, EXIT_OK, EXIT_USAGE};
 use crate::jobs;
+use crate::report::{ActReport, FailureReport, RunReport, RunStatus, Status};
 
 /// Current state schema. Bump only for incompatible changes.
 const STATE_VERSION: u32 = 1;
@@ -75,6 +77,7 @@ pub struct ScheduleState {
     pub disabled_once: bool,
     pub runs: u64,
     pub failures: u64,
+    pub consecutive_failures: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -87,6 +90,34 @@ pub struct WatcherState {
     pub last_status: Option<String>,
     pub last_dump: Option<String>,
     pub next_after: Option<String>,
+    pub notification: NotificationState,
+}
+
+/// Notification bookkeeping for one watcher.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationState {
+    /// The currently open duplicate-failure window.
+    pub failure_window: Option<FailureWindow>,
+    /// A recovery notification is pending after a failing iteration.
+    pub pending_recovery: bool,
+}
+
+/// Identical failures inside this window count towards one notification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureWindow {
+    pub signature: String,
+    pub event: String,
+    pub started_at: String,
+    pub last_at: String,
+    /// Number of occurrences in this window, including the notified first one.
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FailureDecision {
+    send: bool,
+    count: u64,
 }
 
 pub struct Paths {
@@ -600,16 +631,8 @@ fn watcher_loop(
             }
         };
         let outcome = cli::run_workspace(base, config_path, devices_path, &args, false, true);
-        let status = outcome
-            .report
-            .as_ref()
-            .map(|report| report.status)
-            .map(|status| status.as_str().to_string())
-            .unwrap_or_else(|| format!("exit {}", outcome.exit_code));
-        let unverifiable = outcome
-            .report
-            .as_ref()
-            .is_some_and(|report| report.summary().acts_unverifiable > 0);
+        let status = outcome_status(&outcome);
+        let unverifiable = outcome_unverifiable(&outcome);
         let failed = outcome.exit_code != EXIT_OK && outcome.exit_code != EXIT_USAGE;
         if failed || unverifiable {
             failure_streak = failure_streak.saturating_add(1);
@@ -646,7 +669,18 @@ fn watcher_loop(
                     }),
                 );
             }
-            notify_event(home, watcher, &status, unverifiable, dump.as_deref());
+            let event = classify_outcome(&outcome, watcher.device_health.treat_unreachable_as)
+                .unwrap_or(NotifyEvent::Failure);
+            let signature = failure_signature(&outcome, &status);
+            notify_watcher_failure(
+                home,
+                watcher,
+                &status,
+                event,
+                &signature,
+                dump.as_deref(),
+                state,
+            );
         } else {
             append_event(
                 home,
@@ -657,6 +691,9 @@ fn watcher_loop(
                     "at": Local::now().to_rfc3339()
                 }),
             );
+            if outcome.exit_code == EXIT_OK {
+                notify_watcher_recovery(home, watcher, &status, state);
+            }
         }
         let gap = watcher_gap(watcher, failure_streak);
         sleep_unless_stopped(gap, service_stop, stop);
@@ -776,6 +813,8 @@ fn spawn_schedule(
                 "at": Local::now().to_rfc3339()
             }),
         );
+        let status = outcome_status(&outcome);
+        notify_schedule_outcome(&home, &schedule, &outcome, &status, &state);
         if let Ok(mut set) = running.lock() {
             set.remove(&schedule_key(&schedule.name));
         }
@@ -963,30 +1002,346 @@ fn directory_size(path: &Path) -> u64 {
     total
 }
 
-fn notify_event(
+fn outcome_status(outcome: &cli::RunOutcome) -> String {
+    outcome
+        .report
+        .as_ref()
+        .map(|report| report.status.as_str().to_string())
+        .unwrap_or_else(|| format!("exit {}", outcome.exit_code))
+}
+
+fn outcome_unverifiable(outcome: &cli::RunOutcome) -> bool {
+    outcome
+        .report
+        .as_ref()
+        .is_some_and(|report| report.summary().acts_unverifiable > 0)
+}
+
+/// Classify a finished run into the notification event it represents.
+fn classify_outcome(
+    outcome: &cli::RunOutcome,
+    unreachable_as: FailureClass,
+) -> Option<NotifyEvent> {
+    let Some(report) = outcome.report.as_ref() else {
+        return if outcome.exit_code == EXIT_INFRA {
+            Some(match unreachable_as {
+                FailureClass::Infrastructure => NotifyEvent::DeviceUnreachable,
+                FailureClass::Test => NotifyEvent::Failure,
+            })
+        } else {
+            (outcome.exit_code != EXIT_OK).then_some(NotifyEvent::Failure)
+        };
+    };
+    if report_has_infrastructure_failure(report) {
+        return Some(match unreachable_as {
+            FailureClass::Infrastructure => NotifyEvent::DeviceUnreachable,
+            FailureClass::Test => NotifyEvent::Failure,
+        });
+    }
+    let summary = report.summary();
+    if summary.acts_failed > 0
+        || summary.steps_failed > 0
+        || matches!(
+            report.status,
+            RunStatus::Failed | RunStatus::Error | RunStatus::Interrupted
+        )
+    {
+        return Some(NotifyEvent::Failure);
+    }
+    if summary.acts_unverifiable > 0 {
+        return Some(NotifyEvent::Unverifiable);
+    }
+    if outcome.exit_code != EXIT_OK {
+        return Some(NotifyEvent::Failure);
+    }
+    None
+}
+
+fn report_has_infrastructure_failure(report: &RunReport) -> bool {
+    report.devices.iter().any(|device| {
+        device
+            .error
+            .as_ref()
+            .is_some_and(|error| is_infrastructure_code(&error.code))
+            || device.plays.iter().any(|play| {
+                play.acts.iter().any(|act| {
+                    final_failure(act).is_some_and(|failure| is_infrastructure_code(&failure.code))
+                })
+            })
+    })
+}
+
+/// Only the final attempt decides how a failed act is reported; earlier failed
+/// attempts that a retry recovered must not keep notifying.
+fn final_failure(act: &ActReport) -> Option<&FailureReport> {
+    if act.status != Status::Failed {
+        return None;
+    }
+    act.attempts
+        .last()
+        .and_then(|attempt| attempt.failure.as_ref())
+}
+
+fn is_infrastructure_code(code: &str) -> bool {
+    WireErrorCode::ALL
+        .iter()
+        .copied()
+        .find(|candidate| candidate.as_str() == code)
+        .is_some_and(WireErrorCode::is_infrastructure)
+}
+
+/// Stable identity for duplicate-failure throttling: act/stage/step/code.
+fn failure_signature(outcome: &cli::RunOutcome, fallback: &str) -> String {
+    let Some(report) = outcome.report.as_ref() else {
+        return fallback.to_string();
+    };
+    let mut unverifiable = None;
+    for device in &report.devices {
+        if let Some(error) = &device.error {
+            return format!("{}/device/{}", device.name, error.code);
+        }
+        for play in &device.plays {
+            for act in &play.acts {
+                if let Some(failure) = final_failure(act) {
+                    let stage = act
+                        .attempts
+                        .last()
+                        .and_then(|attempt| {
+                            attempt.stages.iter().find(|stage| {
+                                stage.steps.iter().any(|step| step.status == Status::Failed)
+                            })
+                        })
+                        .map_or("-", |stage| stage.name.as_str());
+                    return format!(
+                        "{}/{}/{}/{}/step:{}/{}",
+                        device.name,
+                        play.name,
+                        act_signature_name(&act.name),
+                        stage,
+                        failure.step_index,
+                        failure.code
+                    );
+                }
+                if act.status == Status::Unverifiable && unverifiable.is_none() {
+                    unverifiable = Some(format!(
+                        "{}/{}/{}:unverifiable",
+                        device.name,
+                        play.name,
+                        act_signature_name(&act.name)
+                    ));
+                }
+            }
+        }
+    }
+    unverifiable.unwrap_or_else(|| fallback.to_string())
+}
+
+fn act_signature_name(name: &str) -> &str {
+    name.split_once(" [").map_or(name, |(base, _)| base)
+}
+
+fn event_name(event: NotifyEvent) -> &'static str {
+    match event {
+        NotifyEvent::Failure => "failure",
+        NotifyEvent::Unverifiable => "unverifiable",
+        NotifyEvent::DeviceUnreachable => "device_unreachable",
+        NotifyEvent::Recovery => "recovery",
+    }
+}
+
+fn notify_channels(spec: &NotifySpec, event: NotifyEvent) -> Vec<String> {
+    if spec.on.contains(&event) {
+        spec.channels.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+fn apply_failure_window(
+    window: &mut Option<FailureWindow>,
+    signature: &str,
+    event: NotifyEvent,
+    now: DateTime<Local>,
+    throttle: chrono::Duration,
+) -> FailureDecision {
+    let event = event_name(event);
+    if let Some(window) = window.as_mut() {
+        let duplicate = window.signature.as_str() == signature
+            && window.event.as_str() == event
+            && parse_local(&window.started_at).is_some_and(|started| now - started <= throttle);
+        if duplicate {
+            window.last_at = now.to_rfc3339();
+            window.count = window.count.saturating_add(1);
+            return FailureDecision {
+                send: false,
+                count: window.count,
+            };
+        }
+    }
+    *window = Some(FailureWindow {
+        signature: signature.to_string(),
+        event: event.to_string(),
+        started_at: now.to_rfc3339(),
+        last_at: now.to_rfc3339(),
+        count: 1,
+    });
+    FailureDecision {
+        send: true,
+        count: 1,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn notify_watcher_failure(
     home: &Home,
     watcher: &Watcher,
     status: &str,
-    unverifiable: bool,
+    event: NotifyEvent,
+    signature: &str,
     dump: Option<&Path>,
+    state: &Arc<Mutex<ServiceState>>,
 ) {
-    let mut channels = Vec::new();
-    for channel in &watcher.on_failure.notify {
-        if channel == "toast" {
-            channels.push("toast".to_string());
-        } else if channel.starts_with("webhook:") {
-            channels.push(channel.clone());
+    let channels = watcher.on_failure.notify.clone();
+    if channels.is_empty() {
+        return;
+    }
+    let throttle = parse_span(&watcher.on_failure.throttle.same_failure_window)
+        .unwrap_or_else(|_| chrono::Duration::minutes(15));
+    let now = Local::now();
+    let decision = {
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let entry = state.watchers.entry(watcher.name.clone()).or_default();
+        let decision = apply_failure_window(
+            &mut entry.notification.failure_window,
+            signature,
+            event,
+            now,
+            throttle,
+        );
+        entry.notification.pending_recovery = true;
+        decision
+    };
+    let dump = dump.map(|path| path.display().to_string());
+    if decision.send {
+        append_event(
+            home,
+            json!({
+                "kind": "watch_notify",
+                "watcher": watcher.name,
+                "event": event_name(event),
+                "signature": signature,
+                "status": status,
+                "unverifiable": event == NotifyEvent::Unverifiable,
+                "count": decision.count,
+                "channels": channels,
+                "dump": dump,
+                "at": now.to_rfc3339()
+            }),
+        );
+    } else {
+        append_event(
+            home,
+            json!({
+                "kind": "watch_notify_suppressed",
+                "watcher": watcher.name,
+                "event": event_name(event),
+                "signature": signature,
+                "status": status,
+                "unverifiable": event == NotifyEvent::Unverifiable,
+                "count": decision.count,
+                "channels": channels,
+                "dump": dump,
+                "at": now.to_rfc3339()
+            }),
+        );
+    }
+}
+
+fn notify_watcher_recovery(
+    home: &Home,
+    watcher: &Watcher,
+    status: &str,
+    state: &Arc<Mutex<ServiceState>>,
+) {
+    let channels = watcher.on_failure.notify.clone();
+    if channels.is_empty() {
+        return;
+    }
+    let pending = {
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let entry = state.watchers.entry(watcher.name.clone()).or_default();
+        if entry.notification.pending_recovery {
+            entry.notification.pending_recovery = false;
+            entry.notification.failure_window = None;
+            true
+        } else {
+            false
         }
+    };
+    if pending {
+        append_event(
+            home,
+            json!({
+                "kind": "watch_notify",
+                "watcher": watcher.name,
+                "event": "recovery",
+                "status": status,
+                "unverifiable": false,
+                "channels": channels,
+                "at": Local::now().to_rfc3339()
+            }),
+        );
+    }
+}
+
+fn notify_schedule_outcome(
+    home: &Home,
+    schedule: &Schedule,
+    outcome: &cli::RunOutcome,
+    status: &str,
+    state: &Arc<Mutex<ServiceState>>,
+) {
+    let event = classify_outcome(outcome, FailureClass::Infrastructure);
+    let (channels, notify_event) = {
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        let entry = state.schedules.entry(schedule.name.clone()).or_default();
+        if let Some(event) = event {
+            entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
+            (notify_channels(&schedule.notify, event), event)
+        } else {
+            let recovery = entry.consecutive_failures > 0;
+            if recovery {
+                entry.consecutive_failures = 0;
+            }
+            (
+                if recovery {
+                    notify_channels(&schedule.notify, NotifyEvent::Recovery)
+                } else {
+                    Vec::new()
+                },
+                NotifyEvent::Recovery,
+            )
+        }
+    };
+    if channels.is_empty() {
+        return;
     }
     append_event(
         home,
         json!({
-            "kind": "watch_notify",
-            "watcher": watcher.name,
+            "kind": "schedule_notify",
+            "schedule": schedule.name,
+            "event": event_name(notify_event),
             "status": status,
-            "unverifiable": unverifiable,
+            "exit_code": outcome.exit_code,
+            "job": outcome.run_id,
             "channels": channels,
-            "dump": dump.map(|path| path.display().to_string()),
             "at": Local::now().to_rfc3339()
         }),
     );
@@ -1338,6 +1693,9 @@ pub fn print_logs(home: &Home, follow: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::{
+        AttemptReport, DeviceReport, PlayReport, SpanJson, StageReport, StepReport,
+    };
     use impresario_core::resident::{
         DeviceHealth, FailurePolicy, Pacing, Retention, WatcherPriority,
     };
@@ -1389,5 +1747,200 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 2, "{names:?}");
         assert!(names.iter().any(|name| name == "three"), "{names:?}");
+    }
+
+    fn report_with(status: Status, run_status: RunStatus, code: Option<&str>) -> RunReport {
+        let step = StepReport {
+            source: "Action: click => B".to_string(),
+            span: SpanJson {
+                file: "p.play".to_string(),
+                line: 1,
+                col: 1,
+                len: 10,
+            },
+            status,
+            duration_ms: 1,
+            error: None,
+        };
+        RunReport {
+            schema_version: 2,
+            run_id: "run".to_string(),
+            started_at: "2026-11-05T00:00:00Z".to_string(),
+            duration_ms: 1,
+            status: run_status,
+            exit_code: if run_status == RunStatus::Passed {
+                0
+            } else {
+                1
+            },
+            devices: vec![DeviceReport {
+                name: "tv".to_string(),
+                platform: "android".to_string(),
+                device_info: None,
+                error: None,
+                plays: vec![PlayReport {
+                    name: "P".to_string(),
+                    file: "p.play".to_string(),
+                    acts: vec![ActReport {
+                        name: "A [user=alice]".to_string(),
+                        tags: Vec::new(),
+                        example: Default::default(),
+                        status,
+                        flaky: false,
+                        attempts: vec![AttemptReport {
+                            n: 1,
+                            status,
+                            duration_ms: 1,
+                            stages: vec![StageReport {
+                                name: "S".to_string(),
+                                span: None,
+                                status,
+                                steps: vec![step],
+                            }],
+                            failure: code.map(|code| FailureReport {
+                                step_index: 0,
+                                code: code.to_string(),
+                                message: "failed".to_string(),
+                                details: Default::default(),
+                                screenshot: None,
+                                log_tail: Vec::new(),
+                            }),
+                        }],
+                    }],
+                }],
+            }],
+        }
+    }
+
+    fn outcome(report: RunReport) -> cli::RunOutcome {
+        cli::RunOutcome {
+            exit_code: report.exit_code,
+            run_id: Some(report.run_id.clone()),
+            run_dir: None,
+            report: Some(report),
+            messages: Vec::new(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn failure_signature_uses_the_act_stage_step_and_code() {
+        let outcome = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("CHECK_FAILED"),
+        ));
+        assert_eq!(
+            failure_signature(&outcome, "fallback"),
+            "tv/P/A/S/step:0/CHECK_FAILED"
+        );
+        assert_eq!(act_signature_name("A [user=alice]"), "A");
+    }
+
+    #[test]
+    fn outcome_classification_separates_test_unverifiable_and_infrastructure() {
+        let failed = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("CHECK_FAILED"),
+        ));
+        assert_eq!(
+            classify_outcome(&failed, FailureClass::Infrastructure),
+            Some(NotifyEvent::Failure)
+        );
+        let unverifiable = outcome(report_with(Status::Unverifiable, RunStatus::Passed, None));
+        assert_eq!(
+            classify_outcome(&unverifiable, FailureClass::Infrastructure),
+            Some(NotifyEvent::Unverifiable)
+        );
+        let infrastructure = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("TRANSPORT"),
+        ));
+        assert_eq!(
+            classify_outcome(&infrastructure, FailureClass::Infrastructure),
+            Some(NotifyEvent::DeviceUnreachable)
+        );
+        assert_eq!(
+            classify_outcome(&infrastructure, FailureClass::Test),
+            Some(NotifyEvent::Failure)
+        );
+        let passed = outcome(report_with(Status::Passed, RunStatus::Passed, None));
+        assert_eq!(
+            classify_outcome(&passed, FailureClass::Infrastructure),
+            None
+        );
+        let missing = cli::RunOutcome {
+            exit_code: EXIT_INFRA,
+            run_id: None,
+            run_dir: None,
+            report: None,
+            messages: Vec::new(),
+            detail: None,
+        };
+        assert_eq!(
+            classify_outcome(&missing, FailureClass::Infrastructure),
+            Some(NotifyEvent::DeviceUnreachable)
+        );
+        assert_eq!(
+            classify_outcome(&missing, FailureClass::Test),
+            Some(NotifyEvent::Failure)
+        );
+    }
+
+    #[test]
+    fn identical_failures_are_throttled_inside_the_window() {
+        let now = Local::now();
+        let mut window = None;
+        let first = apply_failure_window(
+            &mut window,
+            "sig",
+            NotifyEvent::Failure,
+            now,
+            chrono::Duration::minutes(15),
+        );
+        assert!(first.send);
+        assert_eq!(first.count, 1);
+        let second = apply_failure_window(
+            &mut window,
+            "sig",
+            NotifyEvent::Failure,
+            now + chrono::Duration::minutes(5),
+            chrono::Duration::minutes(15),
+        );
+        assert!(!second.send);
+        assert_eq!(second.count, 2);
+        let expired = apply_failure_window(
+            &mut window,
+            "sig",
+            NotifyEvent::Failure,
+            now + chrono::Duration::minutes(20),
+            chrono::Duration::minutes(15),
+        );
+        assert!(expired.send);
+        assert_eq!(expired.count, 1);
+        let changed = apply_failure_window(
+            &mut window,
+            "other",
+            NotifyEvent::Failure,
+            now + chrono::Duration::minutes(21),
+            chrono::Duration::minutes(15),
+        );
+        assert!(changed.send);
+        assert_eq!(changed.count, 1);
+    }
+
+    #[test]
+    fn schedule_notification_channels_follow_the_event_list() {
+        let spec = NotifySpec {
+            on: vec![NotifyEvent::Failure, NotifyEvent::Recovery],
+            channels: vec!["toast".to_string(), "webhook:ops".to_string()],
+        };
+        assert_eq!(
+            notify_channels(&spec, NotifyEvent::Failure),
+            vec!["toast".to_string(), "webhook:ops".to_string()]
+        );
+        assert!(notify_channels(&spec, NotifyEvent::Unverifiable).is_empty());
     }
 }
