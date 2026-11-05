@@ -89,6 +89,7 @@ Apple's XCTest frameworks, which are part of the platform SDK.
 | `grpc-swift` | 1.27.6 (exact) | Apache-2.0 | gRPC `Agent` service on SwiftNIO | chosen - I-83 |
 | `swift-nio` | 2.65.0 or newer, lock-pinned | Apache-2.0 | event loops and future glue | chosen - I-83 |
 | `swift-nio-http2` | 1.46.0 or newer, lock-pinned | Apache-2.0 | gRPC metadata (`NIOHPACK`) | chosen - I-83 |
+| `swift-log` | 1.16.2 (exact) | Apache-2.0 | transitive `Logging` module used by grpc-swift; pinned below 1.17.0, whose `@nonexhaustive` attribute is unknown to the CI Swift 6.2 toolchain | chosen - I-83 |
 
 `protoc` is used only at generation time (`scripts/gen-swift.sh`); its output is
 committed. The `protoc-gen-swift` plugin is built from the pinned
