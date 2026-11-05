@@ -43,11 +43,13 @@ let package = Package(
         // -token); the version matches the pin grpc-swift resolves.
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.46.0"),
         // swift-log is declared explicitly because both gates need a manifest
-        // they understand: 1.10.0 is the newest release with tools-version
-        // 6.1, while 1.10.1+ require 6.2 and the Xcode 16.4 gate is Swift
-        // 6.1.2. 1.17.0 additionally uses `@nonexhaustive`, which the Linux
-        // Swift 6.2.1 toolchain does not know.
-        .package(url: "https://github.com/apple/swift-log.git", exact: "1.10.0"),
+        // they understand: 1.9.1 is the newest release that still uses
+        // tools-version 6.1 and has no unsafe build flags (1.10+ adds
+        // -require-explicit-sendable, which SwiftPM rejects in a dependency,
+        // and 1.10.1+ also requires tools-version 6.2 that Xcode 16.4's Swift
+        // 6.1.2 cannot load). 1.17.0 additionally uses `@nonexhaustive`, which
+        // the Linux Swift 6.2.1 toolchain does not know.
+        .package(url: "https://github.com/apple/swift-log.git", exact: "1.9.1"),
     ],
     targets: [
         .target(name: "AgentCore"),
