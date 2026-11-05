@@ -42,10 +42,12 @@ let package = Package(
         // NIOHPACK carries the gRPC metadata type (x-impresario-session-id /
         // -token); the version matches the pin grpc-swift resolves.
         .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.46.0"),
-        // swift-log is declared explicitly to keep grpc-swift's transitive
-        // Logging dependency on a release that builds with the CI Swift 6.2
-        // toolchain. 1.17.0 uses `@nonexhaustive`, which 6.2 does not know.
-        .package(url: "https://github.com/apple/swift-log.git", exact: "1.16.2"),
+        // swift-log is declared explicitly because both gates need a manifest
+        // they understand: 1.10.0 is the newest release with tools-version
+        // 6.1, while 1.10.1+ require 6.2 and the Xcode 16.4 gate is Swift
+        // 6.1.2. 1.17.0 additionally uses `@nonexhaustive`, which the Linux
+        // Swift 6.2.1 toolchain does not know.
+        .package(url: "https://github.com/apple/swift-log.git", exact: "1.10.0"),
     ],
     targets: [
         .target(name: "AgentCore"),
