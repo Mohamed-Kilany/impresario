@@ -759,6 +759,7 @@ fn sleep_unless_stopped(duration: Duration, service_stop: &AtomicBool, stop: &At
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_schedule(
     home: &Home,
     base: &Path,
