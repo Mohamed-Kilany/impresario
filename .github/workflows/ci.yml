@@ -21,6 +21,13 @@ jobs:
   rust:
     name: rust (fmt, clippy, tests)
     runs-on: ubuntu-latest
+    # The toolchain's lld dies with SIGBUS when the large
+    # impresario-master and impresario-clients test binaries link in
+    # parallel. Keep CI-only dev/test artifacts free of debug info and
+    # link them one at a time; release artifacts are unaffected.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,7 +39,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --jobs 1
         env:
           RUST_BACKTRACE: "1"
 
