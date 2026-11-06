@@ -574,7 +574,10 @@ mod tests {
                 let read = stream.read(&mut buffer).expect("read");
                 assert!(read > 0, "request closed before headers");
                 request.extend_from_slice(&buffer[..read]);
-                if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                if let Some(index) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n".as_slice())
+                {
                     break index + 4;
                 }
             };

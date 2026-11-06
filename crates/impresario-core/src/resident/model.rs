@@ -1005,7 +1005,10 @@ notifications:
         assert!(errors.contains("start and end must differ"), "{errors}");
         assert!(errors.contains("email"), "{errors}");
         assert!(errors.contains("max must be greater"), "{errors}");
-        assert!(errors.contains("window must be greater"), "{errors}");
+        assert!(
+            errors.contains("window '0s' must be greater than zero"),
+            "{errors}"
+        );
         assert!(errors.contains("bad name"), "{errors}");
         assert!(errors.contains("http(s) URL"), "{errors}");
     }
