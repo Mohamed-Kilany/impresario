@@ -74,8 +74,8 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 ## Resident sections
 
 `config.yaml` and the workspace `impresario.config` may also contain the
-structured `schedules:` and `watchers:` lists described in TASK.md §8. They are
+structured `schedules:`, `watchers:` and `notifications:` sections described in TASK.md §8. They are
 not scalar settings: the settings loader and the generated table above
-deliberately ignore them, while the `schedule`, `watch` and `service` commands
-parse and validate the owning sections. See `docs/CLI.md` for the commands and
-the schedule/watcher fields.
+deliberately ignore them, while the `schedule`, `watch`, `notify` and `service`
+commands parse and validate the owning sections. See `docs/CLI.md` for the
+commands and the schedule/watcher and delivery fields.

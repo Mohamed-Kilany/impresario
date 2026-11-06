@@ -197,6 +197,11 @@ impresario watch add soak --play smoke.play --gap 30s
 impresario watch list|show|status [--json]|dumps
 impresario watch start|stop|pause|resume soak
 impresario watch run-now soak
+impresario notify list [--json] [--limit 20]
+impresario notify open <notification-id|job-id|report-path> [--print]
+impresario notify secret set ops --stdin
+impresario notify secret status ops
+impresario notify secret clear ops
 ```
 
 `add` and `edit` also accept full YAML with `--yaml` or `--file`; `--when` is
@@ -221,9 +226,47 @@ inside `throttle.same_failure_window` produce one `watch_notify` event and
 then `watch_notify_suppressed` events carrying an increasing count; a recovered
 watcher emits one `watch_notify` recovery event, and schedules emit
 `schedule_notify` only for the events listed in `notify.on`, including recovery
-after consecutive failures. The current slice records rather than delivers:
-OS toast/webhook delivery, quiet hours and per-channel rate limits are not yet
-wired. Dumps copy the full run tree into
+after consecutive failures.
+
+Delivery is configured once in the optional `notifications:` section of the
+workspace config or the global `config.yaml`; the two layers merge by webhook
+name and channel key:
+
+```yaml
+notifications:
+  quiet_hours: { start: "22:00", end: "07:00" }
+  rate_limits:
+    toast: { max: 5, window: 1h }
+    "webhook:ops": { max: 20, window: 1h }
+  webhooks:
+    ops: { url: "https://example.invalid/impresario" }
+```
+
+Quiet hours use host-local time and may wrap midnight; the window is
+half-open (`start <= now < end`). Rate limits are independent moving windows
+per channel and persist across restarts in `service/state.json`. A suppressed
+delivery still records a `notify_delivery` event with a reason of
+`quiet_hours` or `rate_limit`; duplicate-failure `watch_notify_suppressed`
+events are routing decisions and are not delivered at all. Toast delivery uses
+the native Windows notification, macOS notification and Linux freedesktop
+services; the toast's `Open report` action opens the run report when a report
+path exists and the platform supports actions.
+
+Webhook channels POST the JSON payload (`id`, `kind`, `source`, `event`,
+`status`, `signature`, `count`, `job`, `report`, `dump`, `exit_code`, `at`,
+`title`, `body`) with a ten-second timeout. A webhook bearer secret is read
+from the OS credential store under service `impresario.notify`, account
+`webhook:NAME`; `IMPRESARIO_WEBHOOK_<NAME>_SECRET` overrides it for headless
+sessions. Secrets
+are never written to YAML, events or logs. `notify list` shows recent
+watch/schedule notification events, `notify open` resolves an event id or job
+id through the event log and job record (`--print` only prints the path), and
+the `notify secret` subcommands manage the stored bearer token; `set` reads
+exactly one line from stdin and never accepts the value as an argument. Any
+delivery error is recorded in `notify_delivery` and does not stop the watcher
+or schedule.
+
+Dumps copy the full run tree into
 `reports/watch/<name>/<timestamp>/` with a `dump.json`. The TUI Resident
 screen and resident MCP tools are also not yet implemented, and D-39 no-gap
 lifetime leases are not available (see `docs/STATUS.md` gap 21).

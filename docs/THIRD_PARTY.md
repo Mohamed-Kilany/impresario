@@ -26,7 +26,8 @@ facts only).
 | `portable-pty` | 0.9.0 | MIT | ConPTY/PTY-based acceptance tests (dev-dependency only) | chosen, shipped — I-92/I-128 |
 | `getrandom` | 0.4.3 | MIT OR Apache-2.0 | daemon socket token (OS CSPRNG) | chosen — I-126 |
 | `libc` | 0.2.190 | MIT OR Apache-2.0 | Unix pid liveness and daemon `setsid` (Unix-only dependency) | chosen — I-126 |
-| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets: webOS Developer Mode passphrase keyed by device name, Tizen PKCS#12 passwords (Windows Credential Manager, macOS Keychain, Linux Secret Service) | chosen, shipped — I-99/I-141/I-160 |
+| `keyring` | 4.2.0 | MIT OR Apache-2.0 | secrets: webOS Developer Mode passphrase keyed by device name, Tizen PKCS#12 passwords, resident webhook bearer tokens (Windows Credential Manager, macOS Keychain, Linux Secret Service) | chosen, shipped — I-99/I-141/I-160/I-171 |
+| `notify-rust` | 4.18.2 | MIT OR Apache-2.0 | native resident notification toasts (Windows WinRT, macOS notification center, Linux freedesktop D-Bus); toast actions open the report where supported | chosen — I-171 |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | display-width math (tables, reports) | chosen |
 | `inquire` | 0.9.4 | MIT | interactive wizards | candidate — not adopted; Phase 4 wizard/prompt is line-based |
 | `cliclack` | 0.5.6 | MIT | alternative prompt style | candidate — not adopted |

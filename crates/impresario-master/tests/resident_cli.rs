@@ -281,3 +281,62 @@ fn invalid_schedule_names_and_missing_arguments_fail_as_usage_errors() {
     let status: Value = serde_json::from_str(&stopped.stdout).expect("status json");
     assert_eq!(status["running"], false);
 }
+
+#[test]
+fn notify_lists_events_and_resolves_the_recorded_report() {
+    let home = tempfile::tempdir().expect("home");
+    let workspace = tempfile::tempdir().expect("workspace");
+    write_workspace(workspace.path(), "", &[], &[]);
+    let report = workspace
+        .path()
+        .join("reports")
+        .join("job-1")
+        .join("report.html");
+    std::fs::create_dir_all(report.parent().expect("report parent")).expect("report dir");
+    std::fs::write(&report, "<html>report</html>").expect("report");
+    let events = home.path().join("service").join("events.jsonl");
+    std::fs::create_dir_all(events.parent().expect("events parent")).expect("service dir");
+    let event = serde_json::json!({
+        "kind": "watch_notify",
+        "id": "job-1",
+        "watcher": "soak",
+        "event": "device_unreachable",
+        "status": "failed",
+        "channels": ["toast", "webhook:ops"],
+        "job": "job-1",
+        "report": report.display().to_string(),
+        "at": "2026-11-05T10:00:00+00:00"
+    });
+    std::fs::write(&events, format!("{event}\n")).expect("events");
+
+    let listed = run(
+        home.path(),
+        Some(workspace.path()),
+        &["notify", "list", "--json"],
+    );
+    assert_eq!(listed.code, EXIT_OK, "stderr={}", listed.stderr);
+    let events: Vec<Value> = serde_json::from_str(&listed.stdout).expect("notify json");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["watcher"], "soak");
+    assert_eq!(events[0]["id"], "job-1");
+
+    let opened = run(
+        home.path(),
+        Some(workspace.path()),
+        &["notify", "open", "job-1", "--print"],
+    );
+    assert_eq!(opened.code, EXIT_OK, "stderr={}", opened.stderr);
+    assert_eq!(opened.stdout.trim(), report.display().to_string());
+
+    let missing = run(
+        home.path(),
+        Some(workspace.path()),
+        &["notify", "open", "not-a-job", "--print"],
+    );
+    assert_eq!(missing.code, EXIT_USAGE, "stderr={}", missing.stderr);
+    assert!(
+        missing.stderr.contains("no report found"),
+        "{}",
+        missing.stderr
+    );
+}

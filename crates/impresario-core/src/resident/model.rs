@@ -4,13 +4,14 @@
 //! `config.yaml` sections and by the CLI/TUI editors. Validation is kept in
 //! this module so every front end reports the same problem for the same YAML.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::NaiveTime;
 use serde::{Deserialize, Serialize};
 
-use crate::resident::schedule::{parse_span, validate_when};
+use crate::resident::schedule::{parse_hhmm, parse_span, validate_when};
 
-/// Top-level `schedules:` and `watchers:` sections.
+/// Top-level `schedules:`, `watchers:` and `notifications:` sections.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResidentSections {
@@ -18,10 +19,12 @@ pub struct ResidentSections {
     pub schedules: Vec<Schedule>,
     #[serde(default)]
     pub watchers: Vec<Watcher>,
+    #[serde(default, skip_serializing_if = "Notifications::is_empty")]
+    pub notifications: Notifications,
 }
 
 impl ResidentSections {
-    /// Read the two optional sections from an already-parsed YAML document.
+    /// Read the optional resident sections from an already-parsed YAML document.
     /// Unknown top-level keys are ignored because the global `config.yaml`
     /// also contains ordinary settings and profiles.
     pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Self, String> {
@@ -42,9 +45,16 @@ impl ResidentSections {
                 .map_err(|error| format!("invalid watchers: {error}"))?,
             None => Vec::new(),
         };
+        let notifications =
+            match mapping.get(serde_yaml_ng::Value::String("notifications".to_string())) {
+                Some(value) => serde_yaml_ng::from_value(value.clone())
+                    .map_err(|error| format!("invalid notifications: {error}"))?,
+                None => Notifications::default(),
+            };
         let sections = Self {
             schedules,
             watchers,
+            notifications,
         };
         sections.validate().map_err(|errors| errors.join("; "))?;
         Ok(sections)
@@ -57,7 +67,7 @@ impl ResidentSections {
         Self::from_value(&value)
     }
 
-    /// Validate both section lists, including uniqueness across each section.
+    /// Validate all resident sections, including uniqueness across each section.
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
         let mut names = BTreeSet::new();
@@ -74,6 +84,7 @@ impl ResidentSections {
             }
             watcher.validate_into(&mut errors);
         }
+        self.notifications.validate_into(&mut errors);
         if errors.is_empty() {
             Ok(())
         } else {
@@ -107,6 +118,7 @@ impl ResidentSections {
                 self.watchers.push(watcher);
             }
         }
+        self.notifications = self.notifications.merged(overlay.notifications);
         self
     }
 }
@@ -251,18 +263,17 @@ impl NotifySpec {
                 ));
             }
         }
+        let mut channels = BTreeSet::new();
         for channel in &self.channels {
-            if channel == "toast" {
-                continue;
+            if !valid_channel(channel) {
+                errors.push(format!(
+                    "{kind} '{name}': unknown notify channel '{channel}' (expected toast or webhook:NAME)"
+                ));
+            } else if !channels.insert(channel.as_str()) {
+                errors.push(format!(
+                    "{kind} '{name}': notify channels contain a duplicate '{channel}'"
+                ));
             }
-            if let Some(webhook) = channel.strip_prefix("webhook:") {
-                if valid_name(webhook) {
-                    continue;
-                }
-            }
-            errors.push(format!(
-                "{kind} '{name}': unknown notify channel '{channel}' (expected toast or webhook:NAME)"
-            ));
         }
     }
 }
@@ -275,6 +286,182 @@ pub enum NotifyEvent {
     Unverifiable,
     DeviceUnreachable,
     Recovery,
+}
+
+/// Delivery settings shared by schedules and watchers.
+///
+/// Channels are still declared on each schedule/watcher; this section only
+/// configures how the resident runner delivers them. Global and workspace
+/// layers merge by key, so a workspace can override one webhook or rate limit
+/// without repeating the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Notifications {
+    #[serde(default)]
+    pub quiet_hours: Option<QuietHours>,
+    #[serde(default)]
+    pub rate_limits: BTreeMap<String, RateLimit>,
+    #[serde(default)]
+    pub webhooks: BTreeMap<String, WebhookEndpoint>,
+}
+
+impl Notifications {
+    /// Whether this section has no delivery settings.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.quiet_hours.is_none() && self.rate_limits.is_empty() && self.webhooks.is_empty()
+    }
+
+    /// Overlay this layer's notification settings on top of an earlier one.
+    #[must_use]
+    pub fn merged(mut self, overlay: Self) -> Self {
+        if overlay.quiet_hours.is_some() {
+            self.quiet_hours = overlay.quiet_hours;
+        }
+        self.rate_limits.extend(overlay.rate_limits);
+        self.webhooks.extend(overlay.webhooks);
+        self
+    }
+
+    fn validate_into(&self, errors: &mut Vec<String>) {
+        if let Some(quiet) = &self.quiet_hours {
+            quiet.validate_into(errors);
+        }
+        for (channel, limit) in &self.rate_limits {
+            if !valid_channel(channel) {
+                errors.push(format!(
+                    "notifications.rate_limits: unknown channel '{channel}' \
+                     (expected toast or webhook:NAME)"
+                ));
+            }
+            limit.validate_into(channel, errors);
+        }
+        for (name, endpoint) in &self.webhooks {
+            if !valid_name(name) {
+                errors.push(format!(
+                    "notifications.webhooks: '{name}' is not a valid webhook name"
+                ));
+            }
+            endpoint.validate_into(name, errors);
+        }
+    }
+
+    /// Whether `time` is inside the configured quiet-hours window.
+    ///
+    /// A window whose end is before its start wraps over midnight. Invalid
+    /// values validate as errors; this method stays false if one slips
+    /// through, so a bad configuration never silences notifications.
+    #[must_use]
+    pub fn is_quiet_at(&self, time: NaiveTime) -> bool {
+        self.quiet_hours
+            .as_ref()
+            .and_then(|quiet| quiet.contains(time).ok())
+            .unwrap_or(false)
+    }
+}
+
+/// A local-time window in which notifications are recorded but not delivered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuietHours {
+    pub start: String,
+    pub end: String,
+}
+
+impl QuietHours {
+    fn validate_into(&self, errors: &mut Vec<String>) {
+        match (parse_hhmm(&self.start), parse_hhmm(&self.end)) {
+            (Ok(start), Ok(end)) if start == end => errors.push(
+                "notifications.quiet_hours: start and end must differ (omit the section to disable)"
+                    .to_string(),
+            ),
+            (Ok(_), Ok(_)) => {}
+            (start, end) => {
+                if let Err(error) = start {
+                    errors.push(format!("notifications.quiet_hours.start {error}"));
+                }
+                if let Err(error) = end {
+                    errors.push(format!("notifications.quiet_hours.end {error}"));
+                }
+            }
+        }
+    }
+
+    /// Whether `time` falls inside the half-open local window.
+    fn contains(&self, time: NaiveTime) -> Result<bool, String> {
+        let start = parse_hhmm(&self.start)?;
+        let end = parse_hhmm(&self.end)?;
+        if start == end {
+            return Ok(false);
+        }
+        Ok(if start < end {
+            start <= time && time < end
+        } else {
+            time >= start || time < end
+        })
+    }
+}
+
+/// Maximum number of deliveries for one channel inside a moving window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub max: u64,
+    pub window: String,
+}
+
+impl RateLimit {
+    /// Parse the configured moving-window length.
+    pub fn window(&self) -> Result<chrono::Duration, String> {
+        parse_span(&self.window)
+    }
+
+    fn validate_into(&self, channel: &str, errors: &mut Vec<String>) {
+        if self.max == 0 {
+            errors.push(format!(
+                "notifications.rate_limits.{channel}: max must be greater than zero"
+            ));
+        }
+        match parse_span(&self.window) {
+            Ok(window) if !window.is_zero() => {}
+            Ok(_) => errors.push(format!(
+                "notifications.rate_limits.{channel}: window must be greater than zero"
+            )),
+            Err(error) => errors.push(format!(
+                "notifications.rate_limits.{channel}: window {error}"
+            )),
+        }
+    }
+}
+
+/// Non-secret webhook configuration. The bearer secret (when any) lives in the
+/// OS credential store under `impresario.notify` / `webhook:NAME`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookEndpoint {
+    pub url: String,
+}
+
+impl WebhookEndpoint {
+    fn validate_into(&self, name: &str, errors: &mut Vec<String>) {
+        match url::Url::parse(self.url.trim()) {
+            Ok(url)
+                if matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none() => {}
+            Ok(_) => errors.push(format!(
+                "notifications.webhooks.{name}.url must be an http(s) URL without credentials"
+            )),
+            Err(error) => errors.push(format!(
+                "notifications.webhooks.{name}.url is invalid: {error}"
+            )),
+        }
+    }
+}
+
+fn valid_channel(channel: &str) -> bool {
+    channel == "toast" || channel.strip_prefix("webhook:").is_some_and(valid_name)
 }
 
 /// An always-on watcher.
@@ -648,6 +835,7 @@ watchers: []
                 schedule("name: one\nwhen: { kind: interval, every: 2h }"),
             ],
             watchers: Vec::new(),
+            notifications: Notifications::default(),
         };
         let errors = duplicate.validate().expect_err("duplicate");
         assert!(errors
@@ -722,10 +910,12 @@ watchers:
         let base = ResidentSections {
             schedules: vec![schedule("name: one\nwhen: { kind: interval, every: 1h }")],
             watchers: Vec::new(),
+            notifications: Notifications::default(),
         };
         let overlay = ResidentSections {
             schedules: vec![schedule("name: one\nwhen: { kind: interval, every: 2h }")],
             watchers: Vec::new(),
+            notifications: Notifications::default(),
         };
         let merged = base.merged(overlay);
         assert_eq!(merged.schedules.len(), 1);
@@ -733,6 +923,91 @@ watchers:
             merged.schedules.first().map(|value| &value.when),
             Some(crate::resident::model::ScheduleWhen::Interval { every }) if every == "2h"
         ));
+    }
+
+    #[test]
+    fn parses_notification_delivery_settings_and_merges_layers() {
+        let base = ResidentSections::from_yaml(
+            r#"
+notifications:
+  quiet_hours: { start: "22:00", end: "07:00" }
+  rate_limits:
+    toast: { max: 5, window: 1h }
+  webhooks:
+    ops: { url: "https://example.invalid/hook" }
+"#,
+        )
+        .expect("notifications");
+        assert_eq!(base.notifications.rate_limits.len(), 1);
+        assert_eq!(base.notifications.webhooks.len(), 1);
+
+        let overlay = ResidentSections::from_yaml(
+            r#"
+notifications:
+  rate_limits:
+    "webhook:ops": { max: 20, window: 10m }
+  webhooks:
+    ops: { url: "https://example.invalid/override" }
+"#,
+        )
+        .expect("overlay");
+        let merged = base.merged(overlay);
+        assert_eq!(merged.notifications.rate_limits.len(), 2);
+        assert_eq!(
+            merged
+                .notifications
+                .webhooks
+                .get("ops")
+                .map(|endpoint| endpoint.url.as_str()),
+            Some("https://example.invalid/override")
+        );
+        assert!(merged
+            .notifications
+            .is_quiet_at(NaiveTime::from_hms_opt(23, 0, 0).expect("time")));
+    }
+
+    #[test]
+    fn quiet_hours_wrap_midnight_and_exclude_the_end() {
+        let quiet = QuietHours {
+            start: "22:00".to_string(),
+            end: "07:00".to_string(),
+        };
+        let at = |hour, minute| NaiveTime::from_hms_opt(hour, minute, 0).expect("time");
+        assert!(!quiet.contains(at(21, 59)).expect("contains"));
+        assert!(quiet.contains(at(22, 0)).expect("contains"));
+        assert!(quiet.contains(at(23, 59)).expect("contains"));
+        assert!(quiet.contains(at(0, 0)).expect("contains"));
+        assert!(quiet.contains(at(6, 59)).expect("contains"));
+        assert!(!quiet.contains(at(7, 0)).expect("contains"));
+        assert!(!quiet.contains(at(12, 0)).expect("contains"));
+
+        let daytime = QuietHours {
+            start: "09:00".to_string(),
+            end: "17:00".to_string(),
+        };
+        assert!(daytime.contains(at(9, 0)).expect("contains"));
+        assert!(!daytime.contains(at(17, 0)).expect("contains"));
+    }
+
+    #[test]
+    fn rejects_bad_notification_settings() {
+        let errors = ResidentSections::from_yaml(
+            r#"
+notifications:
+  quiet_hours: { start: "22:00", end: "22:00" }
+  rate_limits:
+    email: { max: 0, window: 0s }
+  webhooks:
+    "bad name": { url: "file:///etc/passwd" }
+"#,
+        )
+        .expect_err("invalid");
+        assert!(errors.contains("start and end must differ"), "{errors}");
+        assert!(errors.contains("email"), "{errors}");
+        assert!(errors.contains("max must be greater"), "{errors}");
+        assert!(errors.contains("window must be greater"), "{errors}");
+        assert!(errors.contains("bad name"), "{errors}");
+        assert!(errors.contains("http(s) URL"), "{errors}");
     }
 
     #[test]

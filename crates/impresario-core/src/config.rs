@@ -143,6 +143,12 @@ pub struct ImpresarioConfig {
     /// Always-on watchers (TASK.md section 8.3).
     #[serde(default)]
     pub watchers: Vec<crate::resident::Watcher>,
+    /// Notification delivery settings (TASK.md section 8.3).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::resident::Notifications::is_empty"
+    )]
+    pub notifications: crate::resident::Notifications,
 }
 
 fn parallel_default() -> u32 {
@@ -664,6 +670,7 @@ const CONFIG_KEYS: &[&str] = &[
     "unverifiable_policy",
     "schedules",
     "watchers",
+    "notifications",
 ];
 
 const DEVICE_KEYS: &[&str] = &["name", "type", "ip"];
@@ -1033,6 +1040,7 @@ pub fn parse_config(source: &str, path: &Path) -> ConfigOutcome<ImpresarioConfig
             let sections = crate::resident::ResidentSections {
                 schedules: config.schedules.clone(),
                 watchers: config.watchers.clone(),
+                notifications: config.notifications.clone(),
             };
             match sections.validate() {
                 Ok(()) => ConfigOutcome {

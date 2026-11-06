@@ -25,6 +25,7 @@ pub mod jobs;
 pub mod jobs_cmd;
 pub mod lsp;
 pub mod mcp;
+pub mod open;
 pub mod plan;
 pub mod profile_cmd;
 pub mod redact;

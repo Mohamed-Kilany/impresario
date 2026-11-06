@@ -293,7 +293,7 @@ pub fn run(ctx: Context) -> i32 {
                 }
             }
             Action::OpenExternally(path) => {
-                if let Err(message) = open_external(&path) {
+                if let Err(message) = crate::open::open_external(&path) {
                     app.push_activity(message);
                 }
             }
@@ -804,37 +804,6 @@ fn open_editor(path: &std::path::Path) -> Result<(), String> {
     } else {
         Err(format!("editor exited with {status}"))
     }
-}
-
-fn open_external(path: &std::path::Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("{} does not exist", path.display()));
-    }
-    #[cfg(windows)]
-    let mut command = {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "start", ""]).arg(path);
-        command
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = std::process::Command::new("open");
-        command.arg(path);
-        command
-    };
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(path);
-        command
-    };
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))
 }
 
 #[cfg(test)]

@@ -578,9 +578,13 @@ pub fn parse_settings(source: &str, path: &Path) -> SettingsFile {
 
 fn flatten<'a>(prefix: &str, value: &'a Value, out: &mut Vec<(String, &'a Value)>) {
     // Structured sections are user-editable and owned by their own command:
-    // `profiles` by `impresario profile`, `schedules`/`watchers` by the
-    // resident runner. They are validated by those front ends, not as scalars.
-    if matches!(prefix, "profiles" | "schedules" | "watchers") {
+    // `profiles` by `impresario profile`, `schedules`/`watchers`/`notifications`
+    // by the resident runner. They are validated by those front ends, not as
+    // scalars.
+    if matches!(
+        prefix,
+        "profiles" | "schedules" | "watchers" | "notifications"
+    ) {
         return;
     }
     if !prefix.is_empty() && definition(prefix).is_some() {
@@ -793,6 +797,7 @@ impl EffectiveSettings {
             unverifiable_policy,
             schedules: Vec::new(),
             watchers: Vec::new(),
+            notifications: crate::resident::Notifications::default(),
         }
     }
 }

@@ -15,8 +15,8 @@ use chrono::{DateTime, Local, TimeZone as _};
 use impresario_core::command::WireErrorCode;
 use impresario_core::home::Home;
 use impresario_core::resident::{
-    parse_once, parse_span, BusyPolicy, FailureClass, MissedPolicy, NotifyEvent, NotifySpec,
-    Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen, Watcher,
+    parse_once, parse_span, BusyPolicy, FailureClass, MissedPolicy, Notifications, NotifyEvent,
+    NotifySpec, Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen, Watcher,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,6 +24,8 @@ use serde_json::json;
 use crate::cli::{self, RunArgs, EXIT_INFRA, EXIT_OK, EXIT_USAGE};
 use crate::jobs;
 use crate::report::{ActReport, FailureReport, RunReport, RunStatus, Status};
+
+use super::notify::{self, Message};
 
 /// Current state schema. Bump only for incompatible changes.
 const STATE_VERSION: u32 = 1;
@@ -53,6 +55,8 @@ pub struct ServiceState {
     pub paused: bool,
     pub schedules: BTreeMap<String, ScheduleState>,
     pub watchers: BTreeMap<String, WatcherState>,
+    /// Moving-window delivery counters, keyed by channel name.
+    pub notification_rates: BTreeMap<String, notify::RateWindow>,
 }
 
 impl Default for ServiceState {
@@ -66,6 +70,7 @@ impl Default for ServiceState {
             paused: false,
             schedules: BTreeMap::new(),
             watchers: BTreeMap::new(),
+            notification_rates: BTreeMap::new(),
         }
     }
 }
@@ -473,6 +478,7 @@ fn reconcile_schedules(
             config_path,
             devices_path,
             schedule,
+            &sections.notifications,
             state,
             running,
         ) {
@@ -520,6 +526,7 @@ fn reconcile_watchers(
         let base = base.to_path_buf();
         let config_path = config_path.to_path_buf();
         let devices_path = devices_path.to_path_buf();
+        let notifications = sections.notifications.clone();
         let state = state.clone();
         let service_paused = service_paused.clone();
         let service_stop = service_stop.clone();
@@ -532,6 +539,7 @@ fn reconcile_watchers(
                 &config_path,
                 &devices_path,
                 &watcher,
+                &notifications,
                 &state,
                 &service_paused,
                 &service_stop,
@@ -562,6 +570,7 @@ fn watcher_loop(
     config_path: &Path,
     devices_path: &Path,
     watcher: &Watcher,
+    notifications: &Notifications,
     state: &Arc<Mutex<ServiceState>>,
     service_paused: &Arc<AtomicBool>,
     service_stop: &Arc<AtomicBool>,
@@ -675,11 +684,13 @@ fn watcher_loop(
             notify_watcher_failure(
                 home,
                 watcher,
+                &outcome,
                 &status,
                 event,
                 &signature,
                 dump.as_deref(),
                 state,
+                notifications,
             );
         } else {
             append_event(
@@ -692,7 +703,7 @@ fn watcher_loop(
                 }),
             );
             if outcome.exit_code == EXIT_OK {
-                notify_watcher_recovery(home, watcher, &status, state);
+                notify_watcher_recovery(home, watcher, &outcome, &status, state, notifications);
             }
         }
         let gap = watcher_gap(watcher, failure_streak);
@@ -754,6 +765,7 @@ fn spawn_schedule(
     config_path: &Path,
     devices_path: &Path,
     schedule: &Schedule,
+    notifications: &Notifications,
     state: &Arc<Mutex<ServiceState>>,
     running: &Arc<Mutex<BTreeSet<String>>>,
 ) -> bool {
@@ -769,6 +781,7 @@ fn spawn_schedule(
     let config_path = config_path.to_path_buf();
     let devices_path = devices_path.to_path_buf();
     let schedule = schedule.clone();
+    let notifications = notifications.clone();
     let state = state.clone();
     let running = running.clone();
     std::thread::spawn(move || {
@@ -814,7 +827,7 @@ fn spawn_schedule(
             }),
         );
         let status = outcome_status(&outcome);
-        notify_schedule_outcome(&home, &schedule, &outcome, &status, &state);
+        notify_schedule_outcome(&home, &schedule, &outcome, &status, &state, &notifications);
         if let Ok(mut set) = running.lock() {
             set.remove(&schedule_key(&schedule.name));
         }
@@ -1010,6 +1023,24 @@ fn outcome_status(outcome: &cli::RunOutcome) -> String {
         .unwrap_or_else(|| format!("exit {}", outcome.exit_code))
 }
 
+/// The report file a notification action and `notify open` should target.
+fn outcome_report(outcome: &cli::RunOutcome) -> Option<PathBuf> {
+    let directory = outcome.run_dir.as_ref()?;
+    ["report.html", "report.json"]
+        .iter()
+        .map(|name| directory.join(name))
+        .find(|path| path.is_file())
+}
+
+fn notification_id(outcome: &cli::RunOutcome, kind: &str, source: &str) -> String {
+    outcome.run_id.clone().unwrap_or_else(|| {
+        format!(
+            "{kind}:{source}:{}",
+            Local::now().format("%Y%m%d-%H%M%S-%3f")
+        )
+    })
+}
+
 fn outcome_unverifiable(outcome: &cli::RunOutcome) -> bool {
     outcome
         .report
@@ -1195,11 +1226,13 @@ fn apply_failure_window(
 fn notify_watcher_failure(
     home: &Home,
     watcher: &Watcher,
+    outcome: &cli::RunOutcome,
     status: &str,
     event: NotifyEvent,
     signature: &str,
     dump: Option<&Path>,
     state: &Arc<Mutex<ServiceState>>,
+    notifications: &Notifications,
 ) {
     let channels = watcher.on_failure.notify.clone();
     if channels.is_empty() {
@@ -1223,36 +1256,59 @@ fn notify_watcher_failure(
         entry.notification.pending_recovery = true;
         decision
     };
-    let dump = dump.map(|path| path.display().to_string());
+    let dump_text = dump.map(|path| path.display().to_string());
+    let report = outcome_report(outcome);
+    let id = notification_id(outcome, "watch", &watcher.name);
+    let message = Message {
+        kind: "watch",
+        source: watcher.name.clone(),
+        id: id.clone(),
+        event: event_name(event),
+        status: status.to_string(),
+        signature: Some(signature.to_string()),
+        count: decision.count,
+        job: outcome.run_id.clone(),
+        report: report.clone(),
+        dump: dump.map(Path::to_path_buf),
+        exit_code: Some(outcome.exit_code),
+        at: now.to_rfc3339(),
+    };
     if decision.send {
         append_event(
             home,
             json!({
                 "kind": "watch_notify",
+                "id": id,
                 "watcher": watcher.name,
                 "event": event_name(event),
                 "signature": signature,
                 "status": status,
                 "unverifiable": event == NotifyEvent::Unverifiable,
                 "count": decision.count,
-                "channels": channels,
-                "dump": dump,
+                "channels": &channels,
+                "job": outcome.run_id,
+                "report": report,
+                "dump": dump_text,
                 "at": now.to_rfc3339()
             }),
         );
+        notify::dispatch(home, notifications, state, &channels, &message);
     } else {
         append_event(
             home,
             json!({
                 "kind": "watch_notify_suppressed",
+                "id": id,
                 "watcher": watcher.name,
                 "event": event_name(event),
                 "signature": signature,
                 "status": status,
                 "unverifiable": event == NotifyEvent::Unverifiable,
                 "count": decision.count,
-                "channels": channels,
-                "dump": dump,
+                "channels": &channels,
+                "job": outcome.run_id,
+                "report": report,
+                "dump": dump_text,
                 "at": now.to_rfc3339()
             }),
         );
@@ -1262,8 +1318,10 @@ fn notify_watcher_failure(
 fn notify_watcher_recovery(
     home: &Home,
     watcher: &Watcher,
+    outcome: &cli::RunOutcome,
     status: &str,
     state: &Arc<Mutex<ServiceState>>,
+    notifications: &Notifications,
 ) {
     let channels = watcher.on_failure.notify.clone();
     if channels.is_empty() {
@@ -1283,18 +1341,39 @@ fn notify_watcher_recovery(
         }
     };
     if pending {
+        let now = Local::now();
+        let report = outcome_report(outcome);
+        let id = notification_id(outcome, "watch", &watcher.name);
+        let message = Message {
+            kind: "watch",
+            source: watcher.name.clone(),
+            id: id.clone(),
+            event: "recovery",
+            status: status.to_string(),
+            signature: None,
+            count: 1,
+            job: outcome.run_id.clone(),
+            report: report.clone(),
+            dump: None,
+            exit_code: Some(outcome.exit_code),
+            at: now.to_rfc3339(),
+        };
         append_event(
             home,
             json!({
                 "kind": "watch_notify",
+                "id": id,
                 "watcher": watcher.name,
                 "event": "recovery",
                 "status": status,
                 "unverifiable": false,
-                "channels": channels,
-                "at": Local::now().to_rfc3339()
+                "channels": &channels,
+                "job": outcome.run_id,
+                "report": report,
+                "at": now.to_rfc3339()
             }),
         );
+        notify::dispatch(home, notifications, state, &channels, &message);
     }
 }
 
@@ -1304,6 +1383,7 @@ fn notify_schedule_outcome(
     outcome: &cli::RunOutcome,
     status: &str,
     state: &Arc<Mutex<ServiceState>>,
+    notifications: &Notifications,
 ) {
     let event = classify_outcome(outcome, FailureClass::Infrastructure);
     let (channels, notify_event) = {
@@ -1332,19 +1412,39 @@ fn notify_schedule_outcome(
     if channels.is_empty() {
         return;
     }
+    let now = Local::now();
+    let report = outcome_report(outcome);
+    let id = notification_id(outcome, "schedule", &schedule.name);
+    let message = Message {
+        kind: "schedule",
+        source: schedule.name.clone(),
+        id: id.clone(),
+        event: event_name(notify_event),
+        status: status.to_string(),
+        signature: None,
+        count: 1,
+        job: outcome.run_id.clone(),
+        report: report.clone(),
+        dump: None,
+        exit_code: Some(outcome.exit_code),
+        at: now.to_rfc3339(),
+    };
     append_event(
         home,
         json!({
             "kind": "schedule_notify",
+            "id": id,
             "schedule": schedule.name,
             "event": event_name(notify_event),
             "status": status,
             "exit_code": outcome.exit_code,
             "job": outcome.run_id,
-            "channels": channels,
-            "at": Local::now().to_rfc3339()
+            "report": report,
+            "channels": &channels,
+            "at": now.to_rfc3339()
         }),
     );
+    notify::dispatch(home, notifications, state, &channels, &message);
 }
 
 /// Parse a stored local timestamp.

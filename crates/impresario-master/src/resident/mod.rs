@@ -2,6 +2,10 @@
 
 pub mod cmd;
 pub mod config;
+pub mod notify;
 pub mod service;
 
-pub use cmd::{run_schedule, run_service, run_watch, ScheduleArgs, ServiceArgs, WatchArgs};
+pub use cmd::{
+    run_notify, run_schedule, run_service, run_watch, NotifyArgs, ScheduleArgs, ServiceArgs,
+    WatchArgs,
+};

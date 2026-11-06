@@ -1,5 +1,6 @@
-//! CLI surface for schedules, watchers and the resident service.
+//! CLI surface for schedules, watchers, notifications and the resident service.
 
+use std::io::BufRead as _;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -12,7 +13,7 @@ use impresario_core::resident::{
 use crate::cli::{EXIT_FAILURE, EXIT_INFRA, EXIT_OK, EXIT_USAGE};
 
 use super::config::{self, Kind, Layer};
-use super::service;
+use super::{notify, service};
 
 #[derive(Debug, Args)]
 pub struct ScheduleArgs {
@@ -250,6 +251,52 @@ pub struct ServiceArgs {
     pub command: ServiceCommand,
 }
 
+#[derive(Debug, Args)]
+pub struct NotifyArgs {
+    #[command(subcommand)]
+    pub command: NotifyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotifyCommand {
+    /// List recent notification events.
+    List {
+        #[arg(long)]
+        json: bool,
+        /// Show at most this many of the newest events.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Open the report behind a notification or job id.
+    Open {
+        /// Notification id, job id, or a report path.
+        id: String,
+        /// Print the resolved report path without opening it.
+        #[arg(long)]
+        print: bool,
+    },
+    /// Manage webhook bearer secrets in the OS credential store.
+    Secret {
+        #[command(subcommand)]
+        command: SecretCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretCommand {
+    /// Store a webhook secret read from stdin.
+    Set {
+        name: String,
+        /// Read the secret from stdin (required; secrets are never arguments).
+        #[arg(long)]
+        stdin: bool,
+    },
+    /// Remove a stored webhook secret.
+    Clear { name: String },
+    /// Report whether a secret is stored, without printing it.
+    Status { name: String },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ServiceCommand {
     /// Run the resident runner in the foreground.
@@ -449,6 +496,146 @@ pub fn run_watch(
     }
 }
 
+pub fn run_notify(args: &NotifyArgs, home: &Home) -> i32 {
+    match &args.command {
+        NotifyCommand::List { json, limit } => match notify::notification_events(home, *limit) {
+            Ok(events) => {
+                if *json {
+                    print_json(&events);
+                } else if events.is_empty() {
+                    println!("no notifications");
+                } else {
+                    for event in events {
+                        println!("{}", notification_line(&event));
+                    }
+                }
+                EXIT_OK
+            }
+            Err(error) => usage_error(&error),
+        },
+        NotifyCommand::Open { id, print } => match notify::resolve_report(home, id) {
+            Ok(path) => {
+                if *print {
+                    println!("{}", path.display());
+                    EXIT_OK
+                } else {
+                    match crate::open::open_external(&path) {
+                        Ok(()) => {
+                            println!("opened {}", path.display());
+                            EXIT_OK
+                        }
+                        Err(error) => usage_error(&error),
+                    }
+                }
+            }
+            Err(error) => usage_error(&error),
+        },
+        NotifyCommand::Secret { command } => match command {
+            SecretCommand::Set { name, stdin } => {
+                if !notify::webhook_name_ok(name) {
+                    return usage_error(&format!("'{name}' is not a valid webhook name"));
+                }
+                if !*stdin {
+                    return usage_error(
+                        "pass --stdin to read the webhook secret from standard input",
+                    );
+                }
+                let mut source = String::new();
+                let stdin = std::io::stdin();
+                let mut input = stdin.lock();
+                match input.read_line(&mut source) {
+                    Ok(0) => {
+                        return usage_error("no webhook secret was provided on stdin");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        return usage_error(&format!("cannot read the secret from stdin: {error}"));
+                    }
+                }
+                let secret = source.trim_end_matches(&['\r', '\n'][..]);
+                match notify::set_webhook_secret(name, secret) {
+                    Ok(()) => {
+                        println!("stored webhook '{name}' secret");
+                        EXIT_OK
+                    }
+                    Err(error) => usage_error(&error),
+                }
+            }
+            SecretCommand::Clear { name } => {
+                if !notify::webhook_name_ok(name) {
+                    return usage_error(&format!("'{name}' is not a valid webhook name"));
+                }
+                match notify::clear_webhook_secret(name) {
+                    Ok(true) => {
+                        println!("removed webhook '{name}' secret");
+                        EXIT_OK
+                    }
+                    Ok(false) => {
+                        println!("no stored secret for webhook '{name}'");
+                        EXIT_OK
+                    }
+                    Err(error) => usage_error(&error),
+                }
+            }
+            SecretCommand::Status { name } => {
+                if !notify::webhook_name_ok(name) {
+                    return usage_error(&format!("'{name}' is not a valid webhook name"));
+                }
+                let env_name = notify::env_webhook_secret_name(name);
+                let environment =
+                    std::env::var_os(&env_name).is_some_and(|value| !value.is_empty());
+                match notify::stored_webhook_secret(name) {
+                    Ok(stored) => {
+                        println!(
+                            "webhook '{name}': stored={} environment={} ({env_name})",
+                            stored, environment
+                        );
+                        EXIT_OK
+                    }
+                    Err(error) => usage_error(&error),
+                }
+            }
+        },
+    }
+}
+
+fn notification_line(event: &serde_json::Value) -> String {
+    let at = event
+        .get("at")
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let kind = event
+        .get("kind")
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let source = event
+        .get("watcher")
+        .or_else(|| event.get("schedule"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let name = event
+        .get("event")
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let id = event
+        .get("id")
+        .or_else(|| event.get("job"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let channels = event
+        .get("channels")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    format!("{at} {kind} {source} {name} id={id} channels={channels}")
+}
+
 pub fn run_service(
     args: &ServiceArgs,
     home: &Home,
@@ -611,6 +798,7 @@ fn add_schedule(args: &AddScheduleArgs, home: &Home, config_path: &Path) -> i32 
     let sections = ResidentSections {
         schedules: vec![schedule.clone()],
         watchers: Vec::new(),
+        notifications: impresario_core::resident::Notifications::default(),
     };
     if let Err(errors) = sections.validate() {
         return usage_error(&errors.join("; "));
@@ -858,6 +1046,7 @@ fn add_watch(args: &AddWatchArgs, home: &Home, config_path: &Path) -> i32 {
     let sections = ResidentSections {
         schedules: Vec::new(),
         watchers: vec![watcher.clone()],
+        notifications: impresario_core::resident::Notifications::default(),
     };
     if let Err(errors) = sections.validate() {
         return usage_error(&errors.join("; "));

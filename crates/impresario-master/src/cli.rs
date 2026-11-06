@@ -147,6 +147,8 @@ pub enum Command {
     Schedule(crate::resident::ScheduleArgs),
     /// Always-on watcher runs (resident runner).
     Watch(crate::resident::WatchArgs),
+    /// Resident notifications: list, open a report, or manage webhook secrets.
+    Notify(crate::resident::NotifyArgs),
     /// Resident runner lifecycle (run, install, start, stop, status, logs).
     Service(crate::resident::ServiceArgs),
     /// List active jobs, or every job with `--all`.
@@ -477,6 +479,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Watch(args) => {
             crate::resident::run_watch(args, &home, &base, &config_path, &devices_path)
         }
+        Command::Notify(args) => crate::resident::run_notify(args, &home),
         Command::Service(args) => {
             crate::resident::run_service(args, &home, &base, &config_path, &devices_path)
         }
