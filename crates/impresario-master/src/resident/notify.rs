@@ -81,8 +81,8 @@ impl Message {
             "signature": self.signature,
             "count": self.count,
             "job": self.job,
-            "report": self.report,
-            "dump": self.dump,
+            "report": self.report.as_ref().map(|path| path.display().to_string()),
+            "dump": self.dump.as_ref().map(|path| path.display().to_string()),
             "exit_code": self.exit_code,
             "at": self.at,
             "title": self.title(),
@@ -290,7 +290,9 @@ pub fn deliver_webhook(
     if let Some(secret) = secret {
         request = request.set("Authorization", &format!("Bearer {secret}"));
     }
-    match request.send_json(payload) {
+    let body = serde_json::to_vec(payload)
+        .map_err(|error| format!("webhook '{name}' payload could not be encoded: {error}"))?;
+    match request.send_bytes(&body) {
         Ok(response) if (200..300).contains(&response.status()) => Ok(()),
         Ok(response) => Err(format!(
             "webhook '{name}' returned HTTP {}",
