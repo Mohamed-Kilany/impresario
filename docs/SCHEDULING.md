@@ -180,9 +180,12 @@ The MCP server and the planned TUI Resident screen read the same
 `service/state.json` and layered config. Status reads are side-effect free;
 mutations go through the same lossless YAML helpers as the CLI:
 
-- MCP: `impresario_service_status`, `impresario_schedules_list|add|remove|run_now`,
-  `impresario_watchers_list|start|stop|dumps`. The `impresario://docs/scheduling`
-  resource serves this document. Mutating tools are serialized with runs and
+- MCP: `impresario_service_status`, `impresario_schedules_list`,
+  `impresario_schedule_add`, `impresario_schedule_remove`,
+  `impresario_schedule_run_now`, `impresario_watchers_list`,
+  `impresario_watcher_start`, `impresario_watcher_stop` and
+  `impresario_watcher_dumps`. The `impresario://docs/scheduling` resource
+  serves this document. Mutating tools are serialized with runs and
   config edits and never expose secrets.
 - TUI (open): the **Resident** screen will show service health, schedules with
   the next fire, watchers with live iteration status, and the last dump.
