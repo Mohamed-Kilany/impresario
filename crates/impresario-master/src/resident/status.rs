@@ -239,11 +239,11 @@ schedules:
         let root = temp.path().join("reports/watch/soak");
         std::fs::create_dir_all(root.join("20261106-120000")).expect("first dump");
         std::fs::create_dir_all(root.join("20261106-130000")).expect("second dump");
-        let dumps = dumps(temp.path(), Some("soak")).expect("list dumps");
-        assert_eq!(dumps.len(), 2);
-        assert_eq!(dumps[0].name, "20261106-120000");
-        assert_eq!(dumps[1].name, "20261106-130000");
-        assert_eq!(dumps[0].path, "reports/watch/soak/20261106-120000");
+        let listed = dumps(temp.path(), Some("soak")).expect("list dumps");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].name, "20261106-120000");
+        assert_eq!(listed[1].name, "20261106-130000");
+        assert_eq!(listed[0].path, "reports/watch/soak/20261106-120000");
         assert!(dumps(temp.path(), None).is_ok());
         assert!(dumps(temp.path(), Some("missing"))
             .expect("missing is empty")
