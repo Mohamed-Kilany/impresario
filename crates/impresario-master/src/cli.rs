@@ -361,6 +361,9 @@ pub struct RunArgs {
     /// What to do when another job holds a device lease.
     #[arg(long, value_enum, default_value_t = crate::jobs::OnBusy::Wait)]
     pub on_busy: crate::jobs::OnBusy,
+    /// Internal: prefix a resident-scheduled job label with its source.
+    #[arg(skip)]
+    pub job_label: Option<String>,
 }
 
 /// Entry point used by `main.rs`.
@@ -2742,6 +2745,15 @@ pub(crate) fn run_workspace(
                 return RunOutcome::refusal(EXIT_INFRA, message);
             }
         };
+        let label = format!(
+            "{} play(s) x {} device(s)",
+            selected_plays.len(),
+            selected_devices.len()
+        );
+        let label = match &args.job_label {
+            Some(source) => format!("{source} · {label}"),
+            None => label,
+        };
         let spec = jobs::JobSpec {
             id: run_id.clone(),
             base: base.to_path_buf(),
@@ -2762,11 +2774,7 @@ pub(crate) fn run_workspace(
             color,
             on_busy: args.on_busy,
             detached: args.detach,
-            label: format!(
-                "{} play(s) x {} device(s)",
-                selected_plays.len(),
-                selected_devices.len()
-            ),
+            label,
         };
         if args.detach {
             return match jobs::submit_detached(&home, spec, false) {

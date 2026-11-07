@@ -18,7 +18,13 @@ impresario watch list --json
 State, events and the service log live under `~/.impresario/service/`
 (`state.json`, `events.jsonl`, `service.log`, with `service.log.1` after
 rotation). `service status` reports the pid, pause state and persisted counters
-even while the service is stopped.
+even while the service is stopped. Restarting the runner in the same workspace
+resumes those counters, so a restart neither repeats nor forgets a `once`
+schedule; a different workspace starts with a clean state. A recurring
+schedule's first fire is anchored when the runner first observes it. If the
+schedule was configured while the service was off, the previous state's last
+observation is the baseline, so an intervening fire still follows `on_missed`.
+Editing a schedule's `when` block resets its runtime anchor.
 
 ## Configuration layers
 
@@ -98,9 +104,10 @@ not exist is skipped. A past `once` is marked missed and disabled unless
 `on_missed: run_once` asks for one catch-up run.
 
 Each fire is a normal supervised run, so reports, logs and device leases are
-unchanged. A schedule's `notify.on` decides which routed outcomes are delivered:
-`failure`, `unverifiable`, `device_unreachable` and `recovery`; a recovery
-after consecutive failures emits one recovery event.
+unchanged; the job is labelled `schedule <name>` and appears in
+`impresario jobs`. A schedule's `notify.on` decides which routed outcomes are
+delivered: `failure`, `unverifiable`, `device_unreachable` and `recovery`; a
+recovery after consecutive failures emits one recovery event.
 
 ## Watchers
 
@@ -123,12 +130,18 @@ The watcher holds a per-iteration device lease and releases it between
 iterations, so another run can use the device while the watcher is pacing.
 `watch start|stop` edit the enabled flag and clear/write the per-watcher
 control files; `watch pause|resume` write or clear only the pause marker, and
-`watch run-now` runs the selection once without changing the loop.
+`watch run-now` runs the selection once without changing the loop. Each
+iteration is a normal job labelled `watcher <name>`.
 Failure dumps are written under `reports/watch/<name>/<timestamp>/` and are
-subject to the watcher's retention limits. Identical failure signatures
-(device, play, act, stage, step and code, with example suffixes ignored) inside
-`throttle.same_failure_window` produce one routed event and then suppressed
-events; a recovered watcher emits one recovery event.
+subject to the watcher's retention limits. Each `on_failure.dump` kind writes
+only its own files: `report` copies `report.json`, `junit.xml` and
+`report.html`; `screenshot` copies `screenshots/`; `logs`, `device_state` and
+`evidence` write `logs.json`, `device_state.json` and `evidence.json` built
+from the run report. `dump.json` records the requested kinds, and dumps that
+land in the same millisecond get a `-1`, `-2`, ... suffix. Identical failure
+signatures (device, play, act, stage, step and code, with example suffixes
+ignored) inside `throttle.same_failure_window` produce one routed event and
+then suppressed events; a recovered watcher emits one recovery event.
 
 `watch status` reports the last start, last status, consecutive failures, the
 next iteration time and the last dump, or run `watch status --json` for
@@ -198,7 +211,6 @@ wiring and tool schemas.
 
 The resident runner is implemented and covered by mock-driven tests, but the
 following are not yet complete: live watcher-config reload, priority scheduling,
-missed recurring fires on a fresh state file, dump filtering beyond the
-retention limits, no-gap device leases (D-39), and the heartbeat/version
-handshake. Physical macOS/Linux autostart and toast action behavior remain
-hardware-unverified until run on those hosts.
+no-gap device leases (D-39), and the heartbeat/version handshake. Physical
+macOS/Linux autostart and toast action behavior remain hardware-unverified until
+run on those hosts.

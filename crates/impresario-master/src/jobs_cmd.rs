@@ -141,6 +141,9 @@ pub fn run_jobs(home: &Home, args: &JobsArgs) -> i32 {
                     println!("  {message}");
                 }
             }
+            if record.label.starts_with("schedule ") || record.label.starts_with("watcher ") {
+                println!("  {}", record.label);
+            }
         }
         EXIT_OK
     }

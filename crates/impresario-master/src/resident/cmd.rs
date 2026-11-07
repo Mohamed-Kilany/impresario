@@ -1217,7 +1217,14 @@ fn run_now_schedule(
     let Some(schedule) = sections.schedules.iter().find(|value| value.name == name) else {
         return usage_error(&format!("no schedule named '{name}'"));
     };
-    run_selection(home, base, config_path, devices_path, &schedule.run)
+    run_selection(
+        home,
+        base,
+        config_path,
+        devices_path,
+        &schedule.run,
+        &format!("schedule {name}"),
+    )
 }
 
 fn run_now_watch(
@@ -1234,7 +1241,14 @@ fn run_now_watch(
     let Some(watcher) = sections.watchers.iter().find(|value| value.name == name) else {
         return usage_error(&format!("no watcher named '{name}'"));
     };
-    run_selection(home, base, config_path, devices_path, &watcher.run)
+    run_selection(
+        home,
+        base,
+        config_path,
+        devices_path,
+        &watcher.run,
+        &format!("watcher {name}"),
+    )
 }
 
 fn run_selection(
@@ -1243,8 +1257,10 @@ fn run_selection(
     config_path: &Path,
     devices_path: &Path,
     selection: &RunSelection,
+    source: &str,
 ) -> i32 {
     let mut args = super::service::run_args_for_cli(selection);
+    args.job_label = Some(source.to_string());
     if let Some(profile) = args.profile.clone() {
         if let Err(error) = crate::profile_cmd::apply(home, &profile, &mut args) {
             return usage_error(&error);

@@ -15,8 +15,9 @@ use chrono::{DateTime, Local, TimeZone as _};
 use impresario_core::command::WireErrorCode;
 use impresario_core::home::Home;
 use impresario_core::resident::{
-    parse_once, parse_span, BusyPolicy, FailureClass, MissedPolicy, Notifications, NotifyEvent,
-    NotifySpec, Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen, Watcher,
+    parse_once, parse_span, BusyPolicy, DumpKind, FailureClass, MissedPolicy, Notifications,
+    NotifyEvent, NotifySpec, Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen,
+    Watcher,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -79,6 +80,11 @@ impl Default for ServiceState {
 #[serde(default)]
 pub struct ScheduleState {
     pub last_fire: Option<String>,
+    /// When the runner first observed this schedule; anchors the first fire.
+    pub observed_at: Option<String>,
+    /// Serialized `when` block the counters belong to. Editing the schedule
+    /// resets its anchor so a new `once` is not treated as already fired.
+    pub when: Option<String>,
     pub disabled_once: bool,
     pub runs: u64,
     pub failures: u64,
@@ -249,6 +255,36 @@ pub fn is_running(home: &Home) -> bool {
     }
 }
 
+/// Resume the persisted counters when the runner restarts in the same
+/// workspace. The previous `updated_at` is the last time the runner observed
+/// the config, so it anchors missed-fire detection for schedules that were
+/// configured while the service was off. A different workspace starts clean.
+fn resume_state(
+    previous: ServiceState,
+    base: &Path,
+    started_at: DateTime<Local>,
+) -> (ServiceState, Option<DateTime<Local>>) {
+    let workspace = base.display().to_string();
+    let same_workspace = previous.workspace.is_empty() || previous.workspace == workspace;
+    let prior_seen = if same_workspace {
+        parse_local(&previous.updated_at)
+    } else {
+        None
+    };
+    let mut state = if same_workspace {
+        previous
+    } else {
+        ServiceState::default()
+    };
+    state.version = STATE_VERSION;
+    state.pid = std::process::id();
+    state.started_at = started_at.to_rfc3339();
+    state.updated_at = started_at.to_rfc3339();
+    state.workspace = workspace;
+    state.paused = false;
+    (state, prior_seen)
+}
+
 /// Run the resident loop in the foreground.
 pub fn run_foreground(home: &Home, base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
     let paths = Paths::new(home);
@@ -259,17 +295,21 @@ pub fn run_foreground(home: &Home, base: &Path, config_path: &Path, devices_path
     let _ = std::fs::remove_file(&paths.stop);
     let _ = std::fs::remove_file(&paths.pause);
     log_line(home, "resident runner starting");
-    let state = Arc::new(Mutex::new(ServiceState {
-        pid: std::process::id(),
-        started_at: Local::now().to_rfc3339(),
-        updated_at: Local::now().to_rfc3339(),
-        workspace: base.display().to_string(),
-        ..ServiceState::default()
-    }));
+    let started_at = Local::now();
+    let previous = match read_state(home) {
+        Ok(state) => state,
+        Err(error) => {
+            log_line(home, &format!("state read failed: {error}"));
+            ServiceState::default()
+        }
+    };
+    let (loaded, prior_seen) = resume_state(previous, base, started_at);
+    let state = Arc::new(Mutex::new(loaded));
     let paused = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let running = Arc::new(Mutex::new(BTreeSet::new()));
     let watchers: WatcherHandles = Arc::new(Mutex::new(BTreeMap::new()));
+    let mut first_reconcile = true;
 
     loop {
         if paths.stop.exists() {
@@ -309,6 +349,7 @@ pub fn run_foreground(home: &Home, base: &Path, config_path: &Path, devices_path
             devices_path,
             &sections,
             now_paused,
+            if first_reconcile { prior_seen } else { None },
             &state,
             &running,
         );
@@ -325,6 +366,7 @@ pub fn run_foreground(home: &Home, base: &Path, config_path: &Path, devices_path
             &running,
             &watchers,
         );
+        first_reconcile = false;
         std::thread::sleep(TICK);
     }
 
@@ -366,6 +408,7 @@ fn reconcile_schedules(
     devices_path: &Path,
     sections: &ResidentSections,
     paused: bool,
+    startup_seen: Option<DateTime<Local>>,
     state: &Arc<Mutex<ServiceState>>,
     running: &Arc<Mutex<BTreeSet<String>>>,
 ) {
@@ -375,11 +418,27 @@ fn reconcile_schedules(
         .ok()
         .and_then(|state| parse_local(&state.started_at));
     for schedule in sections.schedules.iter().filter(|value| value.enabled) {
-        let runtime = state
-            .lock()
-            .ok()
-            .and_then(|state| state.schedules.get(&schedule.name).cloned())
-            .unwrap_or_default();
+        let when_key = serde_json::to_string(&schedule.when).unwrap_or_default();
+        let runtime = match state.lock() {
+            Ok(mut state) => {
+                let entry = state.schedules.entry(schedule.name.clone()).or_default();
+                // An old state file has no fingerprint: adopt the current
+                // `when` without discarding its history. A real edit resets
+                // the anchor so a new `once` is not treated as already fired.
+                if entry
+                    .when
+                    .as_deref()
+                    .is_some_and(|previous| previous != when_key)
+                {
+                    entry.last_fire = None;
+                    entry.observed_at = None;
+                    entry.disabled_once = false;
+                }
+                entry.when = Some(when_key);
+                entry.clone()
+            }
+            Err(_) => continue,
+        };
         if runtime.disabled_once {
             continue;
         }
@@ -412,47 +471,49 @@ fn reconcile_schedules(
             }
             now
         } else {
-            let next = match last.as_ref() {
-                Some(last) => match schedule.next_after(last) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        log_line(
+            let observed = match runtime.observed_at.as_deref().and_then(parse_local) {
+                Some(observed) => observed,
+                None => {
+                    // A schedule configured while the runner was off uses the
+                    // last persisted observation as its baseline, so a fire
+                    // missed in between still follows `on_missed`. A brand-new
+                    // schedule starts counting from now.
+                    let observed = startup_seen.unwrap_or(now);
+                    set_observed_at(state, &schedule.name, &observed);
+                    observed
+                }
+            };
+            let anchor = last.unwrap_or(observed);
+            match recurring_due(schedule, anchor, now) {
+                Ok(DueState::Exhausted) => {
+                    mark_once_disabled(state, &schedule.name);
+                    continue;
+                }
+                Ok(DueState::Waiting) => continue,
+                Ok(DueState::Due { missed }) => {
+                    if missed && matches!(schedule.on_missed, MissedPolicy::Skip) {
+                        update_last_fire(state, &schedule.name, &now);
+                        append_event(
                             home,
-                            &format!("schedule '{}' ignored: {error}", schedule.name),
+                            json!({"kind":"schedule_missed","schedule":schedule.name,"at":now.to_rfc3339()}),
                         );
                         continue;
                     }
-                },
-                None => match schedule.next_after(&now) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        log_line(
-                            home,
-                            &format!("schedule '{}' ignored: {error}", schedule.name),
-                        );
-                        continue;
-                    }
-                },
-            };
-            let Some(next) = next else {
-                mark_once_disabled(state, &schedule.name);
-                continue;
-            };
-            next
+                    now
+                }
+                Err(error) => {
+                    log_line(
+                        home,
+                        &format!("schedule '{}' ignored: {error}", schedule.name),
+                    );
+                    continue;
+                }
+            }
         };
         if due > now {
             continue;
         }
         if paused {
-            continue;
-        }
-        let missed = last.is_some() && (now - due) > chrono::Duration::minutes(1);
-        if missed && matches!(schedule.on_missed, MissedPolicy::Skip) {
-            update_last_fire(state, &schedule.name, &now);
-            append_event(
-                home,
-                json!({"kind":"schedule_missed","schedule":schedule.name,"at":now.to_rfc3339()}),
-            );
             continue;
         }
         let busy = running
@@ -491,6 +552,30 @@ fn reconcile_schedules(
             }
         }
     }
+}
+
+/// Whether a recurring schedule is due at `now`, relative to its anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DueState {
+    Waiting,
+    Due { missed: bool },
+    Exhausted,
+}
+
+fn recurring_due(
+    schedule: &Schedule,
+    anchor: DateTime<Local>,
+    now: DateTime<Local>,
+) -> Result<DueState, String> {
+    let Some(due) = schedule.next_after(&anchor)? else {
+        return Ok(DueState::Exhausted);
+    };
+    if due > now {
+        return Ok(DueState::Waiting);
+    }
+    Ok(DueState::Due {
+        missed: (now - due) > chrono::Duration::minutes(1),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -611,7 +696,7 @@ fn watcher_loop(
                 entry.last_started = Some(started.to_rfc3339());
             }
         }
-        let args = match resident_args(home, &watcher.run, BusyPolicy::Queue) {
+        let mut args = match resident_args(home, &watcher.run, BusyPolicy::Queue) {
             Ok(args) => args,
             Err(error) => {
                 failure_streak = failure_streak.saturating_add(1);
@@ -639,6 +724,7 @@ fn watcher_loop(
                 continue;
             }
         };
+        args.job_label = Some(format!("watcher {}", watcher.name));
         let outcome = cli::run_workspace(base, config_path, devices_path, &args, false, true);
         let status = outcome_status(&outcome);
         let unverifiable = outcome_unverifiable(&outcome);
@@ -786,7 +872,7 @@ fn spawn_schedule(
     let state = state.clone();
     let running = running.clone();
     std::thread::spawn(move || {
-        let args = match resident_args(&home, &schedule.run, schedule.on_busy) {
+        let mut args = match resident_args(&home, &schedule.run, schedule.on_busy) {
             Ok(args) => args,
             Err(error) => {
                 if let Ok(mut state) = state.lock() {
@@ -809,6 +895,7 @@ fn spawn_schedule(
                 return;
             }
         };
+        args.job_label = Some(format!("schedule {}", schedule.name));
         let outcome = cli::run_workspace(&base, &config_path, &devices_path, &args, false, true);
         if let Ok(mut state) = state.lock() {
             let entry = state.schedules.entry(schedule.name.clone()).or_default();
@@ -840,6 +927,16 @@ fn update_last_fire(state: &Arc<Mutex<ServiceState>>, name: &str, at: &DateTime<
     if let Ok(mut state) = state.lock() {
         let entry = state.schedules.entry(name.to_string()).or_default();
         entry.last_fire = Some(at.to_rfc3339());
+    }
+}
+
+fn set_observed_at(state: &Arc<Mutex<ServiceState>>, name: &str, at: &DateTime<Local>) {
+    if let Ok(mut state) = state.lock() {
+        state
+            .schedules
+            .entry(name.to_string())
+            .or_default()
+            .observed_at = Some(at.to_rfc3339());
     }
 }
 
@@ -877,6 +974,7 @@ fn run_args(selection: &RunSelection, busy: BusyPolicy) -> RunArgs {
             BusyPolicy::Queue => jobs::OnBusy::Queue,
             BusyPolicy::Skip | BusyPolicy::Fail => jobs::OnBusy::Fail,
         },
+        job_label: None,
     }
 }
 
@@ -906,20 +1004,74 @@ fn write_dump(
     outcome: &cli::RunOutcome,
     status: &str,
 ) -> Option<PathBuf> {
-    if watcher.on_failure.dump.is_empty() {
+    let kinds = &watcher.on_failure.dump;
+    if kinds.is_empty() {
         return None;
     }
-    let stamp = Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
-    let root = base
-        .join("reports")
-        .join("watch")
-        .join(&watcher.name)
-        .join(&stamp);
+    let root = dump_root(base, watcher);
     if std::fs::create_dir_all(&root).is_err() {
         return None;
     }
     if let Some(run_dir) = &outcome.run_dir {
-        let _ = copy_tree(run_dir, &root, 0);
+        if kinds.contains(&DumpKind::Report) {
+            for name in ["report.json", "junit.xml", "report.html"] {
+                let source = run_dir.join(name);
+                if source.is_file() {
+                    let _ = std::fs::copy(&source, root.join(name));
+                }
+            }
+        }
+        if kinds.contains(&DumpKind::Screenshot) {
+            let source = run_dir.join("screenshots");
+            if source.is_dir() {
+                let _ = copy_tree(&source, &root.join("screenshots"), 0);
+            }
+        }
+    }
+    if let Some(report) = &outcome.report {
+        let failures = failure_entries(report);
+        if kinds.contains(&DumpKind::Logs) {
+            let logs: Vec<serde_json::Value> = failures
+                .iter()
+                .map(|entry| {
+                    json!({
+                        "device": entry["device"],
+                        "play": entry["play"],
+                        "act": entry["act"],
+                        "code": entry["code"],
+                        "lines": entry["log_tail"],
+                    })
+                })
+                .collect();
+            write_dump_json(
+                &root.join("logs.json"),
+                &json!({"watcher": watcher.name, "failures": logs}),
+            );
+        }
+        if kinds.contains(&DumpKind::DeviceState) {
+            let devices: Vec<serde_json::Value> = report
+                .devices
+                .iter()
+                .map(|device| {
+                    json!({
+                        "name": device.name,
+                        "platform": device.platform,
+                        "device_info": device.device_info,
+                        "error": device.error,
+                    })
+                })
+                .collect();
+            write_dump_json(
+                &root.join("device_state.json"),
+                &json!({"watcher": watcher.name, "devices": devices}),
+            );
+        }
+        if kinds.contains(&DumpKind::Evidence) {
+            write_dump_json(
+                &root.join("evidence.json"),
+                &json!({"watcher": watcher.name, "failures": failures}),
+            );
+        }
     }
     let metadata = json!({
         "watcher": watcher.name,
@@ -935,6 +1087,57 @@ fn write_dump(
     );
     let _ = prune_watcher_reports(base, watcher);
     Some(root)
+}
+
+/// Timestamped dump directory, disambiguated when two dumps land in the same
+/// millisecond.
+fn dump_root(base: &Path, watcher: &Watcher) -> PathBuf {
+    let parent = base.join("reports").join("watch").join(&watcher.name);
+    let stamp = Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
+    let mut candidate = parent.join(&stamp);
+    let mut suffix = 1_u32;
+    while candidate.exists() {
+        candidate = parent.join(format!("{stamp}-{suffix}"));
+        suffix = suffix.saturating_add(1);
+    }
+    candidate
+}
+
+/// One entry per act whose final attempt carries a failure.
+fn failure_entries(report: &RunReport) -> Vec<serde_json::Value> {
+    let mut entries = Vec::new();
+    for device in &report.devices {
+        for play in &device.plays {
+            for act in &play.acts {
+                let Some(failure) = act
+                    .attempts
+                    .last()
+                    .and_then(|attempt| attempt.failure.as_ref())
+                else {
+                    continue;
+                };
+                entries.push(json!({
+                    "device": device.name,
+                    "play": play.name,
+                    "act": act.name,
+                    "step_index": failure.step_index,
+                    "code": failure.code,
+                    "message": failure.message,
+                    "details": failure.details,
+                    "screenshot": failure.screenshot,
+                    "log_tail": failure.log_tail,
+                }));
+            }
+        }
+    }
+    entries
+}
+
+fn write_dump_json(path: &Path, value: &serde_json::Value) {
+    let _ = std::fs::write(
+        path,
+        serde_json::to_string_pretty(value).unwrap_or_default(),
+    );
 }
 
 fn copy_tree(source: &Path, destination: &Path, depth: usize) -> std::io::Result<()> {
@@ -2043,5 +2246,186 @@ mod tests {
             vec!["toast".to_string(), "webhook:ops".to_string()]
         );
         assert!(notify_channels(&spec, NotifyEvent::Unverifiable).is_empty());
+    }
+
+    fn daily_schedule(at: &str) -> Schedule {
+        Schedule {
+            name: "nightly".to_string(),
+            when: ScheduleWhen::Daily { at: at.to_string() },
+            run: RunSelection::default(),
+            on_missed: MissedPolicy::Skip,
+            on_busy: BusyPolicy::Queue,
+            notify: NotifySpec::default(),
+            enabled: true,
+        }
+    }
+
+    fn local_at(hour: u32, minute: u32, second: u32) -> DateTime<Local> {
+        Local
+            .with_ymd_and_hms(2026, 11, 6, hour, minute, second)
+            .single()
+            .expect("unambiguous local time")
+    }
+
+    #[test]
+    fn recurring_schedules_anchor_the_first_fire_and_detect_missed_runs() {
+        let schedule = daily_schedule("09:00");
+        let anchor = local_at(8, 0, 0);
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(8, 59, 0)).unwrap(),
+            DueState::Waiting
+        );
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(9, 0, 30)).unwrap(),
+            DueState::Due { missed: false }
+        );
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(10, 0, 0)).unwrap(),
+            DueState::Due { missed: true }
+        );
+    }
+
+    #[test]
+    fn interval_schedules_measure_the_next_fire_from_the_anchor() {
+        let mut schedule = daily_schedule("09:00");
+        schedule.when = ScheduleWhen::Interval {
+            every: "1h".to_string(),
+        };
+        let anchor = local_at(8, 0, 0);
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(8, 30, 0)).unwrap(),
+            DueState::Waiting
+        );
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(9, 0, 30)).unwrap(),
+            DueState::Due { missed: false }
+        );
+        assert_eq!(
+            recurring_due(&schedule, anchor, local_at(10, 30, 0)).unwrap(),
+            DueState::Due { missed: true }
+        );
+    }
+
+    #[test]
+    fn resume_state_keeps_history_for_the_same_workspace_only() {
+        let base = Path::new("/workspace/demo");
+        let started = Local::now();
+        let mut previous = ServiceState {
+            version: STATE_VERSION,
+            pid: 42,
+            started_at: "2026-11-05T09:00:00+00:00".to_string(),
+            updated_at: "2026-11-05T10:00:00+00:00".to_string(),
+            workspace: base.display().to_string(),
+            paused: true,
+            ..ServiceState::default()
+        };
+        previous.schedules.insert(
+            "nightly".to_string(),
+            ScheduleState {
+                runs: 3,
+                last_fire: Some("2026-11-05T09:00:00+00:00".to_string()),
+                ..ScheduleState::default()
+            },
+        );
+        let (resumed, prior) = resume_state(previous, base, started);
+        assert_eq!(resumed.pid, std::process::id());
+        assert_ne!(resumed.pid, 42);
+        assert_eq!(resumed.started_at, started.to_rfc3339());
+        assert!(!resumed.paused);
+        assert_eq!(resumed.schedules["nightly"].runs, 3);
+        assert!(prior.is_some());
+
+        let other = Path::new("/workspace/other");
+        let mut previous = ServiceState {
+            workspace: base.display().to_string(),
+            updated_at: "2026-11-05T10:00:00+00:00".to_string(),
+            ..ServiceState::default()
+        };
+        previous.schedules.insert(
+            "nightly".to_string(),
+            ScheduleState {
+                runs: 3,
+                ..ScheduleState::default()
+            },
+        );
+        let (resumed, prior) = resume_state(previous, other, started);
+        assert!(resumed.schedules.is_empty());
+        assert!(prior.is_none());
+        assert_eq!(resumed.workspace, other.display().to_string());
+    }
+
+    fn outcome_in(run_dir: &Path, report: RunReport) -> cli::RunOutcome {
+        cli::RunOutcome {
+            exit_code: report.exit_code,
+            run_id: Some(report.run_id.clone()),
+            run_dir: Some(run_dir.to_path_buf()),
+            report: Some(report),
+            messages: Vec::new(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn dump_bundles_copy_only_the_selected_kinds() {
+        let base = tempfile::tempdir().expect("base");
+        let run_dir = base.path().join("reports").join("run-1");
+        std::fs::create_dir_all(run_dir.join("screenshots").join("tv")).expect("screenshots");
+        std::fs::write(run_dir.join("report.json"), b"{}").expect("report");
+        std::fs::write(run_dir.join("junit.xml"), b"<testsuite/>").expect("junit");
+        std::fs::write(run_dir.join("report.html"), b"<html/>").expect("html");
+        std::fs::write(
+            run_dir.join("screenshots").join("tv").join("failure-1.png"),
+            b"png",
+        )
+        .expect("screenshot");
+        let mut report = report_with(Status::Failed, RunStatus::Failed, Some("CHECK_FAILED"));
+        let failure = report.devices[0].plays[0].acts[0].attempts[0]
+            .failure
+            .as_mut()
+            .expect("failure");
+        failure.log_tail = vec!["line one".to_string()];
+        failure
+            .details
+            .insert("probe".to_string(), "value".to_string());
+        failure.screenshot = Some("screenshots/tv/failure-1.png".to_string());
+        let outcome = outcome_in(&run_dir, report);
+        let mut watcher = test_watcher();
+
+        watcher.on_failure.dump = vec![DumpKind::Report];
+        let root = write_dump(base.path(), &watcher, &outcome, "failed").expect("report dump");
+        assert!(root.join("report.json").is_file());
+        assert!(root.join("junit.xml").is_file());
+        assert!(root.join("report.html").is_file());
+        assert!(!root.join("screenshots").exists());
+        assert!(!root.join("logs.json").exists());
+
+        watcher.on_failure.dump = vec![DumpKind::Screenshot];
+        let root = write_dump(base.path(), &watcher, &outcome, "failed").expect("screenshot dump");
+        assert!(root.join("screenshots/tv/failure-1.png").is_file());
+        assert!(!root.join("report.json").exists());
+
+        watcher.on_failure.dump = vec![DumpKind::Logs];
+        let root = write_dump(base.path(), &watcher, &outcome, "failed").expect("logs dump");
+        let logs: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("logs.json")).expect("logs"))
+                .expect("logs json");
+        assert_eq!(logs["failures"][0]["lines"][0], "line one");
+        assert!(!root.join("report.json").exists());
+
+        watcher.on_failure.dump = vec![DumpKind::DeviceState];
+        let root = write_dump(base.path(), &watcher, &outcome, "failed").expect("device dump");
+        let state: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("device_state.json")).expect("device state"),
+        )
+        .expect("device state json");
+        assert_eq!(state["devices"][0]["name"], "tv");
+
+        watcher.on_failure.dump = vec![DumpKind::Evidence];
+        let root = write_dump(base.path(), &watcher, &outcome, "failed").expect("evidence dump");
+        let evidence: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("evidence.json")).expect("evidence"),
+        )
+        .expect("evidence json");
+        assert_eq!(evidence["failures"][0]["details"]["probe"], "value");
     }
 }

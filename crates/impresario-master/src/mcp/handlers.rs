@@ -663,6 +663,7 @@ use json, junit or html — every reporter still lands in the run directory",
         dry_run: false,
         detach: false,
         on_busy: crate::jobs::OnBusy::Wait,
+        job_label: None,
     };
     let guard = lock_devices();
     let outcome = cli::run_workspace(

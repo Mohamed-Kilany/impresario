@@ -177,7 +177,11 @@ log live under `~/.impresario/service/` (`state.json`, `events.jsonl`,
 Windows Startup `.cmd`, a macOS LaunchAgent plist or a Linux `systemd --user`
 unit; `uninstall` removes only that hook unless `--purge` is given. `service
 status` reports the pid, pause state and per-schedule/per-watcher counters even
-when the runner is stopped.
+when the runner is stopped. Restarting the runner in the same workspace resumes
+those counters and the missed-fire baseline; a different workspace starts clean.
+A recurring schedule is anchored when the runner first observes it (or at the
+last persisted observation when it was configured while the service was off),
+and editing its `when` block resets the anchor.
 
 Schedules and watchers are optional `schedules:`/`watchers:` sections in the
 workspace config. Global `config.yaml` sections with the same names are merged
@@ -214,11 +218,13 @@ with month/weekday names. Fall-back times fire once at the first occurrence,
 spring-forward times that do not exist are skipped, and a past `once` runs when
 the service observed its time or `on_missed: run_once`, otherwise it is marked
 missed and disabled. A schedule fire is a normal supervised job, so reports,
-logs and device leases are unchanged. `on_busy` is `queue` (retry while the
-previous occurrence is still running), `skip` or `fail`.
+logs and device leases are unchanged; it is labelled `schedule <name>` and
+appears in `impresario jobs`. `on_busy` is `queue` (retry while the previous
+occurrence is still running), `skip` or `fail`.
 
 Watchers take a per-iteration device lease and release it between iterations;
-`pacing.mode` is `back_to_back` or `min_gap` with `gap`. `on_failure` configures
+each iteration is a normal job labelled `watcher <name>`. `pacing.mode` is
+`back_to_back` or `min_gap` with `gap`. `on_failure` configures
 the dump, throttle and notification channels. Notification events are routed
 per watcher and schedule: identical watcher failures (same
 device/play/act/stage/step/code signature, with example suffixes ignored)
@@ -266,8 +272,12 @@ exactly one line from stdin and never accepts the value as an argument. Any
 delivery error is recorded in `notify_delivery` and does not stop the watcher
 or schedule.
 
-Dumps copy the full run tree into
-`reports/watch/<name>/<timestamp>/` with a `dump.json`. The resident MCP tools
+Dumps are filtered by `on_failure.dump` under
+`reports/watch/<name>/<timestamp>/`: `report` copies `report.json`, `junit.xml`
+and `report.html`; `screenshot` copies `screenshots/`; `logs`, `device_state`
+and `evidence` write `logs.json`, `device_state.json` and `evidence.json`.
+`dump.json` records the request, and same-millisecond dumps get a numeric
+suffix. The resident MCP tools
 (`service_status`, `schedules_list|add|remove|run_now`,
 `watchers_list|start|stop|dumps`) expose the same state to agents, and the TUI
 **Resident** screen shows the same joined view read-only (refresh every two
