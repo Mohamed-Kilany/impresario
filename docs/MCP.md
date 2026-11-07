@@ -2,8 +2,9 @@
 
 `impresario mcp` serves a [Model Context Protocol](https://modelcontextprotocol.io)
 interface on **stdio** so any MCP-capable AI agent can inspect the
-workspace, author tests against the DSL reference, check devices, run plays
-and debug failures — without shelling out to the CLI.
+workspace, author tests against the DSL reference, check devices, run plays,
+debug failures, and inspect or edit the resident schedules and watchers —
+without shelling out to the CLI.
 
 It is a CLI addition, not part of the spec surface (decision I-80, the same
 pattern as `mock-agent`, I-77).
@@ -66,6 +67,15 @@ does not exist, an argument is out of range) are tool errors
 | `impresario_report_get` | `run_id?` | The full `report.json` (Appendix B document). Default: the newest run. |
 | `impresario_artifacts_list` | `run_id?` | Files of a run with sizes and kinds (`report.json`, `junit.xml`, `report.html`, `screenshots/<device>/*.png`). |
 | `impresario_artifact_get` | `path`, `run_id?` | One artifact. Images (PNG/JPEG/WebP) return as image content; text artifacts return as text (truncated at 2 MiB). |
+| `impresario_service_status` | — | Resident service state: running/paused, pid, workspace, start time and the persisted schedule/watcher counters. Read-only. |
+| `impresario_schedules_list` | — | Effective schedules joined with runs/failures and the next host-local fire. Disabled schedules have no next fire. |
+| `impresario_schedule_add` | `name`, `schedule` or `yaml`, `layer?` | Add one schedule to the workspace (default) or global config. `name` is authoritative; the full file is validated before writing. |
+| `impresario_schedule_remove` | `name`, `layer?` | Remove one schedule from that layer. A definition in the other layer is left untouched. |
+| `impresario_schedule_run_now` | `name` | Run one schedule immediately through the normal pipeline, in this process. Shares the device lock with `impresario_run`; file reporters only. Does not update service `last_fire` counters or send schedule notifications. |
+| `impresario_watchers_list` | — | Effective watchers with enabled/paused, iterations/failures, last start/status/dump and next iteration. |
+| `impresario_watcher_start` | `name`, `layer?` | Enable a watcher and clear its stop/pause control files. Does not start the resident service. |
+| `impresario_watcher_stop` | `name`, `layer?` | Disable a watcher and write its stop control file; a running service ends after the in-flight iteration. |
+| `impresario_watcher_dumps` | `name?` | Timestamped dump directories under `reports/watch`, workspace-relative. Default: every watcher. |
 
 Notes:
 
@@ -78,9 +88,21 @@ Notes:
   validation are identical to the CLI.
 - **One run or device check at a time**: both take a process-wide lock, so
   two agents (or two tool calls) can never drive one device concurrently.
-  Other tools stay available while a run is in flight, and responses may
-  arrive out of order (they are correlated by JSON-RPC id, as the spec
-  allows).
+  `impresario_schedule_run_now` takes the same device lock; schedule/watcher
+  config edits take a separate resident lock, so they never race each other
+  or a manual schedule run. Other tools stay available while a run is in
+  flight, and responses may arrive out of order (they are correlated by
+  JSON-RPC id, as the spec allows).
+- **Resident state is shared**: the tools read `service/state.json` and the
+  layered config used by the CLI (and the planned TUI). `schedules_list` and
+  `watchers_list` are read-only; `schedule_add/remove` and
+  `watcher_start/stop` use the same lossless YAML editor as the CLI. Starting
+  or stopping a watcher does not start the service; a stopped service picks
+  up the change the next time it runs.
+- **A manual schedule run is not a scheduled fire**: it returns the normal
+  run summary but does not advance `last_fire`, increment schedule counters,
+  or emit `schedule_notify` events. Use the resident service when those
+  effects matter.
 - Runs respect the config's per-step timeouts and retries; there is no
   separate MCP-level timeout, so a long run is a long tool call.
 
@@ -92,6 +114,7 @@ Notes:
 | `impresario://docs/parity` | The platform support matrix (`docs/PARITY.md`), generated from the planner tables. |
 | `impresario://docs/devices` | Device setup guide (`docs/DEVICES.md`): adb/Wi-Fi Android, Android TV, web, webOS/Tizen, emulators. |
 | `impresario://docs/mcp` | This document. |
+| `impresario://docs/scheduling` | Schedules, watchers, resident delivery and notification reference (`docs/SCHEDULING.md`). |
 | `impresario://workspace/info` | Live JSON of the workspace summary (same payload as `impresario_workspace_info`). |
 
 Embedding the docs means the agent always reads the documentation that

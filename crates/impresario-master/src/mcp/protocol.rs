@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use impresario_core::home::Home;
 use serde_json::{json, Map, Value};
 
 use crate::mcp::{resources, tools};
@@ -14,6 +15,7 @@ pub(crate) struct Server {
     pub base: PathBuf,
     pub config_path: PathBuf,
     pub devices_path: PathBuf,
+    pub home: Home,
 }
 
 /// JSON-RPC error codes this server emits; `UNSUPPORTED_VERSION` is the
@@ -299,6 +301,7 @@ mod tests {
             base: PathBuf::from("."),
             config_path: PathBuf::from("impresario.config"),
             devices_path: PathBuf::from("impresario.devices.config"),
+            home: Home::at("."),
         };
         let discover = dispatch(
             &server,

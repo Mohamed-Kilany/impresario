@@ -46,6 +46,14 @@ web/headless Chrome, webOS/Tizen, emulators, stay-awake and vendor-freeze notes.
 transport, concurrency and security notes.",
         text: include_str!("../../../../docs/MCP.md"),
     },
+    Doc {
+        uri: "impresario://docs/scheduling",
+        name: "Schedules, watchers and resident delivery",
+        description: "Resident runner reference: layered schedule/watcher config, local-time \
+and cron firing, missed/busy policies, dumps and retention, notifications, quiet hours, rate \
+limits and webhooks.",
+        text: include_str!("../../../../docs/SCHEDULING.md"),
+    },
 ];
 
 pub(crate) fn list(_server: &Server) -> Value {

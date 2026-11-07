@@ -212,6 +212,169 @@ pub(crate) fn definitions() -> Vec<Value> {
                 "additionalProperties": false,
             },
         }),
+        json!({
+            "name": "impresario_service_status",
+            "title": "Resident service status",
+            "description": "Read the resident runner state: whether the service process is \
+        alive, paused, its pid/workspace/start time, and the persisted per-schedule and \
+        per-watcher counters from service/state.json. Read-only; it does not start the service.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "impresario_schedules_list",
+            "title": "List resident schedules",
+            "description": "List the effective schedules from the layered workspace and global \
+        config, joined with persisted runs/failures and the next host-local fire time. A \
+        disabled schedule has no next fire. Read-only.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "impresario_schedule_add",
+            "title": "Add resident schedule",
+            "description": "Add one schedule to the workspace (default) or global config. Give \
+        either a 'schedule' object with the same fields as YAML (when, run, on_missed, on_busy, \
+        notify, enabled) or a 'yaml' string. 'name' is authoritative; a mismatching name inside \
+        the body is rejected. The resulting file is validated through the normal config loader.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique schedule name.",
+                    },
+                    "schedule": {
+                        "type": "object",
+                        "description": "Schedule body (without or with the same name).",
+                    },
+                    "yaml": {
+                        "type": "string",
+                        "description": "Schedule body as YAML; mutually exclusive with \
+        'schedule'.",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["workspace", "global"],
+                        "description": "Which config layer to edit. Default: workspace.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_schedule_remove",
+            "title": "Remove resident schedule",
+            "description": "Remove one schedule by name from the workspace (default) or global \
+        config. Fails if that layer has no such schedule; a definition in the other layer is \
+        left untouched.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Schedule name.",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["workspace", "global"],
+                        "description": "Which config layer to edit. Default: workspace.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_schedule_run_now",
+            "title": "Run a schedule now",
+            "description": "Run one configured schedule immediately through the normal run \
+        pipeline, in this process, serialized with impresario_run (one device-side run at a \
+        time). The result carries the same summary as impresario_run. File reporters only. This \
+        manual run does not update service last_fire counters and does not send schedule \
+        notification events.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Schedule name.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_watchers_list",
+            "title": "List resident watchers",
+            "description": "List the effective watchers, with enabled, per-watcher paused, \
+        persisted iterations/failures, last start/status/dump and the next iteration time. \
+        Read-only.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "impresario_watcher_start",
+            "title": "Start resident watcher",
+            "description": "Enable a watcher in the workspace (default) or global config and \
+        clear its stop/pause control files. A running service picks it up; a stopped service \
+        starts it the next time the service runs. Does not start the service itself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Watcher name.",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["workspace", "global"],
+                        "description": "Which config layer to edit. Default: workspace.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_watcher_stop",
+            "title": "Stop resident watcher",
+            "description": "Disable a watcher in the workspace (default) or global config and \
+        write its stop control file, so a running service ends the current iteration loop after \
+        the in-flight iteration. Does not stop the resident service.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Watcher name.",
+                    },
+                    "layer": {
+                        "type": "string",
+                        "enum": ["workspace", "global"],
+                        "description": "Which config layer to edit. Default: workspace.",
+                    },
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_watcher_dumps",
+            "title": "List watcher dumps",
+            "description": "List timestamped dump directories under reports/watch for one \
+        watcher, or for every watcher when 'name' is omitted, newest last. Paths are \
+        workspace-relative. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Watcher name. Default: every watcher with dumps.",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
     ]
 }
 
@@ -242,6 +405,15 @@ pub(crate) fn call(server: &Server, params: &Value) -> RpcResult {
         "impresario_report_get" => handlers::report_get(server, &arguments),
         "impresario_artifacts_list" => handlers::artifacts_list(server, &arguments),
         "impresario_artifact_get" => handlers::artifact_get(server, &arguments),
+        "impresario_service_status" => handlers::service_status(server, &arguments),
+        "impresario_schedules_list" => handlers::schedules_list(server, &arguments),
+        "impresario_schedule_add" => handlers::schedules_add(server, &arguments),
+        "impresario_schedule_remove" => handlers::schedules_remove(server, &arguments),
+        "impresario_schedule_run_now" => handlers::schedule_run_now(server, &arguments),
+        "impresario_watchers_list" => handlers::watchers_list(server, &arguments),
+        "impresario_watcher_start" => handlers::watcher_start(server, &arguments),
+        "impresario_watcher_stop" => handlers::watcher_stop(server, &arguments),
+        "impresario_watcher_dumps" => handlers::watcher_dumps(server, &arguments),
         other => {
             return Err(RpcError::new(
                 INVALID_PARAMS,

@@ -498,7 +498,7 @@ pub fn run_with(argv: &[String]) -> i32 {
             EXIT_OK
         }
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
-        Command::Mcp => cmd_mcp(&base, &config_path, &devices_path),
+        Command::Mcp => cmd_mcp(&home, &base, &config_path, &devices_path),
         Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }
@@ -3235,11 +3235,12 @@ fn cmd_lsp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
 /// `impresario mcp` (decision I-80, not in the spec CLI list): serve the
 /// Model Context Protocol on stdio so AI agents can validate, run and debug
 /// plays against the configured devices. Stdout is protocol-only.
-fn cmd_mcp(base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
+fn cmd_mcp(home: &Home, base: &Path, config_path: &Path, devices_path: &Path) -> i32 {
     crate::mcp::run_stdio(
         base.to_path_buf(),
         config_path.to_path_buf(),
         devices_path.to_path_buf(),
+        home.clone(),
     )
 }
 

@@ -267,9 +267,11 @@ delivery error is recorded in `notify_delivery` and does not stop the watcher
 or schedule.
 
 Dumps copy the full run tree into
-`reports/watch/<name>/<timestamp>/` with a `dump.json`. The TUI Resident
-screen and resident MCP tools are also not yet implemented, and D-39 no-gap
-lifetime leases are not available (see `docs/STATUS.md` gap 21).
+`reports/watch/<name>/<timestamp>/` with a `dump.json`. The resident MCP tools
+(`service_status`, `schedules_list|add|remove|run_now`,
+`watchers_list|start|stop|dumps`) expose the same state to agents; the TUI
+Resident screen is still open, and D-39 no-gap lifetime leases are not
+available (see `docs/STATUS.md` gap 21 and `docs/SCHEDULING.md`).
 
 ## Packaging and signing
 

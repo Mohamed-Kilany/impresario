@@ -30,6 +30,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use impresario_core::home::Home;
 use serde_json::Value;
 
 use crate::cli::EXIT_OK;
@@ -39,11 +40,12 @@ pub(crate) use protocol::Server;
 /// Serve MCP on stdio until stdin closes (the client hung up); returns the
 /// process exit code.
 #[must_use]
-pub fn run_stdio(base: PathBuf, config_path: PathBuf, devices_path: PathBuf) -> i32 {
+pub fn run_stdio(base: PathBuf, config_path: PathBuf, devices_path: PathBuf, home: Home) -> i32 {
     let server = Server {
         base,
         config_path,
         devices_path,
+        home,
     };
     serve(server, std::io::stdin().lock(), std::io::stdout())
 }

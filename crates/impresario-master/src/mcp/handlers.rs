@@ -14,6 +14,7 @@ use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::platforms::Platform;
+use impresario_core::resident::Schedule;
 use impresario_core::settings;
 use impresario_core::support::{self, CheckVerb, Verb};
 use impresario_core::workspace;
@@ -24,6 +25,9 @@ use crate::mcp::protocol::Server;
 use crate::mcp::tools::ToolOutput;
 use crate::report::{ActReport, AttemptReport, DeviceReport, FailureReport, PlayReport, RunReport};
 use crate::reporters;
+use crate::resident::{
+    config as resident_config, service as resident_service, status as resident_status,
+};
 
 /// Text artifacts larger than this are truncated in the response.
 const TEXT_CAP: usize = 2 * 1024 * 1024;
@@ -36,8 +40,17 @@ const DEFAULT_REPORTERS: &str = "json,junit";
 /// Serializes `impresario_devices_check` and `impresario_run`.
 static DEVICE_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes schedule/watcher configuration and control-file edits.
+static RESIDENT_LOCK: Mutex<()> = Mutex::new(());
+
 fn lock_devices() -> MutexGuard<'static, ()> {
     DEVICE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn lock_resident() -> MutexGuard<'static, ()> {
+    RESIDENT_LOCK
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
 }
@@ -1082,6 +1095,265 @@ fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Resident status and schedule/watcher controls
+// ---------------------------------------------------------------------------
+
+fn required_arg_string(arguments: &Value, key: &str) -> Result<String, String> {
+    match arg_string(arguments, key)? {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(format!("'{key}' must not be empty")),
+        None => Err(format!("missing required string '{key}'")),
+    }
+}
+
+fn resident_layer(arguments: &Value) -> Result<resident_config::Layer, String> {
+    match arg_string(arguments, "layer")?.as_deref() {
+        None | Some("workspace") => Ok(resident_config::Layer::Workspace),
+        Some("global") => Ok(resident_config::Layer::Global),
+        Some(other) => Err(format!(
+            "'layer' must be 'workspace' or 'global', not '{other}'"
+        )),
+    }
+}
+
+fn layer_label(layer: resident_config::Layer) -> &'static str {
+    match layer {
+        resident_config::Layer::Workspace => "workspace",
+        resident_config::Layer::Global => "global",
+    }
+}
+
+fn resident_status(server: &Server) -> Result<resident_status::ResidentStatus, String> {
+    resident_status::collect(&server.home, &server.config_path)
+}
+
+fn effective_schedule(server: &Server, name: &str) -> Result<Schedule, String> {
+    resident_config::load_effective(&server.home, &server.config_path)?
+        .schedules
+        .into_iter()
+        .find(|schedule| schedule.name == name)
+        .ok_or_else(|| format!("no schedule named '{name}'"))
+}
+
+pub(crate) fn service_status(server: &Server, _arguments: &Value) -> ToolOutput {
+    match resident_status(server) {
+        Ok(status) => ToolOutput::json(json!(status)),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+pub(crate) fn schedules_list(server: &Server, _arguments: &Value) -> ToolOutput {
+    match resident_status(server) {
+        Ok(status) => ToolOutput::json(json!({
+            "running": status.running,
+            "schedules": status.schedules,
+        })),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+pub(crate) fn schedules_add(server: &Server, arguments: &Value) -> ToolOutput {
+    let name = match required_arg_string(arguments, "name") {
+        Ok(name) => name,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let layer = match resident_layer(arguments) {
+        Ok(layer) => layer,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let yaml = match (arg_string(arguments, "yaml"), arguments.get("schedule")) {
+        (Ok(Some(yaml)), None) => yaml,
+        (Ok(None), Some(schedule)) => match serde_yaml_ng::to_string(schedule) {
+            Ok(yaml) => yaml,
+            Err(error) => return ToolOutput::error(format!("cannot encode 'schedule': {error}")),
+        },
+        (Ok(Some(_)), Some(_)) => {
+            return ToolOutput::error("give either 'yaml' or 'schedule', not both");
+        }
+        (Ok(None), None) => {
+            return ToolOutput::error("missing required 'schedule' object or 'yaml' string");
+        }
+        (Err(message), _) => return ToolOutput::error(message),
+    };
+    let mut value: serde_yaml_ng::Value = match serde_yaml_ng::from_str(&yaml) {
+        Ok(value) => value,
+        Err(error) => return ToolOutput::error(format!("invalid schedule YAML: {error}")),
+    };
+    let Some(mapping) = value.as_mapping_mut() else {
+        return ToolOutput::error("'schedule' must encode a mapping");
+    };
+    let name_key = serde_yaml_ng::Value::String("name".to_string());
+    if let Some(existing) = mapping.get(&name_key) {
+        match existing.as_str() {
+            Some(existing) if existing == name => {}
+            Some(existing) => {
+                return ToolOutput::error(format!(
+                    "schedule body names '{existing}', but 'name' is '{name}'"
+                ));
+            }
+            None => return ToolOutput::error("schedule 'name' must be a string"),
+        }
+    }
+    mapping.insert(name_key, serde_yaml_ng::Value::String(name.clone()));
+    let yaml = match serde_yaml_ng::to_string(&value) {
+        Ok(yaml) => yaml,
+        Err(error) => return ToolOutput::error(format!("cannot encode schedule YAML: {error}")),
+    };
+    if let Err(error) = serde_yaml_ng::from_str::<Schedule>(&yaml) {
+        return ToolOutput::error(format!("invalid schedule: {error}"));
+    }
+    let path = resident_config::layer_path(layer, &server.home, &server.config_path);
+    let _guard = lock_resident();
+    if let Err(error) = resident_config::append(&path, resident_config::Kind::Schedule, &yaml) {
+        return ToolOutput::error(error);
+    }
+    match effective_schedule(server, &name) {
+        Ok(schedule) => ToolOutput::json(json!({
+            "layer": layer_label(layer),
+            "schedule": schedule,
+        })),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+pub(crate) fn schedules_remove(server: &Server, arguments: &Value) -> ToolOutput {
+    let name = match required_arg_string(arguments, "name") {
+        Ok(name) => name,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let layer = match resident_layer(arguments) {
+        Ok(layer) => layer,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let path = resident_config::layer_path(layer, &server.home, &server.config_path);
+    let _guard = lock_resident();
+    match resident_config::remove(&path, resident_config::Kind::Schedule, &name) {
+        Ok(()) => ToolOutput::json(json!({
+            "removed": name,
+            "layer": layer_label(layer),
+        })),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+fn set_watcher_enabled(server: &Server, arguments: &Value, enabled: bool) -> ToolOutput {
+    let name = match required_arg_string(arguments, "name") {
+        Ok(name) => name,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let layer = match resident_layer(arguments) {
+        Ok(layer) => layer,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let path = resident_config::layer_path(layer, &server.home, &server.config_path);
+    let _guard = lock_resident();
+    if let Err(error) =
+        resident_config::set_enabled(&path, resident_config::Kind::Watcher, &name, enabled)
+    {
+        return ToolOutput::error(error);
+    }
+    let control = if enabled {
+        resident_service::clear_watch_stop(&server.home, &name)
+            .and_then(|()| resident_service::request_pause_watch(&server.home, &name, false))
+    } else {
+        resident_service::request_stop_watch(&server.home, &name)
+    };
+    if let Err(error) = control {
+        return ToolOutput::error(error);
+    }
+    ToolOutput::json(json!({
+        "watcher": name,
+        "enabled": enabled,
+        "layer": layer_label(layer),
+        "paused": resident_service::watch_paused(&server.home, &name),
+    }))
+}
+
+pub(crate) fn watcher_start(server: &Server, arguments: &Value) -> ToolOutput {
+    set_watcher_enabled(server, arguments, true)
+}
+
+pub(crate) fn watcher_stop(server: &Server, arguments: &Value) -> ToolOutput {
+    set_watcher_enabled(server, arguments, false)
+}
+
+pub(crate) fn watchers_list(server: &Server, _arguments: &Value) -> ToolOutput {
+    match resident_status(server) {
+        Ok(status) => ToolOutput::json(json!({
+            "running": status.running,
+            "watchers": status.watchers,
+        })),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+pub(crate) fn watcher_dumps(server: &Server, arguments: &Value) -> ToolOutput {
+    let name = match arg_string(arguments, "name") {
+        Ok(name) => name,
+        Err(message) => return ToolOutput::error(message),
+    };
+    match resident_status::dumps(&server.base, name.as_deref()) {
+        Ok(dumps) => ToolOutput::json(json!({ "dumps": dumps })),
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+pub(crate) fn schedule_run_now(server: &Server, arguments: &Value) -> ToolOutput {
+    let name = match required_arg_string(arguments, "name") {
+        Ok(name) => name,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let schedule = match effective_schedule(server, &name) {
+        Ok(schedule) => schedule,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let mut args = resident_service::run_args_for_cli(&schedule.run);
+    if let Some(profile) = args.profile.clone() {
+        if let Err(error) = crate::profile_cmd::apply(&server.home, &profile, &mut args) {
+            return ToolOutput::error(error);
+        }
+    }
+    args.reporter = Some(DEFAULT_REPORTERS.to_string());
+    let _resident = lock_resident();
+    let _devices = lock_devices();
+    let outcome = cli::run_workspace(
+        &server.base,
+        &server.config_path,
+        &server.devices_path,
+        &args,
+        false,
+        false,
+    );
+    match (&outcome.report, &outcome.run_dir) {
+        (Some(report), Some(run_dir)) => {
+            let summary = report.summary();
+            let headline = format!(
+                "schedule {name}: {} (exit {}) - {} act(s) passed, {} failed, {} skipped; run dir: {}",
+                report.status.as_str(),
+                outcome.exit_code,
+                summary.acts_passed,
+                summary.acts_failed,
+                summary.acts_skipped,
+                run_dir.display()
+            );
+            ToolOutput::json_with_prefix(run_summary(report, run_dir), headline)
+        }
+        _ => {
+            let mut lines = outcome.messages.clone();
+            if let Some(detail) = &outcome.detail {
+                lines.push(detail.clone());
+            }
+            let detail = if lines.is_empty() {
+                "no report was produced".to_string()
+            } else {
+                lines.join("\n")
+            };
+            ToolOutput::error(format!("schedule '{name}' did not run:\n{detail}"))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -238,6 +238,15 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         "impresario_report_get",
         "impresario_artifacts_list",
         "impresario_artifact_get",
+        "impresario_service_status",
+        "impresario_schedules_list",
+        "impresario_schedule_add",
+        "impresario_schedule_remove",
+        "impresario_schedule_run_now",
+        "impresario_watchers_list",
+        "impresario_watcher_start",
+        "impresario_watcher_stop",
+        "impresario_watcher_dumps",
     ] {
         assert!(names.contains(&expected), "missing tool {expected}");
     }
@@ -432,6 +441,7 @@ fn modern_discover_protocol_errors_and_diagnostics() {
         .filter_map(|resource| resource["uri"].as_str())
         .collect();
     assert!(uris.contains(&"impresario://docs/dsl"), "uris: {uris:?}");
+    assert!(uris.contains(&"impresario://docs/scheduling"));
     assert!(uris.contains(&"impresario://workspace/info"));
     let read = result_of(&mcp.request(
         9,
@@ -443,8 +453,118 @@ fn modern_discover_protocol_errors_and_diagnostics() {
     assert!(text.len() > 1000, "dsl doc looks wrong");
     assert!(text.contains("Scene:"), "dsl doc looks wrong");
 
-    let missing = mcp.request(10, "resources/read", json!({ "uri": "impresario://nope" }));
+    let scheduling = result_of(&mcp.request(
+        10,
+        "resources/read",
+        json!({ "uri": "impresario://docs/scheduling" }),
+    ))
+    .clone();
+    let scheduling = scheduling["contents"][0]["text"]
+        .as_str()
+        .expect("scheduling doc text");
+    assert!(scheduling.contains("notifications:"));
+    assert!(scheduling.contains("impresario_watcher_dumps"));
+
+    let missing = mcp.request(11, "resources/read", json!({ "uri": "impresario://nope" }));
     assert_eq!(missing["error"]["code"], json!(-32602));
+
+    mcp.assert_clean();
+}
+
+#[test]
+fn resident_tools_join_state_and_edit_config_layers() {
+    let agent = TestAgent::start(MockAgentBuilder::new());
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_workspace(
+        temp.path(),
+        "schedules:\n  - name: nightly\n    when: { kind: daily, at: \"02:30\" }\n    run: { plays: [basic.play] }\nwatchers:\n  - name: soak\n    run: { plays: [basic.play] }\n",
+        &[("d1".to_string(), agent.address.clone())],
+        &[("basic.play", PLAY_BASIC)],
+    );
+    std::fs::create_dir_all(temp.path().join("reports/watch/soak/20261106-120000"))
+        .expect("dump directory");
+
+    let mut mcp = Mcp::spawn(temp.path());
+
+    let status = structured(&mcp.tools_call(1, "impresario_service_status", json!({})));
+    assert_eq!(status["running"], json!(false));
+    assert_eq!(status["schedules"][0]["name"], json!("nightly"));
+    assert_eq!(status["watchers"][0]["name"], json!("soak"));
+    let next = status["schedules"][0]["next_fire"]
+        .as_str()
+        .expect("next fire");
+    assert!(next.contains("02:30"), "next fire: {next}");
+
+    let schedules = structured(&mcp.tools_call(2, "impresario_schedules_list", json!({})));
+    assert_eq!(schedules["schedules"].as_array().expect("array").len(), 1);
+    let watchers = structured(&mcp.tools_call(3, "impresario_watchers_list", json!({})));
+    assert_eq!(watchers["watchers"][0]["name"], json!("soak"));
+
+    let added = structured(&mcp.tools_call(
+        4,
+        "impresario_schedule_add",
+        json!({
+            "name": "morning",
+            "schedule": {
+                "when": { "kind": "daily", "at": "09:00" },
+                "run": { "plays": ["basic.play"] }
+            }
+        }),
+    ));
+    assert_eq!(added["schedule"]["name"], json!("morning"));
+    let duplicate = mcp.tools_call(
+        5,
+        "impresario_schedule_add",
+        json!({
+            "name": "morning",
+            "schedule": { "when": { "kind": "daily", "at": "10:00" } }
+        }),
+    );
+    assert_eq!(result_of(&duplicate)["isError"], json!(true));
+    let mismatched = mcp.tools_call(
+        6,
+        "impresario_schedule_add",
+        json!({ "name": "bad", "schedule": { "when": { "kind": "daily", "at": "10:00" }, "name": "other" } }),
+    );
+    assert_eq!(result_of(&mismatched)["isError"], json!(true));
+
+    let listed = structured(&mcp.tools_call(7, "impresario_schedules_list", json!({})));
+    assert_eq!(listed["schedules"].as_array().expect("array").len(), 2);
+    let removed = structured(&mcp.tools_call(
+        8,
+        "impresario_schedule_remove",
+        json!({ "name": "morning" }),
+    ));
+    assert_eq!(removed["removed"], json!("morning"));
+    let missing = mcp.tools_call(
+        9,
+        "impresario_schedule_remove",
+        json!({ "name": "morning", "layer": "global" }),
+    );
+    assert_eq!(result_of(&missing)["isError"], json!(true));
+
+    let stopped =
+        structured(&mcp.tools_call(10, "impresario_watcher_stop", json!({ "name": "soak" })));
+    assert_eq!(stopped["enabled"], json!(false));
+    let started =
+        structured(&mcp.tools_call(11, "impresario_watcher_start", json!({ "name": "soak" })));
+    assert_eq!(started["enabled"], json!(true));
+
+    let dumps =
+        structured(&mcp.tools_call(12, "impresario_watcher_dumps", json!({ "name": "soak" })));
+    assert_eq!(dumps["dumps"][0]["name"], json!("20261106-120000"));
+    assert_eq!(
+        dumps["dumps"][0]["path"],
+        json!("reports/watch/soak/20261106-120000")
+    );
+
+    let run = structured(&mcp.tools_call(
+        13,
+        "impresario_schedule_run_now",
+        json!({ "name": "nightly" }),
+    ));
+    assert_eq!(run["exit_code"], json!(0));
+    assert_eq!(run["status"], json!("passed"));
 
     mcp.assert_clean();
 }
