@@ -1045,6 +1045,31 @@ mod lease {
         }
     }
 
+    /// Whether another live job is queued for any of `devices`.
+    pub fn waiting_for(store: &JobStore, devices: &[String]) -> bool {
+        let Ok(entries) = std::fs::read_dir(store.lease_dir()) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if !name.starts_with("wait.") {
+                continue;
+            }
+            let Some(wait) = read_wait(&entry.path()) else {
+                continue;
+            };
+            if wait.job.is_empty() || !pid_alive(wait.pid) {
+                continue;
+            }
+            if wait.devices.iter().any(|device| devices.contains(device)) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn queue_position(store: &JobStore, devices: &[String], job: &str) -> usize {
         let mut position = 1usize;
         let Ok(entries) = std::fs::read_dir(store.lease_dir()) else {
@@ -1593,6 +1618,13 @@ pub fn serve(home: &Home, idle: Duration) -> Result<(), String> {
 // CLI support
 // ---------------------------------------------------------------------------
 
+/// Whether another live job is queued for any of `devices`. A low-priority
+/// watcher uses this to yield the device between iterations.
+#[must_use]
+pub fn waiting_for(home: &Home, devices: &[String]) -> bool {
+    lease::waiting_for(&JobStore::new(home), devices)
+}
+
 /// Poll a job until it becomes terminal; returns its record.
 pub fn wait_for(home: &Home, id: &str) -> Result<JobRecord, String> {
     let store = JobStore::new(home);
@@ -1735,5 +1767,34 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
             .collect();
         assert!(leftovers.is_empty(), "temporary record files remain");
+    }
+
+    #[test]
+    fn waiting_for_matches_live_wait_entries_by_device() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        std::fs::create_dir_all(store.lease_dir()).expect("lease dir");
+        let wait = |job: &str, pid: u32, devices: &[&str]| {
+            let entry = serde_json::json!({
+                "job": job,
+                "pid": pid,
+                "devices": devices,
+            });
+            std::fs::write(
+                store.lease_dir().join(format!("wait.{job}")),
+                entry.to_string(),
+            )
+            .expect("wait file");
+        };
+
+        wait("manual", std::process::id(), &["tv"]);
+        assert!(waiting_for(&home, &["tv".to_string()]));
+        assert!(!waiting_for(&home, &["phone".to_string()]));
+
+        std::fs::remove_file(store.lease_dir().join("wait.manual")).expect("remove wait");
+        wait("dead", u32::MAX, &["tv"]);
+        assert!(!waiting_for(&home, &["tv".to_string()]));
+        assert!(!waiting_for(&home, &[]));
     }
 }

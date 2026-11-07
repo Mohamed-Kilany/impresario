@@ -17,7 +17,7 @@ use impresario_core::home::Home;
 use impresario_core::resident::{
     parse_once, parse_span, BusyPolicy, DumpKind, FailureClass, MissedPolicy, Notifications,
     NotifyEvent, NotifySpec, Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen,
-    Watcher,
+    Watcher, WatcherPriority,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -648,14 +648,22 @@ fn reconcile_watchers(
     }
 }
 
+/// The current enabled definition of a watcher, if it still exists.
+fn live_watcher<'a>(sections: &'a ResidentSections, name: &str) -> Option<&'a Watcher> {
+    sections
+        .watchers
+        .iter()
+        .find(|value| value.name == name && value.enabled)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn watcher_loop(
     home: &Home,
     base: &Path,
     config_path: &Path,
     devices_path: &Path,
-    watcher: &Watcher,
-    notifications: &Notifications,
+    initial: &Watcher,
+    initial_notifications: &Notifications,
     state: &Arc<Mutex<ServiceState>>,
     service_paused: &Arc<AtomicBool>,
     service_stop: &Arc<AtomicBool>,
@@ -665,6 +673,9 @@ fn watcher_loop(
 ) {
     let mut paused = initially_paused;
     let mut failure_streak = 0_u32;
+    let mut watcher = initial.clone();
+    let mut notifications = initial_notifications.clone();
+    let mut last_devices: Option<Vec<String>> = None;
     loop {
         if stop.load(Ordering::SeqCst) || service_stop.load(Ordering::SeqCst) {
             break;
@@ -683,6 +694,42 @@ fn watcher_loop(
             if !service_paused.load(Ordering::SeqCst) {
                 paused = false;
             }
+            continue;
+        }
+        // Re-read the layered config each iteration so edits to pacing, the run
+        // selection, backoff or notifications take effect without a restart.
+        match super::config::load_effective(home, config_path) {
+            Ok(sections) => {
+                match live_watcher(&sections, &watcher.name) {
+                    Some(current) => {
+                        watcher = current.clone();
+                        notifications = sections.notifications.clone();
+                    }
+                    None => {
+                        // Disabled or removed: the reconcile pass sets `stop`
+                        // on its next tick, so wait for it instead of exiting
+                        // into a stale handle entry.
+                        sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+                        continue;
+                    }
+                }
+            }
+            Err(error) => {
+                log_line(
+                    home,
+                    &format!("watcher '{}' config reload failed: {error}", watcher.name),
+                );
+            }
+        }
+        let watcher = &watcher;
+        // A low-priority watcher gives queued manual/scheduled jobs a chance
+        // to take the device between iterations.
+        let yielding = watcher.priority == WatcherPriority::Low
+            && last_devices
+                .as_deref()
+                .is_some_and(|devices| jobs::waiting_for(home, devices));
+        if yielding {
+            sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         if let Ok(mut set) = running.lock() {
@@ -726,6 +773,13 @@ fn watcher_loop(
         };
         args.job_label = Some(format!("watcher {}", watcher.name));
         let outcome = cli::run_workspace(base, config_path, devices_path, &args, false, true);
+        if let Some(id) = &outcome.run_id {
+            if let Ok(Some(record)) = jobs::JobStore::new(home).read(id) {
+                if !record.devices.is_empty() {
+                    last_devices = Some(record.devices);
+                }
+            }
+        }
         let status = outcome_status(&outcome);
         let unverifiable = outcome_unverifiable(&outcome);
         let failed = outcome.exit_code != EXIT_OK && outcome.exit_code != EXIT_USAGE;
@@ -776,7 +830,7 @@ fn watcher_loop(
                 &signature,
                 dump.as_deref(),
                 state,
-                notifications,
+                &notifications,
             );
         } else {
             append_event(
@@ -789,7 +843,7 @@ fn watcher_loop(
                 }),
             );
             if outcome.exit_code == EXIT_OK {
-                notify_watcher_recovery(home, watcher, &outcome, &status, state, notifications);
+                notify_watcher_recovery(home, watcher, &outcome, &status, state, &notifications);
             }
         }
         let gap = watcher_gap(watcher, failure_streak);
@@ -2028,6 +2082,30 @@ mod tests {
         assert_eq!(watcher_backoff(&watcher, 2), Duration::from_secs(30));
         assert_eq!(watcher_backoff(&watcher, 3), Duration::from_secs(120));
         assert_eq!(watcher_backoff(&watcher, 99), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn live_watcher_uses_the_current_enabled_definition() {
+        let watcher = test_watcher();
+        let mut sections = ResidentSections {
+            watchers: vec![watcher.clone()],
+            ..ResidentSections::default()
+        };
+        assert_eq!(live_watcher(&sections, "soak"), Some(&watcher));
+
+        sections.watchers[0].pacing = Pacing::MinGap {
+            gap: "30s".to_string(),
+        };
+        assert_eq!(
+            live_watcher(&sections, "soak").map(|current| &current.pacing),
+            Some(&Pacing::MinGap {
+                gap: "30s".to_string()
+            })
+        );
+
+        sections.watchers[0].enabled = false;
+        assert!(live_watcher(&sections, "soak").is_none());
+        assert!(live_watcher(&sections, "missing").is_none());
     }
 
     #[test]
