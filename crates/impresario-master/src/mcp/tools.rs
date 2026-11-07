@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn definitions_are_unique_and_schemaful() {
         let tools = definitions();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 17);
         let mut names = std::collections::BTreeSet::new();
         for tool in &tools {
             let name = tool["name"].as_str().expect("name").to_string();
