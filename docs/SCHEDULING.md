@@ -117,7 +117,7 @@ A watcher repeats one run selection until stopped or paused:
 |---|---|
 | `run` | same selection fields as a schedule |
 | `pacing` | `{ mode: back_to_back }` (default) or `{ mode: min_gap, gap: 30s }` |
-| `priority` | `normal` (default) or `low`; priority scheduling is not yet implemented |
+| `priority` | `normal` (default) or `low`; a low-priority watcher yields to queued same-device jobs |
 | `on_failure.dump` | any of `report`, `screenshot`, `logs`, `device_state`, `evidence` |
 | `on_failure.throttle.same_failure_window` | duplicate-failure window, default `15m` |
 | `on_failure.notify` | `toast` and/or `webhook:NAME` channels |
@@ -128,6 +128,11 @@ A watcher repeats one run selection until stopped or paused:
 
 The watcher holds a per-iteration device lease and releases it between
 iterations, so another run can use the device while the watcher is pacing.
+The layered config is re-read on each active iteration, so edits to `pacing`,
+`run`, `device_health.backoff` and `on_failure.notify` take effect without
+restarting the service. A `priority: low` watcher checks for a live queued job
+on the devices of its previous iteration and waits while one is present; a
+normal-priority watcher never yields.
 `watch start|stop` edit the enabled flag and clear/write the per-watcher
 control files; `watch pause|resume` write or clear only the pause marker, and
 `watch run-now` runs the selection once without changing the loop. Each
@@ -210,7 +215,7 @@ wiring and tool schemas.
 ## Current limits
 
 The resident runner is implemented and covered by mock-driven tests, but the
-following are not yet complete: live watcher-config reload, priority scheduling,
-no-gap device leases (D-39), and the heartbeat/version handshake. Physical
+following are not yet complete: no-gap device leases (D-39) and the
+heartbeat/version handshake. Physical
 macOS/Linux autostart and toast action behavior remain hardware-unverified until
 run on those hosts.

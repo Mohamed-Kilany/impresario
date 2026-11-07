@@ -223,8 +223,11 @@ appears in `impresario jobs`. `on_busy` is `queue` (retry while the previous
 occurrence is still running), `skip` or `fail`.
 
 Watchers take a per-iteration device lease and release it between iterations;
-each iteration is a normal job labelled `watcher <name>`. `pacing.mode` is
-`back_to_back` or `min_gap` with `gap`. `on_failure` configures
+each iteration is a normal job labelled `watcher <name>`. The layered config is
+re-read each active iteration, so `pacing`, `run`, `device_health.backoff` and
+`on_failure.notify` edits apply without a restart. A `priority: low` watcher
+waits between iterations while another live job is queued for its devices.
+`pacing.mode` is `back_to_back` or `min_gap` with `gap`. `on_failure` configures
 the dump, throttle and notification channels. Notification events are routed
 per watcher and schedule: identical watcher failures (same
 device/play/act/stage/step/code signature, with example suffixes ignored)
