@@ -269,8 +269,9 @@ or schedule.
 Dumps copy the full run tree into
 `reports/watch/<name>/<timestamp>/` with a `dump.json`. The resident MCP tools
 (`service_status`, `schedules_list|add|remove|run_now`,
-`watchers_list|start|stop|dumps`) expose the same state to agents; the TUI
-Resident screen is still open, and D-39 no-gap lifetime leases are not
+`watchers_list|start|stop|dumps`) expose the same state to agents, and the TUI
+**Resident** screen shows the same joined view read-only (refresh every two
+seconds; `j`/`k` scroll, `g`/`G` jump). D-39 no-gap lifetime leases are not
 available (see `docs/STATUS.md` gap 21 and `docs/SCHEDULING.md`).
 
 ## Packaging and signing

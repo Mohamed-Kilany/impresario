@@ -8,14 +8,14 @@ expression: "render(&app, 100, 28)"
 ┌ Workspace menu · Enter opens ─────────────────────┐ ┌ Workspace ─────────────────────────────────┐
 │   Overview                                        │ │ demo                                       │
 │ > Runs              background jobs and live logs │ │ demo                                       │
-│   Tests                                           │ │                                            │
-│   Devices                                         │ │ tests     8 entries                        │
-│   Apps                                            │ │ devices   2 devices                        │
-│   Config                                          │ │ apps      1 app                            │
-│   Doctor                                          │ │ runs      1 run                            │
-│   Switch workspace                                │ │ active    0                                │
-│   Quit                                            │ └────────────────────────────────────────────┘
-│                                                   │ ┌ Navigation ────────────────────────────────┐
+│   Resident                                        │ │                                            │
+│   Tests                                           │ │ tests     8 entries                        │
+│   Devices                                         │ │ devices   2 devices                        │
+│   Apps                                            │ │ apps      1 app                            │
+│   Config                                          │ │ runs      1 run                            │
+│   Doctor                                          │ │ active    0                                │
+│   Switch workspace                                │ └────────────────────────────────────────────┘
+│   Quit                                            │ ┌ Navigation ────────────────────────────────┐
 │                                                   │ │ Arrows move; Enter opens; Esc returns to   │
 │                                                   │ │ the picker; Tab opens the prompt.          │
 │                                                   │ │                                            │

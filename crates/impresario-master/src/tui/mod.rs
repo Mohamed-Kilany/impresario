@@ -41,6 +41,7 @@ pub(super) enum Screen {
     Devices,
     Apps,
     Config,
+    Resident,
 }
 
 impl Screen {
@@ -54,6 +55,7 @@ impl Screen {
             Screen::Devices => "devices",
             Screen::Apps => "apps",
             Screen::Config => "config",
+            Screen::Resident => "resident",
         }
     }
 }
@@ -570,6 +572,7 @@ impl App {
                         }
                     }
                     Screen::Tests => self.test_index = 0,
+                    Screen::Resident => self.resident_scroll = 0,
                     _ => {}
                 }
                 Action::None
@@ -584,6 +587,7 @@ impl App {
                     Screen::Tests => {
                         self.test_index = self.tests.len().saturating_sub(1);
                     }
+                    Screen::Resident => self.resident_scroll = self.resident_max_scroll(),
                     _ => {}
                 }
                 Action::None
@@ -617,6 +621,7 @@ impl App {
                 Screen::Config => self.open_config(),
                 Screen::Devices => Action::OpenEditor(self.ctx.devices_path.clone()),
                 Screen::Apps => Action::OpenEditor(self.ctx.base.join("impresario.apps.config")),
+                Screen::Resident => Action::None,
                 Screen::Landing | Screen::Menu | Screen::Home => Action::None,
             },
             KeyCode::Char('r') => {

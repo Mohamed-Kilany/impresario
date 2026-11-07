@@ -176,7 +176,7 @@ suppressions appear as their own `notify_delivery` events.
 
 ## Clients
 
-The MCP server and the planned TUI Resident screen read the same
+The MCP server and the TUI Resident screen read the same
 `service/state.json` and layered config. Status reads are side-effect free;
 mutations go through the same lossless YAML helpers as the CLI:
 
@@ -187,8 +187,9 @@ mutations go through the same lossless YAML helpers as the CLI:
   `impresario_watcher_dumps`. The `impresario://docs/scheduling` resource
   serves this document. Mutating tools are serialized with runs and
   config edits and never expose secrets.
-- TUI (open): the **Resident** screen will show service health, schedules with
-  the next fire, watchers with live iteration status, and the last dump.
+- TUI: the **Resident** screen (read-only, refreshed every two seconds while
+  open) shows service health, schedules with the next fire, watchers with live
+  iteration status, and the last dump. Edits still go through the CLI or MCP.
 
 See `docs/CLI.md` for the complete command list and `docs/MCP.md` for client
 wiring and tool schemas.

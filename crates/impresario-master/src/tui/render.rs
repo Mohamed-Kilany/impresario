@@ -50,6 +50,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Screen::Devices => draw_devices(frame, app, body),
         Screen::Apps => draw_apps(frame, app, body),
         Screen::Config => draw_config(frame, app, body),
+        Screen::Resident => draw_resident(frame, app, body),
         Screen::Landing => {}
     }
     draw_prompt(frame, app, prompt);
@@ -113,6 +114,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Devices => "Devices",
         Screen::Apps => "Apps",
         Screen::Config => "Config",
+        Screen::Resident => "Resident",
     };
     let crumb = vec![
         Span::styled(" Workspace", secondary(app)),
@@ -431,9 +433,10 @@ fn draw_landing_detail(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-const MENU: [(&str, &str); 9] = [
+const MENU: [(&str, &str); 10] = [
     ("Overview", "summary and activity"),
     ("Runs", "background jobs and live logs"),
+    ("Resident", "schedules, watchers and dumps"),
     ("Tests", "scene, theatre and play explorer"),
     ("Devices", "configured targets"),
     ("Apps", "shared app bindings"),
@@ -1100,6 +1103,166 @@ fn draw_config(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn draw_resident(frame: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(error) = &app.resident_error {
+        lines.push(Line::from(Span::styled(
+            format!("resident: {error}"),
+            error_style(app),
+        )));
+    }
+    if let Some(status) = &app.resident {
+        let state = &status.state;
+        let health = if !status.running {
+            "stopped"
+        } else if state.paused {
+            "running · paused"
+        } else {
+            "running"
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Service  ", secondary(app)),
+            Span::styled(health, title_style(app)),
+        ]));
+        let mut facts = vec![format!("pid {}", state.pid)];
+        if !state.workspace.is_empty() {
+            facts.push(format!("workspace {}", state.workspace));
+        }
+        if !state.started_at.is_empty() {
+            facts.push(format!("started {}", state.started_at));
+        }
+        if !state.updated_at.is_empty() {
+            facts.push(format!("updated {}", state.updated_at));
+        }
+        lines.push(Line::from(Span::styled(facts.join(" · "), secondary(app))));
+        lines.push(Line::from(""));
+
+        lines.push(Line::from(Span::styled(
+            format!("Schedules ({})", status.schedules.len()),
+            title_style(app),
+        )));
+        if status.schedules.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No schedules configured. Add one with `impresario schedule add`.",
+                secondary(app),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{:<18} {:<8} {:<18} {:<20} {:<20} {:>5} {:>5}",
+                    "NAME", "ENABLED", "WHEN", "NEXT", "LAST", "RUNS", "FAIL"
+                ),
+                secondary(app),
+            )));
+            for schedule in &status.schedules {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{:<18}", elide(&schedule.name, 18)),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(
+                        "{:<8}",
+                        if schedule.enabled { "yes" } else { "no" }
+                    )),
+                    Span::raw(format!("{:<18}", elide(&schedule.when, 18))),
+                    Span::raw(format!(
+                        "{:<20}",
+                        schedule.next_fire.as_deref().unwrap_or("-")
+                    )),
+                    Span::raw(format!(
+                        "{:<20}",
+                        schedule.last_fire.as_deref().unwrap_or("-")
+                    )),
+                    Span::raw(format!("{:>5}", schedule.runs)),
+                    Span::raw(format!("{:>5}", schedule.failures)),
+                ]));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("Watchers ({})", status.watchers.len()),
+            title_style(app),
+        )));
+        if status.watchers.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No watchers configured. Add one with `impresario watch add`.",
+                secondary(app),
+            )));
+        } else {
+            for watcher in &status.watchers {
+                let flags = match (watcher.enabled, watcher.paused) {
+                    (false, _) => "stopped",
+                    (true, true) => "paused",
+                    (true, false) => "enabled",
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{:<18}", elide(&watcher.name, 18)),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!("{flags:<8}")),
+                    Span::raw(format!(
+                        "{:>5} iteration(s) · {:>3} failure(s) · {:>3} consecutive",
+                        watcher.iterations, watcher.failures, watcher.consecutive_failures
+                    )),
+                ]));
+                let mut detail = Vec::new();
+                if let Some(value) = &watcher.last_status {
+                    detail.push(format!("last {value}"));
+                }
+                if let Some(value) = &watcher.next_after {
+                    detail.push(format!("next {value}"));
+                }
+                if let Some(value) = &watcher.last_dump {
+                    detail.push(format!("dump {value}"));
+                }
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", detail.join(" · ")),
+                    secondary(app),
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("Dumps ({})", app.resident_dumps.len()),
+            title_style(app),
+        )));
+        if app.resident_dumps.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No watcher dumps yet.",
+                secondary(app),
+            )));
+        } else {
+            for dump in app.resident_dumps.iter().rev().take(8) {
+                lines.push(Line::from(Span::styled(
+                    format!("{}/{}  {}", dump.watcher, dump.name, dump.path),
+                    secondary(app),
+                )));
+            }
+        }
+    } else if app.resident_error.is_none() {
+        lines.push(Line::from(Span::styled(
+            "Resident state is unavailable.",
+            secondary(app),
+        )));
+    }
+
+    let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(
+                app,
+                "Resident · schedules, watchers and dumps",
+                app.focus == Focus::Content && app.screen == Screen::Resident,
+            ))
+            .scroll((app.resident_scroll.min(max_scroll), 0))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_prompt(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = Vec::new();
     let mut prefix = 0usize;
@@ -1235,6 +1398,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Devices | Screen::Apps | Screen::Config if app.focus == Focus::Content => {
             "Enter open · r reload · Esc menu · Tab prompt"
         }
+        Screen::Resident if app.focus == Focus::Content => {
+            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+        }
         Screen::Home if app.focus == Focus::Content => "Esc menu · Tab prompt · ? help",
         _ => "Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help",
     };
@@ -1273,6 +1439,29 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Config => format!(
             "{} available",
             count_label(app.config_rows.len(), "setting", "settings")
+        ),
+        Screen::Resident => app.resident.as_ref().map_or_else(
+            || {
+                app.resident_error
+                    .clone()
+                    .unwrap_or_else(|| "resident state unavailable".to_string())
+            },
+            |status| {
+                format!(
+                    "{} · {} · {}",
+                    if status.running {
+                        if status.state.paused {
+                            "running (paused)"
+                        } else {
+                            "running"
+                        }
+                    } else {
+                        "stopped"
+                    },
+                    count_label(status.schedules.len(), "schedule", "schedules"),
+                    count_label(status.watchers.len(), "watcher", "watchers")
+                )
+            },
         ),
         Screen::Home => format!(
             "workspace ready  ·  {}",

@@ -15,10 +15,12 @@ use crate::cli;
 use crate::exec::ExecEvent;
 use crate::jobs::{self, JobRecord, JobStatus, JobStore};
 use crate::report::Status;
+use crate::resident::status::{self as resident_status, DumpEntry, ResidentStatus};
 
 use super::{Action, Context, Focus, Screen};
 
 const REFRESH: Duration = Duration::from_millis(250);
+const RESIDENT_REFRESH: Duration = Duration::from_secs(2);
 const HISTORY_FALLBACK: usize = 1000;
 const ACTIVITY_LIMIT: usize = 200;
 
@@ -467,6 +469,10 @@ pub(super) struct App {
     pub devices: Vec<DeviceRow>,
     pub apps: Vec<AppRow>,
     pub config_rows: Vec<ConfigRow>,
+    pub resident: Option<ResidentStatus>,
+    pub resident_dumps: Vec<DumpEntry>,
+    pub resident_error: Option<String>,
+    pub resident_scroll: u16,
     pub activity: VecDeque<String>,
     pub overlay: Option<String>,
     pub should_quit: bool,
@@ -480,6 +486,7 @@ pub(super) struct App {
     pub first_run_prompt: bool,
     store: JobStore,
     last_refresh: Instant,
+    resident_refreshed: Instant,
     history_path: PathBuf,
     history_limit: usize,
     state_path: PathBuf,
@@ -520,6 +527,10 @@ impl App {
             devices: Vec::new(),
             apps: Vec::new(),
             config_rows: Vec::new(),
+            resident: None,
+            resident_dumps: Vec::new(),
+            resident_error: None,
+            resident_scroll: 0,
             activity: VecDeque::new(),
             overlay: None,
             should_quit: false,
@@ -533,6 +544,7 @@ impl App {
             first_run_prompt: false,
             store,
             last_refresh: Instant::now(),
+            resident_refreshed: Instant::now(),
             history_path,
             history_limit,
             state_path,
@@ -545,6 +557,7 @@ impl App {
         app.load_devices();
         app.load_apps();
         app.load_config();
+        app.load_resident();
         app.load_tests();
         app.refresh_completion_context();
         app.load_state();
@@ -608,7 +621,7 @@ impl App {
     }
 
     pub(super) fn move_menu(&mut self, delta: i32) {
-        const MENU_LEN: usize = 9;
+        const MENU_LEN: usize = 10;
         if delta < 0 {
             self.menu_index = self.menu_index.saturating_sub(1);
         } else {
@@ -652,12 +665,13 @@ impl App {
         match self.menu_index {
             0 => self.set_screen(Screen::Home),
             1 => self.set_screen(Screen::Runs),
-            2 => self.set_screen(Screen::Tests),
-            3 => self.set_screen(Screen::Devices),
-            4 => self.set_screen(Screen::Apps),
-            5 => self.set_screen(Screen::Config),
-            6 => self.run_doctor(),
-            7 => {
+            2 => self.set_screen(Screen::Resident),
+            3 => self.set_screen(Screen::Tests),
+            4 => self.set_screen(Screen::Devices),
+            5 => self.set_screen(Screen::Apps),
+            6 => self.set_screen(Screen::Config),
+            7 => self.run_doctor(),
+            8 => {
                 self.screen = Screen::Landing;
                 self.focus = Focus::Content;
                 self.overlay = None;
@@ -687,6 +701,7 @@ impl App {
             self.load_devices();
             self.load_apps();
             self.load_config();
+            self.load_resident();
             self.load_tests();
             self.refresh_completion_context();
             let path_text = path.display().to_string();
@@ -832,6 +847,7 @@ impl App {
             "devices" => Screen::Devices,
             "apps" => Screen::Apps,
             "config" => Screen::Config,
+            "resident" => Screen::Resident,
             _ => Screen::Home,
         };
         if let Some(id) = state.selected_job {
@@ -906,6 +922,10 @@ impl App {
         self.clamp_selection();
         if let Some(id) = self.follow.clone() {
             self.refresh_follow(&id);
+        }
+        if self.screen == Screen::Resident && self.resident_refreshed.elapsed() >= RESIDENT_REFRESH
+        {
+            self.load_resident();
         }
     }
 
@@ -1293,6 +1313,66 @@ impl App {
         });
     }
 
+    pub(super) fn load_resident(&mut self) {
+        match resident_status::collect(&self.ctx.home, &self.ctx.config_path) {
+            Ok(status) => {
+                self.resident = Some(status);
+                self.resident_error = None;
+            }
+            Err(message) => {
+                self.resident = None;
+                self.resident_error = Some(message);
+            }
+        }
+        match resident_status::dumps(&self.ctx.base, None) {
+            Ok(dumps) => self.resident_dumps = dumps,
+            Err(message) => {
+                self.resident_dumps.clear();
+                if self.resident_error.is_none() {
+                    self.resident_error = Some(message);
+                }
+            }
+        }
+        self.resident_refreshed = Instant::now();
+    }
+
+    /// Number of scrollable lines in the Resident body.
+    ///
+    /// Mirrors the line construction in `render::draw_resident`; keep the two
+    /// in step when adding a section there.
+    pub(super) fn resident_max_scroll(&self) -> u16 {
+        let mut lines = 0usize;
+        if self.resident_error.is_some() {
+            lines += 1;
+        }
+        if let Some(status) = &self.resident {
+            lines += 3; // service, facts, blank
+            lines += 1; // schedules heading
+            if status.schedules.is_empty() {
+                lines += 1;
+            } else {
+                lines += 1 + status.schedules.len(); // column header + rows
+            }
+            lines += 1; // blank
+            lines += 1; // watchers heading
+            if status.watchers.is_empty() {
+                lines += 1;
+            } else {
+                lines += status.watchers.len() * 2; // summary + detail
+            }
+            lines += 1; // blank
+            lines += 1; // dumps heading
+            if self.resident_dumps.is_empty() {
+                lines += 1;
+            } else {
+                lines += self.resident_dumps.len().min(8);
+            }
+        } else if self.resident_error.is_none() {
+            lines += 1;
+        }
+        u16::try_from(lines.saturating_sub(1)).unwrap_or(u16::MAX)
+    }
+
     pub(super) fn load_tests(&mut self) {
         self.tests.clear();
         self.test_error = None;
@@ -1340,6 +1420,7 @@ impl App {
             Screen::Devices => self.load_devices(),
             Screen::Apps => self.load_apps(),
             Screen::Config => self.load_config(),
+            Screen::Resident => self.load_resident(),
             Screen::Landing | Screen::Menu | Screen::Home | Screen::Runs => {}
         }
     }
@@ -1964,6 +2045,10 @@ impl App {
                 self.load_config();
                 Action::None
             }
+            "resident" | "service" => {
+                self.set_screen(Screen::Resident);
+                Action::None
+            }
             "run" => {
                 let tokens = split_args(rest);
                 self.submit_run(tokens);
@@ -2204,6 +2289,9 @@ impl App {
     pub(super) fn set_screen(&mut self, screen: Screen) {
         self.screen = screen;
         self.focus = Focus::Content;
+        if screen == Screen::Resident {
+            self.resident_scroll = 0;
+        }
         self.reload_screen();
     }
 
@@ -2227,6 +2315,14 @@ impl App {
                     self.select_previous_test();
                 } else {
                     self.select_next_test();
+                }
+            }
+            Screen::Resident => {
+                let max = self.resident_max_scroll();
+                if delta < 0 {
+                    self.resident_scroll = self.resident_scroll.min(max).saturating_sub(1);
+                } else {
+                    self.resident_scroll = self.resident_scroll.saturating_add(1).min(max);
                 }
             }
             Screen::Home | Screen::Devices | Screen::Apps | Screen::Config => {}
@@ -2576,6 +2672,7 @@ fn candidates() -> Vec<&'static str> {
         "/devices",
         "/apps",
         "/config",
+        "/resident",
         "/doctor",
         "/doctor --json",
         "/fmt",
@@ -2688,7 +2785,7 @@ pub(super) fn help_text() -> String {
         "",
         "Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.",
         "Workspace menu · Up/Down, Enter opens, Esc goes back.",
-        "  Overview · Runs · Tests · Devices · Apps · Config · Doctor",
+        "  Overview · Runs · Resident · Tests · Devices · Apps · Config · Doctor",
         "  Switch workspace returns to the landing screen.",
         "Content · arrows move; Esc menu; Tab prompt.",
         "Prompt · type a CLI command; /run --tag smoke is a shortcut.",
@@ -2699,8 +2796,9 @@ pub(super) fn help_text() -> String {
         "  r rerun · F rerun failed · o report · p screenshot · X remove",
         "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
         "Devices / Apps / Config · j/k move · Enter open · r reload",
+        "Resident · j/k scroll · g/G top/bottom · r reload",
         "",
-        "Commands · /run /jobs /devices /apps /config /tests /open /doctor",
+        "Commands · /run /jobs /devices /apps /config /resident /tests /open /doctor",
         "  /fmt /validate /plan /attach /logs /stop /report /profile /quit",
         "Scriptable · run --detach · jobs --json · wait · report",
         "  /menu /workspaces",

@@ -15,6 +15,8 @@ use super::app::{
 };
 use super::{Context, Focus, Screen};
 use crate::jobs::{JobRecord, JobStatus};
+use crate::resident::service::ServiceState;
+use crate::resident::status::{DumpEntry, ResidentStatus, ScheduleStatus, WatcherStatus};
 
 fn context() -> Context {
     // Short, relative paths keep frames deterministic without touching disk.
@@ -309,6 +311,68 @@ fn first_run_overlay_frame() {
 fn small_terminal_frame() {
     let app = populated();
     insta::assert_snapshot!("small_terminal", render(&app, 30, 8));
+}
+
+#[test]
+fn resident_screen_shows_service_schedules_watchers_and_dumps() {
+    let mut app = populated();
+    let state = ServiceState {
+        pid: 4242,
+        started_at: "2026-11-07 09:00:00".to_string(),
+        updated_at: "2026-11-07 09:05:00".to_string(),
+        workspace: "demo".to_string(),
+        ..ServiceState::default()
+    };
+    app.resident = Some(ResidentStatus {
+        running: true,
+        state,
+        schedules: vec![ScheduleStatus {
+            name: "nightly".to_string(),
+            enabled: true,
+            when: "daily 02:30".to_string(),
+            next_fire: Some("2026-11-08 02:30:00".to_string()),
+            last_fire: Some("2026-11-07 02:30:00".to_string()),
+            runs: 3,
+            failures: 1,
+            consecutive_failures: 0,
+        }],
+        watchers: vec![WatcherStatus {
+            name: "soak".to_string(),
+            enabled: true,
+            paused: false,
+            iterations: 4,
+            failures: 2,
+            consecutive_failures: 2,
+            last_started: Some("2026-11-07 09:04:00".to_string()),
+            last_status: Some("failed".to_string()),
+            last_dump: Some("reports/watch/soak/20261107-090400".to_string()),
+            next_after: Some("2026-11-07 09:06:00".to_string()),
+        }],
+    });
+    app.resident_dumps = vec![DumpEntry {
+        watcher: "soak".to_string(),
+        name: "20261107-090400".to_string(),
+        path: "reports/watch/soak/20261107-090400".to_string(),
+    }];
+    app.screen = Screen::Resident;
+    app.focus = Focus::Content;
+
+    let frame = render(&app, 110, 30);
+    for needle in [
+        "Resident",
+        "Service  running",
+        "pid 4242",
+        "Schedules (1)",
+        "nightly",
+        "2026-11-08 02:30:00",
+        "Watchers (1)",
+        "soak",
+        "iteration(s)",
+        "Dumps (1)",
+        "reports/watch/soak/20261107-090400",
+    ] {
+        assert!(frame.contains(needle), "missing {needle:?} in:\n{frame}");
+    }
 }
 
 fn tree_line(indent: usize, text: &str, status: LineStatus) -> TreeLine {

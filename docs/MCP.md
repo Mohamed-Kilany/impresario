@@ -94,7 +94,7 @@ Notes:
   flight, and responses may arrive out of order (they are correlated by
   JSON-RPC id, as the spec allows).
 - **Resident state is shared**: the tools read `service/state.json` and the
-  layered config used by the CLI (and the planned TUI). `schedules_list` and
+  layered config used by the CLI and the TUI Resident screen. `schedules_list` and
   `watchers_list` are read-only; `schedule_add/remove` and
   `watcher_start/stop` use the same lossless YAML editor as the CLI. Starting
   or stopping a watcher does not start the service; a stopped service picks
