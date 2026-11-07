@@ -39,6 +39,9 @@ const REPORT_COPY: &str = "report.json";
 const STOP_FILE: &str = "stop";
 const WAIT_POLL: Duration = Duration::from_millis(250);
 
+/// Distinguishes concurrent temporary record files within this process.
+static RECORD_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 /// Job lifecycle. `Stopped` and `Interrupted` both exit 130 but say why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -246,6 +249,10 @@ impl JobStore {
     }
 
     /// Replace `job.json`; failures are reported, never ignored.
+    ///
+    /// The record is written to a unique temporary file and renamed into place:
+    /// `jobs`, `wait` and the TUI poll `job.json` while the daemon updates it,
+    /// and an in-place rewrite would let them observe a truncated record.
     pub fn write_record(&self, record: &JobRecord) -> Result<(), String> {
         let dir = self.dir(&record.id);
         std::fs::create_dir_all(&dir)
@@ -253,8 +260,17 @@ impl JobStore {
         let text = serde_json::to_string_pretty(record)
             .map_err(|error| format!("cannot serialize job {}: {error}", record.id))?;
         let path = self.record_path(&record.id);
-        std::fs::write(&path, format!("{text}\n"))
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))
+        let temporary = dir.join(format!(
+            "{RECORD_FILE}.tmp.{}.{}",
+            std::process::id(),
+            RECORD_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&temporary, format!("{text}\n"))
+            .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
+        std::fs::rename(&temporary, &path).map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("cannot replace {}: {error}", path.display())
+        })
     }
 
     /// Read one record; a missing file is `Ok(None)`, a broken file is an error.
@@ -1652,4 +1668,72 @@ pub fn last_failed(base: &Path, report_output: &Path) -> Option<BTreeSet<String>
 #[allow(dead_code)]
 fn _keep_types() -> BTreeMap<String, String> {
     BTreeMap::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(id: &str, message: &str) -> JobRecord {
+        JobRecord {
+            schema_version: JOB_SCHEMA,
+            id: id.to_string(),
+            status: JobStatus::Running,
+            detached: true,
+            created_at: now_rfc3339(),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            exit_code: None,
+            workspace: String::new(),
+            devices: Vec::new(),
+            plays: Vec::new(),
+            label: String::new(),
+            pid: Some(std::process::id()),
+            queue_position: None,
+            run_dir: String::new(),
+            message: Some(message.to_string()),
+        }
+    }
+
+    #[test]
+    fn concurrent_readers_never_observe_a_partial_record() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        let id = "atomic";
+        let padding = "x".repeat(64 * 1024);
+        store
+            .write_record(&record(id, &format!("{padding} queued")))
+            .expect("initial record");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let store = store.clone();
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let record = store
+                        .read(id)
+                        .expect("a concurrent write must not truncate the record")
+                        .expect("the record exists");
+                    assert_eq!(record.id, id);
+                }
+            })
+        };
+        for step in 0..100 {
+            store
+                .write_record(&record(id, &format!("{padding} step {step}")))
+                .expect("rewrite record");
+        }
+        stop.store(true, Ordering::Relaxed);
+        reader.join().expect("reader thread");
+
+        let leftovers: Vec<_> = std::fs::read_dir(store.dir(id))
+            .expect("job dir")
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary record files remain");
+    }
 }
