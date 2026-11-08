@@ -7,7 +7,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use impresario_core::home::Home;
 use impresario_core::resident::{
     BusyPolicy, MissedPolicy, NotifySpec, Pacing, ResidentSections, RunSelection, Schedule,
-    ScheduleWhen, Watcher,
+    ScheduleWhen, Watcher, WatcherLease,
 };
 
 use crate::cli::{EXIT_FAILURE, EXIT_INFRA, EXIT_OK, EXIT_USAGE};
@@ -127,6 +127,22 @@ impl From<MissedArg> for MissedPolicy {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LeaseArg {
+    Gap,
+    #[value(name = "no-gap")]
+    NoGap,
+}
+
+impl From<LeaseArg> for WatcherLease {
+    fn from(value: LeaseArg) -> Self {
+        match value {
+            LeaseArg::Gap => Self::Gap,
+            LeaseArg::NoGap => Self::NoGap,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum BusyArg {
     Queue,
     Skip,
@@ -228,6 +244,10 @@ pub struct AddWatchArgs {
     /// Minimum gap between iterations, e.g. `30s`; absent means back-to-back.
     #[arg(long)]
     pub gap: Option<String>,
+    /// Device lease mode: `gap` releases between iterations; `no-gap` holds
+    /// the devices for the watcher lifetime and can starve other runs.
+    #[arg(long, value_enum, default_value_t = LeaseArg::Gap)]
+    pub lease: LeaseArg,
     #[arg(long)]
     pub disabled: bool,
     #[arg(long)]
@@ -710,7 +730,7 @@ pub fn run_service(
                 }
             }
         }
-        ServiceCommand::Status { json } => service_status(home, *json),
+        ServiceCommand::Status { json } => service_status(home, config_path, *json),
         ServiceCommand::Logs { follow } => match service::print_logs(home, *follow) {
             Ok(()) => EXIT_OK,
             Err(error) => usage_error(&error),
@@ -1036,6 +1056,7 @@ fn add_watch(args: &AddWatchArgs, home: &Home, config_path: &Path) -> i32 {
                 profile: args.profile.clone(),
             },
             pacing,
+            lease: args.lease.into(),
             priority: impresario_core::resident::WatcherPriority::Normal,
             on_failure: impresario_core::resident::FailurePolicy::default(),
             device_health: impresario_core::resident::DeviceHealth::default(),
@@ -1162,13 +1183,14 @@ fn list_watchers(sections: &ResidentSections) {
     }
     for watcher in &sections.watchers {
         println!(
-            "{:<24} {:<8} {}  {}",
+            "{:<24} {:<8} lease={:<6} {}  {}",
             watcher.name,
             if watcher.enabled {
                 "enabled"
             } else {
                 "disabled"
             },
+            watcher.lease.as_str(),
             pacing_label(&watcher.pacing),
             plays_label(&watcher.run)
         );
@@ -1286,6 +1308,17 @@ fn when_label(when: &ScheduleWhen) -> String {
     }
 }
 
+fn watcher_lease(sections: Option<&ResidentSections>, name: &str) -> &'static str {
+    sections
+        .and_then(|sections| {
+            sections
+                .watchers
+                .iter()
+                .find(|watcher| watcher.name == name)
+        })
+        .map_or("-", |watcher| watcher.lease.as_str())
+}
+
 fn pacing_label(pacing: &Pacing) -> String {
     match pacing {
         Pacing::BackToBack => "back-to-back".to_string(),
@@ -1315,16 +1348,31 @@ fn print_json<T: serde::Serialize>(value: &T) {
     }
 }
 
-fn service_status(home: &Home, json: bool) -> i32 {
+fn service_status(home: &Home, config_path: &Path, json: bool) -> i32 {
     let state = match service::read_state(home) {
         Ok(state) => state,
         Err(error) => return usage_error(&error),
     };
+    let sections = config::load_effective(home, config_path).ok();
     let running = state.pid != 0 && crate::jobs::pid_alive(state.pid);
     if json {
+        let watchers: Vec<serde_json::Value> = state
+            .watchers
+            .iter()
+            .map(|(name, runtime)| {
+                serde_json::json!({
+                    "name": name,
+                    "lease": watcher_lease(sections.as_ref(), name),
+                    "iterations": runtime.iterations,
+                    "failures": runtime.failures,
+                    "last_status": runtime.last_status,
+                })
+            })
+            .collect();
         let value = serde_json::json!({
             "running": running,
             "state": state,
+            "watchers": watchers,
         });
         print_json(&value);
         return EXIT_OK;
@@ -1357,7 +1405,8 @@ fn service_status(home: &Home, json: bool) -> i32 {
         println!("watchers:");
         for (name, runtime) in &state.watchers {
             println!(
-                "  {name:<24} iterations={} failures={} status={}",
+                "  {name:<24} lease={} iterations={} failures={} status={}",
+                watcher_lease(sections.as_ref(), name),
                 runtime.iterations,
                 runtime.failures,
                 runtime.last_status.as_deref().unwrap_or("-")
@@ -1409,6 +1458,7 @@ fn watch_status(home: &Home, config_path: &Path, name: Option<&str>, json: bool)
             serde_json::json!({
                 "name": watcher.name,
                 "configured_enabled": watcher.enabled,
+                "lease": watcher.lease.as_str(),
                 "iterations": runtime.iterations,
                 "failures": runtime.failures,
                 "last_status": runtime.last_status,
@@ -1422,7 +1472,7 @@ fn watch_status(home: &Home, config_path: &Path, name: Option<&str>, json: bool)
     } else {
         for value in watches {
             println!(
-                "{} enabled={} iterations={} failures={} status={} paused={}",
+                "{} enabled={} lease={} iterations={} failures={} status={} paused={}",
                 value
                     .get("name")
                     .and_then(|item| item.as_str())
@@ -1430,6 +1480,10 @@ fn watch_status(home: &Home, config_path: &Path, name: Option<&str>, json: bool)
                 value
                     .get("configured_enabled")
                     .map_or_else(|| "?".to_string(), ToString::to_string),
+                value
+                    .get("lease")
+                    .and_then(|item| item.as_str())
+                    .unwrap_or("-"),
                 value
                     .get("iterations")
                     .map_or_else(|| "?".to_string(), ToString::to_string),

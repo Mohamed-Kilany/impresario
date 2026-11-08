@@ -198,6 +198,7 @@ impresario schedule next nightly --count 5
 impresario schedule edit nightly --file nightly.yaml
 impresario schedule disable nightly     # enable, rm, show, run-now
 impresario watch add soak --play smoke.play --gap 30s
+impresario watch add hold --play smoke.play --lease no-gap
 impresario watch list|show|status [--json]|dumps
 impresario watch start|stop|pause|resume soak
 impresario watch run-now soak
@@ -222,11 +223,17 @@ logs and device leases are unchanged; it is labelled `schedule <name>` and
 appears in `impresario jobs`. `on_busy` is `queue` (retry while the previous
 occurrence is still running), `skip` or `fail`.
 
-Watchers take a per-iteration device lease and release it between iterations;
-each iteration is a normal job labelled `watcher <name>`. The layered config is
-re-read each active iteration, so `pacing`, `run`, `device_health.backoff` and
-`on_failure.notify` edits apply without a restart. A `priority: low` watcher
-waits between iterations while another live job is queued for its devices.
+By default (`lease: gap`) watchers take a per-iteration device lease and
+release it between iterations; each iteration is a normal job labelled
+`watcher <name>`. `--lease no-gap` (or `lease: no_gap` in YAML) holds the lease
+for the watcher lifetime instead, releasing it on stop, pause, disable or a
+switch back to `gap`; it cannot be combined with `priority: low`, and
+`watch list`, `watch status`, `service status`, the MCP watcher list and the TUI
+Resident screen show the mode. The layered config is re-read each active
+iteration, so `pacing`, `run`, `device_health.backoff` and `on_failure.notify`
+edits apply without a restart (a `lease` change applies on the next iteration).
+A `priority: low` watcher waits between iterations while another live job is
+queued for its devices.
 `pacing.mode` is `back_to_back` or `min_gap` with `gap`. `on_failure` configures
 the dump, throttle and notification channels. Notification events are routed
 per watcher and schedule: identical watcher failures (same
@@ -284,8 +291,8 @@ suffix. The resident MCP tools
 (`service_status`, `schedules_list|add|remove|run_now`,
 `watchers_list|start|stop|dumps`) expose the same state to agents, and the TUI
 **Resident** screen shows the same joined view read-only (refresh every two
-seconds; `j`/`k` scroll, `g`/`G` jump). D-39 no-gap lifetime leases are not
-available (see `docs/STATUS.md` gap 21 and `docs/SCHEDULING.md`).
+seconds; `j`/`k` scroll, `g`/`G` jump). No-gap lifetime leases (D-39) are shown
+in every watcher view (see `docs/STATUS.md` gap 21 and `docs/SCHEDULING.md`).
 
 ## Packaging and signing
 

@@ -340,3 +340,51 @@ fn notify_lists_events_and_resolves_the_recorded_report() {
         missing.stderr
     );
 }
+
+#[test]
+fn watch_add_writes_and_lists_the_lease_mode_and_rejects_no_gap_low_priority() {
+    let home = tempfile::tempdir().expect("home");
+    let workspace = tempfile::tempdir().expect("workspace");
+    write_workspace(workspace.path(), "", &[], &[]);
+    let config = workspace.path().join("impresario.config");
+
+    let added = run(
+        home.path(),
+        Some(workspace.path()),
+        &[
+            "watch",
+            "add",
+            "hold",
+            "--play",
+            "smoke.play",
+            "--lease",
+            "no-gap",
+        ],
+    );
+    assert_eq!(added.code, EXIT_OK, "stderr={}", added.stderr);
+    let value: Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(&config).expect("config")).expect("yaml");
+    assert_eq!(value["watchers"][0]["lease"], "no_gap");
+
+    let listed = run(home.path(), Some(workspace.path()), &["watch", "list"]);
+    assert_eq!(listed.code, EXIT_OK, "stderr={}", listed.stderr);
+    assert!(listed.stdout.contains("lease=no_gap"), "{}", listed.stdout);
+
+    let invalid = run(
+        home.path(),
+        Some(workspace.path()),
+        &[
+            "watch",
+            "add",
+            "starve",
+            "--yaml",
+            "run: { plays: [smoke.play] }\nlease: no_gap\npriority: low\n",
+        ],
+    );
+    assert_eq!(invalid.code, EXIT_USAGE, "stderr={}", invalid.stderr);
+    assert!(
+        invalid.stderr.contains("priority low"),
+        "{}",
+        invalid.stderr
+    );
+}

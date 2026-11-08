@@ -43,6 +43,9 @@ pub struct WatcherStatus {
     pub name: String,
     pub enabled: bool,
     pub paused: bool,
+    /// Device lease mode (`gap` or `no_gap`), so STATUS/TUI cannot hide a
+    /// no-gap watcher that may starve other runs (D-39).
+    pub lease: String,
     pub iterations: u64,
     pub failures: u64,
     pub consecutive_failures: u32,
@@ -112,6 +115,7 @@ pub fn collect(home: &Home, config_path: &Path) -> Result<ResidentStatus, String
                 name: watcher.name.clone(),
                 enabled: watcher.enabled,
                 paused: service::watch_paused(home, &watcher.name),
+                lease: watcher.lease.as_str().to_string(),
                 iterations: runtime.iterations,
                 failures: runtime.failures,
                 consecutive_failures: runtime.consecutive_failures,

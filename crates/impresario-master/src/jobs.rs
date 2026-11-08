@@ -112,6 +112,24 @@ pub struct JobSpec {
     pub on_busy: OnBusy,
     pub detached: bool,
     pub label: String,
+    /// A lease held across iterations by a no-gap watcher (D-39). Skipped when
+    /// the spec crosses the daemon socket; detached jobs acquire their own.
+    #[serde(skip)]
+    pub(crate) held_lease: Option<LifetimeLease>,
+}
+
+/// A device lease held across watcher iterations (D-39 no-gap mode).
+#[derive(Debug, Clone)]
+pub(crate) struct LifetimeLease {
+    guard: Arc<lease::Guard>,
+}
+
+impl LifetimeLease {
+    /// Whether this lease covers every requested device.
+    #[must_use]
+    pub(crate) fn covers(&self, devices: &[String]) -> bool {
+        self.guard.covers(devices)
+    }
 }
 
 impl JobSpec {
@@ -121,7 +139,7 @@ impl JobSpec {
         self.report_dir.join(&self.id)
     }
 
-    fn devices(&self) -> Vec<String> {
+    pub(crate) fn devices(&self) -> Vec<String> {
         self.plan
             .devices
             .iter()
@@ -394,6 +412,20 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Acquire a device lease for a no-gap watcher and keep it across iterations.
+pub(crate) fn acquire_lifetime(
+    home: &Home,
+    job: &str,
+    devices: &[String],
+) -> Result<LifetimeLease, String> {
+    let store = JobStore::new(home);
+    let shutdown = CancellationToken::new();
+    let guard = lease::acquire(&store, job, devices, OnBusy::Queue, |_| {}, &shutdown)?;
+    Ok(LifetimeLease {
+        guard: Arc::new(guard),
+    })
+}
+
 /// Run an attached job: prepare its record, acquire leases and execute.
 pub fn run_foreground(
     home: &Home,
@@ -441,7 +473,10 @@ pub fn run_prepared(store: &JobStore, spec: &JobSpec, print_console: bool) -> Jo
         }
     };
 
-    if spec.on_busy == OnBusy::Fail && !lease::available(store, &record.devices) {
+    if spec.held_lease.is_none()
+        && spec.on_busy == OnBusy::Fail
+        && !lease::available(store, &record.devices)
+    {
         let message = format!(
             "device lease busy for {}; --on-busy fail leaves the devices untouched",
             record.devices.join(", ")
@@ -467,37 +502,42 @@ pub fn run_prepared(store: &JobStore, spec: &JobSpec, print_console: bool) -> Jo
         Arc::clone(&done),
     );
 
-    let lease = match lease::acquire(
-        store,
-        &spec.id,
-        &record.devices,
-        spec.on_busy,
-        |position| {
-            if let Ok(Some(mut current)) = store.read(&spec.id) {
-                current.queue_position = Some(position);
-                let _ = store.write_record(&current);
+    let lease = match &spec.held_lease {
+        Some(held) => held.clone(),
+        None => match lease::acquire(
+            store,
+            &spec.id,
+            &record.devices,
+            spec.on_busy,
+            |position| {
+                if let Ok(Some(mut current)) = store.read(&spec.id) {
+                    current.queue_position = Some(position);
+                    let _ = store.write_record(&current);
+                }
+            },
+            &shutdown,
+        ) {
+            Ok(guard) => LifetimeLease {
+                guard: Arc::new(guard),
+            },
+            Err(error) => {
+                done.store(true, Ordering::Relaxed);
+                record.status = if shutdown.is_cancelled() {
+                    JobStatus::Stopped
+                } else {
+                    JobStatus::Error
+                };
+                record.finished_at = Some(now_rfc3339());
+                record.exit_code = Some(if shutdown.is_cancelled() { 130 } else { 3 });
+                record.message = Some(error.clone());
+                let _ = store.write_record(&record);
+                return JobOutcome {
+                    record,
+                    report: None,
+                    reporter_errors: vec![error],
+                };
             }
         },
-        &shutdown,
-    ) {
-        Ok(lease) => lease,
-        Err(error) => {
-            done.store(true, Ordering::Relaxed);
-            record.status = if shutdown.is_cancelled() {
-                JobStatus::Stopped
-            } else {
-                JobStatus::Error
-            };
-            record.finished_at = Some(now_rfc3339());
-            record.exit_code = Some(if shutdown.is_cancelled() { 130 } else { 3 });
-            record.message = Some(error.clone());
-            let _ = store.write_record(&record);
-            return JobOutcome {
-                record,
-                report: None,
-                reporter_errors: vec![error],
-            };
-        }
     };
 
     record.status = JobStatus::Running;
@@ -861,9 +901,20 @@ mod lease {
         devices: Vec<String>,
     }
 
+    #[derive(Debug)]
     pub struct Guard {
         paths: Vec<PathBuf>,
         wait: PathBuf,
+        devices: Vec<String>,
+    }
+
+    impl Guard {
+        /// Whether this lease covers every requested device.
+        pub fn covers(&self, devices: &[String]) -> bool {
+            devices
+                .iter()
+                .all(|device| self.devices.iter().any(|held| held == device))
+        }
     }
 
     impl Drop for Guard {
@@ -975,6 +1026,7 @@ mod lease {
             return Ok(Guard {
                 paths: Vec::new(),
                 wait,
+                devices: Vec::new(),
             });
         }
         let mut devices = devices.to_vec();
@@ -1027,7 +1079,11 @@ mod lease {
             }
             if !busy {
                 let _ = std::fs::remove_file(&wait);
-                return Ok(Guard { paths, wait });
+                return Ok(Guard {
+                    paths,
+                    wait,
+                    devices,
+                });
             }
             for path in &paths {
                 let _ = std::fs::remove_file(path);
@@ -1798,5 +1854,32 @@ mod tests {
         wait("dead", 0, &["tv"]);
         assert!(!waiting_for(&home, &["tv".to_string()]));
         assert!(!waiting_for(&home, &[]));
+    }
+
+    #[test]
+    fn lifetime_lease_covers_devices_and_releases_when_the_last_clone_drops() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        std::fs::create_dir_all(store.lease_dir()).expect("lease dir");
+        let devices = vec!["tv".to_string(), "phone".to_string()];
+
+        let lease = acquire_lifetime(&home, "watch-soak", &devices).expect("lifetime lease");
+        assert!(lease.covers(&devices));
+        assert!(lease.covers(&["tv".to_string()]));
+        assert!(!lease.covers(&["watch".to_string()]));
+        let tv = store.lease_dir().join("tv.json");
+        let phone = store.lease_dir().join("phone.json");
+        assert!(tv.exists(), "tv lease file");
+        assert!(phone.exists(), "phone lease file");
+
+        // Clones share the guard: dropping one must not release the devices
+        // while the watcher still holds the lease for its next iteration.
+        let held = lease.clone();
+        drop(lease);
+        assert!(tv.exists(), "lease survives a clone drop");
+        drop(held);
+        assert!(!tv.exists(), "lease released with the last clone");
+        assert!(!phone.exists(), "lease released with the last clone");
     }
 }

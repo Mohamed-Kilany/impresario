@@ -1208,6 +1208,7 @@ fn draw_resident(frame: &mut Frame, app: &App, area: Rect) {
                     )),
                 ]));
                 let mut detail = Vec::new();
+                detail.push(format!("lease {}", watcher.lease));
                 if let Some(value) = &watcher.last_status {
                     detail.push(format!("last {value}"));
                 }

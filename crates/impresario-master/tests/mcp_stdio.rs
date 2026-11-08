@@ -490,6 +490,7 @@ fn resident_tools_join_state_and_edit_config_layers() {
     assert_eq!(status["running"], json!(false));
     assert_eq!(status["schedules"][0]["name"], json!("nightly"));
     assert_eq!(status["watchers"][0]["name"], json!("soak"));
+    assert_eq!(status["watchers"][0]["lease"], json!("gap"));
     let next = status["schedules"][0]["next_fire"]
         .as_str()
         .expect("next fire");
@@ -499,6 +500,7 @@ fn resident_tools_join_state_and_edit_config_layers() {
     assert_eq!(schedules["schedules"].as_array().expect("array").len(), 1);
     let watchers = structured(&mcp.tools_call(3, "impresario_watchers_list", json!({})));
     assert_eq!(watchers["watchers"][0]["name"], json!("soak"));
+    assert_eq!(watchers["watchers"][0]["lease"], json!("gap"));
 
     let added = structured(&mcp.tools_call(
         4,

@@ -17,7 +17,7 @@ use impresario_core::home::Home;
 use impresario_core::resident::{
     parse_once, parse_span, BusyPolicy, DumpKind, FailureClass, MissedPolicy, Notifications,
     NotifyEvent, NotifySpec, Pacing, ResidentSections, RunSelection, Schedule, ScheduleWhen,
-    Watcher, WatcherPriority,
+    Watcher, WatcherLease, WatcherPriority,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -676,20 +676,26 @@ fn watcher_loop(
     let mut watcher = initial.clone();
     let mut notifications = initial_notifications.clone();
     let mut last_devices: Option<Vec<String>> = None;
+    // D-39 no-gap mode keeps the device lease across iterations. It is
+    // released on stop, pause, disable or when the mode returns to `gap`.
+    let mut lifetime_lease: Option<jobs::LifetimeLease> = None;
     loop {
         if stop.load(Ordering::SeqCst) || service_stop.load(Ordering::SeqCst) {
             break;
         }
         if watch_stopped(home, &watcher.name) {
+            lifetime_lease = None;
             sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         if watch_paused(home, &watcher.name) {
+            lifetime_lease = None;
             sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         paused |= service_paused.load(Ordering::SeqCst);
         if paused {
+            lifetime_lease = None;
             sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
             if !service_paused.load(Ordering::SeqCst) {
                 paused = false;
@@ -709,6 +715,7 @@ fn watcher_loop(
                         // Disabled or removed: the reconcile pass sets `stop`
                         // on its next tick, so wait for it instead of exiting
                         // into a stale handle entry.
+                        lifetime_lease = None;
                         sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
                         continue;
                     }
@@ -722,6 +729,9 @@ fn watcher_loop(
             }
         }
         let watcher = &watcher;
+        if watcher.lease == WatcherLease::Gap {
+            lifetime_lease = None;
+        }
         // A low-priority watcher gives queued manual/scheduled jobs a chance
         // to take the device between iterations.
         let yielding = watcher.priority == WatcherPriority::Low
@@ -746,6 +756,9 @@ fn watcher_loop(
         let mut args = match resident_args(home, &watcher.run, BusyPolicy::Queue) {
             Ok(args) => args,
             Err(error) => {
+                // No job was planned, so a held no-gap lease would only
+                // starve other runs until the watcher stops.
+                lifetime_lease = None;
                 failure_streak = failure_streak.saturating_add(1);
                 if let Ok(mut state) = state.lock() {
                     let entry = state.watchers.entry(watcher.name.clone()).or_default();
@@ -772,7 +785,25 @@ fn watcher_loop(
             }
         };
         args.job_label = Some(format!("watcher {}", watcher.name));
-        let outcome = cli::run_workspace(base, config_path, devices_path, &args, false, true);
+        let outcome = if watcher.lease == WatcherLease::NoGap {
+            cli::run_workspace_with_lease(
+                base,
+                config_path,
+                devices_path,
+                &args,
+                false,
+                true,
+                Some(&mut lifetime_lease),
+            )
+        } else {
+            cli::run_workspace(base, config_path, devices_path, &args, false, true)
+        };
+        if outcome.run_id.is_none() {
+            // Planning or submission failed, so this iteration holds no job.
+            // Release a lifetime lease instead of starving other runs until
+            // the watcher is stopped.
+            lifetime_lease = None;
+        }
         if let Some(id) = &outcome.run_id {
             if let Ok(Some(record)) = jobs::JobStore::new(home).read(id) {
                 if !record.devices.is_empty() {
@@ -2063,6 +2094,7 @@ mod tests {
             name: "soak".to_string(),
             run: RunSelection::default(),
             pacing: Pacing::default(),
+            lease: WatcherLease::Gap,
             priority: WatcherPriority::Normal,
             on_failure: FailurePolicy::default(),
             device_health: DeviceHealth {

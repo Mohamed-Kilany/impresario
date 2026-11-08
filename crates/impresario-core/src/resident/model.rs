@@ -473,6 +473,10 @@ pub struct Watcher {
     pub run: RunSelection,
     #[serde(default)]
     pub pacing: Pacing,
+    /// How the watcher holds device leases (D-39). The default `gap` mode
+    /// releases the lease between iterations and cannot starve other runs.
+    #[serde(default)]
+    pub lease: WatcherLease,
     #[serde(default)]
     pub priority: WatcherPriority,
     #[serde(default)]
@@ -499,9 +503,38 @@ impl Watcher {
                 Err(error) => errors.push(format!("watcher '{}': pacing.gap {error}", self.name)),
             }
         }
+        if self.lease == WatcherLease::NoGap && self.priority == WatcherPriority::Low {
+            errors.push(format!(
+                "watcher '{}': lease no_gap holds the device exclusively and cannot be combined with priority low",
+                self.name
+            ));
+        }
         self.on_failure.validate_into(&self.name, errors);
         self.device_health.validate_into(&self.name, errors);
         self.retention.validate_into(&self.name, errors);
+    }
+}
+
+/// How a watcher holds device leases (D-39).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherLease {
+    /// Take a per-iteration lease and release it between iterations.
+    #[default]
+    Gap,
+    /// Hold the devices for the watcher lifetime, releasing only on
+    /// stop/pause. This mode is explicit because it can starve other runs.
+    NoGap,
+}
+
+impl WatcherLease {
+    /// Stable configuration label.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gap => "gap",
+            Self::NoGap => "no_gap",
+        }
     }
 }
 
@@ -877,6 +910,36 @@ watchers:
             max_disk: "0B".to_string(),
         };
         assert!(zero_disk.limits().is_err());
+    }
+
+    #[test]
+    fn watcher_lease_defaults_to_gap_and_rejects_no_gap_with_low_priority() {
+        let watcher: Watcher =
+            serde_yaml_ng::from_str("name: soak\nrun: { plays: [streaming_soak] }\n")
+                .expect("watcher");
+        assert_eq!(watcher.lease, WatcherLease::Gap);
+        assert_eq!(watcher.lease.as_str(), "gap");
+
+        let no_gap: Watcher = serde_yaml_ng::from_str(
+            "name: soak\nrun: { plays: [streaming_soak] }\nlease: no_gap\n",
+        )
+        .expect("no-gap watcher");
+        assert_eq!(no_gap.lease, WatcherLease::NoGap);
+        assert_eq!(no_gap.lease.as_str(), "no_gap");
+
+        let invalid = ResidentSections {
+            schedules: Vec::new(),
+            watchers: vec![Watcher {
+                priority: WatcherPriority::Low,
+                ..no_gap
+            }],
+            notifications: Notifications::default(),
+        };
+        let errors = invalid.validate().expect_err("no-gap low priority");
+        assert!(
+            errors.iter().any(|error| error.contains("priority low")),
+            "{errors:?}"
+        );
     }
 
     #[test]

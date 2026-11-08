@@ -117,6 +117,7 @@ A watcher repeats one run selection until stopped or paused:
 |---|---|
 | `run` | same selection fields as a schedule |
 | `pacing` | `{ mode: back_to_back }` (default) or `{ mode: min_gap, gap: 30s }` |
+| `lease` | `gap` (default) releases the devices between iterations; `no_gap` holds them for the watcher lifetime |
 | `priority` | `normal` (default) or `low`; a low-priority watcher yields to queued same-device jobs |
 | `on_failure.dump` | any of `report`, `screenshot`, `logs`, `device_state`, `evidence` |
 | `on_failure.throttle.same_failure_window` | duplicate-failure window, default `15m` |
@@ -126,12 +127,19 @@ A watcher repeats one run selection until stopped or paused:
 | `retention` | `max_reports` (500), `max_age` (`14d`), `max_disk` (`10GiB`) |
 | `enabled` | defaults to `true` |
 
-The watcher holds a per-iteration device lease and releases it between
-iterations, so another run can use the device while the watcher is pacing.
-The layered config is re-read on each active iteration, so edits to `pacing`,
-`run`, `device_health.backoff` and `on_failure.notify` take effect without
-restarting the service. A `priority: low` watcher checks for a live queued job
-on the devices of its previous iteration and waits while one is present; a
+By default (`lease: gap`) the watcher holds a per-iteration device lease and
+releases it between iterations, so another run can use the device while the
+watcher is pacing. `lease: no_gap` is the explicit opposite: after planning the
+first iteration the watcher takes the device lease and keeps it across
+iterations, releasing it only on stop, pause, disable or when the mode changes
+back to `gap`. No-gap mode can starve manual and scheduled runs, so it cannot
+be combined with `priority: low`, and `watch list`, `watch status`,
+`service status`, the MCP watcher list and the TUI Resident screen always show
+the active lease mode. The layered config is re-read on each active iteration,
+so edits to `pacing`, `run`, `device_health.backoff` and `on_failure.notify`
+take effect without restarting the service; a change to `lease` takes effect on
+the next iteration. A `priority: low` watcher checks for a live queued job on
+the devices of its previous iteration and waits while one is present; a
 normal-priority watcher never yields.
 `watch start|stop` edit the enabled flag and clear/write the per-watcher
 control files; `watch pause|resume` write or clear only the pause marker, and
@@ -215,7 +223,6 @@ wiring and tool schemas.
 ## Current limits
 
 The resident runner is implemented and covered by mock-driven tests, but the
-following are not yet complete: no-gap device leases (D-39) and the
-heartbeat/version handshake. Physical
+following are not yet complete: the heartbeat/version handshake. Physical
 macOS/Linux autostart and toast action behavior remain hardware-unverified until
 run on those hosts.

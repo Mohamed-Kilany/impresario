@@ -2420,6 +2420,30 @@ pub(crate) fn run_workspace(
     color: bool,
     interrupts: bool,
 ) -> RunOutcome {
+    run_workspace_with_lease(
+        base,
+        config_path,
+        devices_path,
+        args,
+        color,
+        interrupts,
+        None,
+    )
+}
+
+/// Run one workspace selection, optionally keeping a no-gap watcher's device
+/// lease alive across iterations (D-39). `lifetime` is only used for attached
+/// jobs: the lease is acquired after planning, stored in the slot, and passed
+/// to the job so `run_prepared` does not take a second lease.
+pub(crate) fn run_workspace_with_lease(
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    args: &RunArgs,
+    color: bool,
+    interrupts: bool,
+    lifetime: Option<&mut Option<jobs::LifetimeLease>>,
+) -> RunOutcome {
     let config_outcome = load_effective_config(base, config_path);
     render::eprint_all(&config_outcome.diagnostics);
     let Some(config) = config_outcome.config else {
@@ -2754,7 +2778,7 @@ pub(crate) fn run_workspace(
             Some(source) => format!("{source} · {label}"),
             None => label,
         };
-        let spec = jobs::JobSpec {
+        let mut spec = jobs::JobSpec {
             id: run_id.clone(),
             base: base.to_path_buf(),
             report_dir: report_dir.clone(),
@@ -2775,6 +2799,7 @@ pub(crate) fn run_workspace(
             on_busy: args.on_busy,
             detached: args.detach,
             label,
+            held_lease: None,
         };
         if args.detach {
             return match jobs::submit_detached(&home, spec, false) {
@@ -2796,6 +2821,26 @@ pub(crate) fn run_workspace(
                     RunOutcome::refusal(EXIT_INFRA, format!("run: {message}"))
                 }
             };
+        }
+        if let Some(slot) = lifetime {
+            let devices = spec.devices();
+            if devices.is_empty() {
+                // The new selection needs no devices; do not keep the previous
+                // iteration's lease while the watcher runs without one.
+                *slot = None;
+            } else {
+                let covered = slot.as_ref().is_some_and(|held| held.covers(&devices));
+                if !covered {
+                    // Drop a lease for a previous device set before taking the
+                    // new one; otherwise this process would wait on itself.
+                    *slot = None;
+                    match jobs::acquire_lifetime(&home, &spec.id, &devices) {
+                        Ok(held) => *slot = Some(held),
+                        Err(message) => eprintln!("run: {message}"),
+                    }
+                }
+                spec.held_lease = slot.clone();
+            }
         }
         return match jobs::run_foreground(&home, &spec, true) {
             Ok(job) => {

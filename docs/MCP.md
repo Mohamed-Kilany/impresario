@@ -72,7 +72,7 @@ does not exist, an argument is out of range) are tool errors
 | `impresario_schedule_add` | `name`, `schedule` or `yaml`, `layer?` | Add one schedule to the workspace (default) or global config. `name` is authoritative; the full file is validated before writing. |
 | `impresario_schedule_remove` | `name`, `layer?` | Remove one schedule from that layer. A definition in the other layer is left untouched. |
 | `impresario_schedule_run_now` | `name` | Run one schedule immediately through the normal pipeline, in this process. Shares the device lock with `impresario_run`; file reporters only. Does not update service `last_fire` counters or send schedule notifications. |
-| `impresario_watchers_list` | — | Effective watchers with enabled/paused, iterations/failures, last start/status/dump and next iteration. |
+| `impresario_watchers_list` | — | Effective watchers with enabled/paused, lease mode (`gap`/`no_gap`), iterations/failures, last start/status/dump and next iteration. |
 | `impresario_watcher_start` | `name`, `layer?` | Enable a watcher and clear its stop/pause control files. Does not start the resident service. |
 | `impresario_watcher_stop` | `name`, `layer?` | Disable a watcher and write its stop control file; a running service ends after the in-flight iteration. |
 | `impresario_watcher_dumps` | `name?` | Timestamped dump directories under `reports/watch`, workspace-relative. Default: every watcher. |
