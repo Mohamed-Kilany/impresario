@@ -194,8 +194,11 @@ cargo test --workspace          # mock-driven; no device required
   acceptance (driver + wire classes) is scripted in
   `agents/android/tools/run-tv-suite.ps1` and documented in
   `docs/DEVICES.md`.
-- CI (`.github/workflows/ci.yml`) runs the Rust gates on Ubuntu and the
-  Android unit tests with JDK 17 + the Android SDK.
+- CI (`.github/workflows/ci.yml`) exposes each gate as its own job:
+  `rustfmt`, `clippy` and the workspace tests on Ubuntu (the runner ships
+  Chrome), the Windows release build, the editor/WASM suite, the Android JVM
+  tests with JDK 17 + the Android SDK, the Apple Swift package, and an
+  aggregate `all checks` gate.
 
 ## Documentation
 

@@ -1,8 +1,10 @@
-# CI (spec 17/18). The Rust gates run on Ubuntu (which ships
-# google-chrome — the connector fixture suite needs it); the Android JVM
-# unit tests run with JDK 17 + the Android SDK; the Apple job builds and
-# unit-tests the Swift package on Linux (the Xcode runner targets need
-# macOS/Xcode and are covered by the checklist in docs/DEVICES.md §3.2).
+# CI (spec 17/18). Every gate is a separate job so the Actions UI names the
+# stage that failed. The Rust gates run on Ubuntu (which ships google-chrome —
+# the connector fixture suite needs it); the Windows job builds the release
+# CLI/connector; the Android JVM unit tests run with JDK 17 + the Android SDK;
+# the Apple job builds and unit-tests the Swift package on Linux (the Xcode
+# runner targets need macOS/Xcode and are covered by the checklist in
+# docs/DEVICES.md §3.2). The final `gate` job is the single aggregate check.
 name: CI
 
 on:
@@ -10,16 +12,44 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 5
 
 jobs:
-  rust:
-    name: rust (fmt, clippy, tests)
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: cargo test (ubuntu-latest)
     runs-on: ubuntu-latest
     # The toolchain's lld dies with SIGBUS when the large
     # impresario-master and impresario-clients test binaries link in
@@ -31,20 +61,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace --jobs 1
+        run: cargo test --workspace --locked --jobs 1
         env:
           RUST_BACKTRACE: "1"
 
   windows:
-    name: windows (release binaries artifact)
+    name: windows (release build)
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -94,11 +118,11 @@ jobs:
         run: npm run package
 
   android:
-    name: android (JVM unit tests)
+    name: android (JVM unit tests, APKs)
     runs-on: ubuntu-latest
     env:
-      # GitHub runners have no IPv6 route; some Gradle wrapper downloads try
-      # IPv6 first and fail with "Network is unreachable".
+      # GitHub runners have no IPv6 route; Gradle's dependency downloads can
+      # try IPv6 first and fail with "Network is unreachable".
       GRADLE_OPTS: "-Djava.net.preferIPv4Stack=true"
     steps:
       - uses: actions/checkout@v4
@@ -114,19 +138,40 @@ jobs:
           packages: "platform-tools platforms;android-36 build-tools;36.0.0"
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses > /dev/null || true
+      - name: Install Gradle (retry-safe, mirrored)
+        # The wrapper downloads from services.gradle.org only; that host
+        # returned persistent HTTP 504s from the hosted runner. Fetch the
+        # same 9.6.0 distribution from mirrors, verify the official SHA-256,
+        # and put it on PATH for the remaining steps.
+        run: |
+          set -euo pipefail
+          GRADLE_VERSION=9.6.0
+          GRADLE_SHA256=bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01
+          ZIP="$RUNNER_TEMP/gradle-bin.zip"
+          for URL in \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            "https://repo.huaweicloud.com/gradle/gradle-${GRADLE_VERSION}-bin.zip" \
+            "https://mirrors.cloud.tencent.com/gradle/gradle-${GRADLE_VERSION}-bin.zip"; do
+            echo "downloading $URL"
+            if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$ZIP" "$URL"; then
+              break
+            fi
+          done
+          echo "$GRADLE_SHA256  $ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d "$RUNNER_TEMP/gradle-dist"
+          echo "$RUNNER_TEMP/gradle-dist/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
       - name: Unit tests
         working-directory: agents/android
         run: |
-          chmod +x gradlew
           for attempt in 1 2 3; do
-            ./gradlew --no-daemon test && exit 0
+            gradle --no-daemon test && exit 0
             echo "Gradle attempt $attempt failed; retrying" >&2
             sleep 15
           done
           exit 1
       - name: Assemble agent APKs
         working-directory: agents/android
-        run: ./gradlew --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug
       - name: Upload agent APKs
         uses: actions/upload-artifact@v4
         with:
@@ -163,3 +208,26 @@ jobs:
       - name: Tests
         working-directory: agents/apple
         run: swift test
+
+  gate:
+    name: all checks
+    if: always()
+    needs: [fmt, clippy, test, windows, editor, android, apple]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to pass
+        run: |
+          echo "fmt=${{ needs.fmt.result }}"
+          echo "clippy=${{ needs.clippy.result }}"
+          echo "test=${{ needs.test.result }}"
+          echo "windows=${{ needs.windows.result }}"
+          echo "editor=${{ needs.editor.result }}"
+          echo "android=${{ needs.android.result }}"
+          echo "apple=${{ needs.apple.result }}"
+          test "${{ needs.fmt.result }}" = "success"
+          test "${{ needs.clippy.result }}" = "success"
+          test "${{ needs.test.result }}" = "success"
+          test "${{ needs.windows.result }}" = "success"
+          test "${{ needs.editor.result }}" = "success"
+          test "${{ needs.android.result }}" = "success"
+          test "${{ needs.apple.result }}" = "success"
