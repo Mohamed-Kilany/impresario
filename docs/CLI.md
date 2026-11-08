@@ -293,7 +293,9 @@ Dumps are filtered by `on_failure.dump` under
 and `report.html`; `screenshot` copies `screenshots/`; `logs`, `device_state`
 and `evidence` write `logs.json`, `device_state.json` and `evidence.json`.
 `dump.json` records the request, and same-millisecond dumps get a numeric
-suffix. The resident MCP tools
+suffix. Each watcher's `retention` limits also cover its normal run reports in
+`report_output`, using the per-workspace index described in
+`docs/SCHEDULING.md`. The resident MCP tools
 (`service_status`, `schedules_list|add|remove|run_now`,
 `watchers_list|start|stop|dumps`) expose the same state to agents, and the TUI
 **Resident** screen shows the same joined view read-only (refresh every two

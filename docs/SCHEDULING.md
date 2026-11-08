@@ -124,7 +124,7 @@ A watcher repeats one run selection until stopped or paused:
 | `on_failure.notify` | `toast` and/or `webhook:NAME` channels |
 | `device_health.treat_unreachable_as` | `infrastructure` (default) or `test` |
 | `device_health.backoff` | 1 to 16 positive spans, default `10s, 30s, 2m, 10m` |
-| `retention` | `max_reports` (500), `max_age` (`14d`), `max_disk` (`10GiB`) |
+| `retention` | `max_reports` (500), `max_age` (`14d`), `max_disk` (`10GiB`); covers failure dumps and the watcher's normal reports |
 | `enabled` | defaults to `true` |
 
 By default (`lease: gap`) the watcher holds a per-iteration device lease and
@@ -144,9 +144,15 @@ normal-priority watcher never yields.
 `watch start|stop` edit the enabled flag and clear/write the per-watcher
 control files; `watch pause|resume` write or clear only the pause marker, and
 `watch run-now` runs the selection once without changing the loop. Each
-iteration is a normal job labelled `watcher <name>`.
+iteration is a normal job labelled `watcher <name> · ...`.
 Failure dumps are written under `reports/watch/<name>/<timestamp>/` and are
-subject to the watcher's retention limits. Each `on_failure.dump` kind writes
+subject to the watcher's retention limits. The same limits cover the normal
+run reports the watcher's iterations produce in `report_output`: the runner
+keeps a per-workspace index under
+`service/watchers/<workspace-hash>-<name>.reports.json`, seeded once from
+watcher-labelled job records, and prunes dumps and indexed reports as one
+newest-first pool at most once per minute. Reports from manual runs in the same
+directory are never touched. Each `on_failure.dump` kind writes
 only its own files: `report` copies `report.json`, `junit.xml` and
 `report.html`; `screenshot` copies `screenshots/`; `logs`, `device_state` and
 `evidence` write `logs.json`, `device_state.json` and `evidence.json` built

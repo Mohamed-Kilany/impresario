@@ -9,7 +9,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, TimeZone as _};
 use impresario_core::command::WireErrorCode;
@@ -32,6 +32,13 @@ use super::notify::{self, Message};
 const STATE_VERSION: u32 = 1;
 const TICK: Duration = Duration::from_millis(500);
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+
+/// How often a watcher enforces retention. Pruning walks every retained
+/// directory, so a back-to-back watcher must not pay that cost per iteration.
+const RETENTION_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Schema of the per-watcher normal-report index.
+const REPORT_INDEX_SCHEMA: u32 = 1;
 
 /// Version of this binary, written to `state.json` so clients can detect a
 /// resident runner left behind by an older installation.
@@ -720,6 +727,7 @@ fn watcher_loop(
     // D-39 no-gap mode keeps the device lease across iterations. It is
     // released on stop, pause, disable or when the mode returns to `gap`.
     let mut lifetime_lease: Option<jobs::LifetimeLease> = None;
+    let mut last_retention: Option<Instant> = None;
     loop {
         if stop.load(Ordering::SeqCst) || service_stop.load(Ordering::SeqCst) {
             break;
@@ -852,6 +860,7 @@ fn watcher_loop(
                 }
             }
         }
+        remember_watcher_report(home, base, watcher, &outcome);
         let status = outcome_status(&outcome);
         let unverifiable = outcome_unverifiable(&outcome);
         let failed = outcome.exit_code != EXIT_OK && outcome.exit_code != EXIT_USAGE;
@@ -917,6 +926,15 @@ fn watcher_loop(
             if outcome.exit_code == EXIT_OK {
                 notify_watcher_recovery(home, watcher, &outcome, &status, state, &notifications);
             }
+        }
+        if last_retention.is_none_or(|at| at.elapsed() >= RETENTION_INTERVAL) {
+            if let Err(error) = prune_watcher_reports(home, base, watcher) {
+                log_line(
+                    home,
+                    &format!("watcher '{}' retention failed: {error}", watcher.name),
+                );
+            }
+            last_retention = Some(Instant::now());
         }
         let gap = watcher_gap(watcher, failure_streak);
         sleep_unless_stopped(gap, service_stop, stop);
@@ -1211,7 +1229,6 @@ fn write_dump(
         root.join("dump.json"),
         serde_json::to_string_pretty(&metadata).unwrap_or_default(),
     );
-    let _ = prune_watcher_reports(base, watcher);
     Some(root)
 }
 
@@ -1285,44 +1302,222 @@ fn copy_tree(source: &Path, destination: &Path, depth: usize) -> std::io::Result
     Ok(())
 }
 
-fn prune_watcher_reports(base: &Path, watcher: &Watcher) -> std::io::Result<()> {
+/// One normal run report produced by a watcher iteration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ReportEntry {
+    run_id: String,
+    path: String,
+}
+
+/// Bounded per-watcher index of normal reports that retention may remove.
+/// Seeded from job records once so reports written before the index existed
+/// are still covered; it is per workspace because each workspace can have a
+/// different `report_output`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct ReportIndex {
+    schema_version: u32,
+    reports: Vec<ReportEntry>,
+}
+
+impl Default for ReportIndex {
+    fn default() -> Self {
+        Self {
+            schema_version: REPORT_INDEX_SCHEMA,
+            reports: Vec::new(),
+        }
+    }
+}
+
+fn workspace_key(base: &Path) -> String {
+    format!(
+        "{:016x}",
+        crate::time_fmt::fnv1a(base.display().to_string().as_bytes())
+    )
+}
+
+fn report_index_path(home: &Home, base: &Path, watcher: &Watcher) -> PathBuf {
+    home.service_dir().join("watchers").join(format!(
+        "{}-{}.reports.json",
+        workspace_key(base),
+        watcher.name
+    ))
+}
+
+fn load_report_index(path: &Path) -> Option<ReportIndex> {
+    let source = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&source).ok()
+}
+
+fn save_report_index(path: &Path, index: &ReportIndex) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = serde_json::to_string_pretty(index).unwrap_or_default();
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, format!("{text}\n"))?;
+    std::fs::rename(&temporary, path)
+}
+
+fn seed_report_index(home: &Home, base: &Path, watcher: &Watcher) -> ReportIndex {
+    let exact = format!("watcher {}", watcher.name);
+    let prefix = format!("watcher {} · ", watcher.name);
+    let workspace = base.display().to_string();
+    let mut reports: Vec<ReportEntry> = Vec::new();
+    for record in jobs::JobStore::new(home).list() {
+        if record.workspace != workspace || record.id.is_empty() || record.run_dir.is_empty() {
+            continue;
+        }
+        if record.label != exact && !record.label.starts_with(&prefix) {
+            continue;
+        }
+        if !Path::new(&record.run_dir).is_dir() {
+            continue;
+        }
+        reports.push(ReportEntry {
+            run_id: record.id,
+            path: record.run_dir,
+        });
+    }
+    reports.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    reports.dedup_by(|left, right| left.run_id == right.run_id);
+    ReportIndex {
+        schema_version: REPORT_INDEX_SCHEMA,
+        reports,
+    }
+}
+
+/// Load the watcher's report index, seeding it from the job store when the
+/// file is missing or unreadable. The boolean reports whether seeding happened
+/// so the caller can persist the result even when nothing was pruned.
+fn load_or_seed_report_index(home: &Home, base: &Path, watcher: &Watcher) -> (ReportIndex, bool) {
+    match load_report_index(&report_index_path(home, base, watcher)) {
+        Some(index) => (index, false),
+        None => (seed_report_index(home, base, watcher), true),
+    }
+}
+
+/// Record one iteration's normal report. Reports that were not written (no
+/// run directory) are not tracked and therefore never pruned.
+fn remember_watcher_report(home: &Home, base: &Path, watcher: &Watcher, outcome: &cli::RunOutcome) {
+    let (Some(run_id), Some(run_dir)) = (&outcome.run_id, &outcome.run_dir) else {
+        return;
+    };
+    if run_id.is_empty() || !run_dir.is_dir() {
+        return;
+    }
+    let path = report_index_path(home, base, watcher);
+    let (mut index, seeded) = load_or_seed_report_index(home, base, watcher);
+    let changed = if index.reports.iter().any(|report| report.run_id == *run_id) {
+        false
+    } else {
+        index.reports.push(ReportEntry {
+            run_id: run_id.clone(),
+            path: run_dir.display().to_string(),
+        });
+        true
+    };
+    if !changed && !seeded {
+        return;
+    }
+    index.schema_version = REPORT_INDEX_SCHEMA;
+    if let Err(error) = save_report_index(&path, &index) {
+        log_line(
+            home,
+            &format!(
+                "watcher '{}' report index write failed: {error}",
+                watcher.name
+            ),
+        );
+    }
+}
+
+/// Run ids are `YYYYMMDD-HHMMSS-<4 hex>` (20 chars). The index only ever names
+/// run directories, so refusing anything else keeps a corrupted or hand-edited
+/// index from deleting an unrelated directory.
+fn is_run_dir_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let bytes = name.as_bytes();
+    bytes.len() == 20
+        && bytes[..8].iter().all(|byte| byte.is_ascii_digit())
+        && bytes[8] == b'-'
+        && bytes[9..15].iter().all(|byte| byte.is_ascii_digit())
+        && bytes[15] == b'-'
+        && bytes[16..].iter().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Enforce one watcher's retention over its failure dumps and the normal run
+/// reports its iterations produced. Both kinds share the same limits; only
+/// reports named by the watcher's index are candidates, so manual runs in the
+/// same `report_output` directory are never removed.
+fn prune_watcher_reports(home: &Home, base: &Path, watcher: &Watcher) -> std::io::Result<()> {
     let Ok((max_reports, max_age, max_disk)) = watcher.retention.limits() else {
         return Ok(());
     };
-    let root = base.join("reports").join("watch").join(&watcher.name);
-    let mut entries = Vec::new();
-    let Ok(read) = std::fs::read_dir(&root) else {
-        return Ok(());
-    };
-    for entry in read.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
+    let dump_root = base.join("reports").join("watch").join(&watcher.name);
+    let index_path = report_index_path(home, base, watcher);
+    let (mut index, seeded) = load_or_seed_report_index(home, base, watcher);
+    let loaded_len = index.reports.len();
+    // `None` marks a failure dump; `Some` marks an indexed normal report.
+    let mut entries: Vec<(std::time::SystemTime, PathBuf, Option<String>)> = Vec::new();
+    if let Ok(read) = std::fs::read_dir(&dump_root) {
+        for entry in read.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
             let modified = entry
                 .metadata()
                 .and_then(|metadata| metadata.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            entries.push((modified, path));
+            entries.push((modified, path, None));
         }
     }
-    entries.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for report in &index.reports {
+        let path = PathBuf::from(&report.path);
+        if !path.is_dir() || !is_run_dir_name(&path) {
+            continue;
+        }
+        let modified = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        entries.push((modified, path, Some(report.run_id.clone())));
+    }
+    entries.sort_by_key(|(modified, _, _)| std::cmp::Reverse(*modified));
     let now = std::time::SystemTime::now();
     let mut kept_total = 0_u64;
-    for (index, (modified, path)) in entries.iter().enumerate() {
+    let mut kept_reports = BTreeSet::new();
+    for (position, (modified, path, run_id)) in entries.iter().enumerate() {
         let age_ok = match now.duration_since(*modified) {
             Ok(age) => chrono::Duration::from_std(age).is_ok_and(|age| age <= max_age),
             Err(_) => true,
         };
         let size = directory_size(path);
-        let too_many = index >= max_reports;
+        let too_many = position >= max_reports;
         let too_old = !age_ok;
         // Keep the newest report even if it alone exceeds the disk limit, and
         // never count the size of reports that are being removed.
-        let too_large = index > 0 && kept_total.saturating_add(size) > max_disk;
-        if too_many || too_old || too_large {
+        let too_large = position > 0 && kept_total.saturating_add(size) > max_disk;
+        let prune = too_many || too_old || too_large;
+        if prune {
             let _ = std::fs::remove_dir_all(path);
-        } else {
-            kept_total = kept_total.saturating_add(size);
         }
+        // A failed removal stays indexed so the next pass retries it.
+        if !prune || path.exists() {
+            kept_total = kept_total.saturating_add(size);
+            if let Some(run_id) = run_id {
+                kept_reports.insert(run_id.clone());
+            }
+        }
+    }
+    index
+        .reports
+        .retain(|report| kept_reports.contains(&report.run_id));
+    index.schema_version = REPORT_INDEX_SCHEMA;
+    if seeded || index.reports.len() != loaded_len {
+        save_report_index(&index_path, &index)?;
     }
     Ok(())
 }
@@ -2213,6 +2408,7 @@ mod tests {
     #[test]
     fn prune_keeps_the_newest_reports_and_honours_max_reports() {
         let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
         let root = base.path().join("reports").join("watch").join("soak");
         std::fs::create_dir_all(&root).expect("reports root");
         for name in ["one", "two", "three"] {
@@ -2223,7 +2419,7 @@ mod tests {
         }
         let mut watcher = test_watcher();
         watcher.retention.max_reports = 2;
-        prune_watcher_reports(base.path(), &watcher).expect("prune");
+        prune_watcher_reports(&home, base.path(), &watcher).expect("prune");
         let names: Vec<String> = std::fs::read_dir(&root)
             .expect("read reports")
             .flatten()
@@ -2231,6 +2427,197 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 2, "{names:?}");
         assert!(names.iter().any(|name| name == "three"), "{names:?}");
+    }
+
+    fn write_run_report(root: &Path, run_id: &str) {
+        let dir = root.join(run_id);
+        std::fs::create_dir_all(&dir).expect("run dir");
+        std::fs::write(dir.join("report.json"), b"{}").expect("report");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    fn index_with(entries: &[(&str, &Path)]) -> ReportIndex {
+        ReportIndex {
+            schema_version: REPORT_INDEX_SCHEMA,
+            reports: entries
+                .iter()
+                .map(|(run_id, path)| ReportEntry {
+                    run_id: (*run_id).to_string(),
+                    path: path.display().to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn prune_removes_tracked_normal_reports_and_rewrites_the_index() {
+        let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
+        let report_root = base.path().join("reports");
+        let ids = [
+            "20260101-000000-aaaa",
+            "20260101-000001-bbbb",
+            "20260101-000002-cccc",
+        ];
+        for id in ids {
+            write_run_report(&report_root, id);
+        }
+        let watcher = test_watcher();
+        let paths: Vec<PathBuf> = ids.iter().map(|id| report_root.join(id)).collect();
+        let index = index_with(&[
+            (ids[0], &paths[0]),
+            (ids[1], &paths[1]),
+            (ids[2], &paths[2]),
+        ]);
+        save_report_index(&report_index_path(&home, base.path(), &watcher), &index).expect("index");
+
+        let mut watcher = test_watcher();
+        watcher.retention.max_reports = 2;
+        prune_watcher_reports(&home, base.path(), &watcher).expect("prune");
+
+        assert!(!paths[0].exists());
+        assert!(paths[1].exists());
+        assert!(paths[2].exists());
+        let stored = load_report_index(&report_index_path(&home, base.path(), &watcher))
+            .expect("stored index");
+        assert_eq!(stored.reports.len(), 2, "{:?}", stored.reports);
+        assert!(stored.reports.iter().all(|entry| entry.run_id != ids[0]));
+    }
+
+    #[test]
+    fn prune_combines_dumps_and_reports_and_leaves_untracked_runs_alone() {
+        let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
+        let report_root = base.path().join("reports");
+        let ids = ["20260101-000000-aaaa", "20260101-000001-bbbb"];
+        for id in ids {
+            write_run_report(&report_root, id);
+        }
+        let dump = base
+            .path()
+            .join("reports")
+            .join("watch")
+            .join("soak")
+            .join("20260101-000002-dddd");
+        std::fs::create_dir_all(&dump).expect("dump");
+        std::fs::write(dump.join("dump.json"), b"{}").expect("dump metadata");
+        std::thread::sleep(Duration::from_millis(20));
+        // A manual run in the same report directory is not part of the pool.
+        let manual = report_root.join("20260101-000003-eeee");
+        std::fs::create_dir_all(&manual).expect("manual");
+        std::fs::write(manual.join("report.json"), b"{}").expect("manual report");
+
+        let watcher = test_watcher();
+        let index = index_with(&[
+            (ids[0], &report_root.join(ids[0])),
+            (ids[1], &report_root.join(ids[1])),
+        ]);
+        save_report_index(&report_index_path(&home, base.path(), &watcher), &index).expect("index");
+
+        let mut watcher = test_watcher();
+        watcher.retention.max_reports = 2;
+        prune_watcher_reports(&home, base.path(), &watcher).expect("prune");
+
+        assert!(!report_root.join(ids[0]).exists());
+        assert!(report_root.join(ids[1]).exists());
+        assert!(dump.exists());
+        assert!(manual.exists());
+    }
+
+    fn job_record(id: &str, label: &str, workspace: &Path, run_dir: &Path) -> jobs::JobRecord {
+        jobs::JobRecord {
+            schema_version: 1,
+            id: id.to_string(),
+            status: jobs::JobStatus::Passed,
+            detached: true,
+            created_at: "2026-11-08T00:00:00Z".to_string(),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            exit_code: Some(0),
+            workspace: workspace.display().to_string(),
+            devices: Vec::new(),
+            plays: Vec::new(),
+            label: label.to_string(),
+            pid: None,
+            queue_position: None,
+            run_dir: run_dir.display().to_string(),
+            message: None,
+        }
+    }
+
+    #[test]
+    fn report_index_seeds_from_watcher_job_records_for_the_workspace() {
+        let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
+        let report_root = base.path().join("reports");
+        let watcher = test_watcher();
+        let run = report_root.join("20260101-000000-aaaa");
+        let manual = report_root.join("20260101-000001-bbbb");
+        let other = report_root.join("20260101-000002-cccc");
+        let prefix_collision = report_root.join("20260101-000003-dddd");
+        for dir in [&run, &manual, &other, &prefix_collision] {
+            std::fs::create_dir_all(dir).expect("run dir");
+        }
+        let store = jobs::JobStore::new(&home);
+        for record in [
+            job_record(
+                "20260101-000000-aaaa",
+                "watcher soak · 1 play(s) x 1 device(s)",
+                base.path(),
+                &run,
+            ),
+            job_record(
+                "20260101-000001-bbbb",
+                "1 play(s) x 1 device(s)",
+                base.path(),
+                &manual,
+            ),
+            job_record(
+                "20260101-000002-cccc",
+                "watcher soak · 1 play(s) x 1 device(s)",
+                Path::new("elsewhere"),
+                &other,
+            ),
+            job_record(
+                "20260101-000003-dddd",
+                "watcher soak2 · 1 play(s) x 1 device(s)",
+                base.path(),
+                &prefix_collision,
+            ),
+        ] {
+            store.write_record(&record).expect("job record");
+        }
+
+        let index = seed_report_index(&home, base.path(), &watcher);
+        assert_eq!(index.reports.len(), 1, "{:?}", index.reports);
+        assert_eq!(index.reports[0].run_id, "20260101-000000-aaaa");
+    }
+
+    #[test]
+    fn remember_watcher_report_adds_each_run_once() {
+        let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
+        let watcher = test_watcher();
+        let run_id = "20260101-000000-aaaa";
+        let run_dir = base.path().join("reports").join(run_id);
+        std::fs::create_dir_all(&run_dir).expect("run dir");
+        let outcome = cli::RunOutcome {
+            exit_code: EXIT_OK,
+            run_id: Some(run_id.to_string()),
+            run_dir: Some(run_dir),
+            report: None,
+            messages: Vec::new(),
+            detail: None,
+        };
+
+        remember_watcher_report(&home, base.path(), &watcher, &outcome);
+        remember_watcher_report(&home, base.path(), &watcher, &outcome);
+
+        let index = load_report_index(&report_index_path(&home, base.path(), &watcher))
+            .expect("report index");
+        assert_eq!(index.reports.len(), 1);
+        assert_eq!(index.reports[0].run_id, run_id);
     }
 
     fn report_with(status: Status, run_status: RunStatus, code: Option<&str>) -> RunReport {
