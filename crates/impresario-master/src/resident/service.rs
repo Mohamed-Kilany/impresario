@@ -1441,11 +1441,17 @@ fn is_run_dir_name(path: &Path) -> bool {
     };
     let bytes = name.as_bytes();
     bytes.len() == 20
-        && bytes[..8].iter().all(|byte| byte.is_ascii_digit())
-        && bytes[8] == b'-'
-        && bytes[9..15].iter().all(|byte| byte.is_ascii_digit())
-        && bytes[15] == b'-'
-        && bytes[16..].iter().all(|byte| byte.is_ascii_hexdigit())
+        && bytes
+            .get(..8)
+            .is_some_and(|part| part.iter().all(|byte| byte.is_ascii_digit()))
+        && bytes.get(8) == Some(&b'-')
+        && bytes
+            .get(9..15)
+            .is_some_and(|part| part.iter().all(|byte| byte.is_ascii_digit()))
+        && bytes.get(15) == Some(&b'-')
+        && bytes
+            .get(16..)
+            .is_some_and(|part| part.iter().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 /// Enforce one watcher's retention over its failure dumps and the normal run
@@ -2465,9 +2471,9 @@ mod tests {
         let watcher = test_watcher();
         let paths: Vec<PathBuf> = ids.iter().map(|id| report_root.join(id)).collect();
         let index = index_with(&[
-            (ids[0], &paths[0]),
-            (ids[1], &paths[1]),
-            (ids[2], &paths[2]),
+            (ids[0], paths[0].as_path()),
+            (ids[1], paths[1].as_path()),
+            (ids[2], paths[2].as_path()),
         ]);
         save_report_index(&report_index_path(&home, base.path(), &watcher), &index).expect("index");
 
@@ -2508,10 +2514,9 @@ mod tests {
         std::fs::write(manual.join("report.json"), b"{}").expect("manual report");
 
         let watcher = test_watcher();
-        let index = index_with(&[
-            (ids[0], &report_root.join(ids[0])),
-            (ids[1], &report_root.join(ids[1])),
-        ]);
+        let first = report_root.join(ids[0]);
+        let second = report_root.join(ids[1]);
+        let index = index_with(&[(ids[0], first.as_path()), (ids[1], second.as_path())]);
         save_report_index(&report_index_path(&home, base.path(), &watcher), &index).expect("index");
 
         let mut watcher = test_watcher();
