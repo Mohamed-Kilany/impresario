@@ -122,8 +122,8 @@ A watcher repeats one run selection until stopped or paused:
 | `on_failure.dump` | any of `report`, `screenshot`, `logs`, `device_state`, `evidence` |
 | `on_failure.throttle.same_failure_window` | duplicate-failure window, default `15m` |
 | `on_failure.notify` | `toast` and/or `webhook:NAME` channels |
-| `device_health.treat_unreachable_as` | `infrastructure` (default) or `test` |
-| `device_health.backoff` | 1 to 16 positive spans, default `10s, 30s, 2m, 10m` |
+| `device_health.treat_unreachable_as` | `infrastructure` (default) or `test`; `test` also keeps unreachable failures out of the device backoff |
+| `device_health.backoff` | 1 to 16 positive spans, default `10s, 30s, 2m, 10m`; advances only on consecutive infrastructure failures |
 | `retention` | `max_reports` (500), `max_age` (`14d`), `max_disk` (`10GiB`); covers failure dumps and the watcher's normal reports |
 | `enabled` | defaults to `true` |
 
@@ -141,6 +141,13 @@ take effect without restarting the service; a change to `lease` takes effect on
 the next iteration. A `priority: low` watcher checks for a live queued job on
 the devices of its previous iteration and waits while one is present; a
 normal-priority watcher never yields.
+`device_health.backoff` follows infrastructure failures only: each consecutive
+infrastructure-class iteration advances one step through the list, and a test
+failure, an unverifiable iteration or a successful run resets the streak.
+`treat_unreachable_as: test` reclassifies unreachable devices as test failures,
+so they reset the streak instead of advancing it. The general consecutive
+failure count in `watch status` still counts every failed or unverifiable
+iteration, and a planning/profile error keeps its own conservative backoff.
 `watch start|stop` edit the enabled flag and clear/write the per-watcher
 control files; `watch pause|resume` write or clear only the pause marker, and
 `watch run-now` runs the selection once without changing the loop. Each

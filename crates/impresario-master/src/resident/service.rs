@@ -721,6 +721,9 @@ fn watcher_loop(
 ) {
     let mut paused = initially_paused;
     let mut failure_streak = 0_u32;
+    // Device backoff follows infrastructure failures only; `failure_streak`
+    // stays the general failure count shown in the resident status.
+    let mut infrastructure_streak = 0_u32;
     let mut watcher = initial.clone();
     let mut notifications = initial_notifications.clone();
     let mut last_devices: Option<Vec<String>> = None;
@@ -869,6 +872,11 @@ fn watcher_loop(
         } else {
             failure_streak = 0;
         }
+        infrastructure_streak = next_infrastructure_streak(
+            infrastructure_streak,
+            &outcome,
+            watcher.device_health.treat_unreachable_as,
+        );
         if let Ok(mut state) = state.lock() {
             let entry = state.watchers.entry(watcher.name.clone()).or_default();
             entry.last_status = Some(status.clone());
@@ -936,7 +944,7 @@ fn watcher_loop(
             }
             last_retention = Some(Instant::now());
         }
-        let gap = watcher_gap(watcher, failure_streak);
+        let gap = watcher_gap(watcher, infrastructure_streak);
         sleep_unless_stopped(gap, service_stop, stop);
         if let Ok(mut set) = running.lock() {
             set.remove(&watcher_key(&watcher.name));
@@ -944,7 +952,7 @@ fn watcher_loop(
     }
 }
 
-fn watcher_gap(watcher: &Watcher, failure_streak: u32) -> Duration {
+fn watcher_gap(watcher: &Watcher, infrastructure_streak: u32) -> Duration {
     let mut gap = match &watcher.pacing {
         Pacing::BackToBack => Duration::ZERO,
         Pacing::MinGap { gap } => impresario_core::resident::parse_span(gap)
@@ -952,8 +960,8 @@ fn watcher_gap(watcher: &Watcher, failure_streak: u32) -> Duration {
             .and_then(|duration| duration.to_std().ok())
             .unwrap_or(Duration::ZERO),
     };
-    if failure_streak > 0 {
-        gap = gap.max(watcher_backoff(watcher, failure_streak));
+    if infrastructure_streak > 0 {
+        gap = gap.max(watcher_backoff(watcher, infrastructure_streak));
     }
     gap
 }
@@ -1617,6 +1625,24 @@ fn classify_outcome(
         return Some(NotifyEvent::Failure);
     }
     None
+}
+
+/// Only infrastructure-class failures advance the watcher's device backoff;
+/// test, unverifiable and successful iterations reset the streak.
+fn infrastructure_failure(outcome: &cli::RunOutcome, unreachable_as: FailureClass) -> bool {
+    classify_outcome(outcome, unreachable_as) == Some(NotifyEvent::DeviceUnreachable)
+}
+
+fn next_infrastructure_streak(
+    current: u32,
+    outcome: &cli::RunOutcome,
+    unreachable_as: FailureClass,
+) -> u32 {
+    if infrastructure_failure(outcome, unreachable_as) {
+        current.saturating_add(1)
+    } else {
+        0
+    }
 }
 
 fn report_has_infrastructure_failure(report: &RunReport) -> bool {
@@ -2763,6 +2789,85 @@ mod tests {
             classify_outcome(&missing, FailureClass::Test),
             Some(NotifyEvent::Failure)
         );
+    }
+
+    #[test]
+    fn infrastructure_streak_only_advances_on_device_failures() {
+        let passed = outcome(report_with(Status::Passed, RunStatus::Passed, None));
+        let failed = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("CHECK_FAILED"),
+        ));
+        let unverifiable = outcome(report_with(Status::Unverifiable, RunStatus::Passed, None));
+        let infrastructure = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("TRANSPORT"),
+        ));
+
+        let mut streak = 0;
+        streak = next_infrastructure_streak(streak, &failed, FailureClass::Infrastructure);
+        assert_eq!(streak, 0);
+        streak = next_infrastructure_streak(streak, &unverifiable, FailureClass::Infrastructure);
+        assert_eq!(streak, 0);
+        streak = next_infrastructure_streak(streak, &infrastructure, FailureClass::Infrastructure);
+        assert_eq!(streak, 1);
+        streak = next_infrastructure_streak(streak, &infrastructure, FailureClass::Infrastructure);
+        assert_eq!(streak, 2);
+        streak = next_infrastructure_streak(streak, &failed, FailureClass::Infrastructure);
+        assert_eq!(streak, 0);
+        streak = next_infrastructure_streak(streak, &infrastructure, FailureClass::Infrastructure);
+        assert_eq!(streak, 1);
+        streak = next_infrastructure_streak(streak, &passed, FailureClass::Infrastructure);
+        assert_eq!(streak, 0);
+
+        let missing = cli::RunOutcome {
+            exit_code: EXIT_INFRA,
+            run_id: None,
+            run_dir: None,
+            report: None,
+            messages: Vec::new(),
+            detail: None,
+        };
+        assert_eq!(
+            next_infrastructure_streak(0, &missing, FailureClass::Infrastructure),
+            1
+        );
+        assert_eq!(
+            next_infrastructure_streak(0, &missing, FailureClass::Test),
+            0
+        );
+    }
+
+    #[test]
+    fn treat_unreachable_as_test_disables_infrastructure_backoff() {
+        let infrastructure = outcome(report_with(
+            Status::Failed,
+            RunStatus::Failed,
+            Some("TRANSPORT"),
+        ));
+        assert!(infrastructure_failure(
+            &infrastructure,
+            FailureClass::Infrastructure
+        ));
+        assert!(!infrastructure_failure(&infrastructure, FailureClass::Test));
+        let mut streak = 0;
+        for _ in 0..3 {
+            streak = next_infrastructure_streak(streak, &infrastructure, FailureClass::Test);
+            assert_eq!(streak, 0);
+        }
+    }
+
+    #[test]
+    fn watcher_gap_uses_the_infrastructure_streak() {
+        let mut watcher = test_watcher();
+        watcher.pacing = Pacing::MinGap {
+            gap: "5s".to_string(),
+        };
+        assert_eq!(watcher_gap(&watcher, 0), Duration::from_secs(5));
+        assert_eq!(watcher_gap(&watcher, 1), Duration::from_secs(10));
+        assert_eq!(watcher_gap(&watcher, 2), Duration::from_secs(30));
     }
 
     #[test]
