@@ -19,6 +19,14 @@ use super::service::{self, ServiceState};
 #[derive(Debug, Clone, Serialize)]
 pub struct ResidentStatus {
     pub running: bool,
+    /// Version reported by the runner that wrote `state.json`.
+    pub runner_version: String,
+    /// Version of the client rendering this view.
+    pub client_version: String,
+    /// True when a live runner was written by a different binary version.
+    pub restart_required: bool,
+    /// True when a live runner has not refreshed its heartbeat in time.
+    pub heartbeat_stale: bool,
     pub state: ServiceState,
     pub schedules: Vec<ScheduleStatus>,
     pub watchers: Vec<WatcherStatus>,
@@ -70,6 +78,8 @@ pub fn collect(home: &Home, config_path: &Path) -> Result<ResidentStatus, String
     let sections = config::load_effective(home, config_path)?;
     let running = state.pid != 0 && crate::jobs::pid_alive(state.pid);
     let now = Local::now();
+    let restart_required = running && service::version_mismatch(&state);
+    let heartbeat_stale = running && service::heartbeat_stale(&state, now);
 
     let schedules = sections
         .schedules
@@ -129,6 +139,10 @@ pub fn collect(home: &Home, config_path: &Path) -> Result<ResidentStatus, String
 
     Ok(ResidentStatus {
         running,
+        runner_version: state.runner_version.clone(),
+        client_version: service::RUNNER_VERSION.to_string(),
+        restart_required,
+        heartbeat_stale,
         state,
         schedules,
         watchers,

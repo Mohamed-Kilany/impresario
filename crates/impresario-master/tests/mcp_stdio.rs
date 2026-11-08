@@ -488,6 +488,9 @@ fn resident_tools_join_state_and_edit_config_layers() {
 
     let status = structured(&mcp.tools_call(1, "impresario_service_status", json!({})));
     assert_eq!(status["running"], json!(false));
+    assert_eq!(status["client_version"], json!(env!("CARGO_PKG_VERSION")));
+    assert_eq!(status["restart_required"], json!(false));
+    assert_eq!(status["heartbeat_stale"], json!(false));
     assert_eq!(status["schedules"][0]["name"], json!("nightly"));
     assert_eq!(status["watchers"][0]["name"], json!("soak"));
     assert_eq!(status["watchers"][0]["lease"], json!("gap"));

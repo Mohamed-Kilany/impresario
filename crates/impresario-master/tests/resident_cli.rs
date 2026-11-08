@@ -388,3 +388,55 @@ fn watch_add_writes_and_lists_the_lease_mode_and_rejects_no_gap_low_priority() {
         invalid.stderr
     );
 }
+
+#[test]
+fn service_status_reports_version_handshake_and_stale_heartbeat() {
+    let home = tempfile::tempdir().expect("home");
+    let workspace = tempfile::tempdir().expect("workspace");
+    write_workspace(workspace.path(), "", &[], &[]);
+    let service = home.path().join("service");
+    std::fs::create_dir_all(&service).expect("service dir");
+    let state_path = service.join("state.json");
+    let now = chrono::Local::now().to_rfc3339();
+    let write_state = |heartbeat: &str, runner: &str| {
+        std::fs::write(
+            &state_path,
+            serde_json::json!({
+                "version": 1,
+                "pid": std::process::id(),
+                "started_at": heartbeat,
+                "updated_at": heartbeat,
+                "heartbeat_at": heartbeat,
+                "runner_version": runner,
+                "workspace": workspace.path().display().to_string(),
+            })
+            .to_string(),
+        )
+        .expect("state");
+    };
+
+    write_state(&now, "0.0.1");
+    let status = run(
+        home.path(),
+        Some(workspace.path()),
+        &["service", "status", "--json"],
+    );
+    assert_eq!(status.code, EXIT_OK, "stderr={}", status.stderr);
+    let value: serde_json::Value = serde_json::from_str(&status.stdout).expect("status json");
+    assert_eq!(value["running"], true);
+    assert_eq!(value["runner_version"], "0.0.1");
+    assert_eq!(value["client_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["restart_required"], true);
+    assert_eq!(value["heartbeat_stale"], false);
+
+    write_state("2000-01-01T00:00:00+00:00", env!("CARGO_PKG_VERSION"));
+    let status = run(
+        home.path(),
+        Some(workspace.path()),
+        &["service", "status", "--json"],
+    );
+    assert_eq!(status.code, EXIT_OK, "stderr={}", status.stderr);
+    let value: serde_json::Value = serde_json::from_str(&status.stdout).expect("status json");
+    assert_eq!(value["restart_required"], false);
+    assert_eq!(value["heartbeat_stale"], true);
+}

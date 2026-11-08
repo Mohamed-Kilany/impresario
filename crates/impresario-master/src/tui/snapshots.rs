@@ -325,6 +325,10 @@ fn resident_screen_shows_service_schedules_watchers_and_dumps() {
     };
     app.resident = Some(ResidentStatus {
         running: true,
+        runner_version: "0.9.0".to_string(),
+        client_version: "1.0.0".to_string(),
+        restart_required: true,
+        heartbeat_stale: true,
         state,
         schedules: vec![ScheduleStatus {
             name: "nightly".to_string(),
@@ -363,6 +367,9 @@ fn resident_screen_shows_service_schedules_watchers_and_dumps() {
         "Resident",
         "Service  running",
         "pid 4242",
+        "version 0.9.0",
+        "restart required: runner 0.9.0 differs from client 1.0.0",
+        "heartbeat stale: last",
         "Schedules (1)",
         "nightly",
         "2026-11-08 02:30:00",

@@ -1131,10 +1131,43 @@ fn draw_resident(frame: &mut Frame, app: &App, area: Rect) {
         if !state.started_at.is_empty() {
             facts.push(format!("started {}", state.started_at));
         }
+        facts.push(format!(
+            "version {}",
+            if status.runner_version.is_empty() {
+                "-"
+            } else {
+                status.runner_version.as_str()
+            }
+        ));
         if !state.updated_at.is_empty() {
             facts.push(format!("updated {}", state.updated_at));
         }
         lines.push(Line::from(Span::styled(facts.join(" · "), secondary(app))));
+        if status.restart_required {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "restart required: runner {} differs from client {}",
+                    if status.runner_version.is_empty() {
+                        "unknown"
+                    } else {
+                        status.runner_version.as_str()
+                    },
+                    status.client_version
+                ),
+                error_style(app),
+            )));
+        }
+        if status.heartbeat_stale {
+            let last = if state.heartbeat_at.is_empty() {
+                &state.updated_at
+            } else {
+                &state.heartbeat_at
+            };
+            lines.push(Line::from(Span::styled(
+                format!("heartbeat stale: last {last}"),
+                error_style(app),
+            )));
+        }
         lines.push(Line::from(""));
 
         lines.push(Line::from(Span::styled(

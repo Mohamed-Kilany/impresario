@@ -200,6 +200,26 @@ opens the report (or prints its path with `--print`). `notify list` shows the
 top-level routed `watch_notify` and `schedule_notify` events; delivery
 suppressions appear as their own `notify_delivery` events.
 
+## Heartbeat and version handshake
+
+The runner writes `heartbeat_at` to `service/state.json` on every 500 ms loop
+tick and stamps `runner_version` with the binary that wrote the file. Status
+clients (`service status`, the MCP `impresario_service_status` tool and the TUI
+Resident screen) report both:
+
+- `heartbeat_stale` is true when a live runner's heartbeat (or, for a
+  pre-handshake state file, `updated_at`) is older than 30 s. The runner keeps
+  scheduling while the host is asleep; after wake the next tick refreshes the
+  timestamp, so a stale report is transient unless the process is wedged.
+- `restart_required` is true when a live runner reports a different
+  `runner_version`. `service start` performs the handshake automatically: it
+  asks the old runner to stop and starts the current binary, so upgrading the
+  CLI never leaves an old runner scheduling jobs. `service restart` is the
+  explicit form.
+
+The state schema stays version 1: `heartbeat_at` and `runner_version` are
+optional fields, and a missing heartbeat falls back to `updated_at`.
+
 ## Clients
 
 The MCP server and the TUI Resident screen read the same
@@ -222,7 +242,6 @@ wiring and tool schemas.
 
 ## Current limits
 
-The resident runner is implemented and covered by mock-driven tests, but the
-following are not yet complete: the heartbeat/version handshake. Physical
+The resident runner is implemented and covered by mock-driven tests. Physical
 macOS/Linux autostart and toast action behavior remain hardware-unverified until
 run on those hosts.

@@ -177,11 +177,17 @@ log live under `~/.impresario/service/` (`state.json`, `events.jsonl`,
 Windows Startup `.cmd`, a macOS LaunchAgent plist or a Linux `systemd --user`
 unit; `uninstall` removes only that hook unless `--purge` is given. `service
 status` reports the pid, pause state and per-schedule/per-watcher counters even
-when the runner is stopped. Restarting the runner in the same workspace resumes
-those counters and the missed-fire baseline; a different workspace starts clean.
-A recurring schedule is anchored when the runner first observes it (or at the
-last persisted observation when it was configured while the service was off),
-and editing its `when` block resets the anchor.
+when the runner is stopped. It also reports the runner version, whether a live
+runner was written by a different client version (`restart_required`) and
+whether its heartbeat is older than 30 s (`heartbeat_stale`); the runner
+refreshes the heartbeat every 500 ms. `service start` performs the version
+handshake: when a live runner reports a different version (including a
+pre-handshake state file), it asks that runner to stop and starts the current
+binary; `service restart` does the same explicitly. Restarting the runner in the
+same workspace resumes those counters and the missed-fire baseline; a different
+workspace starts clean. A recurring schedule is anchored when the runner first
+observes it (or at the last persisted observation when it was configured while
+the service was off), and editing its `when` block resets the anchor.
 
 Schedules and watchers are optional `schedules:`/`watchers:` sections in the
 workspace config. Global `config.yaml` sections with the same names are merged

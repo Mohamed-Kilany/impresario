@@ -1347,6 +1347,12 @@ impl App {
         }
         if let Some(status) = &self.resident {
             lines += 3; // service, facts, blank
+            if status.restart_required {
+                lines += 1;
+            }
+            if status.heartbeat_stale {
+                lines += 1;
+            }
             lines += 1; // schedules heading
             if status.schedules.is_empty() {
                 lines += 1;

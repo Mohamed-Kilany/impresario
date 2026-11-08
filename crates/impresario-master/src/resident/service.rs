@@ -33,6 +33,15 @@ const STATE_VERSION: u32 = 1;
 const TICK: Duration = Duration::from_millis(500);
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Version of this binary, written to `state.json` so clients can detect a
+/// resident runner left behind by an older installation.
+pub const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// A runner that has not refreshed its heartbeat for this long is reported as
+/// unresponsive. The runner ticks every 500 ms; the timeout leaves room for a
+/// suspended host or a heavily loaded machine.
+pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// One stop flag per running watcher thread.
 type WatcherHandles = Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>>;
 
@@ -52,6 +61,13 @@ pub struct ServiceState {
     pub pid: u32,
     pub started_at: String,
     pub updated_at: String,
+    /// Last runner loop tick. Clients treat a stale value as an unresponsive
+    /// process; `updated_at` remains the last config observation used to
+    /// anchor missed fires.
+    pub heartbeat_at: String,
+    /// Version of the binary that wrote this state; empty on files written
+    /// before the version handshake existed.
+    pub runner_version: String,
     pub workspace: String,
     pub paused: bool,
     pub schedules: BTreeMap<String, ScheduleState>,
@@ -67,6 +83,8 @@ impl Default for ServiceState {
             pid: 0,
             started_at: String::new(),
             updated_at: String::new(),
+            heartbeat_at: String::new(),
+            runner_version: String::new(),
             workspace: String::new(),
             paused: false,
             schedules: BTreeMap::new(),
@@ -255,6 +273,25 @@ pub fn is_running(home: &Home) -> bool {
     }
 }
 
+/// Whether the persisted heartbeat is older than [`HEARTBEAT_TIMEOUT`].
+///
+/// A state file with neither timestamp belongs to a pre-handshake runner; a
+/// live pid then counts as stale because liveness cannot be proven.
+#[must_use]
+pub fn heartbeat_stale(state: &ServiceState, now: DateTime<Local>) -> bool {
+    let Some(at) = parse_local(&state.heartbeat_at).or_else(|| parse_local(&state.updated_at))
+    else {
+        return state.pid != 0;
+    };
+    now.signed_duration_since(at).num_seconds() > HEARTBEAT_TIMEOUT.as_secs() as i64
+}
+
+/// Whether a live state file was written by a different binary version.
+#[must_use]
+pub fn version_mismatch(state: &ServiceState) -> bool {
+    state.pid != 0 && state.runner_version != RUNNER_VERSION
+}
+
 /// Resume the persisted counters when the runner restarts in the same
 /// workspace. The previous `updated_at` is the last time the runner observed
 /// the config, so it anchors missed-fire detection for schedules that were
@@ -280,6 +317,8 @@ fn resume_state(
     state.pid = std::process::id();
     state.started_at = started_at.to_rfc3339();
     state.updated_at = started_at.to_rfc3339();
+    state.heartbeat_at = started_at.to_rfc3339();
+    state.runner_version = RUNNER_VERSION.to_string();
     state.workspace = workspace;
     state.paused = false;
     (state, prior_seen)
@@ -323,7 +362,9 @@ pub fn run_foreground(home: &Home, base: &Path, config_path: &Path, devices_path
                 Err(_) => break,
             };
             state.paused = now_paused;
-            state.updated_at = Local::now().to_rfc3339();
+            let now = Local::now();
+            state.updated_at = now.to_rfc3339();
+            state.heartbeat_at = now.to_rfc3339();
             state.pid = std::process::id();
             if let Err(error) = save_state(home, &state) {
                 log_line(home, &format!("state write failed: {error}"));
@@ -1895,7 +1936,36 @@ pub fn start(
 ) -> Result<u32, String> {
     if is_running(home) {
         let state = read_state(home)?;
-        return Ok(state.pid);
+        if state.pid != 0 && !version_mismatch(&state) {
+            return Ok(state.pid);
+        }
+        if version_mismatch(&state) {
+            // Version handshake: a client from a newer installation restarts
+            // the resident runner instead of leaving it on stale code.
+            let previous = if state.runner_version.is_empty() {
+                "unknown"
+            } else {
+                state.runner_version.as_str()
+            };
+            log_line(
+                home,
+                &format!(
+                    "resident runner version {previous} differs from client {RUNNER_VERSION}; restarting"
+                ),
+            );
+            request_stop(home)?;
+            for _ in 0..100 {
+                if !is_running(home) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if is_running(home) {
+                return Err(format!(
+                    "resident runner version {previous} differs from client {RUNNER_VERSION} and did not stop; run `impresario service restart`"
+                ));
+            }
+        }
     }
     let exe =
         std::env::current_exe().map_err(|error| format!("cannot locate impresario: {error}"))?;
@@ -2462,6 +2532,60 @@ mod tests {
         assert!(resumed.schedules.is_empty());
         assert!(prior.is_none());
         assert_eq!(resumed.workspace, other.display().to_string());
+    }
+
+    #[test]
+    fn resume_state_stamps_the_runner_version_and_heartbeat() {
+        let base = Path::new("/workspace/demo");
+        let started = Local::now();
+        let (resumed, _) = resume_state(ServiceState::default(), base, started);
+        assert_eq!(resumed.runner_version, RUNNER_VERSION);
+        assert_eq!(resumed.heartbeat_at, started.to_rfc3339());
+        assert_eq!(resumed.updated_at, started.to_rfc3339());
+    }
+
+    #[test]
+    fn heartbeat_staleness_and_version_mismatch_are_detected() {
+        let now = local_at(12, 0, 0);
+        let fresh = ServiceState {
+            pid: 42,
+            heartbeat_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+            runner_version: RUNNER_VERSION.to_string(),
+            ..ServiceState::default()
+        };
+        assert!(!heartbeat_stale(&fresh, now));
+        assert!(!version_mismatch(&fresh));
+
+        let old = ServiceState {
+            heartbeat_at: (now - chrono::Duration::seconds(HEARTBEAT_TIMEOUT.as_secs() as i64 + 1))
+                .to_rfc3339(),
+            ..fresh.clone()
+        };
+        assert!(heartbeat_stale(&old, now));
+
+        // Pre-handshake files have no heartbeat field; updated_at still anchors
+        // the watchdog so an upgraded client can read them.
+        let legacy = ServiceState {
+            heartbeat_at: String::new(),
+            updated_at: now.to_rfc3339(),
+            ..fresh.clone()
+        };
+        assert!(!heartbeat_stale(&legacy, now));
+        let unknown = ServiceState {
+            heartbeat_at: String::new(),
+            updated_at: String::new(),
+            ..fresh.clone()
+        };
+        assert!(heartbeat_stale(&unknown, now));
+
+        let outdated = ServiceState {
+            runner_version: "0.0.1".to_string(),
+            ..fresh
+        };
+        assert!(version_mismatch(&outdated));
+        let stopped = ServiceState { pid: 0, ..outdated };
+        assert!(!version_mismatch(&stopped));
     }
 
     fn outcome_in(run_dir: &Path, report: RunReport) -> cli::RunOutcome {

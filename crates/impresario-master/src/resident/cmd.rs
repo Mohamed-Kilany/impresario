@@ -1355,6 +1355,8 @@ fn service_status(home: &Home, config_path: &Path, json: bool) -> i32 {
     };
     let sections = config::load_effective(home, config_path).ok();
     let running = state.pid != 0 && crate::jobs::pid_alive(state.pid);
+    let restart_required = running && service::version_mismatch(&state);
+    let heartbeat_stale = running && service::heartbeat_stale(&state, chrono::Local::now());
     if json {
         let watchers: Vec<serde_json::Value> = state
             .watchers
@@ -1371,6 +1373,10 @@ fn service_status(home: &Home, config_path: &Path, json: bool) -> i32 {
             .collect();
         let value = serde_json::json!({
             "running": running,
+            "runner_version": state.runner_version.clone(),
+            "client_version": service::RUNNER_VERSION,
+            "restart_required": restart_required,
+            "heartbeat_stale": heartbeat_stale,
             "state": state,
             "watchers": watchers,
         });
@@ -1380,6 +1386,34 @@ fn service_status(home: &Home, config_path: &Path, json: bool) -> i32 {
     println!("resident: {}", if running { "running" } else { "stopped" });
     if state.pid != 0 {
         println!("pid: {}", state.pid);
+    }
+    if !state.runner_version.is_empty() {
+        println!(
+            "version: runner {} client {}",
+            state.runner_version,
+            service::RUNNER_VERSION
+        );
+    }
+    if restart_required {
+        println!(
+            "restart required: runner {} differs from client {}",
+            if state.runner_version.is_empty() {
+                "unknown"
+            } else {
+                state.runner_version.as_str()
+            },
+            service::RUNNER_VERSION
+        );
+    }
+    if heartbeat_stale {
+        println!(
+            "heartbeat: stale (last {})",
+            service::display_local(if state.heartbeat_at.is_empty() {
+                &state.updated_at
+            } else {
+                &state.heartbeat_at
+            })
+        );
     }
     if !state.started_at.is_empty() {
         println!("started: {}", service::display_local(&state.started_at));

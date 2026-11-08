@@ -67,7 +67,7 @@ does not exist, an argument is out of range) are tool errors
 | `impresario_report_get` | `run_id?` | The full `report.json` (Appendix B document). Default: the newest run. |
 | `impresario_artifacts_list` | `run_id?` | Files of a run with sizes and kinds (`report.json`, `junit.xml`, `report.html`, `screenshots/<device>/*.png`). |
 | `impresario_artifact_get` | `path`, `run_id?` | One artifact. Images (PNG/JPEG/WebP) return as image content; text artifacts return as text (truncated at 2 MiB). |
-| `impresario_service_status` | — | Resident service state: running/paused, pid, workspace, start time and the persisted schedule/watcher counters. Read-only. |
+| `impresario_service_status` | — | Resident service state: running/paused, pid, workspace, start time, the persisted schedule/watcher counters, `runner_version`/`client_version`, `restart_required` and `heartbeat_stale`. Read-only. |
 | `impresario_schedules_list` | — | Effective schedules joined with runs/failures and the next host-local fire. Disabled schedules have no next fire. |
 | `impresario_schedule_add` | `name`, `schedule` or `yaml`, `layer?` | Add one schedule to the workspace (default) or global config. `name` is authoritative; the full file is validated before writing. |
 | `impresario_schedule_remove` | `name`, `layer?` | Remove one schedule from that layer. A definition in the other layer is left untouched. |
