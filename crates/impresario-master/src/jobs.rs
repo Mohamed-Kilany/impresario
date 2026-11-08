@@ -1793,7 +1793,9 @@ mod tests {
         assert!(!waiting_for(&home, &["phone".to_string()]));
 
         std::fs::remove_file(store.lease_dir().join("wait.manual")).expect("remove wait");
-        wait("dead", u32::MAX, &["tv"]);
+        // pid 0 is never alive; `u32::MAX` would become -1 on Unix and mean
+        // "signal every process" instead of a dead pid.
+        wait("dead", 0, &["tv"]);
         assert!(!waiting_for(&home, &["tv".to_string()]));
         assert!(!waiting_for(&home, &[]));
     }
