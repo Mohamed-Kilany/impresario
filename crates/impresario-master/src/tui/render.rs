@@ -48,6 +48,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Screen::Runs => draw_runs(frame, app, body),
         Screen::Tests => draw_tests(frame, app, body),
         Screen::Coverage => draw_coverage(frame, app, body),
+        Screen::Probe => draw_probe(frame, app, body),
         Screen::Devices => draw_devices(frame, app, body),
         Screen::Apps => draw_apps(frame, app, body),
         Screen::Config => draw_config(frame, app, body),
@@ -113,6 +114,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Runs => "Runs",
         Screen::Tests => "Tests",
         Screen::Coverage => "Coverage",
+        Screen::Probe => "Probe",
         Screen::Devices => "Devices",
         Screen::Apps => "Apps",
         Screen::Config => "Config",
@@ -435,12 +437,13 @@ fn draw_landing_detail(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-const MENU: [(&str, &str); 11] = [
+const MENU: [(&str, &str); 12] = [
     ("Overview", "summary and activity"),
     ("Runs", "background jobs and live logs"),
     ("Resident", "schedules, watchers and dumps"),
     ("Tests", "scene, theatre and play explorer"),
     ("Coverage", "theatre stages × platforms"),
+    ("Probe", "plan-time evidence sources"),
     ("Devices", "configured targets"),
     ("Apps", "shared app bindings"),
     ("Config", "effective settings"),
@@ -1094,6 +1097,93 @@ fn draw_coverage(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn draw_probe(frame: &mut Frame, app: &App, area: Rect) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "{} · plan-time evidence sources; live sessions need `impresario probe`",
+                count_label(app.probe.len(), "device", "devices")
+            ),
+            secondary(app),
+        )),
+        Line::from(""),
+    ];
+    if app.probe.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No devices configured; add devices in impresario.devices.config.",
+            secondary(app),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{:<16} {:<10} {:<5} {:<5} {:<5} {:<14} {:>5}  {}",
+                "DEVICE", "PLATFORM", "SHOW", "PLAY", "DRM", "STRONGEST", "PROPS", "PROVIDERS"
+            ),
+            title_style(app),
+        )));
+        for row in &app.probe {
+            if let Some(error) = &row.error {
+                lines.push(Line::from(Span::styled(
+                    format!("{} ({}): {error}", row.device, row.platform),
+                    error_style(app),
+                )));
+                continue;
+            }
+            let yes_no = |value: bool| if value { "yes" } else { "no" };
+            lines.push(Line::from(format!(
+                "{:<16} {:<10} {:<5} {:<5} {:<5} {:<14} {:>5}  {}",
+                elide(&row.device, 16),
+                row.platform,
+                yes_no(row.showing),
+                yes_no(row.player),
+                yes_no(row.drm),
+                row.strongest,
+                row.properties,
+                row.providers.join(", ")
+            )));
+            for source in &row.sources {
+                let mark = if source.available {
+                    if app.ctx.ascii {
+                        "*"
+                    } else {
+                        "✓"
+                    }
+                } else if app.ctx.ascii {
+                    "-"
+                } else {
+                    "·"
+                };
+                let style = if source.available {
+                    Style::default().fg(color_or_reset(app, Color::Green))
+                } else {
+                    Style::default().fg(color_or_reset(app, Color::Yellow))
+                };
+                let reason = source
+                    .reason
+                    .as_deref()
+                    .map(|reason| format!(": {reason}"))
+                    .unwrap_or_default();
+                lines.push(Line::from(Span::styled(
+                    format!("  {mark} {} ({}){reason}", source.source, source.class),
+                    style,
+                )));
+            }
+        }
+    }
+    let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(
+                app,
+                "Probe · plan-time evidence sources",
+                app.focus == Focus::Content && app.screen == Screen::Probe,
+            ))
+            .scroll((app.probe_scroll.min(max_scroll), 0))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1539,6 +1629,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Coverage if app.focus == Focus::Content => {
             "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
         }
+        Screen::Probe if app.focus == Focus::Content => {
+            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+        }
         Screen::Devices | Screen::Apps | Screen::Config if app.focus == Focus::Content => {
             "Enter open · r reload · Esc menu · Tab prompt"
         }
@@ -1585,6 +1678,18 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
                 "{} · {} with missing actors",
                 count_label(app.coverage.len(), "stage", "stages"),
                 count_label(missing, "stage", "stages")
+            )
+        }
+        Screen::Probe => {
+            let available: usize = app
+                .probe
+                .iter()
+                .map(|row| row.sources.iter().filter(|source| source.available).count())
+                .sum();
+            format!(
+                "{} · {} available",
+                count_label(app.probe.len(), "device", "devices"),
+                count_label(available, "source", "sources")
             )
         }
         Screen::Devices => format!(

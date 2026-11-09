@@ -39,6 +39,7 @@ pub(super) enum Screen {
     Runs,
     Tests,
     Coverage,
+    Probe,
     Devices,
     Apps,
     Config,
@@ -54,6 +55,7 @@ impl Screen {
             Screen::Runs => "runs",
             Screen::Tests => "tests",
             Screen::Coverage => "coverage",
+            Screen::Probe => "probe",
             Screen::Devices => "devices",
             Screen::Apps => "apps",
             Screen::Config => "config",
@@ -575,6 +577,7 @@ impl App {
                     }
                     Screen::Tests => self.test_index = 0,
                     Screen::Coverage => self.coverage_scroll = 0,
+                    Screen::Probe => self.probe_scroll = 0,
                     Screen::Resident => self.resident_scroll = 0,
                     _ => {}
                 }
@@ -591,6 +594,7 @@ impl App {
                         self.test_index = self.tests.len().saturating_sub(1);
                     }
                     Screen::Coverage => self.coverage_scroll = self.coverage_max_scroll(),
+                    Screen::Probe => self.probe_scroll = self.probe_max_scroll(),
                     Screen::Resident => self.resident_scroll = self.resident_max_scroll(),
                     _ => {}
                 }
@@ -624,6 +628,7 @@ impl App {
                 Screen::Tests => self.open_selected_test(),
                 Screen::Config => self.open_config(),
                 Screen::Coverage => Action::None,
+                Screen::Probe => Action::None,
                 Screen::Devices => Action::OpenEditor(self.ctx.devices_path.clone()),
                 Screen::Apps => Action::OpenEditor(self.ctx.base.join("impresario.apps.config")),
                 Screen::Resident => Action::None,

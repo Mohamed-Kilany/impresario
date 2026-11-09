@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use impresario_core::apps;
 use impresario_core::config;
+use impresario_core::platforms::Platform;
+use impresario_core::probe;
 use impresario_core::settings::{self, SettingValue};
 use impresario_core::workspace;
 
@@ -65,6 +67,31 @@ pub(super) struct CoverageRow {
     pub platforms: BTreeSet<String>,
     /// Configured devices whose platform has no implementation of this stage.
     pub missing: Vec<String>,
+}
+
+/// One configured device's plan-time probe support.
+#[derive(Debug, Clone)]
+pub(super) struct ProbeRow {
+    pub device: String,
+    pub platform: String,
+    pub showing: bool,
+    pub player: bool,
+    pub drm: bool,
+    pub strongest: String,
+    pub properties: usize,
+    pub providers: Vec<String>,
+    pub sources: Vec<ProbeSourceRow>,
+    /// Set when the configured platform cannot be resolved.
+    pub error: Option<String>,
+}
+
+/// One evidence source in a device's probe matrix.
+#[derive(Debug, Clone)]
+pub(super) struct ProbeSourceRow {
+    pub source: String,
+    pub class: String,
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -492,6 +519,8 @@ pub(super) struct App {
     pub coverage: Vec<CoverageRow>,
     pub coverage_error: Option<String>,
     pub coverage_scroll: u16,
+    pub probe: Vec<ProbeRow>,
+    pub probe_scroll: u16,
     pub activity: VecDeque<String>,
     pub overlay: Option<String>,
     pub should_quit: bool,
@@ -553,6 +582,8 @@ impl App {
             coverage: Vec::new(),
             coverage_error: None,
             coverage_scroll: 0,
+            probe: Vec::new(),
+            probe_scroll: 0,
             activity: VecDeque::new(),
             overlay: None,
             should_quit: false,
@@ -644,7 +675,7 @@ impl App {
     }
 
     pub(super) fn move_menu(&mut self, delta: i32) {
-        const MENU_LEN: usize = 11;
+        const MENU_LEN: usize = 12;
         if delta < 0 {
             self.menu_index = self.menu_index.saturating_sub(1);
         } else {
@@ -691,11 +722,12 @@ impl App {
             2 => self.set_screen(Screen::Resident),
             3 => self.set_screen(Screen::Tests),
             4 => self.set_screen(Screen::Coverage),
-            5 => self.set_screen(Screen::Devices),
-            6 => self.set_screen(Screen::Apps),
-            7 => self.set_screen(Screen::Config),
-            8 => self.run_doctor(),
-            9 => {
+            5 => self.set_screen(Screen::Probe),
+            6 => self.set_screen(Screen::Devices),
+            7 => self.set_screen(Screen::Apps),
+            8 => self.set_screen(Screen::Config),
+            9 => self.run_doctor(),
+            10 => {
                 self.screen = Screen::Landing;
                 self.focus = Focus::Content;
                 self.overlay = None;
@@ -719,6 +751,8 @@ impl App {
             self.devices.clear();
             self.apps.clear();
             self.config_rows.clear();
+            self.probe.clear();
+            self.probe_scroll = 0;
             self.follow = None;
             self.tree.clear();
             self.logs.clear();
@@ -870,6 +904,7 @@ impl App {
             "runs" => Screen::Runs,
             "tests" => Screen::Tests,
             "coverage" => Screen::Coverage,
+            "probe" => Screen::Probe,
             "devices" => Screen::Devices,
             "apps" => Screen::Apps,
             "config" => Screen::Config,
@@ -1377,6 +1412,12 @@ impl App {
         self.rebuild_coverage();
     }
 
+    /// Rebuild the plan-time probe matrix for the configured devices.
+    pub(super) fn load_probe(&mut self) {
+        self.load_devices();
+        self.probe = self.devices.iter().map(probe_row).collect();
+    }
+
     fn rebuild_coverage(&mut self) {
         self.coverage.clear();
         self.coverage_error = self.test_error.clone();
@@ -1435,6 +1476,24 @@ impl App {
                 .iter()
                 .filter(|row| !row.missing.is_empty())
                 .count();
+        }
+        u16::try_from(lines.saturating_sub(1)).unwrap_or(u16::MAX)
+    }
+
+    /// Number of scrollable lines in the Probe body. Mirrors
+    /// `render::draw_probe`; keep the two in sync.
+    pub(super) fn probe_max_scroll(&self) -> u16 {
+        let mut lines = 2; // summary + blank
+        if self.probe.is_empty() {
+            lines += 1;
+        } else {
+            lines += 1; // header
+            for row in &self.probe {
+                lines += 1;
+                if row.error.is_none() {
+                    lines += row.sources.len();
+                }
+            }
         }
         u16::try_from(lines.saturating_sub(1)).unwrap_or(u16::MAX)
     }
@@ -1527,6 +1586,7 @@ impl App {
         match self.screen {
             Screen::Tests => self.load_tests(),
             Screen::Coverage => self.load_coverage(),
+            Screen::Probe => self.load_probe(),
             Screen::Devices => self.load_devices(),
             Screen::Apps => self.load_apps(),
             Screen::Config => self.load_config(),
@@ -2141,6 +2201,10 @@ impl App {
                 self.set_screen(Screen::Coverage);
                 Action::None
             }
+            "probe" => {
+                self.set_screen(Screen::Probe);
+                Action::None
+            }
             "devices" => {
                 self.screen = Screen::Devices;
                 self.focus = Focus::Content;
@@ -2409,6 +2473,9 @@ impl App {
         if screen == Screen::Coverage {
             self.coverage_scroll = 0;
         }
+        if screen == Screen::Probe {
+            self.probe_scroll = 0;
+        }
         self.reload_screen();
     }
 
@@ -2448,6 +2515,14 @@ impl App {
                     self.coverage_scroll = self.coverage_scroll.min(max).saturating_sub(1);
                 } else {
                     self.coverage_scroll = self.coverage_scroll.saturating_add(1).min(max);
+                }
+            }
+            Screen::Probe => {
+                let max = self.probe_max_scroll();
+                if delta < 0 {
+                    self.probe_scroll = self.probe_scroll.min(max).saturating_sub(1);
+                } else {
+                    self.probe_scroll = self.probe_scroll.saturating_add(1).min(max);
                 }
             }
             Screen::Home | Screen::Devices | Screen::Apps | Screen::Config => {}
@@ -2599,6 +2674,52 @@ fn status_of_str(status: &str) -> LineStatus {
         LineStatus::Failed
     } else {
         LineStatus::Running
+    }
+}
+
+/// Build one probe support row from a configured device.
+pub(super) fn probe_row(device: &DeviceRow) -> ProbeRow {
+    match device_platform_slug(&device.platform).parse::<Platform>() {
+        Ok(platform) => {
+            let support = probe::support(platform);
+            ProbeRow {
+                device: device.name.clone(),
+                platform: platform.as_str().to_string(),
+                showing: support.showing,
+                player: support.player,
+                drm: support.drm,
+                strongest: support.strongest_class().as_str().to_string(),
+                properties: support.properties.len(),
+                providers: support
+                    .providers
+                    .iter()
+                    .map(|provider| provider.as_str().to_string())
+                    .collect(),
+                sources: support
+                    .sources
+                    .iter()
+                    .map(|source| ProbeSourceRow {
+                        source: source.source.as_str().to_string(),
+                        class: source.source.evidence_class().as_str().to_string(),
+                        available: source.available,
+                        reason: source.reason.clone(),
+                    })
+                    .collect(),
+                error: None,
+            }
+        }
+        Err(()) => ProbeRow {
+            device: device.name.clone(),
+            platform: device.platform.clone(),
+            showing: false,
+            player: false,
+            drm: false,
+            strongest: String::new(),
+            properties: 0,
+            providers: Vec::new(),
+            sources: Vec::new(),
+            error: Some(format!("unknown platform '{}'", device.platform)),
+        },
     }
 }
 
@@ -2815,6 +2936,7 @@ fn candidates() -> Vec<&'static str> {
         "/tests open ",
         "/tests --dry-run",
         "/coverage",
+        "/probe",
         "/devices",
         "/apps",
         "/config",
@@ -2931,7 +3053,7 @@ pub(super) fn help_text() -> String {
         "",
         "Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.",
         "Workspace menu · Up/Down, Enter opens, Esc goes back.",
-        "  Overview · Runs · Resident · Tests · Coverage · Devices · Apps · Config · Doctor",
+        "  Overview · Runs · Resident · Tests · Coverage · Probe · Devices · Apps · Config · Doctor",
         "  Switch workspace returns to the landing screen.",
         "Content · arrows move; Esc menu; Tab prompt.",
         "Prompt · type a CLI command; /run --tag smoke is a shortcut.",
@@ -2942,10 +3064,11 @@ pub(super) fn help_text() -> String {
         "  r rerun · F rerun failed · o report · p screenshot · X remove",
         "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
         "Coverage · j/k scroll · g/G top/bottom · r reload",
+        "Probe · j/k scroll · g/G top/bottom · r reload",
         "Devices / Apps / Config · j/k move · Enter open · r reload",
         "Resident · j/k scroll · g/G top/bottom · r reload",
         "",
-        "Commands · /run /jobs /devices /apps /config /resident /coverage /tests /open /doctor",
+        "Commands · /run /jobs /devices /apps /config /resident /coverage /probe /tests /open /doctor",
         "  /fmt /validate /plan /attach /logs /stop /report /profile /quit",
         "Scriptable · run --detach · jobs --json · wait · report",
         "  /menu /workspaces",
@@ -3179,5 +3302,52 @@ mod tests {
             .logs
             .iter()
             .any(|line| line.contains("no system evidence")));
+    }
+
+    #[test]
+    fn probe_rows_follow_the_platform_matrix() {
+        let web = probe_row(&DeviceRow {
+            name: "web1".to_string(),
+            platform: "web".to_string(),
+            connection: "launch".to_string(),
+        });
+        assert_eq!(web.error, None);
+        assert!(web.showing && web.player && web.drm);
+        assert_eq!(web.strongest, "authoritative");
+        assert!(web.properties > 0);
+        assert!(web.providers.contains(&"Widevine".to_string()));
+        assert!(web
+            .sources
+            .iter()
+            .any(|source| source.source == "dom" && source.available));
+        let luna = web
+            .sources
+            .iter()
+            .find(|source| source.source == "luna_media")
+            .expect("luna_media row");
+        assert!(!luna.available);
+        assert!(luna
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("webOS")));
+
+        let apple = probe_row(&DeviceRow {
+            name: "living".to_string(),
+            platform: "tvOS".to_string(),
+            connection: "apple".to_string(),
+        });
+        assert_eq!(apple.providers, vec!["FairPlay".to_string()]);
+        assert!(apple
+            .sources
+            .iter()
+            .any(|source| source.source == "dvt_sysmon" && !source.available));
+
+        let unknown = probe_row(&DeviceRow {
+            name: "x".to_string(),
+            platform: "bogus".to_string(),
+            connection: "adb".to_string(),
+        });
+        assert!(unknown.error.is_some());
+        assert!(unknown.sources.is_empty());
     }
 }

@@ -565,7 +565,7 @@ app and run counts. Below the workspace rows are `Add current workspace`,
 On the landing screen: `a` adds the current workspace, `d` runs doctor and `q`
 quits. `Enter` on a missing workspace reports it in the status line instead of
 trying to enter it. Entering a workspace opens the workspace menu:
-`Overview`, `Runs`, `Resident`, `Tests`, `Coverage`, `Devices`, `Apps`,
+`Overview`, `Runs`, `Resident`, `Tests`, `Coverage`, `Probe`, `Devices`, `Apps`,
 `Config`, `Doctor`, `Switch workspace` and `Quit`. `Esc` from menu content
 returns to the landing screen; `Esc` from the menu prompt returns to menu
 content. `/menu`, `/workspaces` and `/landing` jump directly.
@@ -625,6 +625,17 @@ config spelling (`webOS`, `tizenOS`, `iOS`, `tvOS`). `j`/`k` scroll, `g`/`G`
 jump to the top/bottom, and `r` reloads from disk; entering the screen also
 refreshes. ASCII mode uses `*` for covered and `-` for missing columns.
 
+**Probe screen** (menu → Probe, or `/probe`): the read-only plan-time probe
+matrix for the configured devices, built from `impresario_core::probe::support`
+(the same matrix the planner and `docs/PARITY.md` use). Each device row shows
+whether `showing`, `player` and `drm` claims can be reached, the strongest
+evidence class among reachable sources, the property and DRM-provider counts,
+and one line per evidence source with its class and, when unavailable, the
+reason. It does not start a live session or touch a device: use `impresario
+run --dry-run` for the plan and `impresario probe` (hardware-gated) for live
+signals. `j`/`k` scroll, `g`/`G` jump to the top/bottom, and `r` reloads the
+device list and matrix; entering the screen also refreshes.
+
 **Devices/Apps/Config screens** (menu → the section, or `/devices`, `/apps`,
 `/config`): `j`/`k` scroll, `Enter` opens the
 relevant file in `$VISUAL`/`$EDITOR`, `r` reloads from disk. The Config screen
@@ -644,6 +655,7 @@ in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 | `/devices`, `/apps`, `/config` | Open those screens |
 | `/tests [args]` | Open the explorer; with args runs `impresario tests ...` |
 | `/coverage` | Open the theatre stage × platform coverage matrix |
+| `/probe` | Open the plan-time probe support matrix |
 | `/open <path>` | Open a file/directory with the OS handler |
 | `/doctor [--json]` | Run `impresario doctor` and print the result |
 | `/fmt [args]`, `/validate [args]` | Run the matching CLI command |

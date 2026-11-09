@@ -11,13 +11,13 @@ expression: "render(&app, 100, 28)"
 │   Resident                                        │ │                                            │
 │   Tests                                           │ │ tests     8 entries                        │
 │   Coverage                                        │ │ devices   2 devices                        │
-│   Devices                                         │ │ apps      1 app                            │
-│   Apps                                            │ │ runs      1 run                            │
-│   Config                                          │ │ active    0                                │
-│   Doctor                                          │ └────────────────────────────────────────────┘
-│   Switch workspace                                │ ┌ Navigation ────────────────────────────────┐
-│   Quit                                            │ │ Arrows move; Enter opens; Esc returns to   │
-│                                                   │ │ the picker; Tab opens the prompt.          │
+│   Probe                                           │ │ apps      1 app                            │
+│   Devices                                         │ │ runs      1 run                            │
+│   Apps                                            │ │ active    0                                │
+│   Config                                          │ └────────────────────────────────────────────┘
+│   Doctor                                          │ ┌ Navigation ────────────────────────────────┐
+│   Switch workspace                                │ │ Arrows move; Enter opens; Esc returns to   │
+│   Quit                                            │ │ the picker; Tab opens the prompt.          │
 │                                                   │ │                                            │
 │                                                   │ │ /run, /attach, /logs and the other slash   │
 │                                                   │ │ commands still work here.                  │

@@ -11,7 +11,8 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
 use super::app::{
-    App, AppRow, ConfigRow, DeviceRow, LineStatus, TestKind, TestRow, TreeLine, WorkspaceRow,
+    probe_row, App, AppRow, ConfigRow, DeviceRow, LineStatus, TestKind, TestRow, TreeLine,
+    WorkspaceRow,
 };
 use super::{Context, Focus, Screen};
 use crate::jobs::{JobRecord, JobStatus};
@@ -258,6 +259,31 @@ fn run_view_renders_probe_evidence_and_unverifiable_state() {
     assert!(output.contains("probe: showing=unverifiable"), "{output}");
     assert!(output.contains("reason: no system evidence"), "{output}");
     assert!(output.contains("observed.playing: false"), "{output}");
+}
+
+#[test]
+fn probe_support_frame() {
+    let mut app = populated();
+    app.screen = Screen::Probe;
+    app.focus = Focus::Content;
+    app.probe = vec![
+        probe_row(&DeviceRow {
+            name: "web1".to_string(),
+            platform: "web".to_string(),
+            connection: "launch".to_string(),
+        }),
+        probe_row(&DeviceRow {
+            name: "living".to_string(),
+            platform: "tvOS".to_string(),
+            connection: "apple".to_string(),
+        }),
+    ];
+    let output = render(&app, 120, 40);
+    assert!(output.contains("plan-time evidence sources"), "{output}");
+    assert!(output.contains("html_media"), "{output}");
+    assert!(output.contains("luna_media"), "{output}");
+    assert!(output.contains("dvt_sysmon"), "{output}");
+    assert!(output.contains("FairPlay"), "{output}");
 }
 
 #[test]
