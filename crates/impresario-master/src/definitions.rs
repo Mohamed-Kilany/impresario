@@ -493,14 +493,19 @@ fn edit_group(
             }
             // Appending the whole block keeps the nested indentation
             // unambiguous; an in-tree `Mapping::set` handles the other path.
+            // Serialize the members through the same builder as the in-tree
+            // path so values that need quoting (`@group` starts a YAML
+            // reserved indicator) stay valid YAML.
             let mut candidate = source;
             if !candidate.ends_with('\n') {
                 candidate.push('\n');
             }
             candidate.push_str("groups:\n");
             candidate.push_str(&format!("  {name}:\n"));
-            for member in members {
-                candidate.push_str(&format!("    - {member}\n"));
+            for line in sequence_document.to_string().lines() {
+                candidate.push_str("    ");
+                candidate.push_str(line);
+                candidate.push('\n');
             }
             candidate
         }
