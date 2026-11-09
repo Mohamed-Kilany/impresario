@@ -1536,7 +1536,7 @@ impl App {
         });
     }
 
-    fn handle_group_editor_key(&mut self, key: KeyEvent) -> Action {
+    pub(super) fn handle_group_editor_key(&mut self, key: KeyEvent) -> Action {
         let Some(editor) = self.group_editor.as_ref() else {
             return Action::None;
         };
