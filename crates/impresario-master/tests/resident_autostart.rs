@@ -66,7 +66,9 @@ fn systemd_install_enables_the_unit_and_uninstall_removes_it() {
     );
     let text = std::fs::read_to_string(&unit).expect("unit");
     assert!(text.contains("ExecStart="), "{text}");
-    assert!(text.contains("--workspace"), "{text}");
+    for flag in ["--workspace", "--config", "--devices-config"] {
+        assert!(text.contains(flag), "the hook must pass {flag}: {text}");
+    }
     assert!(
         text.contains(&workspace.display().to_string()),
         "the hook must name the workspace: {text}"
@@ -124,7 +126,9 @@ fn xdg_fallback_is_used_without_a_systemd_user_manager() {
     assert!(!config_home.join("systemd/user/impresario.service").exists());
     let text = std::fs::read_to_string(&desktop).expect("desktop entry");
     assert!(text.contains("Type=Application"), "{text}");
-    assert!(text.contains("--workspace"), "{text}");
+    for flag in ["--workspace", "--config", "--devices-config"] {
+        assert!(text.contains(flag), "the fallback must pass {flag}: {text}");
+    }
     assert!(
         text.contains(&workspace.display().to_string()),
         "the fallback must name the workspace: {text}"

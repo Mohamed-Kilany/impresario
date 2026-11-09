@@ -2140,7 +2140,7 @@ fn systemd_arg(path: &Path) -> String {
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 fn systemd_unit_text(exe: &Path, base: &Path, config_path: &Path, devices_path: &Path) -> String {
     format!(
-        "[Unit]\nDescription=impresario resident runner\n\n[Service]\nExecStart={} {} {} {} service run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=impresario resident runner\n\n[Service]\nExecStart={} --workspace {} --config {} --devices-config {} service run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
         systemd_arg(exe),
         systemd_arg(base),
         systemd_arg(config_path),
@@ -2165,7 +2165,7 @@ fn desktop_arg(path: &Path) -> String {
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 fn xdg_desktop_text(exe: &Path, base: &Path, config_path: &Path, devices_path: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Impresario resident runner\nComment=Start the Impresario resident runner at logon\nExec={} {} {} {} service run\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=Impresario resident runner\nComment=Start the Impresario resident runner at logon\nExec={} --workspace {} --config {} --devices-config {} service run\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
         desktop_arg(exe),
         desktop_arg(base),
         desktop_arg(config_path),
@@ -3671,7 +3671,7 @@ watchers:
         assert!(unit.contains("Restart=on-failure"), "{unit}");
         assert!(
             unit.contains(
-                "ExecStart=\"/opt/Impresario 100%% & ready/impresario\" \"/work/My Project\" \"/work/My Project/impresario.config\" \"/work/My Project/impresario.devices.config\" service run"
+                "ExecStart=\"/opt/Impresario 100%% & ready/impresario\" --workspace \"/work/My Project\" --config \"/work/My Project/impresario.config\" --devices-config \"/work/My Project/impresario.devices.config\" service run"
             ),
             "{unit}"
         );
@@ -3680,6 +3680,12 @@ watchers:
         assert!(desktop.contains("Type=Application"), "{desktop}");
         assert!(
             desktop.contains("X-GNOME-Autostart-enabled=true"),
+            "{desktop}"
+        );
+        assert!(
+            desktop.contains(
+                "Exec=\"/opt/Impresario 100%% & ready/impresario\" --workspace \"/work/My Project\" --config \"/work/My Project/impresario.config\" --devices-config \"/work/My Project/impresario.devices.config\" service run"
+            ),
             "{desktop}"
         );
         assert!(desktop.contains("100%% & ready"), "{desktop}");
@@ -3699,6 +3705,12 @@ watchers:
             cmd.contains(">> \"/home/u/.impresario/service/service.log\" 2>&1"),
             "{cmd}"
         );
+
+        for payload in [&unit, &desktop, &plist, &cmd] {
+            for flag in ["--workspace", "--config", "--devices-config"] {
+                assert!(payload.contains(flag), "missing {flag}: {payload}");
+            }
+        }
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
