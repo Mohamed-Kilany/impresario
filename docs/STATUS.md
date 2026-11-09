@@ -155,7 +155,9 @@ session or contacts a device, refreshes on entry and `r`, and is covered by a
 unit test plus a render test. CI run `42666377892` at `f4fd667` passed all eight
 jobs for I-185/I-186; the first attempt failed only the pre-existing flaky
 connector `fixture_suite_raw_backend` scroll timeout, and the failed-job rerun
-passed. The optional tray icon is decided against (I-180).
+passed. CI run `42671247165` attempt 4 at `40806c0` passed all eight jobs for
+I-187; attempts 1-3 were cut short by the GitHub Actions outage rather than code
+failures. The optional tray icon is decided against (I-180).
 Section 10 parity remains open for LSP code actions, the actor/group editor,
 and the MCP `probe_inspect` and evidence/dump bundle slice. The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
