@@ -119,6 +119,12 @@ pub enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
+    /// Actor groups in impresario.devices.config: add, set, remove, list.
+    #[command(alias = "groups")]
+    Group {
+        #[command(subcommand)]
+        command: GroupCommand,
+    },
     /// Explain what every platform needs, what was found and how to fix gaps.
     Doctor {
         /// Machine-readable output.
@@ -194,7 +200,7 @@ pub enum Command {
     },
 }
 
-use crate::definitions::{AppCommand, DeviceCommand};
+use crate::definitions::{AppCommand, DeviceCommand, GroupCommand};
 
 /// `--global` / `--workspace` scope selector; the workspace is the default.
 #[derive(Debug, Args)]
@@ -457,6 +463,7 @@ pub fn run_with(argv: &[String]) -> i32 {
             DeviceCommand::Wizard(args) => crate::wizard::run(args, &home, &devices_path),
             other => crate::definitions::run_device(other, &home, &devices_path),
         },
+        Command::Group { command } => crate::definitions::run_group(command, &home, &devices_path),
         Command::App { command } => {
             let apps_path = base.join("impresario.apps.config");
             crate::definitions::run_app(command, &home, &apps_path)

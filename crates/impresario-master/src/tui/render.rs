@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
-use super::app::{App, LineStatus, TestKind};
+use super::app::{App, GroupEditorKind, LineStatus, TestKind};
 use super::{Focus, Screen};
 
 pub(super) fn draw(frame: &mut Frame, app: &App) {
@@ -49,6 +49,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Screen::Tests => draw_tests(frame, app, body),
         Screen::Coverage => draw_coverage(frame, app, body),
         Screen::Probe => draw_probe(frame, app, body),
+        Screen::Groups => draw_groups(frame, app, body),
         Screen::Devices => draw_devices(frame, app, body),
         Screen::Apps => draw_apps(frame, app, body),
         Screen::Config => draw_config(frame, app, body),
@@ -115,6 +116,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Tests => "Tests",
         Screen::Coverage => "Coverage",
         Screen::Probe => "Probe",
+        Screen::Groups => "Groups",
         Screen::Devices => "Devices",
         Screen::Apps => "Apps",
         Screen::Config => "Config",
@@ -437,13 +439,14 @@ fn draw_landing_detail(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-const MENU: [(&str, &str); 12] = [
+const MENU: [(&str, &str); 13] = [
     ("Overview", "summary and activity"),
     ("Runs", "background jobs and live logs"),
     ("Resident", "schedules, watchers and dumps"),
     ("Tests", "scene, theatre and play explorer"),
     ("Coverage", "theatre stages × platforms"),
     ("Probe", "plan-time evidence sources"),
+    ("Groups", "actor groups and resolved devices"),
     ("Devices", "configured targets"),
     ("Apps", "shared app bindings"),
     ("Config", "effective settings"),
@@ -1184,6 +1187,138 @@ fn draw_probe(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn draw_groups(frame: &mut Frame, app: &App, area: Rect) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "{} · workspace groups override global groups by name",
+                count_label(app.groups.len(), "group", "groups")
+            ),
+            secondary(app),
+        )),
+        Line::from(""),
+    ];
+    if let Some(editor) = &app.group_editor {
+        if editor.kind == GroupEditorKind::Remove {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Remove group '{}' from the {} layer? Enter/y confirm · Esc cancel",
+                    editor.name,
+                    editor.source.as_str()
+                ),
+                error_style(app),
+            )));
+        } else {
+            let name_style = if editor.members_focus {
+                Style::default()
+            } else {
+                active_border(app)
+            };
+            let members_style = if editor.members_focus {
+                active_border(app)
+            } else {
+                Style::default()
+            };
+            let name = if editor.name.is_empty() {
+                "<name>".to_string()
+            } else {
+                editor.name.clone()
+            };
+            let members = if editor.members.is_empty() {
+                "<device or @group, comma separated>".to_string()
+            } else {
+                editor.members.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("name: ", title_style(app)),
+                Span::styled(format!("{name}_"), name_style),
+                Span::raw("  members: "),
+                Span::styled(format!("{members}_"), members_style),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "Enter save · Tab switch field · Esc cancel",
+                secondary(app),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+    if let Some(error) = &app.group_error {
+        lines.push(Line::from(Span::styled(error.clone(), error_style(app))));
+    } else if app.groups.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No groups configured. Press `a` to add one.",
+            secondary(app),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("{:<20} {:<10} {}", "NAME", "SOURCE", "MEMBERS"),
+            title_style(app),
+        )));
+        for (index, group) in app.groups.iter().enumerate() {
+            let selected = index == app.group_index;
+            let pointer = if selected {
+                if app.ctx.ascii {
+                    ">"
+                } else {
+                    "›"
+                }
+            } else {
+                " "
+            };
+            let style = if selected && app.focus == Focus::Content {
+                selected_style(app)
+            } else {
+                Style::default()
+            };
+            let members = if group.members.is_empty() {
+                "(empty)".to_string()
+            } else {
+                group.members.join(", ")
+            };
+            lines.push(Line::from(vec![Span::styled(
+                format!(
+                    "{pointer} {:<20} {:<10} {}",
+                    elide(&group.name, 20),
+                    group.source.as_str(),
+                    members
+                ),
+                style,
+            )]));
+            let detail = match &group.error {
+                Some(error) => format!("    ! {error}"),
+                None if group.devices.is_empty() => "    (no devices)".to_string(),
+                None => format!(
+                    "    {}",
+                    group
+                        .devices
+                        .iter()
+                        .map(|device| format!("{} [{}]", device.name, device.platform))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            let detail_style = if group.error.is_some() {
+                error_style(app)
+            } else {
+                secondary(app)
+            };
+            lines.push(Line::from(Span::styled(detail, detail_style)));
+        }
+    }
+    let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(
+                app,
+                "Groups · actor groups and resolved devices",
+                app.focus == Focus::Content && app.screen == Screen::Groups,
+            ))
+            .scroll((app.group_scroll.min(max_scroll), 0))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1632,6 +1767,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Probe if app.focus == Focus::Content => {
             "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
         }
+        Screen::Groups if app.focus == Focus::Content => {
+            "j/k move · a add · Enter/e edit · x remove · r reload · Esc menu · Tab prompt"
+        }
         Screen::Devices | Screen::Apps | Screen::Config if app.focus == Focus::Content => {
             "Enter open · r reload · Esc menu · Tab prompt"
         }
@@ -1692,6 +1830,18 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
                 count_label(available, "source", "sources")
             )
         }
+        Screen::Groups => format!(
+            "{} · {} resolved",
+            count_label(app.groups.len(), "group", "groups"),
+            count_label(
+                app.groups
+                    .iter()
+                    .map(|group| group.devices.len())
+                    .sum::<usize>(),
+                "device",
+                "devices"
+            )
+        ),
         Screen::Devices => format!(
             "{} configured",
             count_label(app.devices.len(), "device", "devices")

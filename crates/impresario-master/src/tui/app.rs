@@ -1,5 +1,6 @@
 //! Interactive application state, input handling and child command dispatch.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use impresario_core::settings::{self, SettingValue};
 use impresario_core::workspace;
 
 use crate::cli;
+use crate::definitions::{GroupInfo, GroupSource};
 use crate::exec::ExecEvent;
 use crate::jobs::{self, JobRecord, JobStatus, JobStore};
 use crate::report::Status;
@@ -83,6 +85,23 @@ pub(super) struct ProbeRow {
     pub sources: Vec<ProbeSourceRow>,
     /// Set when the configured platform cannot be resolved.
     pub error: Option<String>,
+}
+
+/// Modal state for adding, editing or removing an actor group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GroupEditorKind {
+    Add,
+    Edit,
+    Remove,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct GroupEditor {
+    pub kind: GroupEditorKind,
+    pub name: String,
+    pub members: String,
+    pub members_focus: bool,
+    pub source: GroupSource,
 }
 
 /// One evidence source in a device's probe matrix.
@@ -521,6 +540,11 @@ pub(super) struct App {
     pub coverage_scroll: u16,
     pub probe: Vec<ProbeRow>,
     pub probe_scroll: u16,
+    pub groups: Vec<GroupInfo>,
+    pub group_index: usize,
+    pub group_scroll: u16,
+    pub group_error: Option<String>,
+    pub group_editor: Option<GroupEditor>,
     pub activity: VecDeque<String>,
     pub overlay: Option<String>,
     pub should_quit: bool,
@@ -584,6 +608,11 @@ impl App {
             coverage_scroll: 0,
             probe: Vec::new(),
             probe_scroll: 0,
+            groups: Vec::new(),
+            group_index: 0,
+            group_scroll: 0,
+            group_error: None,
+            group_editor: None,
             activity: VecDeque::new(),
             overlay: None,
             should_quit: false,
@@ -608,6 +637,7 @@ impl App {
     pub(super) fn new(ctx: Context) -> Self {
         let mut app = Self::empty(ctx);
         app.load_devices();
+        app.load_groups();
         app.load_apps();
         app.load_config();
         app.load_resident();
@@ -675,7 +705,7 @@ impl App {
     }
 
     pub(super) fn move_menu(&mut self, delta: i32) {
-        const MENU_LEN: usize = 12;
+        const MENU_LEN: usize = 13;
         if delta < 0 {
             self.menu_index = self.menu_index.saturating_sub(1);
         } else {
@@ -723,11 +753,12 @@ impl App {
             3 => self.set_screen(Screen::Tests),
             4 => self.set_screen(Screen::Coverage),
             5 => self.set_screen(Screen::Probe),
-            6 => self.set_screen(Screen::Devices),
-            7 => self.set_screen(Screen::Apps),
-            8 => self.set_screen(Screen::Config),
-            9 => self.run_doctor(),
-            10 => {
+            6 => self.set_screen(Screen::Groups),
+            7 => self.set_screen(Screen::Devices),
+            8 => self.set_screen(Screen::Apps),
+            9 => self.set_screen(Screen::Config),
+            10 => self.run_doctor(),
+            11 => {
                 self.screen = Screen::Landing;
                 self.focus = Focus::Content;
                 self.overlay = None;
@@ -753,10 +784,16 @@ impl App {
             self.config_rows.clear();
             self.probe.clear();
             self.probe_scroll = 0;
+            self.groups.clear();
+            self.group_index = 0;
+            self.group_scroll = 0;
+            self.group_error = None;
+            self.group_editor = None;
             self.follow = None;
             self.tree.clear();
             self.logs.clear();
             self.load_devices();
+            self.load_groups();
             self.load_apps();
             self.load_config();
             self.load_resident();
@@ -832,6 +869,9 @@ impl App {
         for device in &self.devices {
             values.insert(format!("/run --device {}", device.name));
         }
+        for group in &self.groups {
+            values.insert(format!("/run --device @{}", group.name));
+        }
         for app in &self.apps {
             values.insert(format!("/run --app {}", app.name));
         }
@@ -905,6 +945,7 @@ impl App {
             "tests" => Screen::Tests,
             "coverage" => Screen::Coverage,
             "probe" => Screen::Probe,
+            "groups" => Screen::Groups,
             "devices" => Screen::Devices,
             "apps" => Screen::Apps,
             "config" => Screen::Config,
@@ -1287,6 +1328,24 @@ impl App {
         }
     }
 
+    pub(super) fn load_groups(&mut self) {
+        self.groups.clear();
+        self.group_error = None;
+        match crate::definitions::group_rows(&self.ctx.home, &self.ctx.devices_path) {
+            Ok(groups) => {
+                self.groups = groups;
+                self.group_index = self.group_index.min(self.groups.len().saturating_sub(1));
+                self.group_scroll = self.group_scroll_for_index();
+            }
+            Err(message) => {
+                self.group_error = Some(message);
+                self.group_index = 0;
+                self.group_scroll = 0;
+            }
+        }
+        self.refresh_completion_context();
+    }
+
     pub(super) fn load_apps(&mut self) {
         self.apps.clear();
         let apps_path = self.ctx.base.join("impresario.apps.config");
@@ -1416,6 +1475,149 @@ impl App {
     pub(super) fn load_probe(&mut self) {
         self.load_devices();
         self.probe = self.devices.iter().map(probe_row).collect();
+    }
+
+    pub(super) fn select_first_group(&mut self) {
+        self.group_index = 0;
+        self.group_scroll = 0;
+    }
+
+    pub(super) fn select_last_group(&mut self) {
+        self.group_index = self.groups.len().saturating_sub(1);
+        self.group_scroll = self.group_scroll_for_index();
+    }
+
+    fn group_scroll_for_index(&self) -> u16 {
+        if self.group_index == 0 {
+            return 0;
+        }
+        let lines = 3usize.saturating_add(self.group_index.saturating_mul(2));
+        u16::try_from(lines).unwrap_or(u16::MAX)
+    }
+
+    pub(super) fn open_group_editor(&mut self, add: bool) {
+        if add {
+            self.group_scroll = 0;
+            self.group_editor = Some(GroupEditor {
+                kind: GroupEditorKind::Add,
+                name: String::new(),
+                members: String::new(),
+                members_focus: false,
+                source: GroupSource::Workspace,
+            });
+            return;
+        }
+        let Some(group) = self.groups.get(self.group_index) else {
+            self.push_activity("No group selected; press `a` to add one.".to_string());
+            return;
+        };
+        self.group_scroll = 0;
+        self.group_editor = Some(GroupEditor {
+            kind: GroupEditorKind::Edit,
+            name: group.name.clone(),
+            members: group.members.join(", "),
+            members_focus: true,
+            source: group.source,
+        });
+    }
+
+    pub(super) fn confirm_remove_group(&mut self) {
+        let Some(group) = self.groups.get(self.group_index) else {
+            self.push_activity("No group selected.".to_string());
+            return;
+        };
+        self.group_scroll = 0;
+        self.group_editor = Some(GroupEditor {
+            kind: GroupEditorKind::Remove,
+            name: group.name.clone(),
+            members: String::new(),
+            members_focus: false,
+            source: group.source,
+        });
+    }
+
+    fn handle_group_editor_key(&mut self, key: KeyEvent) -> Action {
+        let Some(editor) = self.group_editor.as_ref() else {
+            return Action::None;
+        };
+        let kind = editor.kind;
+        if kind == GroupEditorKind::Remove {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
+                    if let Some(editor) = self.group_editor.take() {
+                        self.run_group_editor(editor);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('n' | 'N') => self.group_editor = None,
+                _ => {}
+            }
+            return Action::None;
+        }
+        match key.code {
+            KeyCode::Esc => self.group_editor = None,
+            KeyCode::Enter => {
+                if let Some(editor) = self.group_editor.take() {
+                    self.run_group_editor(editor);
+                }
+            }
+            KeyCode::Tab | KeyCode::BackTab if kind == GroupEditorKind::Add => {
+                if let Some(editor) = self.group_editor.as_mut() {
+                    editor.members_focus = !editor.members_focus;
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(editor) = self.group_editor.as_mut() {
+                    let field = if editor.members_focus {
+                        &mut editor.members
+                    } else {
+                        &mut editor.name
+                    };
+                    field.pop();
+                }
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                if let Some(editor) = self.group_editor.as_mut() {
+                    let field = if editor.members_focus {
+                        &mut editor.members
+                    } else {
+                        &mut editor.name
+                    };
+                    field.push(character);
+                }
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    fn run_group_editor(&mut self, editor: GroupEditor) {
+        let name = editor.name.trim().to_string();
+        if name.is_empty() {
+            self.push_activity("A group name is required.".to_string());
+            self.group_editor = Some(editor);
+            return;
+        }
+        let action = match editor.kind {
+            GroupEditorKind::Add => "add",
+            GroupEditorKind::Edit => "set",
+            GroupEditorKind::Remove => "remove",
+        };
+        let members = if editor.kind == GroupEditorKind::Remove {
+            Vec::new()
+        } else {
+            split_group_members(&editor.members)
+        };
+        let args = group_command(action, &name, &members, editor.source);
+        self.run_and_report(&args);
+        self.load_groups();
+        if let Some(index) = self.groups.iter().position(|group| group.name == name) {
+            self.group_index = index;
+            self.group_scroll = self.group_scroll_for_index();
+        }
     }
 
     fn rebuild_coverage(&mut self) {
@@ -1587,6 +1789,7 @@ impl App {
             Screen::Tests => self.load_tests(),
             Screen::Coverage => self.load_coverage(),
             Screen::Probe => self.load_probe(),
+            Screen::Groups => self.load_groups(),
             Screen::Devices => self.load_devices(),
             Screen::Apps => self.load_apps(),
             Screen::Config => self.load_config(),
@@ -2205,6 +2408,10 @@ impl App {
                 self.set_screen(Screen::Probe);
                 Action::None
             }
+            "groups" => {
+                self.set_screen(Screen::Groups);
+                Action::None
+            }
             "devices" => {
                 self.screen = Screen::Devices;
                 self.focus = Focus::Content;
@@ -2476,6 +2683,11 @@ impl App {
         if screen == Screen::Probe {
             self.probe_scroll = 0;
         }
+        if screen == Screen::Groups {
+            self.group_index = 0;
+            self.group_scroll = 0;
+            self.group_editor = None;
+        }
         self.reload_screen();
     }
 
@@ -2524,6 +2736,15 @@ impl App {
                 } else {
                     self.probe_scroll = self.probe_scroll.saturating_add(1).min(max);
                 }
+            }
+            Screen::Groups => {
+                let last = self.groups.len().saturating_sub(1);
+                if delta < 0 {
+                    self.group_index = self.group_index.saturating_sub(1);
+                } else {
+                    self.group_index = self.group_index.saturating_add(1).min(last);
+                }
+                self.group_scroll = self.group_scroll_for_index();
             }
             Screen::Home | Screen::Devices | Screen::Apps | Screen::Config => {}
         }
@@ -2937,6 +3158,7 @@ fn candidates() -> Vec<&'static str> {
         "/tests --dry-run",
         "/coverage",
         "/probe",
+        "/groups",
         "/devices",
         "/apps",
         "/config",
@@ -2993,6 +3215,22 @@ fn fuzzy_score(candidate: &str, query: &str) -> Option<i32> {
         position = index.saturating_add(needle.len_utf8());
     }
     Some(score.saturating_sub(candidate_lower.len() as i32 / 4))
+}
+
+fn split_group_members(text: &str) -> Vec<String> {
+    text.split(|character: char| character == ',' || character.is_whitespace())
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn group_command(action: &str, name: &str, members: &[String], source: GroupSource) -> Vec<String> {
+    let mut args = vec!["group".to_string(), action.to_string(), name.to_string()];
+    args.extend(members.iter().cloned());
+    if source == GroupSource::Workspace {
+        args.push("--workspace".to_string());
+    }
+    args
 }
 
 /// Split a command line with single/double quotes and backslash escapes.
@@ -3053,8 +3291,8 @@ pub(super) fn help_text() -> String {
         "",
         "Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.",
         "Workspace menu · Up/Down, Enter opens, Esc goes back.",
-        "  Overview · Runs · Resident · Tests · Coverage · Probe · Devices · Apps · Config · Doctor",
-        "  Switch workspace returns to the landing screen.",
+        "  Overview · Runs · Resident · Tests · Coverage · Probe · Groups · Devices · Apps · Config",
+        "  Doctor · Switch workspace returns to the landing screen.",
         "Content · arrows move; Esc menu; Tab prompt.",
         "Prompt · type a CLI command; /run --tag smoke is a shortcut.",
         "  Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline",
@@ -3063,13 +3301,13 @@ pub(super) fn help_text() -> String {
         "Runs · Enter follow · b detach · x stop · f logs · t device · / filter",
         "  r rerun · F rerun failed · o report · p screenshot · X remove",
         "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
-        "Coverage · j/k scroll · g/G top/bottom · r reload",
-        "Probe · j/k scroll · g/G top/bottom · r reload",
+        "Coverage / Probe · j/k scroll · g/G top/bottom · r reload",
+        "Groups · j/k move · a add · Enter/e edit · x remove · r reload",
         "Devices / Apps / Config · j/k move · Enter open · r reload",
         "Resident · j/k scroll · g/G top/bottom · r reload",
         "",
         "Commands · /run /jobs /devices /apps /config /resident /coverage /probe /tests /open /doctor",
-        "  /fmt /validate /plan /attach /logs /stop /report /profile /quit",
+        "  /groups /fmt /validate /plan /attach /logs /stop /report /profile /quit",
         "Scriptable · run --detach · jobs --json · wait · report",
         "  /menu /workspaces",
     ]
@@ -3079,6 +3317,7 @@ pub(super) fn help_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::definitions::ResolvedDevice;
 
     #[test]
     fn fuzzy_completion_prefers_prefixes() {
@@ -3129,6 +3368,123 @@ mod tests {
         app.load_apps();
         assert_eq!(app.apps.len(), 1);
         assert_eq!(app.apps.first().map(|row| row.name.as_str()), Some("shop"));
+    }
+
+    #[test]
+    fn group_command_targets_the_selected_layer() {
+        assert_eq!(
+            group_command(
+                "add",
+                "phones",
+                &["phone".to_string()],
+                GroupSource::Workspace
+            ),
+            vec!["group", "add", "phones", "phone", "--workspace"]
+        );
+        assert_eq!(
+            group_command("set", "phones", &["phone".to_string()], GroupSource::Global),
+            vec!["group", "set", "phones", "phone"]
+        );
+        assert_eq!(
+            group_command("remove", "phones", &[], GroupSource::Global),
+            vec!["group", "remove", "phones"]
+        );
+    }
+
+    #[test]
+    fn split_group_members_accepts_commas_and_spaces() {
+        assert_eq!(
+            split_group_members("phone, @tv  web1"),
+            vec!["phone", "@tv", "web1"]
+        );
+        assert!(split_group_members("  ,  ").is_empty());
+    }
+
+    #[test]
+    fn load_groups_reads_both_layers_and_resolves_nesting() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let home = impresario_core::home::Home::at(dir.path().join("home"));
+        std::fs::create_dir_all(home.root()).expect("home");
+        std::fs::write(
+            home.devices_path(),
+            "devices:\n  - name: phone\n    type: android\n    ip: 10.0.0.5\ngroups:\n  phones:\n    - phone\n",
+        )
+        .expect("global devices");
+        std::fs::write(
+            dir.path().join("impresario.devices.config"),
+            "devices:\n  - name: web1\n    type: web\n    ip: 127.0.0.1\ngroups:\n  screens:\n    - '@phones'\n    - web1\n",
+        )
+        .expect("workspace devices");
+        let context = Context::new(
+            home,
+            dir.path().to_path_buf(),
+            dir.path().join("impresario.config"),
+            dir.path().join("impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.load_groups();
+        assert_eq!(app.groups.len(), 2, "{:?}", app.group_error);
+        let phones = app
+            .groups
+            .iter()
+            .find(|group| group.name == "phones")
+            .expect("phones");
+        assert_eq!(phones.source, GroupSource::Global);
+        assert_eq!(
+            phones.devices,
+            vec![ResolvedDevice {
+                name: "phone".to_string(),
+                platform: "android".to_string(),
+            }]
+        );
+        let screens = app
+            .groups
+            .iter()
+            .find(|group| group.name == "screens")
+            .expect("screens");
+        assert_eq!(screens.source, GroupSource::Workspace);
+        assert_eq!(screens.devices.len(), 2, "{:?}", screens.error);
+        assert!(screens.error.is_none());
+        assert_eq!(screens.members, vec!["@phones", "web1"]);
+    }
+
+    #[test]
+    fn group_selection_clamps_and_follows_the_last_row() {
+        let context = Context::new(
+            impresario_core::home::Home::at("demo-home"),
+            PathBuf::from("demo"),
+            PathBuf::from("demo/impresario.config"),
+            PathBuf::from("demo/impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.groups = vec![
+            GroupInfo {
+                name: "a".to_string(),
+                members: Vec::new(),
+                devices: Vec::new(),
+                source: GroupSource::Global,
+                error: None,
+            },
+            GroupInfo {
+                name: "b".to_string(),
+                members: Vec::new(),
+                devices: Vec::new(),
+                source: GroupSource::Workspace,
+                error: None,
+            },
+        ];
+        app.screen = Screen::Groups;
+        app.select_last_group();
+        assert_eq!(app.group_index, 1);
+        app.scroll(1);
+        assert_eq!(app.group_index, 1, "selection must not pass the last row");
+        app.select_first_group();
+        app.scroll(-1);
+        assert_eq!(app.group_index, 0, "selection must not go below zero");
+        app.scroll(1);
+        assert_eq!(app.group_index, 1, "selection must follow a down scroll");
     }
 
     #[test]

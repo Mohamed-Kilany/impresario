@@ -11,8 +11,8 @@ expression: "render(&app, 100, 34)"
 │ │                                                                                              │ │
 │ │ Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.                                  │ │
 │ │ Workspace menu · Up/Down, Enter opens, Esc goes back.                                        │ │
-│ │   Overview · Runs · Resident · Tests · Coverage · Probe · Devices · Apps · Config · Doctor   │ │
-│ │   Switch workspace returns to the landing screen.                                            │ │
+│ │   Overview · Runs · Resident · Tests · Coverage · Probe · Groups · Devices · Apps · Config   │ │
+│ │   Doctor · Switch workspace returns to the landing screen.                                   │ │
 │ │ Content · arrows move; Esc menu; Tab prompt.                                                 │ │
 │ │ Prompt · type a CLI command; /run --tag smoke is a shortcut.                                 │ │
 │ │   Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline                        │ │
@@ -21,13 +21,13 @@ expression: "render(&app, 100, 34)"
 │ │ Runs · Enter follow · b detach · x stop · f logs · t device · / filter                       │─┘
 │ │   r rerun · F rerun failed · o report · p screenshot · X remove                              │
 │ │ Tests · Enter edit · Space mark · r run · d dry-run · j/k move                               │─┐
-│ │ Coverage · j/k scroll · g/G top/bottom · r reload                                            │ │
-│ │ Probe · j/k scroll · g/G top/bottom · r reload                                               │ │
+│ │ Coverage / Probe · j/k scroll · g/G top/bottom · r reload                                    │ │
+│ │ Groups · j/k move · a add · Enter/e edit · x remove · r reload                               │ │
 │ │ Devices / Apps / Config · j/k move · Enter open · r reload                                   │ │
 │ │ Resident · j/k scroll · g/G top/bottom · r reload                                            │ │
 │ │                                                                                              │ │
 │ │ Commands · /run /jobs /devices /apps /config /resident /coverage /probe /tests /open /doctor │ │
-│ │   /fmt /validate /plan /attach /logs /stop /report /profile /quit                            │ │
+│ │   /groups /fmt /validate /plan /attach /logs /stop /report /profile /quit                    │ │
 └─│ Scriptable · run --detach · jobs --json · wait · report                                      │─┘
 ┌ │   /menu /workspaces                                                                          │─┐
 │ └──────────────────────────────────────────────────────────────────────────────────────────────┘ │

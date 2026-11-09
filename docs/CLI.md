@@ -89,6 +89,31 @@ is leased. The play-level/act-level `Actors:` list and `Perform For/Except`
 use the same expansion. Selecting a group does not force every member to run:
 each play still intersects the selected devices with its effective actors.
 
+### Device and group definitions
+
+```powershell
+impresario device add --name phone --type android --ip 10.0.0.5
+impresario device add --workspace --name web1 --type web --ip 127.0.0.1
+impresario device list --json
+impresario group add phones phone tv
+impresario group add screens @phones web1 --workspace
+impresario group set phones phone
+impresario group list --json
+impresario group remove screens --workspace
+```
+
+`device` and `group` write the global layer by default; `--workspace` targets
+the workspace file. `group add` refuses a name that already exists in the
+target layer, `group set` creates or replaces it, and `group remove` deletes it.
+Every edit preserves the existing file text so comments and ordering survive
+(an existing `groups:` block is edited in place; a missing one is appended),
+then validates the prospective merged file: invalid names or members, unknown
+actors and cross-layer membership cycles are rejected before anything is
+written.
+`group list` shows the effective groups, their winning layer, members and the
+expanded device/platform list; `--json` is the stable machine shape. There is
+no group rename yet because it would have to rewrite references in both layers.
+
 `--unverifiable` overrides `unverifiable_policy` for one run. Probes (`Check:
 Showing`, `Check: Player`) are tri-state: a claim that cannot reach the required
 confidence is `unverifiable`. The default `fail` makes the step fail; `warn`
@@ -565,8 +590,8 @@ app and run counts. Below the workspace rows are `Add current workspace`,
 On the landing screen: `a` adds the current workspace, `d` runs doctor and `q`
 quits. `Enter` on a missing workspace reports it in the status line instead of
 trying to enter it. Entering a workspace opens the workspace menu:
-`Overview`, `Runs`, `Resident`, `Tests`, `Coverage`, `Probe`, `Devices`, `Apps`,
-`Config`, `Doctor`, `Switch workspace` and `Quit`. `Esc` from menu content
+`Overview`, `Runs`, `Resident`, `Tests`, `Coverage`, `Probe`, `Groups`, `Devices`,
+`Apps`, `Config`, `Doctor`, `Switch workspace` and `Quit`. `Esc` from menu content
 returns to the landing screen; `Esc` from the menu prompt returns to menu
 content. `/menu`, `/workspaces` and `/landing` jump directly.
 
@@ -636,13 +661,23 @@ run --dry-run` for the plan and `impresario probe` (hardware-gated) for live
 signals. `j`/`k` scroll, `g`/`G` jump to the top/bottom, and `r` reloads the
 device list and matrix; entering the screen also refreshes.
 
+**Groups screen** (menu → Groups, or `/groups`): the effective actor groups
+from both device layers, with the winning layer, members, expanded
+devices/platforms and any unknown-actor or cycle error. `j`/`k` move, `a` adds
+a workspace group, `Enter`/`e` edits the selected group's members, `x`/`Delete`
+removes it after confirmation, and `r` reloads from disk; entering the screen
+also refreshes. The add form uses `Tab` to switch between name and members.
+Every mutation runs the matching `impresario group add|set|remove` child
+process, so validation and comment-preserving YAML edits have one
+implementation. Group names cannot be renamed in place (see above).
+
 **Devices/Apps/Config screens** (menu → the section, or `/devices`, `/apps`,
 `/config`): `j`/`k` scroll, `Enter` opens the
 relevant file in `$VISUAL`/`$EDITOR`, `r` reloads from disk. The Config screen
 shows the effective setting, its value and its winning layer, plus the typed
-`impresario.config` values. These screens are viewers: add/edit/remove is the
-matching CLI command typed at the prompt (or `device wizard`), not a dedicated
-in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
+`impresario.config` values. These three screens are viewers: add/edit/remove is
+the matching CLI command typed at the prompt (or `device wizard`), not a
+dedicated in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 
 ### Slash commands
 
@@ -656,6 +691,7 @@ in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 | `/tests [args]` | Open the explorer; with args runs `impresario tests ...` |
 | `/coverage` | Open the theatre stage × platform coverage matrix |
 | `/probe` | Open the plan-time probe support matrix |
+| `/groups` | Open the actor groups screen |
 | `/open <path>` | Open a file/directory with the OS handler |
 | `/doctor [--json]` | Run `impresario doctor` and print the result |
 | `/fmt [args]`, `/validate [args]` | Run the matching CLI command |

@@ -40,6 +40,7 @@ pub(super) enum Screen {
     Tests,
     Coverage,
     Probe,
+    Groups,
     Devices,
     Apps,
     Config,
@@ -56,6 +57,7 @@ impl Screen {
             Screen::Tests => "tests",
             Screen::Coverage => "coverage",
             Screen::Probe => "probe",
+            Screen::Groups => "groups",
             Screen::Devices => "devices",
             Screen::Apps => "apps",
             Screen::Config => "config",
@@ -376,6 +378,9 @@ impl App {
             }
             return Action::None;
         }
+        if self.group_editor.is_some() {
+            return self.handle_group_editor_key(key);
+        }
         if key.code == KeyCode::F(1) {
             self.overlay = Some(app::help_text());
             return Action::None;
@@ -578,6 +583,7 @@ impl App {
                     Screen::Tests => self.test_index = 0,
                     Screen::Coverage => self.coverage_scroll = 0,
                     Screen::Probe => self.probe_scroll = 0,
+                    Screen::Groups => self.select_first_group(),
                     Screen::Resident => self.resident_scroll = 0,
                     _ => {}
                 }
@@ -595,6 +601,7 @@ impl App {
                     }
                     Screen::Coverage => self.coverage_scroll = self.coverage_max_scroll(),
                     Screen::Probe => self.probe_scroll = self.probe_max_scroll(),
+                    Screen::Groups => self.select_last_group(),
                     Screen::Resident => self.resident_scroll = self.resident_max_scroll(),
                     _ => {}
                 }
@@ -629,6 +636,10 @@ impl App {
                 Screen::Config => self.open_config(),
                 Screen::Coverage => Action::None,
                 Screen::Probe => Action::None,
+                Screen::Groups => {
+                    self.open_group_editor(false);
+                    Action::None
+                }
                 Screen::Devices => Action::OpenEditor(self.ctx.devices_path.clone()),
                 Screen::Apps => Action::OpenEditor(self.ctx.base.join("impresario.apps.config")),
                 Screen::Resident => Action::None,
@@ -679,6 +690,18 @@ impl App {
                 if !self.test_marks.remove(&index) {
                     self.test_marks.insert(index);
                 }
+                Action::None
+            }
+            KeyCode::Char('a') if self.screen == Screen::Groups => {
+                self.open_group_editor(true);
+                Action::None
+            }
+            KeyCode::Char('e') if self.screen == Screen::Groups => {
+                self.open_group_editor(false);
+                Action::None
+            }
+            KeyCode::Char('x' | 'X') | KeyCode::Delete if self.screen == Screen::Groups => {
+                self.confirm_remove_group();
                 Action::None
             }
             KeyCode::Char('q') => Action::Quit,

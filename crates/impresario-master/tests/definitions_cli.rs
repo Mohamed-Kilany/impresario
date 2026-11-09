@@ -1,4 +1,4 @@
-//! `device` and `app` integration tests (TASK-2 4.3 and 5).
+//! `device`, `group` and `app` integration tests (TASK-2 4.3 and 5).
 //!
 //! Each test gets its own global home via `IMPRESARIO_HOME`; workspace scope is
 //! selected with the subcommand-level `--workspace` flag.
@@ -179,6 +179,177 @@ fn exact_types_and_ip_validation() {
     );
     assert_eq!(code, EXIT_USAGE);
     assert!(stderr.contains("not an IPv4 or IPv6 address"), "{stderr}");
+}
+
+#[test]
+fn group_lifecycle_preserves_comments_and_validates_layers() {
+    let (_guard, home, workspace) = temp();
+    for args in [
+        vec![
+            "device", "add", "--name", "phone", "--type", "android", "--ip", "10.0.0.5",
+        ],
+        vec![
+            "device",
+            "add",
+            "--name",
+            "tv",
+            "--type",
+            "webOS",
+            "--ip",
+            "192.168.1.50",
+        ],
+        vec![
+            "device",
+            "add",
+            "--workspace",
+            "--name",
+            "web1",
+            "--type",
+            "web",
+            "--ip",
+            "127.0.0.1",
+        ],
+    ] {
+        let (code, _stdout, stderr) = run(&home, &workspace, &args);
+        assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    }
+
+    // Comments in either layer must survive group edits.
+    let global = home.join("devices.yaml");
+    let local = workspace.join("impresario.devices.config");
+    let text = std::fs::read_to_string(&global).expect("global devices");
+    std::fs::write(&global, format!("# global comment\n{text}")).expect("global comment");
+    let text = std::fs::read_to_string(&local).expect("workspace devices");
+    std::fs::write(&local, format!("# workspace comment\n{text}")).expect("workspace comment");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "phones", "phone", "tv"],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let text = std::fs::read_to_string(&global).expect("global devices");
+    assert!(text.contains("# global comment"), "{text}");
+    assert!(text.contains("phones:"), "{text}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "screens", "@phones", "web1", "--workspace"],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let text = std::fs::read_to_string(&local).expect("workspace devices");
+    assert!(text.contains("# workspace comment"), "{text}");
+    assert!(text.contains("screens:"), "{text}");
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["group", "list"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    assert!(stdout.contains("phones"), "{stdout}");
+    assert!(stdout.contains("screens"), "{stdout}");
+    assert!(stdout.contains("phone [android]"), "{stdout}");
+    assert!(stdout.contains("web1 [web]"), "{stdout}");
+    let screens_line = stdout
+        .lines()
+        .find(|line| line.starts_with("screens"))
+        .expect("screens row");
+    assert!(screens_line.contains("workspace"), "{screens_line}");
+    assert!(screens_line.contains("tv [webos]"), "{screens_line}");
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["group", "list", "--json"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    assert!(stdout.contains("\"source\": \"workspace\""), "{stdout}");
+    assert!(stdout.contains("\"platform\": \"android\""), "{stdout}");
+    assert!(stdout.contains("\"error\": null"), "{stdout}");
+
+    let (code, _stdout, stderr) = run(&home, &workspace, &["groups", "list"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+
+    let (code, _stdout, stderr) = run(&home, &workspace, &["group", "add", "phones", "tv"]);
+    assert_eq!(code, EXIT_USAGE, "duplicate add must fail");
+    assert!(stderr.contains("already exists"), "{stderr}");
+
+    let (code, _stdout, stderr) = run(&home, &workspace, &["group", "set", "phones", "tv"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let (code, stdout, stderr) = run(&home, &workspace, &["group", "list"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let phones_line = stdout
+        .lines()
+        .find(|line| line.starts_with("phones"))
+        .expect("phones row");
+    assert!(phones_line.contains("tv [webos]"), "{phones_line}");
+    assert!(!phones_line.contains("[android]"), "{phones_line}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "broken", "@missing", "--workspace"],
+    );
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("unknown actor"), "{stderr}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "alpha", "web1", "--workspace"],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "beta", "@alpha", "--workspace"],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "set", "alpha", "@beta", "--workspace"],
+    );
+    assert_eq!(code, EXIT_USAGE, "cycles must be rejected");
+    assert!(stderr.contains("cycle"), "{stderr}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "bad", "bad!", "--workspace"],
+    );
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("invalid actor reference"), "{stderr}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "add", "Bad Name", "phone", "--workspace"],
+    );
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("invalid name"), "{stderr}");
+
+    // A global group referenced from the workspace cannot be removed.
+    let (code, _stdout, stderr) = run(&home, &workspace, &["group", "remove", "phones"]);
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("unknown actor"), "{stderr}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &["group", "remove", "screens", "--workspace"],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    assert!(!std::fs::read_to_string(&local)
+        .expect("workspace devices")
+        .contains("screens:"));
+
+    let (code, _stdout, stderr) = run(&home, &workspace, &["group", "remove", "phones"]);
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    assert!(!std::fs::read_to_string(&global)
+        .expect("global devices")
+        .contains("phones:"));
+    assert!(std::fs::read_to_string(&global)
+        .expect("global devices")
+        .contains("# global comment"));
+
+    let (code, _stdout, stderr) = run(&home, &workspace, &["group", "remove", "phones"]);
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("no group named"), "{stderr}");
 }
 
 #[test]

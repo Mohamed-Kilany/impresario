@@ -58,6 +58,24 @@ after the merge. Groups are accepted anywhere an actor list is accepted:
 `--actor @group`. A run selection narrows a play's actor set; members of a
 selected group that the play does not use simply do not run.
 
+Groups can be edited without hand-editing the YAML:
+
+```powershell
+impresario group add phones pocket_phone @spare_phones
+impresario group add screens @phones --workspace
+impresario group set phones pocket_phone
+impresario group list --json
+impresario group remove screens --workspace
+```
+
+`group` writes the global layer unless `--workspace` is given. Each edit
+preserves comments and ordering, then re-validates the merged layers, so a
+cross-layer reference cannot be broken by removing or replacing a group. In the
+TUI, the Groups screen (`/groups`) lists the effective groups with their
+winning layer and resolved devices; `a` adds, `Enter`/`e` edits members,
+`x`/Delete removes and `r` reloads. Renaming is not supported because it would
+need to rewrite references in both layers.
+
 Transport, protocol ports, pairing, signing and credential references are
 derived during planning; they are not part of the file:
 

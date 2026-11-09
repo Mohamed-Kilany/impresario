@@ -11,10 +11,11 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
 use super::app::{
-    probe_row, App, AppRow, ConfigRow, DeviceRow, LineStatus, TestKind, TestRow, TreeLine,
-    WorkspaceRow,
+    probe_row, App, AppRow, ConfigRow, DeviceRow, GroupEditor, GroupEditorKind, LineStatus,
+    TestKind, TestRow, TreeLine, WorkspaceRow,
 };
 use super::{Context, Focus, Screen};
+use crate::definitions::{GroupInfo, GroupSource, ResolvedDevice};
 use crate::jobs::{JobRecord, JobStatus};
 use crate::resident::service::ServiceState;
 use crate::resident::status::{DumpEntry, ResidentStatus, ScheduleStatus, WatcherStatus};
@@ -284,6 +285,83 @@ fn probe_support_frame() {
     assert!(output.contains("luna_media"), "{output}");
     assert!(output.contains("dvt_sysmon"), "{output}");
     assert!(output.contains("FairPlay"), "{output}");
+}
+
+#[test]
+fn groups_frame() {
+    let mut app = populated();
+    app.screen = Screen::Groups;
+    app.focus = Focus::Content;
+    app.groups = vec![
+        GroupInfo {
+            name: "phones".to_string(),
+            members: vec!["phone".to_string()],
+            devices: vec![ResolvedDevice {
+                name: "phone".to_string(),
+                platform: "android".to_string(),
+            }],
+            source: GroupSource::Workspace,
+            error: None,
+        },
+        GroupInfo {
+            name: "screens".to_string(),
+            members: vec!["@phones".to_string(), "web1".to_string()],
+            devices: vec![
+                ResolvedDevice {
+                    name: "phone".to_string(),
+                    platform: "android".to_string(),
+                },
+                ResolvedDevice {
+                    name: "web1".to_string(),
+                    platform: "web".to_string(),
+                },
+            ],
+            source: GroupSource::Global,
+            error: None,
+        },
+        GroupInfo {
+            name: "broken".to_string(),
+            members: vec!["@missing".to_string()],
+            devices: Vec::new(),
+            source: GroupSource::Workspace,
+            error: Some("unknown actor '@missing'".to_string()),
+        },
+    ];
+    app.group_index = 1;
+    let output = render(&app, 120, 30);
+    assert!(
+        output.contains("workspace groups override global"),
+        "{output}"
+    );
+    assert!(output.contains("phones"), "{output}");
+    assert!(output.contains("phone [android]"), "{output}");
+    assert!(output.contains("screens"), "{output}");
+    assert!(output.contains("unknown actor '@missing'"), "{output}");
+
+    app.group_editor = Some(GroupEditor {
+        kind: GroupEditorKind::Add,
+        name: "newgroup".to_string(),
+        members: "phone".to_string(),
+        members_focus: true,
+        source: GroupSource::Workspace,
+    });
+    let output = render(&app, 120, 30);
+    assert!(output.contains("name: newgroup_"), "{output}");
+    assert!(output.contains("members: phone_"), "{output}");
+    assert!(output.contains("Tab switch field"), "{output}");
+
+    app.group_editor = Some(GroupEditor {
+        kind: GroupEditorKind::Remove,
+        name: "screens".to_string(),
+        members: String::new(),
+        members_focus: false,
+        source: GroupSource::Global,
+    });
+    let output = render(&app, 120, 30);
+    assert!(
+        output.contains("Remove group 'screens' from the global layer?"),
+        "{output}"
+    );
 }
 
 #[test]

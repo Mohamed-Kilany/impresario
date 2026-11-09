@@ -6,13 +6,15 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr as _;
 
 use clap::{Args, Subcommand};
 use impresario_core::apps::{self, AppConfig, AppOptions, AppPlatform, AppsConfig};
-use impresario_core::config::{self, DeviceConfig, DevicesConfig};
+use impresario_core::config::{self, ActorResolveError, DeviceConfig, DevicesConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::home::Home;
 use impresario_core::platforms::{DeviceType, Platform};
+use yaml_edit::{SequenceBuilder, YamlFile};
 
 use crate::cli::{EXIT_INFRA, EXIT_OK, EXIT_USAGE};
 
@@ -127,6 +129,37 @@ pub struct DeviceAddArgs {
     pub scope: DefinitionScope,
 }
 
+/// Actor groups (`groups:` in `impresario.devices.config`).
+#[derive(Debug, Subcommand)]
+pub enum GroupCommand {
+    /// Add a group to one layer (fails when the name already exists there).
+    Add(GroupEditArgs),
+    /// Create or replace a group in one layer.
+    Set(GroupEditArgs),
+    /// Remove a group from one layer.
+    Remove {
+        name: String,
+        #[command(flatten)]
+        scope: DefinitionScope,
+    },
+    /// List the effective groups with expanded devices and platforms.
+    List {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct GroupEditArgs {
+    /// Group name (^[a-z0-9][a-z0-9_-]{0,62}$).
+    pub name: String,
+    /// Members: device names or @group references (comma or space separated).
+    pub members: Vec<String>,
+    #[command(flatten)]
+    pub scope: DefinitionScope,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
     /// Add an app definition.
@@ -233,6 +266,379 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
             export_devices(home, workspace_path, !scope.workspace, *merged)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Actor group commands
+// ---------------------------------------------------------------------------
+
+pub fn run_group(command: &GroupCommand, home: &Home, workspace_path: &Path) -> i32 {
+    match command {
+        GroupCommand::Add(args) => save_group(args, home, workspace_path, false),
+        GroupCommand::Set(args) => save_group(args, home, workspace_path, true),
+        GroupCommand::Remove { name, scope } => {
+            remove_group(name, home, workspace_path, !scope.workspace)
+        }
+        GroupCommand::List { json } => list_groups(home, workspace_path, *json),
+    }
+}
+
+/// One effective group row shared by `group list` and the TUI Groups screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GroupSource {
+    Global,
+    Workspace,
+}
+
+impl GroupSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Workspace => "workspace",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedDevice {
+    pub name: String,
+    pub platform: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GroupInfo {
+    pub name: String,
+    pub members: Vec<String>,
+    pub devices: Vec<ResolvedDevice>,
+    pub source: GroupSource,
+    pub error: Option<String>,
+}
+
+/// Read one devices layer, returning `None` when the file is absent or empty.
+fn read_group_layer(path: &Path) -> Result<Option<DevicesConfig>, String> {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    if source.trim().is_empty() {
+        return Ok(None);
+    }
+    let outcome = config::parse_devices(&source, path);
+    match outcome.config {
+        Some(config) => Ok(Some(config)),
+        None => Err(render_diagnostics(&outcome.diagnostics)),
+    }
+}
+
+fn merge_group_layer(merged: &mut DevicesConfig, layer: DevicesConfig) {
+    for device in layer.devices {
+        if let Some(existing) = merged
+            .devices
+            .iter_mut()
+            .find(|item| item.name == device.name)
+        {
+            *existing = device;
+        } else {
+            merged.devices.push(device);
+        }
+    }
+    for (name, members) in layer.groups {
+        merged.groups.insert(name, members);
+    }
+}
+
+/// Effective groups with their source layer and expanded device/platform view.
+pub(crate) fn group_rows(home: &Home, workspace_path: &Path) -> Result<Vec<GroupInfo>, String> {
+    let global_path = home.devices_path();
+    let mut merged = DevicesConfig::default();
+    if let Some(layer) = read_group_layer(&global_path)? {
+        merge_group_layer(&mut merged, layer);
+    }
+    let workspace_groups: std::collections::BTreeSet<String> =
+        match read_group_layer(workspace_path)? {
+            Some(layer) => {
+                let names = layer.groups.keys().cloned().collect();
+                merge_group_layer(&mut merged, layer);
+                names
+            }
+            None => std::collections::BTreeSet::new(),
+        };
+    let mut rows = Vec::with_capacity(merged.groups.len());
+    for (name, members) in &merged.groups {
+        let source = if workspace_groups.contains(name) {
+            GroupSource::Workspace
+        } else {
+            GroupSource::Global
+        };
+        let mut devices = Vec::new();
+        let mut error = None;
+        match merged.expand_actor(&format!("@{name}")) {
+            Ok(expanded) => {
+                for device_name in expanded {
+                    if let Some(device) = merged.device(&device_name) {
+                        devices.push(ResolvedDevice {
+                            name: device_name,
+                            platform: device.platform.as_str().to_string(),
+                        });
+                    }
+                }
+            }
+            Err(ActorResolveError::Unknown(reference)) => {
+                error = Some(format!("unknown actor '{reference}'"));
+            }
+            Err(ActorResolveError::Cycle(path)) => {
+                error = Some(format!("membership cycle: {}", path.join(" -> ")));
+            }
+        }
+        rows.push(GroupInfo {
+            name: name.clone(),
+            members: members.clone(),
+            devices,
+            source,
+            error,
+        });
+    }
+    Ok(rows)
+}
+
+fn normalize_members(members: &[String]) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    for member in members {
+        for item in member.split(|character: char| character == ',' || character.is_whitespace()) {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            if !config::valid_actor_ref(item) {
+                return Err(format!(
+                    "invalid actor reference '{item}'; use a device name or @group"
+                ));
+            }
+            if !normalized.iter().any(|existing| existing == item) {
+                normalized.push(item.to_string());
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+fn save_group(args: &GroupEditArgs, home: &Home, workspace_path: &Path, replace: bool) -> i32 {
+    if !config::valid_device_name(&args.name) {
+        eprintln!(
+            "group: invalid name '{}'; expected ^[a-z0-9][a-z0-9_-]{{0,62}}$",
+            args.name
+        );
+        return EXIT_USAGE;
+    }
+    let members = match normalize_members(&args.members) {
+        Ok(members) => members,
+        Err(message) => {
+            eprintln!("group: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    if members.is_empty() {
+        eprintln!("group: a group needs at least one member");
+        return EXIT_USAGE;
+    }
+    let path = layer_path(home, workspace_path, !args.scope.workspace, true);
+    match edit_group(&path, &args.name, &members, replace, home, workspace_path) {
+        Ok(()) => {
+            let verb = if replace { "saved" } else { "added" };
+            println!("{verb} group '{}' in {}", args.name, path.display());
+            EXIT_OK
+        }
+        Err(message) => {
+            eprintln!("group: {message}");
+            EXIT_USAGE
+        }
+    }
+}
+
+fn edit_group(
+    path: &Path,
+    name: &str,
+    members: &[String],
+    replace: bool,
+    home: &Home,
+    workspace_path: &Path,
+) -> Result<(), String> {
+    let source = read_layer(path, "devices");
+    let file = YamlFile::from_str(&source)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    let document = file.ensure_document();
+    let mut sequence = SequenceBuilder::new();
+    for member in members {
+        sequence = sequence.item(member.as_str());
+    }
+    let sequence_document = sequence.build_document();
+    let Some(value) = sequence_document.as_sequence() else {
+        return Err("cannot build the group member list".to_string());
+    };
+    let candidate = match document.get_mapping("groups") {
+        Some(groups) => {
+            if !replace && groups.contains_key(name) {
+                return Err(format!(
+                    "group '{name}' already exists in {}",
+                    path.display()
+                ));
+            }
+            groups.set(name, value);
+            file.to_string()
+        }
+        None => {
+            if document.contains_key("groups") {
+                return Err(format!("groups in {} is not a mapping", path.display()));
+            }
+            // Appending the whole block keeps the nested indentation
+            // unambiguous; an in-tree `Mapping::set` handles the other path.
+            let mut candidate = source;
+            if !candidate.ends_with('\n') {
+                candidate.push('\n');
+            }
+            candidate.push_str("groups:\n");
+            candidate.push_str(&format!("  {name}:\n"));
+            for member in members {
+                candidate.push_str(&format!("    - {member}\n"));
+            }
+            candidate
+        }
+    };
+    validate_group_candidate(path, &candidate, home, workspace_path)?;
+    write_candidate(path, &candidate)
+}
+
+fn remove_group(name: &str, home: &Home, workspace_path: &Path, global: bool) -> i32 {
+    let path = layer_path(home, workspace_path, global, true);
+    match delete_group(&path, name, home, workspace_path) {
+        Ok(()) => {
+            println!("removed group '{name}' from {}", path.display());
+            EXIT_OK
+        }
+        Err(message) => {
+            eprintln!("group: {message}");
+            EXIT_USAGE
+        }
+    }
+}
+
+fn delete_group(path: &Path, name: &str, home: &Home, workspace_path: &Path) -> Result<(), String> {
+    let source = read_layer(path, "devices");
+    let file = YamlFile::from_str(&source)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    let document = file.ensure_document();
+    let (found, empty) = match document.get_mapping("groups") {
+        Some(groups) => {
+            let found = groups.remove(name).is_some();
+            (found, groups.is_empty())
+        }
+        None => (false, false),
+    };
+    if !found {
+        return Err(format!("no group named '{name}' in {}", path.display()));
+    }
+    if empty {
+        document.remove("groups");
+    }
+    let candidate = file.to_string();
+    validate_group_candidate(path, &candidate, home, workspace_path)?;
+    write_candidate(path, &candidate)
+}
+
+/// Validate the prospective file on its own and against the other layer, so a
+/// group edit can never leave the effective `groups:` map with an unknown
+/// member or a cycle.
+fn validate_group_candidate(
+    path: &Path,
+    candidate: &str,
+    home: &Home,
+    workspace_path: &Path,
+) -> Result<(), String> {
+    let outcome = config::parse_devices(candidate, path);
+    let Some(target) = outcome.config else {
+        return Err(render_diagnostics(&outcome.diagnostics));
+    };
+    let target_is_workspace = path == workspace_path;
+    let mut merged = DevicesConfig::default();
+    if target_is_workspace {
+        if let Some(layer) = read_group_layer(&home.devices_path())? {
+            merge_group_layer(&mut merged, layer);
+        }
+        merge_group_layer(&mut merged, target);
+    } else {
+        merge_group_layer(&mut merged, target);
+        if let Some(layer) = read_group_layer(workspace_path)? {
+            merge_group_layer(&mut merged, layer);
+        }
+    }
+    if let Some((code, message)) = merged.validate_groups().into_iter().next() {
+        return Err(format!("{}: {message}", code.as_str()));
+    }
+    Ok(())
+}
+
+fn list_groups(home: &Home, workspace_path: &Path, json: bool) -> i32 {
+    let groups = match group_rows(home, workspace_path) {
+        Ok(groups) => groups,
+        Err(message) => {
+            eprintln!("group list: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    if json {
+        let rows: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|group| {
+                serde_json::json!({
+                    "name": group.name,
+                    "members": group.members,
+                    "source": group.source.as_str(),
+                    "devices": group.devices.iter().map(|device| {
+                        serde_json::json!({
+                            "name": device.name,
+                            "platform": device.platform,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "error": group.error,
+                })
+            })
+            .collect();
+        match serde_json::to_string_pretty(&rows) {
+            Ok(text) => println!("{text}"),
+            Err(error) => {
+                eprintln!("group list: cannot serialize: {error}");
+                return EXIT_USAGE;
+            }
+        }
+        return EXIT_OK;
+    }
+    if groups.is_empty() {
+        println!("no groups configured (add one with `impresario group add`)");
+        return EXIT_OK;
+    }
+    println!("{:<20} {:<10} {:<34} RESOLVED", "NAME", "SOURCE", "MEMBERS");
+    for group in groups {
+        let members = group.members.join(", ");
+        let resolved = match &group.error {
+            Some(error) => format!("! {error}"),
+            None if group.devices.is_empty() => "(empty)".to_string(),
+            None => group
+                .devices
+                .iter()
+                .map(|device| format!("{} [{}]", device.name, device.platform))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        println!(
+            "{:<20} {:<10} {:<34} {}",
+            group.name,
+            group.source.as_str(),
+            members,
+            resolved
+        );
+    }
+    EXIT_OK
 }
 
 /// Save, inspect or clear the global webOS Developer Mode passphrase. The OS

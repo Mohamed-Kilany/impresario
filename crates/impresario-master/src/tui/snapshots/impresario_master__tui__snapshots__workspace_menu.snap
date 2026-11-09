@@ -12,13 +12,13 @@ expression: "render(&app, 100, 28)"
 │   Tests                                           │ │ tests     8 entries                        │
 │   Coverage                                        │ │ devices   2 devices                        │
 │   Probe                                           │ │ apps      1 app                            │
-│   Devices                                         │ │ runs      1 run                            │
-│   Apps                                            │ │ active    0                                │
-│   Config                                          │ └────────────────────────────────────────────┘
-│   Doctor                                          │ ┌ Navigation ────────────────────────────────┐
-│   Switch workspace                                │ │ Arrows move; Enter opens; Esc returns to   │
-│   Quit                                            │ │ the picker; Tab opens the prompt.          │
-│                                                   │ │                                            │
+│   Groups                                          │ │ runs      1 run                            │
+│   Devices                                         │ │ active    0                                │
+│   Apps                                            │ └────────────────────────────────────────────┘
+│   Config                                          │ ┌ Navigation ────────────────────────────────┐
+│   Doctor                                          │ │ Arrows move; Enter opens; Esc returns to   │
+│   Switch workspace                                │ │ the picker; Tab opens the prompt.          │
+│   Quit                                            │ │                                            │
 │                                                   │ │ /run, /attach, /logs and the other slash   │
 │                                                   │ │ commands still work here.                  │
 │                                                   │ │                                            │
