@@ -1,7 +1,7 @@
 //! Interactive application state, input handling and child command dispatch.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -49,6 +49,19 @@ pub(super) struct TestRow {
     pub file: Option<PathBuf>,
     pub line: Option<usize>,
     pub name: String,
+    /// Platform audience of a stage row, from `tests --json`.
+    pub platforms: Vec<String>,
+}
+
+/// One stage row of the theatre coverage matrix.
+#[derive(Debug, Clone, Default)]
+pub(super) struct CoverageRow {
+    pub stage: String,
+    pub theatres: Vec<String>,
+    pub implementations: usize,
+    pub platforms: BTreeSet<String>,
+    /// Configured devices whose platform has no implementation of this stage.
+    pub missing: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -473,6 +486,9 @@ pub(super) struct App {
     pub resident_dumps: Vec<DumpEntry>,
     pub resident_error: Option<String>,
     pub resident_scroll: u16,
+    pub coverage: Vec<CoverageRow>,
+    pub coverage_error: Option<String>,
+    pub coverage_scroll: u16,
     pub activity: VecDeque<String>,
     pub overlay: Option<String>,
     pub should_quit: bool,
@@ -531,6 +547,9 @@ impl App {
             resident_dumps: Vec::new(),
             resident_error: None,
             resident_scroll: 0,
+            coverage: Vec::new(),
+            coverage_error: None,
+            coverage_scroll: 0,
             activity: VecDeque::new(),
             overlay: None,
             should_quit: false,
@@ -559,6 +578,7 @@ impl App {
         app.load_config();
         app.load_resident();
         app.load_tests();
+        app.rebuild_coverage();
         app.refresh_completion_context();
         app.load_state();
         app.load_workspaces();
@@ -621,7 +641,7 @@ impl App {
     }
 
     pub(super) fn move_menu(&mut self, delta: i32) {
-        const MENU_LEN: usize = 10;
+        const MENU_LEN: usize = 11;
         if delta < 0 {
             self.menu_index = self.menu_index.saturating_sub(1);
         } else {
@@ -667,11 +687,12 @@ impl App {
             1 => self.set_screen(Screen::Runs),
             2 => self.set_screen(Screen::Resident),
             3 => self.set_screen(Screen::Tests),
-            4 => self.set_screen(Screen::Devices),
-            5 => self.set_screen(Screen::Apps),
-            6 => self.set_screen(Screen::Config),
-            7 => self.run_doctor(),
-            8 => {
+            4 => self.set_screen(Screen::Coverage),
+            5 => self.set_screen(Screen::Devices),
+            6 => self.set_screen(Screen::Apps),
+            7 => self.set_screen(Screen::Config),
+            8 => self.run_doctor(),
+            9 => {
                 self.screen = Screen::Landing;
                 self.focus = Focus::Content;
                 self.overlay = None;
@@ -703,6 +724,7 @@ impl App {
             self.load_config();
             self.load_resident();
             self.load_tests();
+            self.rebuild_coverage();
             self.refresh_completion_context();
             let path_text = path.display().to_string();
             let _ = self.run_child(&[
@@ -844,6 +866,7 @@ impl App {
             "menu" => Screen::Menu,
             "runs" => Screen::Runs,
             "tests" => Screen::Tests,
+            "coverage" => Screen::Coverage,
             "devices" => Screen::Devices,
             "apps" => Screen::Apps,
             "config" => Screen::Config,
@@ -1336,6 +1359,77 @@ impl App {
         self.resident_refreshed = Instant::now();
     }
 
+    /// Refresh the theatre coverage matrix from the same `tests --json`
+    /// explorer data the Tests screen uses.
+    pub(super) fn load_coverage(&mut self) {
+        self.load_tests();
+        self.rebuild_coverage();
+    }
+
+    fn rebuild_coverage(&mut self) {
+        self.coverage.clear();
+        self.coverage_error = self.test_error.clone();
+        if self.test_error.is_some() {
+            return;
+        }
+
+        let mut stages: BTreeMap<String, (BTreeSet<String>, Vec<String>, usize)> = BTreeMap::new();
+        let mut theatre = None;
+        for row in &self.tests {
+            match row.kind {
+                TestKind::Theatre => theatre = Some(row.name.clone()),
+                TestKind::Stage => {
+                    let entry = stages.entry(row.name.clone()).or_default();
+                    entry.0.extend(row.platforms.iter().cloned());
+                    entry.2 += 1;
+                    if let Some(name) = &theatre {
+                        entry.1.push(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (_, (_, theatres, _)) in &mut stages {
+            theatres.dedup();
+        }
+
+        for (stage, (platforms, theatres, implementations)) in stages {
+            let missing = self
+                .devices
+                .iter()
+                .filter(|device| !platforms.contains(device_platform_slug(&device.platform)))
+                .map(|device| format!("{} ({})", device.name, device.platform))
+                .collect();
+            self.coverage.push(CoverageRow {
+                stage,
+                theatres,
+                implementations,
+                platforms,
+                missing,
+            });
+        }
+    }
+
+    /// Number of scrollable lines in the Coverage body. Mirrors
+    /// `render::draw_coverage`; keep the two in sync.
+    pub(super) fn coverage_max_scroll(&self) -> u16 {
+        let mut lines = 2; // summary + blank
+        if self.coverage_error.is_some() {
+            lines += 1;
+        } else if self.coverage.is_empty() {
+            lines += 1;
+        } else {
+            lines += 2; // legend + header
+            lines += self.coverage.len() * 2;
+            lines += self
+                .coverage
+                .iter()
+                .filter(|row| !row.missing.is_empty())
+                .count();
+        }
+        u16::try_from(lines.saturating_sub(1)).unwrap_or(u16::MAX)
+    }
+
     /// Number of scrollable lines in the Resident body.
     ///
     /// Mirrors the line construction in `render::draw_resident`; keep the two
@@ -1423,6 +1517,7 @@ impl App {
     pub(super) fn reload_screen(&mut self) {
         match self.screen {
             Screen::Tests => self.load_tests(),
+            Screen::Coverage => self.load_coverage(),
             Screen::Devices => self.load_devices(),
             Screen::Apps => self.load_apps(),
             Screen::Config => self.load_config(),
@@ -2033,6 +2128,10 @@ impl App {
                     Action::None
                 }
             }
+            "coverage" => {
+                self.set_screen(Screen::Coverage);
+                Action::None
+            }
             "devices" => {
                 self.screen = Screen::Devices;
                 self.focus = Focus::Content;
@@ -2298,6 +2397,9 @@ impl App {
         if screen == Screen::Resident {
             self.resident_scroll = 0;
         }
+        if screen == Screen::Coverage {
+            self.coverage_scroll = 0;
+        }
         self.reload_screen();
     }
 
@@ -2329,6 +2431,14 @@ impl App {
                     self.resident_scroll = self.resident_scroll.min(max).saturating_sub(1);
                 } else {
                     self.resident_scroll = self.resident_scroll.saturating_add(1).min(max);
+                }
+            }
+            Screen::Coverage => {
+                let max = self.coverage_max_scroll();
+                if delta < 0 {
+                    self.coverage_scroll = self.coverage_scroll.min(max).saturating_sub(1);
+                } else {
+                    self.coverage_scroll = self.coverage_scroll.saturating_add(1).min(max);
                 }
             }
             Screen::Home | Screen::Devices | Screen::Apps | Screen::Config => {}
@@ -2481,6 +2591,18 @@ fn status_of_str(status: &str) -> LineStatus {
     }
 }
 
+/// Normalize a configured device type (`webOS`, `tizenOS`, `iOS`, `tvOS`)
+/// to the lowercase platform slug used by stage audiences.
+fn device_platform_slug(platform: &str) -> &str {
+    match platform {
+        "webOS" => "webos",
+        "tizenOS" => "tizen",
+        "iOS" => "ios",
+        "tvOS" => "tvos",
+        other => other,
+    }
+}
+
 fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
     let mut rows = Vec::new();
     if let Some(scenes) = value.get("scenes").and_then(serde_json::Value::as_array) {
@@ -2496,6 +2618,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                     .and_then(serde_json::Value::as_u64)
                     .map(|n| n as usize),
                 name: name.clone(),
+                platforms: Vec::new(),
             });
             if let Some(pieces) = scene.get("pieces").and_then(serde_json::Value::as_array) {
                 for piece in pieces {
@@ -2510,6 +2633,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                             .and_then(serde_json::Value::as_u64)
                             .map(|n| n as usize),
                         name: piece_name,
+                        platforms: Vec::new(),
                     });
                 }
             }
@@ -2528,6 +2652,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                     .and_then(serde_json::Value::as_u64)
                     .map(|n| n as usize),
                 name: name.clone(),
+                platforms: Vec::new(),
             });
             if let Some(stages) = theatre.get("stages").and_then(serde_json::Value::as_array) {
                 for stage in stages {
@@ -2542,6 +2667,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                             .and_then(serde_json::Value::as_u64)
                             .map(|n| n as usize),
                         name: stage_name,
+                        platforms: string_array(stage, "platforms"),
                     });
                 }
             }
@@ -2561,6 +2687,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                     .and_then(serde_json::Value::as_u64)
                     .map(|n| n as usize),
                 name: name.clone(),
+                platforms: Vec::new(),
             });
             if let Some(acts) = play.get("acts").and_then(serde_json::Value::as_array) {
                 for act in acts {
@@ -2581,6 +2708,7 @@ fn rows_from_tree(value: &serde_json::Value) -> Vec<TestRow> {
                             .and_then(serde_json::Value::as_u64)
                             .map(|n| n as usize),
                         name: act_name,
+                        platforms: Vec::new(),
                     });
                 }
             }
@@ -2675,6 +2803,7 @@ fn candidates() -> Vec<&'static str> {
         "/tests rename ",
         "/tests open ",
         "/tests --dry-run",
+        "/coverage",
         "/devices",
         "/apps",
         "/config",
@@ -2791,7 +2920,7 @@ pub(super) fn help_text() -> String {
         "",
         "Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.",
         "Workspace menu · Up/Down, Enter opens, Esc goes back.",
-        "  Overview · Runs · Resident · Tests · Devices · Apps · Config · Doctor",
+        "  Overview · Runs · Resident · Tests · Coverage · Devices · Apps · Config · Doctor",
         "  Switch workspace returns to the landing screen.",
         "Content · arrows move; Esc menu; Tab prompt.",
         "Prompt · type a CLI command; /run --tag smoke is a shortcut.",
@@ -2801,10 +2930,11 @@ pub(super) fn help_text() -> String {
         "Runs · Enter follow · b detach · x stop · f logs · t device · / filter",
         "  r rerun · F rerun failed · o report · p screenshot · X remove",
         "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
+        "Coverage · j/k scroll · g/G top/bottom · r reload",
         "Devices / Apps / Config · j/k move · Enter open · r reload",
         "Resident · j/k scroll · g/G top/bottom · r reload",
         "",
-        "Commands · /run /jobs /devices /apps /config /resident /tests /open /doctor",
+        "Commands · /run /jobs /devices /apps /config /resident /coverage /tests /open /doctor",
         "  /fmt /validate /plan /attach /logs /stop /report /profile /quit",
         "Scriptable · run --detach · jobs --json · wait · report",
         "  /menu /workspaces",
@@ -2887,6 +3017,87 @@ mod tests {
                 .and_then(|row| row.file.as_ref())
                 .map(|p| p.display().to_string()),
             Some("plays/login.play".to_string())
+        );
+    }
+
+    #[test]
+    fn coverage_groups_stage_implementations_and_marks_missing_devices() {
+        let context = Context::new(
+            impresario_core::home::Home::at("demo-home"),
+            PathBuf::from("demo"),
+            PathBuf::from("demo/impresario.config"),
+            PathBuf::from("demo/impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.devices = vec![
+            DeviceRow {
+                name: "web1".to_string(),
+                platform: "web".to_string(),
+                connection: "launch".to_string(),
+            },
+            DeviceRow {
+                name: "phone".to_string(),
+                platform: "android".to_string(),
+                connection: "adb".to_string(),
+            },
+            DeviceRow {
+                name: "living".to_string(),
+                platform: "webOS".to_string(),
+                connection: "cdp".to_string(),
+            },
+        ];
+        app.tests = vec![
+            TestRow {
+                indent: 0,
+                label: "theatre Auth".to_string(),
+                kind: TestKind::Theatre,
+                name: "Auth".to_string(),
+                ..TestRow::default()
+            },
+            TestRow {
+                indent: 1,
+                label: "stage Login".to_string(),
+                kind: TestKind::Stage,
+                name: "Login".to_string(),
+                platforms: vec![
+                    "web".to_string(),
+                    "android".to_string(),
+                    "webos".to_string(),
+                ],
+                ..TestRow::default()
+            },
+            TestRow {
+                indent: 0,
+                label: "theatre Playback".to_string(),
+                kind: TestKind::Theatre,
+                name: "Playback".to_string(),
+                ..TestRow::default()
+            },
+            TestRow {
+                indent: 1,
+                label: "stage PlaybackStarted".to_string(),
+                kind: TestKind::Stage,
+                name: "PlaybackStarted".to_string(),
+                platforms: vec!["web".to_string()],
+                ..TestRow::default()
+            },
+        ];
+        app.test_error = None;
+
+        app.rebuild_coverage();
+
+        assert_eq!(app.coverage.len(), 2);
+        let login = &app.coverage[0];
+        assert_eq!(login.stage, "Login");
+        assert_eq!(login.theatres, vec!["Auth".to_string()]);
+        assert_eq!(login.implementations, 1);
+        assert!(login.missing.is_empty());
+        let playback = &app.coverage[1];
+        assert_eq!(playback.stage, "PlaybackStarted");
+        assert_eq!(
+            playback.missing,
+            vec!["phone (android)".to_string(), "living (webOS)".to_string()]
         );
     }
 }

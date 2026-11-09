@@ -15,6 +15,7 @@ const EXIT_USAGE: i32 = 2;
 const EXIT_INFRA: i32 = 3;
 
 const THEATRE: &str = r#"Theatre: Auth
+Audience: web, android
 
 Stage: Login(user = 'x')
     Audience: web, android
@@ -24,6 +25,10 @@ Stage: Login(user = 'x')
 
 Stage: WebOnly
     Audience: web
+    Scene: TestScreen
+        Check: A
+
+Stage: Inherited
     Scene: TestScreen
         Check: A
 "#;
@@ -142,6 +147,9 @@ fn list_explorer_tree_and_filters() {
     assert_eq!(login["items"][0]["steps"], 2);
     let web_only = find(&theatre["stages"], "WebOnly");
     assert_eq!(web_only["platforms"][0], "web");
+    let inherited = find(&theatre["stages"], "Inherited");
+    assert_eq!(inherited["platforms"][0], "web");
+    assert_eq!(inherited["platforms"][1], "android");
 
     let perform = find(&tree["plays"], "Perform");
     let act = find(&perform["acts"], "LoginAct");

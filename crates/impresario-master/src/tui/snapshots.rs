@@ -141,6 +141,7 @@ fn test_row(indent: usize, label: &str, kind: TestKind, name: &str, line: usize)
         file: Some(PathBuf::from(format!("demo/{}", file_for(kind)))),
         line: Some(line),
         name: name.to_string(),
+        platforms: Vec::new(),
     }
 }
 
@@ -382,6 +383,52 @@ fn resident_screen_shows_service_schedules_watchers_and_dumps() {
     ] {
         assert!(frame.contains(needle), "missing {needle:?} in:\n{frame}");
     }
+}
+
+#[test]
+fn coverage_screen_shows_stage_platform_matrix_and_missing_actors() {
+    use std::collections::BTreeSet;
+
+    let mut app = populated();
+    app.coverage = vec![
+        super::app::CoverageRow {
+            stage: "Login".to_string(),
+            theatres: vec!["Auth".to_string()],
+            implementations: 2,
+            platforms: BTreeSet::from(["web".to_string(), "android".to_string()]),
+            missing: Vec::new(),
+        },
+        super::app::CoverageRow {
+            stage: "PlaybackStarted".to_string(),
+            theatres: vec!["Playback".to_string()],
+            implementations: 1,
+            platforms: BTreeSet::from(["web".to_string()]),
+            missing: vec!["phone (android)".to_string()],
+        },
+    ];
+    app.coverage_error = None;
+    app.screen = Screen::Coverage;
+    app.focus = Focus::Content;
+
+    let frame = render(&app, 110, 30);
+    for needle in [
+        "Coverage",
+        "2 stages · 2 configured",
+        "andr=android",
+        "atv=androidtv",
+        "STAGE",
+        "Login",
+        "PlaybackStarted",
+        "2 implementation(s) in Auth",
+        "1 implementation(s) in Playback",
+        "missing for: phone (android)",
+    ] {
+        assert!(frame.contains(needle), "missing {needle:?} in:\n{frame}");
+    }
+    assert!(
+        !frame.contains("missing for: web1"),
+        "web1 is covered by the Login row:\n{frame}"
+    );
 }
 
 fn tree_line(indent: usize, text: &str, status: LineStatus) -> TreeLine {

@@ -518,7 +518,9 @@ does not use it (I-127); all other settings edits still use `yaml-edit`.
 `impresario tests` lists scenes, theatres, plays, acts, stages, tags,
 platforms, parameters, files and references. It accepts the same `--play`,
 `--act`, `--tag`, `--exclude-tag` and `--platform` filters; `--json` is the
-stable machine shape consumed by the TUI.
+stable machine shape consumed by the TUI. Stage rows report the effective
+audience: the stage `Audience:` first, then the theatre default, and all seven
+platforms when neither restricts the stage.
 
 ```powershell
 impresario tests list
@@ -563,10 +565,10 @@ app and run counts. Below the workspace rows are `Add current workspace`,
 On the landing screen: `a` adds the current workspace, `d` runs doctor and `q`
 quits. `Enter` on a missing workspace reports it in the status line instead of
 trying to enter it. Entering a workspace opens the workspace menu:
-`Overview`, `Runs`, `Tests`, `Devices`, `Apps`, `Config`, `Doctor`,
-`Switch workspace` and `Quit`. `Esc` from menu content returns to the landing
-screen; `Esc` from the menu prompt returns to menu content. `/menu`,
-`/workspaces` and `/landing` jump directly.
+`Overview`, `Runs`, `Resident`, `Tests`, `Coverage`, `Devices`, `Apps`,
+`Config`, `Doctor`, `Switch workspace` and `Quit`. `Esc` from menu content
+returns to the landing screen; `Esc` from the menu prompt returns to menu
+content. `/menu`, `/workspaces` and `/landing` jump directly.
 
 The first-run welcome overlay appears after the first workspace is entered,
 not on the landing screen. The Overview/Home screen shows the workspace,
@@ -610,6 +612,17 @@ failure screenshot path.
 (detached), `d` prints the dry-run matrix for the selection. `Tab` returns to
 the prompt.
 
+**Coverage screen** (menu → Coverage, or `/coverage`): a read-only matrix of
+theatre stage implementations × platforms derived from `impresario tests
+--json`, not a separate command. Each stage row unions the platforms of all
+theatres implementing that stage and shows the implementation and theatre
+counts; the seven columns are `andr` (android), `atv` (androidtv), `web`,
+`wos` (webos), `tiz` (tizen), `ios` and `tvos`. Configured devices whose
+platform has no implementation are listed under `missing for:`, using the
+config spelling (`webOS`, `tizenOS`, `iOS`, `tvOS`). `j`/`k` scroll, `g`/`G`
+jump to the top/bottom, and `r` reloads from disk; entering the screen also
+refreshes. ASCII mode uses `*` for covered and `-` for missing columns.
+
 **Devices/Apps/Config screens** (menu → the section, or `/devices`, `/apps`,
 `/config`): `j`/`k` scroll, `Enter` opens the
 relevant file in `$VISUAL`/`$EDITOR`, `r` reloads from disk. The Config screen
@@ -628,6 +641,7 @@ in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
 | `/workspaces`, `/landing` | Return to the landing/workspace picker |
 | `/devices`, `/apps`, `/config` | Open those screens |
 | `/tests [args]` | Open the explorer; with args runs `impresario tests ...` |
+| `/coverage` | Open the theatre stage × platform coverage matrix |
 | `/open <path>` | Open a file/directory with the OS handler |
 | `/doctor [--json]` | Run `impresario doctor` and print the result |
 | `/fmt [args]`, `/validate [args]` | Run the matching CLI command |

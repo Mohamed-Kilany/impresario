@@ -216,7 +216,7 @@ fn scene_json(scene: &SceneFile) -> Value {
     })
 }
 
-fn stage_json(stage: &StageDecl) -> Value {
+fn stage_json(theatre: &TheatreFile, stage: &StageDecl) -> Value {
     let items: Vec<Value> = stage
         .items
         .iter()
@@ -235,11 +235,19 @@ fn stage_json(stage: &StageDecl) -> Value {
             }),
         })
         .collect();
+    // Report the effective audience: stage restriction first, then the
+    // theatre default, and all seven platforms when neither restricts it.
+    // The TUI coverage matrix relies on this resolved list.
+    let platforms: Vec<&str> = theatre
+        .stage_audience(stage)
+        .iter()
+        .map(|platform| platform.as_str())
+        .collect();
     json!({
         "name": stage.name,
         "file": stage.name_span.file,
         "line": stage.name_span.line,
-        "platforms": stage_platform_names(stage),
+        "platforms": platforms,
         "params": stage.params.iter().map(|param| json!({
             "name": param.name,
             "required": param.default.is_none(),
@@ -253,7 +261,7 @@ fn theatre_json(theatre: &TheatreFile) -> Value {
         "name": theatre.name,
         "file": theatre.name_span.file,
         "line": theatre.name_span.line,
-        "stages": theatre.stages.iter().map(stage_json).collect::<Vec<_>>(),
+        "stages": theatre.stages.iter().map(|stage| stage_json(theatre, stage)).collect::<Vec<_>>(),
     })
 }
 

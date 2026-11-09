@@ -47,6 +47,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App) {
         Screen::Home => draw_home(frame, app, body),
         Screen::Runs => draw_runs(frame, app, body),
         Screen::Tests => draw_tests(frame, app, body),
+        Screen::Coverage => draw_coverage(frame, app, body),
         Screen::Devices => draw_devices(frame, app, body),
         Screen::Apps => draw_apps(frame, app, body),
         Screen::Config => draw_config(frame, app, body),
@@ -111,6 +112,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Home => "Overview",
         Screen::Runs => "Runs",
         Screen::Tests => "Tests",
+        Screen::Coverage => "Coverage",
         Screen::Devices => "Devices",
         Screen::Apps => "Apps",
         Screen::Config => "Config",
@@ -433,11 +435,12 @@ fn draw_landing_detail(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-const MENU: [(&str, &str); 10] = [
+const MENU: [(&str, &str); 11] = [
     ("Overview", "summary and activity"),
     ("Runs", "background jobs and live logs"),
     ("Resident", "schedules, watchers and dumps"),
     ("Tests", "scene, theatre and play explorer"),
+    ("Coverage", "theatre stages × platforms"),
     ("Devices", "configured targets"),
     ("Apps", "shared app bindings"),
     ("Config", "effective settings"),
@@ -987,6 +990,109 @@ fn draw_tests(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn draw_coverage(frame: &mut Frame, app: &App, area: Rect) {
+    const COLUMNS: [(&str, &str); 7] = [
+        ("android", "andr"),
+        ("androidtv", "atv"),
+        ("web", "web"),
+        ("webos", "wos"),
+        ("tizen", "tiz"),
+        ("ios", "ios"),
+        ("tvos", "tvos"),
+    ];
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "{} · {} configured",
+                count_label(app.coverage.len(), "stage", "stages"),
+                count_label(app.devices.len(), "device", "devices")
+            ),
+            secondary(app),
+        )),
+        Line::from(""),
+    ];
+    if let Some(error) = &app.coverage_error {
+        lines.push(Line::from(Span::styled(error.clone(), error_style(app))));
+    } else if app.coverage.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No theatre stages found in this workspace.",
+            secondary(app),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Columns: andr=android atv=androidtv web=web wos=webos tiz=tizen ios=ios tvos=tvos",
+            secondary(app),
+        )));
+        let header = COLUMNS
+            .iter()
+            .map(|(_, short)| format!("{short:^4}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let width =
+            usize::from(area.width.saturating_sub(header.chars().count() as u16 + 4)).max(12);
+        lines.push(Line::from(Span::styled(
+            format!("{:<width$} {}", "STAGE", header, width = width),
+            title_style(app),
+        )));
+        for row in &app.coverage {
+            let cells = COLUMNS
+                .iter()
+                .map(|(platform, _)| {
+                    let mark = if row.platforms.contains(*platform) {
+                        if app.ctx.ascii {
+                            "*"
+                        } else {
+                            "✓"
+                        }
+                    } else if app.ctx.ascii {
+                        "-"
+                    } else {
+                        "·"
+                    };
+                    format!("{mark:^4}")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            lines.push(Line::from(format!(
+                "{:<width$} {}",
+                elide(&row.stage, width),
+                cells,
+                width = width
+            )));
+            let theatres = if row.theatres.is_empty() {
+                "unknown theatre".to_string()
+            } else {
+                row.theatres.join(", ")
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {} implementation(s) in {}",
+                    row.implementations, theatres
+                ),
+                secondary(app),
+            )));
+            if !row.missing.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("  missing for: {}", row.missing.join(", ")),
+                    Style::default().fg(color_or_reset(app, Color::Yellow)),
+                )));
+            }
+        }
+    }
+    let max_scroll = u16::try_from(lines.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel(
+                app,
+                "Coverage · theatre stages × platforms",
+                app.focus == Focus::Content && app.screen == Screen::Coverage,
+            ))
+            .scroll((app.coverage_scroll.min(max_scroll), 0))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1429,6 +1535,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Tests if app.focus == Focus::Content => {
             "Enter edit · Space mark · r run · d dry-run · Esc menu · Tab prompt"
         }
+        Screen::Coverage if app.focus == Focus::Content => {
+            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+        }
         Screen::Devices | Screen::Apps | Screen::Config if app.focus == Focus::Content => {
             "Enter open · r reload · Esc menu · Tab prompt"
         }
@@ -1465,6 +1574,18 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
                 )
             },
         ),
+        Screen::Coverage => {
+            let missing = app
+                .coverage
+                .iter()
+                .filter(|row| !row.missing.is_empty())
+                .count();
+            format!(
+                "{} · {} with missing actors",
+                count_label(app.coverage.len(), "stage", "stages"),
+                count_label(missing, "stage", "stages")
+            )
+        }
         Screen::Devices => format!(
             "{} configured",
             count_label(app.devices.len(), "device", "devices")
