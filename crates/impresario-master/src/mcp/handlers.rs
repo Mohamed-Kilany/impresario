@@ -375,15 +375,23 @@ pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn tags_list(server: &Server, _arguments: &Value) -> ToolOutput {
-    let WorkspaceConfig { config, .. } = match load_workspace_config(server) {
-        Ok(value) => value,
-        Err(message) => return ToolOutput::error(message),
+    // `impresario tags` reads only the workspace config: a broken devices or
+    // apps file must not hide the tag index.
+    let config_outcome = settings::load_default_layers(&server.config_path, &server.base);
+    let Some(config) = config_outcome.config else {
+        return ToolOutput::error(format!(
+            "configuration errors in {}:\n{}",
+            server.config_path.display(),
+            diagnostics_text(&config_outcome.diagnostics)
+        ));
     };
     let loaded = workspace::load_dirs(
         &server.base.join(&config.scenes_dir),
         &server.base.join(&config.theatres_dir),
         &server.base.join(&config.plays_dir),
     );
+    let mut diagnostics = config_outcome.diagnostics;
+    diagnostics.extend(loaded.diagnostics.iter().cloned());
 
     #[derive(Default)]
     struct TagEntry {
@@ -445,7 +453,7 @@ pub(crate) fn tags_list(server: &Server, _arguments: &Value) -> ToolOutput {
     ToolOutput::json_with_prefix(
         json!({
             "tags": tags,
-            "diagnostics": diagnostics_json(&loaded.diagnostics),
+            "diagnostics": diagnostics_json(&diagnostics),
         }),
         format!("{} tag(s) declared", index.len()),
     )

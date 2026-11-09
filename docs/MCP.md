@@ -60,7 +60,7 @@ does not exist, an argument is out of range) are tool errors
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `impresario_workspace_info` | — | Config defaults, devices **with each platform's action/check support matrix**, scenes, plays, acts, tags and diagnostics. Call this first. |
-| `impresario_tags_list` | — | Every declared tag across plays, acts, theatres and stages: usage count, workspace-relative files and usage labels (`play X`, `act X / Y`, `theatre X`, `stage X.Y`), plus diagnostics. Same index as `impresario tags --json`. Read-only. |
+| `impresario_tags_list` | — | Every declared tag across plays, acts, theatres and stages: usage count, workspace-relative files and usage labels (`play X`, `act X / Y`, `theatre X`, `stage X.Y`), plus diagnostics. Same index as `impresario tags --json`; reads only the workspace config. Read-only. |
 | `impresario_validate` | `paths?` | Parse/validate the workspace (or listed files/dirs) without touching a device. Returns core diagnostics with codes. |
 | `impresario_devices_list` | - | The effective devices: name, exact type, IP, derived platform/transport and support matrix. No device contacted. |
 | `impresario_devices_check` | `devices?` | Prepare → connect → handshake → `DeviceInfo` → teardown per device. Contacts hardware; takes seconds per device. |
