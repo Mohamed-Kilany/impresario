@@ -583,7 +583,7 @@ fn tags_jobs_and_probes_resource_are_available() {
 Tags: smoke, auth
 
 Act: Pass
-    Tags: smoke
+Tags: smoke
     Perform: Basic
 "#;
     const TAGGED_THEATRE: &str = r#"Theatre: Tagged
