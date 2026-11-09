@@ -679,6 +679,7 @@ fn reconcile_watchers(
                 &running,
                 paused_now,
                 &stop,
+                &SystemWatcherRuntime,
             );
         });
     }
@@ -704,6 +705,65 @@ fn live_watcher<'a>(sections: &'a ResidentSections, name: &str) -> Option<&'a Wa
         .find(|value| value.name == name && value.enabled)
 }
 
+/// Clock and execution seam for the watcher loop. Production uses the wall
+/// clock and the normal workspace runner; the fake-time soak test drives the
+/// same loop without sleeping or touching a device.
+trait WatcherRuntime {
+    fn now(&self) -> DateTime<Local>;
+    fn monotonic(&self) -> Instant;
+    fn sleep(&self, duration: Duration, service_stop: &AtomicBool, stop: &AtomicBool);
+    fn run(
+        &self,
+        base: &Path,
+        config_path: &Path,
+        devices_path: &Path,
+        args: &RunArgs,
+        lease: WatcherLease,
+        lifetime: &mut Option<jobs::LifetimeLease>,
+    ) -> cli::RunOutcome;
+}
+
+struct SystemWatcherRuntime;
+
+impl WatcherRuntime for SystemWatcherRuntime {
+    fn now(&self) -> DateTime<Local> {
+        Local::now()
+    }
+
+    fn monotonic(&self) -> Instant {
+        Instant::now()
+    }
+
+    fn sleep(&self, duration: Duration, service_stop: &AtomicBool, stop: &AtomicBool) {
+        sleep_unless_stopped(duration, service_stop, stop);
+    }
+
+    fn run(
+        &self,
+        base: &Path,
+        config_path: &Path,
+        devices_path: &Path,
+        args: &RunArgs,
+        lease: WatcherLease,
+        lifetime: &mut Option<jobs::LifetimeLease>,
+    ) -> cli::RunOutcome {
+        match lease {
+            WatcherLease::NoGap => cli::run_workspace_with_lease(
+                base,
+                config_path,
+                devices_path,
+                args,
+                false,
+                true,
+                Some(lifetime),
+            ),
+            WatcherLease::Gap => {
+                cli::run_workspace(base, config_path, devices_path, args, false, true)
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn watcher_loop(
     home: &Home,
@@ -718,6 +778,7 @@ fn watcher_loop(
     running: &Arc<Mutex<BTreeSet<String>>>,
     initially_paused: bool,
     stop: &Arc<AtomicBool>,
+    runtime: &dyn WatcherRuntime,
 ) {
     let mut paused = initially_paused;
     let mut failure_streak = 0_u32;
@@ -737,18 +798,18 @@ fn watcher_loop(
         }
         if watch_stopped(home, &watcher.name) {
             lifetime_lease = None;
-            sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+            runtime.sleep(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         if watch_paused(home, &watcher.name) {
             lifetime_lease = None;
-            sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+            runtime.sleep(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         paused |= service_paused.load(Ordering::SeqCst);
         if paused {
             lifetime_lease = None;
-            sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+            runtime.sleep(Duration::from_millis(250), service_stop, stop);
             if !service_paused.load(Ordering::SeqCst) {
                 paused = false;
             }
@@ -768,7 +829,7 @@ fn watcher_loop(
                         // on its next tick, so wait for it instead of exiting
                         // into a stale handle entry.
                         lifetime_lease = None;
-                        sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+                        runtime.sleep(Duration::from_millis(250), service_stop, stop);
                         continue;
                     }
                 }
@@ -791,13 +852,13 @@ fn watcher_loop(
                 .as_deref()
                 .is_some_and(|devices| jobs::waiting_for(home, devices));
         if yielding {
-            sleep_unless_stopped(Duration::from_millis(250), service_stop, stop);
+            runtime.sleep(Duration::from_millis(250), service_stop, stop);
             continue;
         }
         if let Ok(mut set) = running.lock() {
             set.insert(watcher_key(&watcher.name));
         }
-        let started = Local::now();
+        let started = runtime.now();
         {
             if let Ok(mut state) = state.lock() {
                 let entry = state.watchers.entry(watcher.name.clone()).or_default();
@@ -825,11 +886,11 @@ fn watcher_loop(
                         "watcher": watcher.name,
                         "status": "profile_error",
                         "error": error,
-                        "at": Local::now().to_rfc3339()
+                        "at": runtime.now().to_rfc3339()
                     }),
                 );
                 let gap = watcher_backoff(watcher, failure_streak);
-                sleep_unless_stopped(gap, service_stop, stop);
+                runtime.sleep(gap, service_stop, stop);
                 if let Ok(mut set) = running.lock() {
                     set.remove(&watcher_key(&watcher.name));
                 }
@@ -837,19 +898,14 @@ fn watcher_loop(
             }
         };
         args.job_label = Some(format!("watcher {}", watcher.name));
-        let outcome = if watcher.lease == WatcherLease::NoGap {
-            cli::run_workspace_with_lease(
-                base,
-                config_path,
-                devices_path,
-                &args,
-                false,
-                true,
-                Some(&mut lifetime_lease),
-            )
-        } else {
-            cli::run_workspace(base, config_path, devices_path, &args, false, true)
-        };
+        let outcome = runtime.run(
+            base,
+            config_path,
+            devices_path,
+            &args,
+            watcher.lease,
+            &mut lifetime_lease,
+        );
         if outcome.run_id.is_none() {
             // Planning or submission failed, so this iteration holds no job.
             // Release a lifetime lease instead of starving other runs until
@@ -903,7 +959,7 @@ fn watcher_loop(
                         "watcher": watcher.name,
                         "status": status,
                         "dump": path_text,
-                        "at": Local::now().to_rfc3339()
+                        "at": runtime.now().to_rfc3339()
                     }),
                 );
             }
@@ -928,24 +984,25 @@ fn watcher_loop(
                     "kind": "watch_iteration",
                     "watcher": watcher.name,
                     "status": status,
-                    "at": Local::now().to_rfc3339()
+                    "at": runtime.now().to_rfc3339()
                 }),
             );
             if outcome.exit_code == EXIT_OK {
                 notify_watcher_recovery(home, watcher, &outcome, &status, state, &notifications);
             }
         }
-        if last_retention.is_none_or(|at| at.elapsed() >= RETENTION_INTERVAL) {
+        let now_mono = runtime.monotonic();
+        if last_retention.is_none_or(|at| now_mono.duration_since(at) >= RETENTION_INTERVAL) {
             if let Err(error) = prune_watcher_reports(home, base, watcher) {
                 log_line(
                     home,
                     &format!("watcher '{}' retention failed: {error}", watcher.name),
                 );
             }
-            last_retention = Some(Instant::now());
+            last_retention = Some(now_mono);
         }
         let gap = watcher_gap(watcher, infrastructure_streak);
-        sleep_unless_stopped(gap, service_stop, stop);
+        runtime.sleep(gap, service_stop, stop);
         if let Ok(mut set) = running.lock() {
             set.remove(&watcher_key(&watcher.name));
         }
@@ -2649,6 +2706,211 @@ mod tests {
             .expect("report index");
         assert_eq!(index.reports.len(), 1);
         assert_eq!(index.reports[0].run_id, run_id);
+    }
+
+    /// Fake-time runtime for the 24 h soak: sleeping only advances the clock,
+    /// and each iteration synthesizes one passing run report.
+    struct SoakRuntime {
+        wall_base: DateTime<Local>,
+        mono_base: Instant,
+        elapsed: Mutex<Duration>,
+        horizon: Duration,
+        runs: Mutex<u64>,
+        report_root: PathBuf,
+    }
+
+    impl SoakRuntime {
+        fn new(report_root: PathBuf, horizon: Duration) -> Self {
+            let wall_base = DateTime::parse_from_rfc3339("2026-01-01T00:00:00+00:00")
+                .expect("fixed soak start")
+                .with_timezone(&Local);
+            Self {
+                wall_base,
+                mono_base: Instant::now(),
+                elapsed: Mutex::new(Duration::ZERO),
+                horizon,
+                runs: Mutex::new(0),
+                report_root,
+            }
+        }
+
+        fn elapsed(&self) -> Duration {
+            *self.elapsed.lock().expect("soak clock")
+        }
+
+        fn advance(&self, duration: Duration, stop: &AtomicBool) {
+            let mut elapsed = self.elapsed.lock().expect("soak clock");
+            *elapsed = elapsed.saturating_add(duration);
+            if *elapsed >= self.horizon {
+                stop.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    impl WatcherRuntime for SoakRuntime {
+        fn now(&self) -> DateTime<Local> {
+            self.wall_base.clone()
+                + chrono::Duration::from_std(self.elapsed()).expect("soak offset")
+        }
+
+        fn monotonic(&self) -> Instant {
+            self.mono_base + self.elapsed()
+        }
+
+        fn sleep(&self, duration: Duration, _service_stop: &AtomicBool, stop: &AtomicBool) {
+            self.advance(duration, stop);
+        }
+
+        fn run(
+            &self,
+            _base: &Path,
+            _config_path: &Path,
+            _devices_path: &Path,
+            _args: &RunArgs,
+            _lease: WatcherLease,
+            _lifetime: &mut Option<jobs::LifetimeLease>,
+        ) -> cli::RunOutcome {
+            let index = {
+                let mut runs = self.runs.lock().expect("soak runs");
+                *runs += 1;
+                *runs
+            };
+            let run_id = format!(
+                "{}-{:04x}",
+                self.now().format("%Y%m%d-%H%M%S"),
+                index & 0xffff
+            );
+            let run_dir = self.report_root.join(&run_id);
+            std::fs::create_dir_all(&run_dir).expect("soak report dir");
+            std::fs::write(run_dir.join("report.json"), b"{\"status\":\"passed\"}\n")
+                .expect("soak report");
+            cli::RunOutcome {
+                exit_code: EXIT_OK,
+                run_id: Some(run_id),
+                run_dir: Some(run_dir),
+                report: None,
+                messages: Vec::new(),
+                detail: None,
+            }
+        }
+    }
+
+    /// TASK 8.3 resource hygiene: drive the watcher loop over a full fake day
+    /// (24 h at a 60 s gap = 1440 iterations) and prove that the resident
+    /// state, report index and on-disk reports stay bounded and that the
+    /// running set drains after every iteration.
+    #[test]
+    fn watcher_loop_soaks_a_fake_day_with_bounded_state() {
+        const HORIZON: Duration = Duration::from_secs(24 * 60 * 60);
+        const MAX_REPORTS: u64 = 60;
+        let base = tempfile::tempdir().expect("base");
+        let home = Home::at(base.path().join("home"));
+        let workspace = base.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let config_path = workspace.join("impresario.config");
+        std::fs::write(
+            &config_path,
+            "\
+watchers:
+  - name: soak
+    run: { plays: [smoke.play] }
+    pacing: { mode: min_gap, gap: 60s }
+    retention: { max_reports: 60 }
+",
+        )
+        .expect("config");
+        let devices_path = workspace.join("impresario.devices.config");
+        std::fs::write(&devices_path, "devices: []\n").expect("devices");
+        let sections = crate::resident::config::read_layer(&config_path).expect("sections");
+        let watcher = sections.watchers[0].clone();
+        let notifications = sections.notifications.clone();
+        let report_root = workspace.join("reports");
+        let runtime = SoakRuntime::new(report_root.clone(), HORIZON);
+        let state = Arc::new(Mutex::new(ServiceState::default()));
+        let service_paused = Arc::new(AtomicBool::new(false));
+        let service_stop = Arc::new(AtomicBool::new(false));
+        let running = Arc::new(Mutex::new(BTreeSet::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        watcher_loop(
+            &home,
+            &workspace,
+            &config_path,
+            &devices_path,
+            &watcher,
+            &notifications,
+            &state,
+            &service_paused,
+            &service_stop,
+            &running,
+            false,
+            &stop,
+            &runtime,
+        );
+
+        assert!(
+            stop.load(Ordering::SeqCst),
+            "the fake horizon ends the loop"
+        );
+        assert_eq!(runtime.elapsed(), HORIZON);
+        assert_eq!(*runtime.runs.lock().expect("soak runs"), 1440);
+        assert!(
+            running.lock().expect("running").is_empty(),
+            "every iteration releases its running marker"
+        );
+
+        let state = state.lock().expect("state");
+        assert_eq!(
+            state.watchers.len(),
+            1,
+            "one watcher entry, not one per run"
+        );
+        assert!(state.schedules.is_empty());
+        assert!(state.notification_rates.is_empty());
+        let entry = state.watchers.get("soak").expect("watcher state");
+        assert_eq!(entry.iterations, 1440);
+        assert_eq!(entry.failures, 0);
+        assert_eq!(entry.consecutive_failures, 0);
+        let state_bytes = serde_json::to_vec(&*state).expect("state json").len();
+        assert!(
+            state_bytes < 16 * 1024,
+            "resident state grew to {state_bytes} bytes"
+        );
+        drop(state);
+
+        let index = load_report_index(&report_index_path(&home, &workspace, &watcher))
+            .expect("report index");
+        assert_eq!(index.reports.len(), usize::try_from(MAX_REPORTS).unwrap());
+        let unique: BTreeSet<&str> = index
+            .reports
+            .iter()
+            .map(|entry| entry.run_id.as_str())
+            .collect();
+        assert_eq!(unique.len(), index.reports.len());
+        assert!(
+            index
+                .reports
+                .iter()
+                .all(|entry| Path::new(&entry.path).is_dir()),
+            "the index never names a pruned report"
+        );
+        let report_dirs = std::fs::read_dir(&report_root)
+            .expect("report root")
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .count();
+        assert_eq!(report_dirs, usize::try_from(MAX_REPORTS).unwrap());
+        assert!(
+            !report_root.join("watch").join("soak").exists(),
+            "passing iterations write no failure dumps"
+        );
+
+        let events = std::fs::read_to_string(home.service_events_path()).expect("events");
+        let iterations = events
+            .lines()
+            .filter(|line| line.contains("\"kind\":\"watch_iteration\""))
+            .count();
+        assert_eq!(iterations, 1440, "one event per simulated iteration");
     }
 
     fn report_with(status: Status, run_status: RunStatus, code: Option<&str>) -> RunReport {

@@ -181,6 +181,35 @@ async fn passing_play_exits_zero() {
     assert!(!options.run_dir().join("screenshots").exists());
 }
 
+/// TASK 8.3 resource hygiene, transport half: every watcher iteration is a
+/// fresh job that re-establishes the agent (D-12) and ends with one shutdown.
+/// A long series of iterations must not accumulate open sessions on the mock.
+#[tokio::test]
+async fn repeated_iterations_reestablish_the_agent_without_accumulating_state() {
+    const ITERATIONS: usize = 32;
+    let agent = TestAgent::start(MockAgentBuilder::new());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let config = test_config("");
+    let devices = vec![device("web1", &agent.address)];
+    let plan = build_test_plan(&config, &devices, PLAY_BASIC);
+
+    for iteration in 0..ITERATIONS {
+        let options = exec_options(&temp, config.clone(), &format!("soak-{iteration:03}"));
+        let outcome = execute(&plan, &options).await;
+        assert_eq!(outcome.exit_code, 0, "iteration {iteration}");
+        assert_eq!(outcome.report.status, RunStatus::Passed);
+    }
+
+    assert_eq!(agent.state.handshakes(), ITERATIONS as u64);
+    assert_eq!(agent.state.sessions(), ITERATIONS as u64);
+    assert_eq!(agent.state.shutdowns(), ITERATIONS as u64);
+    assert_eq!(
+        agent.state.command_count(),
+        ITERATIONS * 3,
+        "every passing iteration sends the same three commands"
+    );
+}
+
 #[tokio::test]
 async fn actor_groups_and_for_except_send_only_the_selected_stages() {
     let first = TestAgent::start(MockAgentBuilder::new());

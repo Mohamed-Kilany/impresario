@@ -168,6 +168,19 @@ land in the same millisecond get a `-1`, `-2`, ... suffix. Identical failure
 signatures (device, play, act, stage, step and code, with example suffixes
 ignored) inside `throttle.same_failure_window` produce one routed event and
 then suppressed events; a recovered watcher emits one recovery event.
+The watcher loop reads time and executes runs through a small runtime seam.
+Production uses the wall clock and the normal workspace runner; the resource
+soak replaces both with a fake clock and a synthetic executor. The soak drives
+the real loop over 24 h at a 60 s gap (1440 iterations) and asserts that the
+resident state keeps one watcher entry and a bounded serialized size, the
+running set drains after every iteration, the report index and on-disk reports
+stay capped at `max_reports` with every indexed path still present, passing
+iterations write no dumps, and the events log has exactly one
+`watch_iteration` per iteration. Retention scheduling compares two runtime
+monotonic instants rather than `Instant::elapsed()`, so fake time advances the
+pruning interval too. A separate transport soak runs repeated real iterations
+against one mock agent and asserts one handshake, session and shutdown per
+iteration, covering D-12 re-establishment and teardown without real waiting.
 
 `watch status` reports the last start, last status, consecutive failures, the
 next iteration time and the last dump, or run `watch status --json` for
