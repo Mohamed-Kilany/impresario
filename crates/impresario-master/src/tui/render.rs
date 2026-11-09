@@ -1028,8 +1028,9 @@ fn draw_coverage(frame: &mut Frame, app: &App, area: Rect) {
             .map(|(_, short)| format!("{short:^4}"))
             .collect::<Vec<_>>()
             .join(" ");
+        // The panel reserves one border and one padding column on each side.
         let width =
-            usize::from(area.width.saturating_sub(header.chars().count() as u16 + 4)).max(12);
+            usize::from(area.width.saturating_sub(header.chars().count() as u16 + 5)).max(12);
         lines.push(Line::from(Span::styled(
             format!("{:<width$} {}", "STAGE", header, width = width),
             title_style(app),

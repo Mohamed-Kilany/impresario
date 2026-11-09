@@ -7,30 +7,30 @@ expression: "render(&app, 100, 34)"
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ┌ Runs ────────────────────────────────┐ ┌ Run · running ──────────────────────────────────────────┐
 │ 1 run · 1 active                     │ │ 20261021-120000-run01                                   │
-│ filter┌ Help · Esc closes ──────────────────────────────────────────────────────────────┐        │
-│ clear)│ impresario interactive                                                          │        │
-│       │                                                                                 │        │
-│ [>] 20│ Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.                     │        │
-│       │ Workspace menu · Up/Down, Enter opens, Esc goes back.                           │        │
-│       │   Overview · Runs · Resident · Tests · Devices · Apps · Config · Doctor         │        │
-│       │   Switch workspace returns to the landing screen.                               │        │
-│       │ Content · arrows move; Esc menu; Tab prompt.                                    │        │
-│       │ Prompt · type a CLI command; /run --tag smoke is a shortcut.                    │        │
-│       │   Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline           │        │
-│       │   Ctrl-C clears (twice quits) · Ctrl-Q quits · Ctrl-Z suspends                  │        │
-│       │                                                                                 │────────┘
-│       │ Runs · Enter follow · b detach · x stop · f logs · t device · / filter          │
-│       │   r rerun · F rerun failed · o report · p screenshot · X remove                 │────────┐
-│       │ Tests · Enter edit · Space mark · r run · d dry-run · j/k move                  │        │
-│       │ Devices / Apps / Config · j/k move · Enter open · r reload                      │        │
-│       │ Resident · j/k scroll · g/G top/bottom · r reload                               │        │
-│       │                                                                                 │        │
-│       │ Commands · /run /jobs /devices /apps /config /resident /tests /open /doctor     │        │
-│       │   /fmt /validate /plan /attach /logs /stop /report /profile /quit               │        │
-│       │ Scriptable · run --detach · jobs --json · wait · report                         │        │
-└───────│   /menu /workspaces                                                             │────────┘
-┌ Comman└─────────────────────────────────────────────────────────────────────────────────┘────────┐
-│ ❯ Type a command, or /help for keys                                                              │
+│ f┌ Help · Esc closes ────────────────────────────────────────────────────────────────────────┐   │
+│ c│ impresario interactive                                                                    │   │
+│  │                                                                                           │   │
+│ [│ Workspaces · Up/Down, Enter opens; a add, d doctor, q quit.                               │   │
+│  │ Workspace menu · Up/Down, Enter opens, Esc goes back.                                     │   │
+│  │   Overview · Runs · Resident · Tests · Coverage · Devices · Apps · Config · Doctor        │   │
+│  │   Switch workspace returns to the landing screen.                                         │   │
+│  │ Content · arrows move; Esc menu; Tab prompt.                                              │   │
+│  │ Prompt · type a CLI command; /run --tag smoke is a shortcut.                              │   │
+│  │   Tab completes · Ctrl-R search · Up/Down history · Alt+Enter newline                     │   │
+│  │   Ctrl-C clears (twice quits) · Ctrl-Q quits · Ctrl-Z suspends                            │   │
+│  │                                                                                           │───┘
+│  │ Runs · Enter follow · b detach · x stop · f logs · t device · / filter                    │
+│  │   r rerun · F rerun failed · o report · p screenshot · X remove                           │───┐
+│  │ Tests · Enter edit · Space mark · r run · d dry-run · j/k move                            │   │
+│  │ Coverage · j/k scroll · g/G top/bottom · r reload                                         │   │
+│  │ Devices / Apps / Config · j/k move · Enter open · r reload                                │   │
+│  │ Resident · j/k scroll · g/G top/bottom · r reload                                         │   │
+│  │                                                                                           │   │
+│  │ Commands · /run /jobs /devices /apps /config /resident /coverage /tests /open /doctor     │   │
+│  │   /fmt /validate /plan /attach /logs /stop /report /profile /quit                         │   │
+└──│ Scriptable · run --detach · jobs --json · wait · report                                   │───┘
+┌ C│   /menu /workspaces                                                                       │───┐
+│ ❯└───────────────────────────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help              1 active · Ctrl-Q quit

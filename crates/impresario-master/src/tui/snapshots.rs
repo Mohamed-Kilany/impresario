@@ -413,7 +413,7 @@ fn coverage_screen_shows_stage_platform_matrix_and_missing_actors() {
     let frame = render(&app, 110, 30);
     for needle in [
         "Coverage",
-        "2 stages · 2 configured",
+        "2 stages · 2 devices configured",
         "andr=android",
         "atv=androidtv",
         "STAGE",

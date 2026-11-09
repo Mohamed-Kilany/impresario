@@ -1389,7 +1389,7 @@ impl App {
                 _ => {}
             }
         }
-        for (_, (_, theatres, _)) in &mut stages {
+        for (_, theatres, _) in stages.values_mut() {
             theatres.dedup();
         }
 
@@ -1414,9 +1414,7 @@ impl App {
     /// `render::draw_coverage`; keep the two in sync.
     pub(super) fn coverage_max_scroll(&self) -> u16 {
         let mut lines = 2; // summary + blank
-        if self.coverage_error.is_some() {
-            lines += 1;
-        } else if self.coverage.is_empty() {
+        if self.coverage_error.is_some() || self.coverage.is_empty() {
             lines += 1;
         } else {
             lines += 2; // legend + header
