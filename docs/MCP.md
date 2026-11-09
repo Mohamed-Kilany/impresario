@@ -60,6 +60,7 @@ does not exist, an argument is out of range) are tool errors
 | Tool | Arguments | What it does |
 | --- | --- | --- |
 | `impresario_workspace_info` | — | Config defaults, devices **with each platform's action/check support matrix**, scenes, plays, acts, tags and diagnostics. Call this first. |
+| `impresario_tags_list` | — | Every declared tag across plays, acts, theatres and stages: usage count, workspace-relative files and usage labels (`play X`, `act X / Y`, `theatre X`, `stage X.Y`), plus diagnostics. Same index as `impresario tags --json`. Read-only. |
 | `impresario_validate` | `paths?` | Parse/validate the workspace (or listed files/dirs) without touching a device. Returns core diagnostics with codes. |
 | `impresario_devices_list` | - | The effective devices: name, exact type, IP, derived platform/transport and support matrix. No device contacted. |
 | `impresario_devices_check` | `devices?` | Prepare → connect → handshake → `DeviceInfo` → teardown per device. Contacts hardware; takes seconds per device. |
@@ -67,6 +68,8 @@ does not exist, an argument is out of range) are tool errors
 | `impresario_report_get` | `run_id?` | The full `report.json` (Appendix B document). Default: the newest run. |
 | `impresario_artifacts_list` | `run_id?` | Files of a run with sizes and kinds (`report.json`, `junit.xml`, `report.html`, `screenshots/<device>/*.png`). |
 | `impresario_artifact_get` | `path`, `run_id?` | One artifact. Images (PNG/JPEG/WebP) return as image content; text artifacts return as text (truncated at 2 MiB). |
+| `impresario_jobs_list` | `all?`, `limit?` | Background jobs newest first. Default: active (queued/running) only; `all: true` includes finished jobs. Stale jobs whose owner is gone are marked interrupted first, like `impresario jobs`. `limit` defaults to 50 (maximum 500); the result reports the filtered total, the returned count and the `all` flag. |
+| `impresario_jobs_get` | `id` | One job record: status, exit code, duration, workspace, devices, plays, label and `run_dir`, plus `report_copy` (whether the completed `report.json` was copied into the job directory). Use `impresario_report_get` with the job id as `run_id` for that report. |
 | `impresario_service_status` | — | Resident service state: running/paused, pid, workspace, start time, the persisted schedule/watcher counters, `runner_version`/`client_version`, `restart_required` and `heartbeat_stale`. Read-only. |
 | `impresario_schedules_list` | — | Effective schedules joined with runs/failures and the next host-local fire. Disabled schedules have no next fire. |
 | `impresario_schedule_add` | `name`, `schedule` or `yaml`, `layer?` | Add one schedule to the workspace (default) or global config. `name` is authoritative; the full file is validated before writing. |
@@ -115,6 +118,7 @@ Notes:
 | `impresario://docs/devices` | Device setup guide (`docs/DEVICES.md`): adb/Wi-Fi Android, Android TV, web, webOS/Tizen, emulators. |
 | `impresario://docs/mcp` | This document. |
 | `impresario://docs/scheduling` | Schedules, watchers, resident delivery and notification reference (`docs/SCHEDULING.md`). |
+| `impresario://docs/probes` | Probe evidence model: kinds, evidence sources and confidence, per-platform reachability, fallback rungs and the in-app SDK contract (`docs/PROBES.md`). |
 | `impresario://workspace/info` | Live JSON of the workspace summary (same payload as `impresario_workspace_info`). |
 
 Embedding the docs means the agent always reads the documentation that

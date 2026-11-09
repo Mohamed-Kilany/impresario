@@ -6,6 +6,7 @@
 //! device at the same time. Everything else is read-only against the
 //! workspace or the report directory.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -21,6 +22,7 @@ use impresario_core::workspace;
 use serde_json::{json, Map, Value};
 
 use crate::cli;
+use crate::jobs::{JobRecord, JobStore};
 use crate::mcp::protocol::Server;
 use crate::mcp::tools::ToolOutput;
 use crate::report::{ActReport, AttemptReport, DeviceReport, FailureReport, PlayReport, RunReport};
@@ -366,6 +368,87 @@ pub(crate) fn workspace_info_value(server: &Server) -> Result<Value, String> {
         "tags": tags,
         "diagnostics": diagnostics_json(&diagnostics),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// impresario_tags_list
+// ---------------------------------------------------------------------------
+
+pub(crate) fn tags_list(server: &Server, _arguments: &Value) -> ToolOutput {
+    let WorkspaceConfig { config, .. } = match load_workspace_config(server) {
+        Ok(value) => value,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let loaded = workspace::load_dirs(
+        &server.base.join(&config.scenes_dir),
+        &server.base.join(&config.theatres_dir),
+        &server.base.join(&config.plays_dir),
+    );
+
+    #[derive(Default)]
+    struct TagEntry {
+        files: BTreeSet<String>,
+        usages: Vec<String>,
+    }
+    let mut index: BTreeMap<String, TagEntry> = BTreeMap::new();
+    let mut add = |tag: &str, file: &Path, usage: String| {
+        let entry = index.entry(tag.to_string()).or_default();
+        entry.files.insert(relative_to(&server.base, file));
+        if !entry.usages.contains(&usage) {
+            entry.usages.push(usage);
+        }
+    };
+    for play in &loaded.workspace.plays {
+        for tag in &play.tags {
+            add(&tag.name, &play.path, format!("play {}", play.name));
+        }
+        for act in &play.acts {
+            for tag in &act.tags {
+                add(
+                    &tag.name,
+                    &play.path,
+                    format!("act {} / {}", play.name, act.name),
+                );
+            }
+        }
+    }
+    for theatre in &loaded.workspace.theatres {
+        for tag in &theatre.tags {
+            add(
+                &tag.name,
+                &theatre.path,
+                format!("theatre {}", theatre.name),
+            );
+        }
+        for stage in &theatre.stages {
+            for tag in &stage.tags {
+                add(
+                    &tag.name,
+                    &theatre.path,
+                    format!("stage {}.{}", theatre.name, stage.name),
+                );
+            }
+        }
+    }
+
+    let tags: Vec<Value> = index
+        .iter()
+        .map(|(tag, entry)| {
+            json!({
+                "tag": tag,
+                "count": entry.usages.len(),
+                "files": entry.files,
+                "usages": entry.usages,
+            })
+        })
+        .collect();
+    ToolOutput::json_with_prefix(
+        json!({
+            "tags": tags,
+            "diagnostics": diagnostics_json(&loaded.diagnostics),
+        }),
+        format!("{} tag(s) declared", index.len()),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,6 +1179,78 @@ fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Background jobs
+// ---------------------------------------------------------------------------
+
+const JOBS_LIMIT_DEFAULT: u64 = 50;
+const JOBS_LIMIT_MAX: u64 = 500;
+
+pub(crate) fn jobs_list(server: &Server, arguments: &Value) -> ToolOutput {
+    let all = match arg_bool(arguments, "all") {
+        Ok(value) => value.unwrap_or(false),
+        Err(message) => return ToolOutput::error(message),
+    };
+    let limit = match arg_u64(arguments, "limit") {
+        Ok(None) => JOBS_LIMIT_DEFAULT,
+        Ok(Some(value)) if (1..=JOBS_LIMIT_MAX).contains(&value) => value,
+        Ok(Some(_)) => {
+            return ToolOutput::error(format!("'limit' must be between 1 and {JOBS_LIMIT_MAX}"));
+        }
+        Err(message) => return ToolOutput::error(message),
+    };
+    let store = JobStore::new(&server.home);
+    store.recover_interrupted();
+    let mut records: Vec<JobRecord> = store
+        .list()
+        .into_iter()
+        .filter(|record| all || !record.status.terminal())
+        .collect();
+    let total = records.len();
+    let active = records
+        .iter()
+        .filter(|record| !record.status.terminal())
+        .count();
+    records.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    ToolOutput::json_with_prefix(
+        json!({
+            "jobs": records,
+            "total": total,
+            "returned": records.len(),
+            "all": all,
+        }),
+        format!(
+            "{} job(s), {} active; showing {}",
+            total,
+            active,
+            records.len()
+        ),
+    )
+}
+
+pub(crate) fn jobs_get(server: &Server, arguments: &Value) -> ToolOutput {
+    let id = match required_arg_string(arguments, "id") {
+        Ok(id) => id,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let store = JobStore::new(&server.home);
+    store.recover_interrupted();
+    let record = match store.read(&id) {
+        Ok(Some(record)) => record,
+        Ok(None) => return ToolOutput::error(format!("unknown job '{id}'")),
+        Err(message) => return ToolOutput::error(message),
+    };
+    let report_copy = store.report_path(&id).is_file();
+    let status = record.status.label();
+    ToolOutput::json_with_prefix(
+        json!({
+            "job": record,
+            "report_copy": report_copy,
+        }),
+        format!("job {id}: {status}"),
+    )
 }
 
 // ---------------------------------------------------------------------------

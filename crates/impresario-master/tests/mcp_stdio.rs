@@ -231,6 +231,7 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         .collect();
     for expected in [
         "impresario_workspace_info",
+        "impresario_tags_list",
         "impresario_validate",
         "impresario_devices_list",
         "impresario_devices_check",
@@ -238,6 +239,8 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         "impresario_report_get",
         "impresario_artifacts_list",
         "impresario_artifact_get",
+        "impresario_jobs_list",
+        "impresario_jobs_get",
         "impresario_service_status",
         "impresario_schedules_list",
         "impresario_schedule_add",
@@ -570,6 +573,175 @@ fn resident_tools_join_state_and_edit_config_layers() {
     ));
     assert_eq!(run["exit_code"], json!(0));
     assert_eq!(run["status"], json!("passed"));
+
+    mcp.assert_clean();
+}
+
+#[test]
+fn tags_jobs_and_probes_resource_are_available() {
+    const TAGGED_PLAY: &str = r#"Play: Tagged
+Tags: smoke, auth
+
+Act: Pass
+    Tags: smoke
+    Perform: Basic
+"#;
+    const TAGGED_THEATRE: &str = r#"Theatre: Tagged
+Tags: nightly
+
+Stage: Curtain
+    Tags: smoke
+    Scene: TestScreen
+        Check: A
+"#;
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_workspace(temp.path(), "", &[], &[("tagged.play", TAGGED_PLAY)]);
+    std::fs::write(temp.path().join("theatres/tagged.theatre"), TAGGED_THEATRE)
+        .expect("write tagged theatre");
+
+    let home = common::test_home();
+    let passed_id = "20261109-120000-mcp-tags-passed";
+    let running_id = "20261109-120000-mcp-tags-running";
+    for (id, status, pid) in [
+        (passed_id, "passed", Value::Null),
+        (running_id, "running", json!(std::process::id())),
+    ] {
+        let dir = home.join("jobs").join(id);
+        std::fs::create_dir_all(&dir).expect("job dir");
+        let finished = status == "passed";
+        let record = json!({
+            "schema_version": 1,
+            "id": id,
+            "status": status,
+            "detached": true,
+            "created_at": "2026-11-09T12:00:00Z",
+            "started_at": "2026-11-09T12:00:01Z",
+            "finished_at": if finished { json!("2026-11-09T12:00:02Z") } else { Value::Null },
+            "duration_ms": if finished { json!(1000) } else { Value::Null },
+            "exit_code": if finished { json!(0) } else { Value::Null },
+            "workspace": "mcp-tags",
+            "devices": ["d1"],
+            "plays": ["tagged.play"],
+            "label": "1 play(s) x 1 device(s)",
+            "pid": pid,
+            "queue_position": Value::Null,
+            "run_dir": "reports/20261109-120000-mcp-tags",
+            "message": Value::Null,
+        });
+        std::fs::write(
+            dir.join("job.json"),
+            serde_json::to_string(&record).expect("serialize job"),
+        )
+        .expect("write job");
+    }
+
+    let mut mcp = Mcp::spawn(temp.path());
+
+    // Tags across plays, acts, theatres and stages, with workspace-relative files.
+    let tags = structured(&mcp.tools_call(1, "impresario_tags_list", json!({})));
+    let by_tag = |name: &str| {
+        tags["tags"]
+            .as_array()
+            .expect("tags array")
+            .iter()
+            .find(|tag| tag["tag"] == json!(name))
+            .unwrap_or_else(|| panic!("missing tag {name}: {tags}"))
+            .clone()
+    };
+    let smoke = by_tag("smoke");
+    assert_eq!(smoke["count"], json!(3));
+    let files: Vec<&str> = smoke["files"]
+        .as_array()
+        .expect("files array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(files.contains(&"plays/tagged.play"), "files: {files:?}");
+    assert!(
+        files.contains(&"theatres/tagged.theatre"),
+        "files: {files:?}"
+    );
+    let usages: Vec<&str> = smoke["usages"]
+        .as_array()
+        .expect("usages array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(usages.contains(&"play Tagged"), "usages: {usages:?}");
+    assert!(usages.contains(&"act Tagged / Pass"), "usages: {usages:?}");
+    assert!(
+        usages.contains(&"stage Tagged.Curtain"),
+        "usages: {usages:?}"
+    );
+    assert_eq!(by_tag("auth")["count"], json!(1));
+    assert_eq!(by_tag("nightly")["count"], json!(1));
+    assert_eq!(tags["diagnostics"], json!([]));
+
+    // Active-only is the default; all: true includes the finished job.
+    let active = structured(&mcp.tools_call(2, "impresario_jobs_list", json!({})));
+    let active_ids: Vec<&str> = active["jobs"]
+        .as_array()
+        .expect("jobs array")
+        .iter()
+        .filter_map(|job| job["id"].as_str())
+        .collect();
+    assert!(
+        active_ids.contains(&running_id),
+        "active jobs: {active_ids:?}"
+    );
+    assert!(
+        !active_ids.contains(&passed_id),
+        "finished job leaked into the active list: {active_ids:?}"
+    );
+
+    let all = structured(&mcp.tools_call(
+        3,
+        "impresario_jobs_list",
+        json!({ "all": true, "limit": 1 }),
+    ));
+    assert_eq!(all["returned"], json!(1));
+    assert!(
+        all["total"].as_u64().unwrap_or(0) >= 2,
+        "total: {}",
+        all["total"]
+    );
+
+    let job = structured(&mcp.tools_call(4, "impresario_jobs_get", json!({ "id": passed_id })));
+    assert_eq!(job["job"]["id"], json!(passed_id));
+    assert_eq!(job["job"]["status"], json!("passed"));
+    assert_eq!(job["report_copy"], json!(false));
+
+    let missing = mcp.tools_call(
+        5,
+        "impresario_jobs_get",
+        json!({ "id": "20261109-120000-no-such-job" }),
+    );
+    assert_eq!(result_of(&missing)["isError"], json!(true));
+    let text = content_of(&missing)[0]["text"]
+        .as_str()
+        .expect("error text")
+        .to_string();
+    assert!(text.contains("unknown job"), "error text: {text}");
+
+    // The probe reference is a first-class resource.
+    let resources = result_of(&mcp.request(6, "resources/list", json!({}))).clone();
+    let uris: Vec<&str> = resources["resources"]
+        .as_array()
+        .expect("resources array")
+        .iter()
+        .filter_map(|resource| resource["uri"].as_str())
+        .collect();
+    assert!(uris.contains(&"impresario://docs/probes"), "uris: {uris:?}");
+    let probes = result_of(&mcp.request(
+        7,
+        "resources/read",
+        json!({ "uri": "impresario://docs/probes" }),
+    ))
+    .clone();
+    let probes = probes["contents"][0]["text"]
+        .as_str()
+        .expect("probes doc text");
+    assert!(probes.contains("unverifiable"));
 
     mcp.assert_clean();
 }

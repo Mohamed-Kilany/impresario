@@ -24,6 +24,15 @@ pub(crate) fn definitions() -> Vec<Value> {
             "inputSchema": { "type": "object", "additionalProperties": false },
         }),
         json!({
+            "name": "impresario_tags_list",
+            "title": "List workspace tags",
+            "description": "Index every declared tag across plays, acts, theatres and stages: \
+        the tag, its usage count, the workspace-relative files that declare it and the usage \
+        labels (play X, act X / Y, theatre X, stage X.Y). Parse/validation diagnostics are \
+        included. Read-only; nothing is executed.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
             "name": "impresario_validate",
             "title": "Validate workspace",
             "description": "Parse and validate the workspace (or the given files/directories) \
@@ -213,6 +222,50 @@ pub(crate) fn definitions() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "impresario_jobs_list",
+            "title": "List background jobs",
+            "description": "List the jobs recorded in this home, newest first. Default: active \
+        (queued/running) only; pass all: true to include finished jobs. Stale jobs whose owner \
+        process is gone are marked interrupted first, like `impresario jobs`. Bounded by limit \
+        (default 50, maximum 500). Read-only apart from that stale-job recovery.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "all": {
+                        "type": "boolean",
+                        "description": "Include finished jobs. Default: false (active only).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "description": "Maximum jobs to return. Default: 50.",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "impresario_jobs_get",
+            "title": "Get a background job",
+            "description": "Read one job record by id: status, exit code, duration, workspace, \
+        devices, plays, label and run_dir. report_copy says whether the completed report.json was \
+        copied into the job directory; use impresario_report_get with the job id as run_id for \
+        the run report. Read-only apart from stale-job recovery.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Job id, as printed by impresario_run or \
+        impresario_jobs_list.",
+                    },
+                },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
             "name": "impresario_service_status",
             "title": "Resident service status",
             "description": "Read the resident runner state: whether the service process is \
@@ -398,6 +451,7 @@ pub(crate) fn call(server: &Server, params: &Value) -> RpcResult {
     };
     let output = match name {
         "impresario_workspace_info" => handlers::workspace_info(server, &arguments),
+        "impresario_tags_list" => handlers::tags_list(server, &arguments),
         "impresario_validate" => handlers::validate(server, &arguments),
         "impresario_devices_list" => handlers::devices_list(server, &arguments),
         "impresario_devices_check" => handlers::devices_check(server, &arguments),
@@ -405,6 +459,8 @@ pub(crate) fn call(server: &Server, params: &Value) -> RpcResult {
         "impresario_report_get" => handlers::report_get(server, &arguments),
         "impresario_artifacts_list" => handlers::artifacts_list(server, &arguments),
         "impresario_artifact_get" => handlers::artifact_get(server, &arguments),
+        "impresario_jobs_list" => handlers::jobs_list(server, &arguments),
+        "impresario_jobs_get" => handlers::jobs_get(server, &arguments),
         "impresario_service_status" => handlers::service_status(server, &arguments),
         "impresario_schedules_list" => handlers::schedules_list(server, &arguments),
         "impresario_schedule_add" => handlers::schedules_add(server, &arguments),
@@ -508,7 +564,7 @@ mod tests {
     #[test]
     fn definitions_are_unique_and_schemaful() {
         let tools = definitions();
-        assert_eq!(tools.len(), 17);
+        assert_eq!(tools.len(), 20);
         let mut names = std::collections::BTreeSet::new();
         for tool in &tools {
             let name = tool["name"].as_str().expect("name").to_string();

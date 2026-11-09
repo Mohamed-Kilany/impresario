@@ -54,6 +54,13 @@ and cron firing, missed/busy policies, dumps and retention, notifications, quiet
 limits and webhooks.",
         text: include_str!("../../../../docs/SCHEDULING.md"),
     },
+    Doc {
+        uri: "impresario://docs/probes",
+        name: "Probe evidence and verdict model",
+        description: "Probe kinds, evidence sources and confidence, per-platform reachability, \
+fallback rungs and the in-app SDK contract.",
+        text: include_str!("../../../../docs/PROBES.md"),
+    },
 ];
 
 pub(crate) fn list(_server: &Server) -> Value {
