@@ -1916,6 +1916,14 @@ fn tree_line(app: &App, line: &super::app::TreeLine) -> Line<'static> {
         }
         LineStatus::Skipped => "-",
         LineStatus::Aborted => "!",
+        LineStatus::Unverifiable => {
+            if app.ctx.ascii {
+                "[?]"
+            } else {
+                "?"
+            }
+        }
+        LineStatus::Detail => "-",
         LineStatus::Running => {
             if app.ctx.ascii {
                 "[>]"
@@ -1938,6 +1946,8 @@ fn status_style(app: &App, status: LineStatus) -> Style {
         LineStatus::Failed => Color::Red,
         LineStatus::Skipped => Color::DarkGray,
         LineStatus::Aborted => Color::Magenta,
+        LineStatus::Unverifiable => Color::Yellow,
+        LineStatus::Detail => Color::DarkGray,
         LineStatus::Running => Color::Cyan,
     };
     Style::default().fg(color)

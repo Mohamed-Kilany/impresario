@@ -234,6 +234,33 @@ fn run_view_following_frame() {
 }
 
 #[test]
+fn run_view_renders_probe_evidence_and_unverifiable_state() {
+    let mut app = populated();
+    app.screen = Screen::Runs;
+    app.focus = Focus::Content;
+    app.jobs = vec![running_job()];
+    app.job_index = 0;
+    app.follow = Some("20261021-120000-run01".to_string());
+    app.tree = vec![
+        tree_line(0, "web1 (web)", LineStatus::Running),
+        tree_line(2, "web1 :: Playback :: Check", LineStatus::Running),
+        tree_line(
+            3,
+            "Playing [2]  unverifiable  12ms",
+            LineStatus::Unverifiable,
+        ),
+        tree_line(4, "probe: showing=unverifiable", LineStatus::Detail),
+        tree_line(4, "reason: no system evidence", LineStatus::Detail),
+        tree_line(4, "observed.playing: false", LineStatus::Detail),
+    ];
+    let output = render(&app, 120, 32);
+    assert!(output.contains("unverifiable"), "{output}");
+    assert!(output.contains("probe: showing=unverifiable"), "{output}");
+    assert!(output.contains("reason: no system evidence"), "{output}");
+    assert!(output.contains("observed.playing: false"), "{output}");
+}
+
+#[test]
 fn tests_explorer_frame() {
     let mut app = populated();
     app.screen = Screen::Tests;

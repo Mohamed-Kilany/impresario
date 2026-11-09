@@ -127,6 +127,10 @@ pub enum ExecEvent {
         status: String,
         duration_ms: u64,
         error: Option<String>,
+        /// Redacted failure evidence (`probe`, `reason`, `observed.*`), shown
+        /// by the TUI run view and persisted in `events.jsonl`.
+        #[serde(default)]
+        details: BTreeMap<String, String>,
     },
     LogLine {
         device: String,
@@ -152,6 +156,15 @@ fn emit(events: Option<&std::sync::mpsc::Sender<ExecEvent>>, event: ExecEvent) {
         // A disconnected viewer must never affect a run.
         let _ = sender.send(event);
     }
+}
+
+/// Redact one wire error's details for reports and live events.
+fn redacted_details(redactor: &Redactor, error: &WireError) -> BTreeMap<String, String> {
+    error
+        .details
+        .iter()
+        .map(|(key, value)| (key.clone(), redactor.redact(value)))
+        .collect()
 }
 
 impl ExecOptions {
@@ -1058,6 +1071,7 @@ impl DeviceRun<'_> {
                                 status: "passed".to_string(),
                                 duration_ms,
                                 error: None,
+                                details: BTreeMap::new(),
                             },
                         );
                         stage_report.steps.push(step_report(
@@ -1085,6 +1099,7 @@ impl DeviceRun<'_> {
                                 status: "failed".to_string(),
                                 duration_ms,
                                 error: Some(self.shared.redactor.redact(&error.message)),
+                                details: redacted_details(&self.shared.redactor, &error),
                             },
                         );
                         stage_report.steps.push(step_report(
@@ -1113,6 +1128,7 @@ impl DeviceRun<'_> {
                                 status: "unverifiable".to_string(),
                                 duration_ms,
                                 error: Some(self.shared.redactor.redact(&error.message)),
+                                details: redacted_details(&self.shared.redactor, &error),
                             },
                         );
                         stage_report.steps.push(step_report(
@@ -1136,6 +1152,7 @@ impl DeviceRun<'_> {
                                 status: "aborted".to_string(),
                                 duration_ms,
                                 error: None,
+                                details: BTreeMap::new(),
                             },
                         );
                         stage_report.steps.push(step_report(
@@ -1451,11 +1468,7 @@ impl DeviceRun<'_> {
             step_index,
             code: error.code.as_str().to_string(),
             message: self.shared.redactor.redact(&error.message),
-            details: error
-                .details
-                .iter()
-                .map(|(key, value)| (key.clone(), self.shared.redactor.redact(value)))
-                .collect(),
+            details: redacted_details(&self.shared.redactor, error),
             screenshot,
             log_tail: self.log_tail(),
         }

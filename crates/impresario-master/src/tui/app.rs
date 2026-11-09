@@ -32,6 +32,9 @@ pub(super) enum LineStatus {
     Failed,
     Skipped,
     Aborted,
+    Unverifiable,
+    /// A non-status line carrying failure evidence (probe/reason/observed).
+    Detail,
 }
 
 #[derive(Debug, Clone)]
@@ -1127,6 +1130,7 @@ impl App {
                     status,
                     duration_ms,
                     error,
+                    details,
                     ..
                 } => {
                     self.tree.push(TreeLine {
@@ -1134,6 +1138,13 @@ impl App {
                         text: format!("{stage} [{index}]  {status}  {duration_ms}ms"),
                         status: status_of_str(status),
                     });
+                    for (key, value) in details {
+                        self.tree.push(TreeLine {
+                            indent: 4,
+                            text: format!("{key}: {value}"),
+                            status: LineStatus::Detail,
+                        });
+                    }
                     if let Some(error) = error {
                         self.logs
                             .push_back(format!("{act} {stage} [{index}]: {error}"));
@@ -2582,6 +2593,8 @@ fn status_of_str(status: &str) -> LineStatus {
         LineStatus::Skipped
     } else if status.eq_ignore_ascii_case("aborted") {
         LineStatus::Aborted
+    } else if status.eq_ignore_ascii_case("unverifiable") {
+        LineStatus::Unverifiable
     } else if status.eq_ignore_ascii_case("failed") || status.eq_ignore_ascii_case("error") {
         LineStatus::Failed
     } else {
@@ -3097,5 +3110,74 @@ mod tests {
             playback.missing,
             vec!["phone (android)".to_string(), "living (webOS)".to_string()]
         );
+    }
+
+    #[test]
+    fn step_finished_adds_redacted_probe_evidence_lines() {
+        let context = Context::new(
+            impresario_core::home::Home::at("demo-home"),
+            PathBuf::from("demo"),
+            PathBuf::from("demo/impresario.config"),
+            PathBuf::from("demo/impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.events = vec![ExecEvent::StepFinished {
+            device: "web1".to_string(),
+            play: "Playback".to_string(),
+            act: "Check".to_string(),
+            stage: "Playing".to_string(),
+            index: 2,
+            status: "unverifiable".to_string(),
+            duration_ms: 12,
+            error: Some("probe unverifiable: no system evidence".to_string()),
+            details: BTreeMap::from([
+                ("probe".to_string(), "showing=unverifiable".to_string()),
+                ("reason".to_string(), "no system evidence".to_string()),
+                ("observed.playing".to_string(), "false".to_string()),
+            ]),
+        }];
+        let record = JobRecord {
+            schema_version: 1,
+            id: "job-1".to_string(),
+            status: JobStatus::Running,
+            detached: true,
+            created_at: "2026-11-09T12:00:00Z".to_string(),
+            started_at: Some("2026-11-09T12:00:01Z".to_string()),
+            finished_at: None,
+            duration_ms: None,
+            exit_code: None,
+            workspace: "demo".to_string(),
+            devices: vec!["web1".to_string()],
+            plays: vec!["Playback".to_string()],
+            label: "1 play(s) x 1 device(s)".to_string(),
+            pid: Some(1),
+            queue_position: None,
+            run_dir: "demo/reports/job-1".to_string(),
+            message: None,
+        };
+        app.rebuild_tree(&record);
+
+        assert!(app.tree.iter().any(|line| {
+            line.status == LineStatus::Unverifiable && line.text.contains("unverifiable")
+        }));
+        let details: Vec<&str> = app
+            .tree
+            .iter()
+            .filter(|line| line.status == LineStatus::Detail)
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            details,
+            vec![
+                "observed.playing: false",
+                "probe: showing=unverifiable",
+                "reason: no system evidence",
+            ]
+        );
+        assert!(app
+            .logs
+            .iter()
+            .any(|line| line.contains("no system evidence")));
     }
 }

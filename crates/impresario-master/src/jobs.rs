@@ -829,14 +829,27 @@ fn event_line(id: &str, event: &ExecEvent) -> String {
             status,
             duration_ms,
             error,
+            details,
             ..
         } => {
             let error = error
                 .as_ref()
                 .map(|error| format!(" - {error}"))
                 .unwrap_or_default();
+            let details = if details.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " [{}]",
+                    details
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             format!(
-                "{id}: {device} {act} step {} {status} ({} ms){error}",
+                "{id}: {device} {act} step {} {status} ({} ms){error}{details}",
                 index + 1,
                 duration_ms
             )

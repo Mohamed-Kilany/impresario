@@ -591,7 +591,9 @@ Unix, capped by `ui.history_size`).
 submit/follow a job): left pane = jobs, right pane = the followed
 job's device → play → act → stage → step tree, current command and rolling log.
 The detail pane shows status, duration, devices, plays, message and the
-failure screenshot path.
+failure screenshot path. Probe steps show the redacted `probe`, `reason` and
+`observed.*` evidence as indented lines under the step; `unverifiable` has its
+own `?` marker instead of looking like a running step.
 
 | Key (content focus) | Action |
 |---|---|

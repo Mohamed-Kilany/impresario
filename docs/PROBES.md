@@ -279,8 +279,9 @@ impresario run --unverifiable warn  # keep unverifiable claims non-fatal
 ```
 
 `impresario probe ...` live inspection and the TUI probe screen are specified but not
-implemented; use `--dry-run` plus the report evidence table until then. MCP runs inherit
-the same planner, probe commands and policy.
+implemented; use `--dry-run` plus the report evidence table until then. The TUI run
+view shows the same redacted `probe`, `reason` and `observed.*` details under a failed
+or unverifiable step. MCP runs inherit the same planner, probe commands and policy.
 
 ## Fixtures
 
