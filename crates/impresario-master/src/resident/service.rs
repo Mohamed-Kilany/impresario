@@ -2749,8 +2749,7 @@ mod tests {
 
     impl WatcherRuntime for SoakRuntime {
         fn now(&self) -> DateTime<Local> {
-            self.wall_base.clone()
-                + chrono::Duration::from_std(self.elapsed()).expect("soak offset")
+            self.wall_base + chrono::Duration::from_std(self.elapsed()).expect("soak offset")
         }
 
         fn monotonic(&self) -> Instant {
