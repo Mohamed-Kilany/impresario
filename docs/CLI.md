@@ -175,7 +175,15 @@ impresario service uninstall --purge   # --purge also deletes state/logs
 log live under `~/.impresario/service/` (`state.json`, `events.jsonl`,
 `service.log`, rotated to `service.log.1` at 10 MiB). `service install` writes a
 Windows Startup `.cmd`, a macOS LaunchAgent plist or a Linux `systemd --user`
-unit; `uninstall` removes only that hook unless `--purge` is given. `service
+unit. On Linux it also creates the persistent
+`systemd/user/default.target.wants/impresario.service` symlink, which is the
+same file-system effect as `systemctl --user enable` and is read by the user
+manager at the next logon; no external tool or D-Bus call is used. An
+already-running user manager may need a manual `systemctl --user
+daemon-reload` before it sees the new unit. When `$XDG_RUNTIME_DIR/systemd` is
+absent, install writes an XDG autostart `.desktop` entry instead. Switching
+backends removes the other hook, and `uninstall` removes every installed hook
+unless `--purge` is given. `service
 status` reports the pid, pause state and per-schedule/per-watcher counters even
 when the runner is stopped. It also reports the runner version, whether a live
 runner was written by a different client version (`restart_required`) and

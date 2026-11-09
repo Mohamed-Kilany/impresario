@@ -2110,15 +2110,12 @@ pub fn autostart_path() -> Option<PathBuf> {
 #[cfg(all(unix, not(target_os = "macos")))]
 #[must_use]
 pub fn autostart_path() -> Option<PathBuf> {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(
-        config
-            .join("systemd")
-            .join("user")
-            .join("impresario.service"),
-    )
+    let config = linux_config_dir()?;
+    Some(if systemd_user_manager_available() {
+        linux_unit_path(&config)
+    } else {
+        linux_desktop_path(&config)
+    })
 }
 
 /// The autostart file for the current OS, if one can be determined.
@@ -2128,39 +2125,70 @@ pub fn autostart_path() -> Option<PathBuf> {
     None
 }
 
-/// Write the per-user autostart hook. Returns the file written.
-pub fn install_autostart(
-    home: &Home,
-    base: &Path,
-    config_path: &Path,
-    devices_path: &Path,
-) -> Result<PathBuf, String> {
-    let path = autostart_path()
-        .ok_or_else(|| "cannot determine a per-user autostart directory".to_string())?;
-    let _ = home;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-    }
-    let exe =
-        std::env::current_exe().map_err(|error| format!("cannot locate impresario: {error}"))?;
-    #[cfg(windows)]
-    {
-        let text = format!(
-            "@echo off\r\n\"{}\" --workspace \"{}\" --config \"{}\" --devices-config \"{}\" service run >> \"{}\" 2>&1\r\n",
-            exe.display(),
-            base.display(),
-            config_path.display(),
-            devices_path.display(),
-            home.service_log_path().display()
-        );
-        std::fs::write(&path, text)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let text = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+/// Quote one argument for a systemd `ExecStart=` line.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn systemd_arg(path: &Path) -> String {
+    let value = path
+        .to_string_lossy()
+        .replace('%', "%%")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    format!("\"{value}\"")
+}
+
+/// The systemd `--user` unit written by `service install`.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn systemd_unit_text(exe: &Path, base: &Path, config_path: &Path, devices_path: &Path) -> String {
+    format!(
+        "[Unit]\nDescription=impresario resident runner\n\n[Service]\nExecStart={} {} {} {} service run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+        systemd_arg(exe),
+        systemd_arg(base),
+        systemd_arg(config_path),
+        systemd_arg(devices_path)
+    )
+}
+
+/// Quote one argument for a freedesktop `Exec=` line.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn desktop_arg(path: &Path) -> String {
+    let value = path
+        .to_string_lossy()
+        .replace('%', "%%")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
+    format!("\"{value}\"")
+}
+
+/// The XDG autostart entry used when no systemd user manager is present.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn xdg_desktop_text(exe: &Path, base: &Path, config_path: &Path, devices_path: &Path) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Impresario resident runner\nComment=Start the Impresario resident runner at logon\nExec={} {} {} {} service run\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        desktop_arg(exe),
+        desktop_arg(base),
+        desktop_arg(config_path),
+        desktop_arg(devices_path)
+    )
+}
+
+/// Escape one value for an XML plist string.
+#[cfg(any(target_os = "macos", test))]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// The macOS LaunchAgent plist written by `service install`.
+#[cfg(any(target_os = "macos", test))]
+fn launch_agent_text(exe: &Path, base: &Path, config_path: &Path, devices_path: &Path) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.impresario.service</string>
@@ -2174,40 +2202,246 @@ pub fn install_autostart(
   <key>KeepAlive</key><false/>
 </dict></plist>
 "#,
-            exe.display(),
-            base.display(),
-            config_path.display(),
-            devices_path.display()
-        );
-        std::fs::write(&path, text)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        xml_escape(&exe.to_string_lossy()),
+        xml_escape(&base.to_string_lossy()),
+        xml_escape(&config_path.to_string_lossy()),
+        xml_escape(&devices_path.to_string_lossy())
+    )
+}
+
+/// Quote one argument for a Windows batch file.
+#[cfg(any(windows, test))]
+fn batch_arg(path: &Path) -> String {
+    format!("\"{}\"", path.to_string_lossy().replace('%', "%%"))
+}
+
+/// The Windows Startup-folder batch file written by `service install`.
+#[cfg(any(windows, test))]
+fn windows_startup_text(
+    exe: &Path,
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    log_path: &Path,
+) -> String {
+    format!(
+        "@echo off\r\n{} --workspace {} --config {} --devices-config {} service run >> {} 2>&1\r\n",
+        batch_arg(exe),
+        batch_arg(base),
+        batch_arg(config_path),
+        batch_arg(devices_path),
+        batch_arg(log_path)
+    )
+}
+
+/// Write an autostart file, creating its parent directory.
+fn write_autostart_file(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    std::fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// Remove one autostart file. A missing file is not an error.
+fn remove_autostart_file(path: &Path) -> Result<bool, String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("cannot remove {}: {error}", path.display())),
+    }
+}
+
+/// The per-user XDG config directory used for Linux autostart files.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+}
+
+/// Whether a systemd user manager is present for this login session.
+///
+/// The manager creates `$XDG_RUNTIME_DIR/systemd` when the user session
+/// starts. Without it, an XDG desktop-autostart entry is the fallback.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn systemd_user_manager_available() -> bool {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .is_some_and(|runtime| runtime.join("systemd").is_dir())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_unit_path(config: &Path) -> PathBuf {
+    config
+        .join("systemd")
+        .join("user")
+        .join("impresario.service")
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_wants_path(config: &Path) -> PathBuf {
+    config
+        .join("systemd")
+        .join("user")
+        .join("default.target.wants")
+        .join("impresario.service")
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_desktop_path(config: &Path) -> PathBuf {
+    config.join("autostart").join("impresario.desktop")
+}
+
+/// Install one Linux autostart backend and remove the other one.
+///
+/// `systemd` mirrors `systemctl --user enable` with a `default.target.wants`
+/// symlink: the user manager reads it at the next logon. No shell-out or
+/// D-Bus call is involved (D-19).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn install_linux_autostart(
+    config: &Path,
+    exe: &Path,
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+    systemd: bool,
+) -> Result<PathBuf, String> {
+    let unit = linux_unit_path(config);
+    let wants = linux_wants_path(config);
+    let desktop = linux_desktop_path(config);
+    if !systemd {
+        remove_autostart_file(&unit)?;
+        remove_autostart_file(&wants)?;
+        write_autostart_file(
+            &desktop,
+            &xdg_desktop_text(exe, base, config_path, devices_path),
+        )?;
+        return Ok(desktop);
+    }
+    remove_autostart_file(&desktop)?;
+    write_autostart_file(
+        &unit,
+        &systemd_unit_text(exe, base, config_path, devices_path),
+    )?;
+    if let Some(parent) = wants.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    remove_autostart_file(&wants)?;
+    let target = std::path::absolute(&unit)
+        .map_err(|error| format!("cannot resolve {}: {error}", unit.display()))?;
+    std::os::unix::fs::symlink(&target, &wants)
+        .map_err(|error| format!("cannot enable {}: {error}", wants.display()))?;
+    Ok(unit)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn uninstall_linux_autostart(config: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut removed = Vec::new();
+    for path in [
+        linux_unit_path(config),
+        linux_wants_path(config),
+        linux_desktop_path(config),
+    ] {
+        if remove_autostart_file(&path)? {
+            removed.push(path);
+        }
+    }
+    Ok(removed)
+}
+
+/// Write the per-user autostart hook. Returns the primary file written.
+pub fn install_autostart(
+    home: &Home,
+    base: &Path,
+    config_path: &Path,
+    devices_path: &Path,
+) -> Result<PathBuf, String> {
+    let _ = home;
+    let exe =
+        std::env::current_exe().map_err(|error| format!("cannot locate impresario: {error}"))?;
+    #[cfg(windows)]
+    {
+        let path = autostart_path()
+            .ok_or_else(|| "cannot determine a per-user autostart directory".to_string())?;
+        write_autostart_file(
+            &path,
+            &windows_startup_text(
+                &exe,
+                base,
+                config_path,
+                devices_path,
+                &home.service_log_path(),
+            ),
+        )?;
+        Ok(path)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let path = autostart_path()
+            .ok_or_else(|| "cannot determine a per-user autostart directory".to_string())?;
+        write_autostart_file(
+            &path,
+            &launch_agent_text(&exe, base, config_path, devices_path),
+        )?;
+        Ok(path)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let text = format!(
-            "[Unit]\nDescription=impresario resident runner\n\n[Service]\nExecStart=\"{}\" --workspace \"{}\" --config \"{}\" --devices-config \"{}\" service run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
-            exe.display(),
-            base.display(),
-            config_path.display(),
-            devices_path.display()
-        );
-        std::fs::write(&path, text)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        let config = linux_config_dir()
+            .ok_or_else(|| "cannot determine a per-user autostart directory".to_string())?;
+        install_linux_autostart(
+            &config,
+            &exe,
+            base,
+            config_path,
+            devices_path,
+            systemd_user_manager_available(),
+        )
     }
-    Ok(path)
+    #[cfg(not(any(windows, unix)))]
+    {
+        Err("cannot determine a per-user autostart directory".to_string())
+    }
 }
 
-/// Remove the per-user autostart hook.
-pub fn uninstall_autostart() -> Result<Option<PathBuf>, String> {
-    let Some(path) = autostart_path() else {
-        return Ok(None);
-    };
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
-        Ok(Some(path))
-    } else {
-        Ok(None)
+/// Remove every per-user autostart hook installed by this binary.
+pub fn uninstall_autostart() -> Result<Vec<PathBuf>, String> {
+    #[cfg(windows)]
+    {
+        let Some(path) = autostart_path() else {
+            return Ok(Vec::new());
+        };
+        Ok(if remove_autostart_file(&path)? {
+            vec![path]
+        } else {
+            Vec::new()
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let Some(path) = autostart_path() else {
+            return Ok(Vec::new());
+        };
+        Ok(if remove_autostart_file(&path)? {
+            vec![path]
+        } else {
+            Vec::new()
+        })
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let Some(config) = linux_config_dir() else {
+            return Ok(Vec::new());
+        };
+        uninstall_linux_autostart(&config)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        Ok(Vec::new())
     }
 }
 
@@ -3419,5 +3653,135 @@ watchers:
         )
         .expect("evidence json");
         assert_eq!(evidence["failures"][0]["details"]["probe"], "value");
+    }
+
+    #[test]
+    fn autostart_payloads_quote_paths_for_each_platform() {
+        let exe = Path::new("/opt/Impresario 100% & ready/impresario");
+        let base = Path::new("/work/My Project");
+        let config = Path::new("/work/My Project/impresario.config");
+        let devices = Path::new("/work/My Project/impresario.devices.config");
+        let log = Path::new("/home/u/.impresario/service/service.log");
+
+        let unit = systemd_unit_text(exe, base, config, devices);
+        assert!(
+            unit.contains("[Install]\nWantedBy=default.target\n"),
+            "{unit}"
+        );
+        assert!(unit.contains("Restart=on-failure"), "{unit}");
+        assert!(
+            unit.contains(
+                "ExecStart=\"/opt/Impresario 100%% & ready/impresario\" \"/work/My Project\" \"/work/My Project/impresario.config\" \"/work/My Project/impresario.devices.config\" service run"
+            ),
+            "{unit}"
+        );
+
+        let desktop = xdg_desktop_text(exe, base, config, devices);
+        assert!(desktop.contains("Type=Application"), "{desktop}");
+        assert!(
+            desktop.contains("X-GNOME-Autostart-enabled=true"),
+            "{desktop}"
+        );
+        assert!(desktop.contains("100%% & ready"), "{desktop}");
+
+        let plist = launch_agent_text(exe, base, config, devices);
+        assert!(
+            plist.contains("<key>Label</key><string>com.impresario.service</string>"),
+            "{plist}"
+        );
+        assert!(plist.contains("<key>RunAtLoad</key><true/>"), "{plist}");
+        assert!(plist.contains("100% &amp; ready"), "{plist}");
+
+        let cmd = windows_startup_text(exe, base, config, devices, log);
+        assert!(cmd.starts_with("@echo off\r\n"), "{cmd}");
+        assert!(cmd.contains("100%% & ready"), "{cmd}");
+        assert!(
+            cmd.contains(">> \"/home/u/.impresario/service/service.log\" 2>&1"),
+            "{cmd}"
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_systemd_install_enables_the_unit_and_replaces_the_fallback() {
+        let base = tempfile::tempdir().expect("base");
+        let config = base.path().join("config");
+        let exe = base.path().join("bin").join("impresario");
+        let workspace = base.path().join("work space");
+        let config_path = workspace.join("impresario.config");
+        let devices_path = workspace.join("impresario.devices.config");
+
+        let desktop = install_linux_autostart(
+            &config,
+            &exe,
+            &workspace,
+            &config_path,
+            &devices_path,
+            false,
+        )
+        .expect("fallback install");
+        assert_eq!(desktop, linux_desktop_path(&config));
+        assert!(desktop.is_file());
+
+        let unit =
+            install_linux_autostart(&config, &exe, &workspace, &config_path, &devices_path, true)
+                .expect("systemd install");
+        assert_eq!(unit, linux_unit_path(&config));
+        assert!(unit.is_file());
+        assert!(!desktop.exists(), "the fallback hook must not double-start");
+        let wants = linux_wants_path(&config);
+        assert_eq!(
+            std::fs::read_link(&wants).expect("wants link"),
+            std::path::absolute(&unit).expect("absolute unit")
+        );
+
+        install_linux_autostart(&config, &exe, &workspace, &config_path, &devices_path, true)
+            .expect("idempotent install");
+        assert_eq!(
+            std::fs::read_dir(wants.parent().expect("wants parent"))
+                .expect("wants dir")
+                .count(),
+            1
+        );
+
+        let removed = uninstall_linux_autostart(&config).expect("uninstall");
+        assert!(removed.contains(&unit), "{removed:?}");
+        assert!(removed.contains(&wants), "{removed:?}");
+        assert!(!unit.exists());
+        assert!(!wants.exists());
+        assert!(!desktop.exists());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_xdg_fallback_removes_a_stale_systemd_unit() {
+        let base = tempfile::tempdir().expect("base");
+        let config = base.path().join("config");
+        let exe = base.path().join("bin").join("impresario");
+        let workspace = base.path().join("work space");
+        let config_path = workspace.join("impresario.config");
+        let devices_path = workspace.join("impresario.devices.config");
+
+        install_linux_autostart(&config, &exe, &workspace, &config_path, &devices_path, true)
+            .expect("systemd install");
+        let desktop = install_linux_autostart(
+            &config,
+            &exe,
+            &workspace,
+            &config_path,
+            &devices_path,
+            false,
+        )
+        .expect("fallback install");
+        assert_eq!(desktop, linux_desktop_path(&config));
+        assert!(!linux_unit_path(&config).exists());
+        assert!(!linux_wants_path(&config).exists());
+        let text = std::fs::read_to_string(&desktop).expect("desktop entry");
+        assert!(text.contains("--workspace"), "{text}");
+        assert!(text.contains("X-GNOME-Autostart-enabled=true"), "{text}");
+
+        let removed = uninstall_linux_autostart(&config).expect("uninstall");
+        assert_eq!(removed, vec![desktop.clone()]);
+        assert!(!desktop.exists());
     }
 }

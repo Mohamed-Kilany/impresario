@@ -685,8 +685,12 @@ pub fn run_service(
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             match service::uninstall_autostart() {
-                Ok(Some(path)) => println!("removed autostart: {}", path.display()),
-                Ok(None) => println!("no autostart hook found"),
+                Ok(paths) if paths.is_empty() => println!("no autostart hook found"),
+                Ok(paths) => {
+                    for path in paths {
+                        println!("removed autostart: {}", path.display());
+                    }
+                }
                 Err(error) => return usage_error(&error),
             }
             if *purge {
