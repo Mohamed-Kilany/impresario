@@ -270,21 +270,43 @@ correct result.
 
 ## Running probes
 
-Today probes run as planned steps:
+Probes run as planned steps and through the live inspection command:
 
 ```text
 impresario run --dry-run            # check the plan and IMP-DSL-013 diagnostics
 impresario run --device web1        # execute
 impresario run --unverifiable warn  # keep unverifiable claims non-fatal
+
+impresario probe showing --device web1 --piece TestScreen.Video
+impresario probe player --device tv1 --selector "#video" --claim state=Playing
+impresario probe drm --device web1 --piece TestScreen.Video --watch
 ```
 
-`impresario probe ...` live inspection is specified but not implemented; use
-`--dry-run` plus the report evidence table until then. The TUI Probe screen shows the
-read-only plan-time support matrix (`showing`/`player`/`drm`, strongest evidence class,
-properties, providers and per-source health) for each configured device; it never
-touches a device. The run view shows the same redacted `probe`, `reason` and
-`observed.*` details under a failed or unverifiable step. MCP runs inherit the same
-planner, probe commands and policy.
+`impresario probe` builds a synthetic one-step plan and runs it through the same
+executor as `run`, so app reset/launch, transport preparation, screenshots,
+canonicalisation and redaction are shared. Exactly one of `--piece Scene.Piece`
+or `--selector` is required; `showing` always asserts `showing=present`;
+`--claim` accepts a leading `not `; `--confidence` sets the minimum confidence.
+Each invocation writes `report.json` (schema 3, canonical probe under the step)
+plus `evidence.json` (schema 1) into the run directory and prints the verdicts,
+evidence rows, observed values and window. Exit codes are 0 pass, 1
+fail/unverifiable, 3 infrastructure or configuration/selector errors, 130
+interrupted. `--watch` repeats at `poll_interval_ms`.
+
+The same operation is exposed to agents as `impresario_probe_inspect`; its
+`evidence.json` bundle is readable through `impresario_artifact_get` as an
+`evidence` artifact.
+
+The TUI Probe screen shows the read-only plan-time support matrix
+(`showing`/`player`/`drm`, strongest evidence class, properties, providers and
+per-source health) for each configured device; it never touches a device. The
+run view shows the same redacted `probe`, `reason` and `observed.*` details under
+a failed or unverifiable step. MCP runs inherit the same planner, probe commands
+and policy.
+
+The live command and MCP tool are covered by mock-agent CLI/MCP tests. Physical
+device runs of the new command are still pending; the existing LG/Tizen/Apple TV
+hardware evidence exercised the same probe commands through `run`.
 
 ## Fixtures
 

@@ -235,6 +235,7 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         "impresario_validate",
         "impresario_devices_list",
         "impresario_devices_check",
+        "impresario_probe_inspect",
         "impresario_run",
         "impresario_report_get",
         "impresario_artifacts_list",
@@ -279,6 +280,47 @@ fn legacy_handshake_runs_and_reads_artifacts() {
         check["devices"][0]["device_info"]["model"],
         json!("Mock Device")
     );
+
+    // probe_inspect executes one live probe through the same executor.
+    let probe = structured(&mcp.tools_call(
+        60,
+        "impresario_probe_inspect",
+        json!({
+            "kind": "showing",
+            "device": "d1",
+            "piece": "TestScreen.A",
+        }),
+    ));
+    assert_eq!(probe["kind"], json!("showing"));
+    assert_eq!(probe["verdict"], json!("pass"));
+    assert_eq!(probe["exit_code"], json!(0));
+    assert_eq!(probe["verdicts"][0]["claim"], json!("showing=present"));
+    let probe_dir = PathBuf::from(probe["run_dir"].as_str().expect("probe run_dir string"));
+    assert!(probe_dir.join("report.json").is_file());
+    assert!(probe_dir.join("evidence.json").is_file());
+
+    let probe_artifacts = structured(&mcp.tools_call(
+        61,
+        "impresario_artifacts_list",
+        json!({ "run_id": probe["run_id"] }),
+    ));
+    let evidence = probe_artifacts["artifacts"]
+        .as_array()
+        .expect("artifacts array")
+        .iter()
+        .find(|artifact| artifact["path"] == json!("evidence.json"))
+        .expect("evidence artifact");
+    assert_eq!(evidence["kind"], json!("evidence"));
+    let bundle = mcp.tools_call(
+        62,
+        "impresario_artifact_get",
+        json!({ "run_id": probe["run_id"], "path": "evidence.json" }),
+    );
+    let bundle_text = content_of(&bundle);
+    let bundle: Value = serde_json::from_str(bundle_text[0]["text"].as_str().expect("text"))
+        .expect("evidence.json parses");
+    assert_eq!(bundle["kind"], json!("showing"));
+    assert_eq!(bundle["result"]["verdicts"][0]["verdict"], json!("pass"));
 
     // run — the play goes by the bare name `workspace_info` reports.
     let run = structured(&mcp.tools_call(

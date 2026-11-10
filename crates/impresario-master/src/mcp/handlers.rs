@@ -15,6 +15,7 @@ use impresario_core::apps::{self, AppConfig};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::diag::Diagnostics;
 use impresario_core::platforms::Platform;
+use impresario_core::probe::ProbeKind;
 use impresario_core::resident::Schedule;
 use impresario_core::settings;
 use impresario_core::support::{self, CheckVerb, Verb};
@@ -22,6 +23,7 @@ use impresario_core::workspace;
 use serde_json::{json, Map, Value};
 
 use crate::cli;
+use crate::inspect;
 use crate::jobs::{JobRecord, JobStore};
 use crate::mcp::protocol::Server;
 use crate::mcp::tools::ToolOutput;
@@ -629,6 +631,96 @@ pub(crate) fn devices_check(server: &Server, arguments: &Value) -> ToolOutput {
 }
 
 // ---------------------------------------------------------------------------
+// impresario_probe_inspect
+// ---------------------------------------------------------------------------
+
+pub(crate) fn probe_inspect(server: &Server, arguments: &Value) -> ToolOutput {
+    let kind = match required_arg_string(arguments, "kind") {
+        Ok(kind) => kind,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let kind = match kind.as_str() {
+        "showing" => ProbeKind::Showing,
+        "player" => ProbeKind::Player,
+        "drm" => ProbeKind::Drm,
+        other => {
+            return ToolOutput::error(format!(
+                "'kind' must be showing, player or drm (got '{other}')"
+            ))
+        }
+    };
+    let device = match required_arg_string(arguments, "device") {
+        Ok(device) => device,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let app = match arg_string(arguments, "app") {
+        Ok(app) => app,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let piece = match arg_string(arguments, "piece") {
+        Ok(piece) => piece,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let selector = match arg_string(arguments, "selector") {
+        Ok(selector) => selector,
+        Err(message) => return ToolOutput::error(message),
+    };
+    if piece.is_some() == selector.is_some() {
+        return ToolOutput::error("provide exactly one of 'piece' or 'selector'");
+    }
+    let claims = match arg_strings(arguments, "claims") {
+        Ok(claims) => claims,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let confidence = match arg_string(arguments, "confidence") {
+        Ok(None) => None,
+        Ok(Some(value)) => match inspect::parse_confidence(&value) {
+            Some(confidence) => Some(confidence),
+            None => {
+                return ToolOutput::error(format!(
+                    "'confidence' must be none, inferred, corroborated or authoritative (got '{value}')"
+                ))
+            }
+        },
+        Err(message) => return ToolOutput::error(message),
+    };
+
+    let request = inspect::ProbeRequest {
+        base: &server.base,
+        config_path: &server.config_path,
+        devices_path: &server.devices_path,
+        kind,
+        device: &device,
+        app: app.as_deref(),
+        piece: piece.as_deref(),
+        selector: selector.as_deref(),
+        claims: &claims,
+        confidence,
+    };
+    let guard = lock_devices();
+    let outcome = inspect::probe(&request);
+    drop(guard);
+    match outcome {
+        Ok(outcome) => {
+            let headline = format!(
+                "probe {} on {}: {} (exit {}) — {}",
+                outcome.kind.as_str(),
+                outcome.device,
+                outcome
+                    .probe
+                    .as_ref()
+                    .map(|probe| probe.overall().as_str())
+                    .unwrap_or("no evidence"),
+                outcome.exit_code,
+                outcome.run_dir.display()
+            );
+            ToolOutput::json_with_prefix(inspect::outcome_json(&outcome), headline)
+        }
+        Err(message) => ToolOutput::error(message),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // impresario_run
 // ---------------------------------------------------------------------------
 
@@ -1034,6 +1126,13 @@ fn collect_artifacts(root: &Path, dir: &Path, out: &mut Vec<Value>) {
 }
 
 fn artifact_kind(path: &Path) -> &'static str {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "evidence.json")
+    {
+        return "evidence";
+    }
     match path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -1139,7 +1238,7 @@ pub(crate) fn artifact_get(server: &Server, arguments: &Value) -> ToolOutput {
                 format!("{name} ({relative}, {} bytes)", bytes.len()),
             )
         }
-        "text" => {
+        "text" | "evidence" => {
             let bytes = match std::fs::read(&canonical) {
                 Ok(bytes) => bytes,
                 Err(err) => {
@@ -1560,6 +1659,7 @@ mod tests {
         assert_eq!(artifact_kind(Path::new("a/b/report.json")), "text");
         assert_eq!(artifact_kind(Path::new("junit.xml")), "text");
         assert_eq!(artifact_kind(Path::new("report.html")), "text");
+        assert_eq!(artifact_kind(Path::new("evidence.json")), "evidence");
         assert_eq!(artifact_kind(Path::new("shots/failure-1.PNG")), "image");
         assert_eq!(artifact_kind(Path::new("blob.bin")), "binary");
     }

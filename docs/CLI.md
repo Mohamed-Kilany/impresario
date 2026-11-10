@@ -126,6 +126,42 @@ device and prints the act × device matrix, parameter bindings (secrets masked)
 and every skipped act with its reason (platform filter, unsupported action,
 selection).
 
+### Live probe inspection
+
+`impresario probe` runs one probe family (`showing`, `player` or `drm`) against
+exactly one device and prints the canonical evidence. With `--watch` it repeats
+at the configured `poll_interval_ms` until Ctrl-C.
+
+```powershell
+impresario probe showing --device web1 --piece TestScreen.Video
+impresario probe player --device tv1 --selector "#video" --claim "state=Playing"
+impresario probe drm --device web1 --piece TestScreen.Video --claim "not drm.enabled"
+impresario probe showing --device web1 --piece TestScreen.Video --watch
+```
+
+`--device` accepts a configured name or a group that resolves to exactly one
+device (`--actor` is a visible alias). `--app NAME` launches that app before
+probing; without it the probe does not require app control. Exactly one of
+`--piece Scene.Piece` (resolved through the device platform's selector fallback
+chain) or `--selector` (a raw selector for that platform) is required.
+`showing` always asserts `showing=present`; each `--claim` adds a claim id and
+a leading `not ` inverts it. `--confidence none|inferred|corroborated|authoritative`
+sets the minimum confidence (default `corroborated`).
+
+Each invocation writes `report_output/<run_id>/report.json` (schema 3, with the
+canonical result under the step's `probe`) and, when evidence exists,
+`evidence.json` (schema 1) containing the selector, claims, observed values and
+the full evidence list. Exit codes: 0 when the overall verdict is `pass`, 1 for
+`fail` or `unverifiable` (and command-level test failures), 3 for
+infrastructure or probe configuration/selector errors, 130 when interrupted.
+Command-line syntax errors use the usual exit 2. One invocation is one
+observation: retries are deliberately not applied.
+
+The same operation is the MCP tool `impresario_probe_inspect`; its
+`evidence.json` bundle is readable through `impresario_artifact_get` as an
+`evidence` artifact. Live command coverage is mock-driven; physical-device runs
+of the new command are still pending (see `docs/PROBES.md`).
+
 ## Jobs and the background supervisor
 
 A run is a job with an id shaped `YYYYMMDD-HHMMSS-xxxx`, whether it runs

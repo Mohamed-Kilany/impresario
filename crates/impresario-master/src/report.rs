@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use impresario_core::probe::ProbeResult;
 use serde::{Deserialize, Serialize};
 
 /// Run-level status (Appendix B): `passed|failed|interrupted|error`.
@@ -93,6 +94,10 @@ pub struct StepReport {
     #[serde(default)]
     pub duration_ms: u64,
     pub error: Option<ErrorJson>,
+    /// Canonical probe evidence for a probe step (TASK-3 section 3.2).
+    /// Absent on non-probe steps and on old reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<ProbeResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,7 +184,9 @@ pub struct DeviceReport {
 /// The complete `report.json` document (Appendix B).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunReport {
-    /// `report.json` schema version (2 adds stage spans and example rows).
+    /// `report.json` schema version (2 adds stage spans and example rows;
+    /// 3 adds per-step probe evidence). The default stays 2 so reports
+    /// written before v3 still deserialize.
     #[serde(default = "report_schema_version")]
     pub schema_version: u32,
     pub run_id: String,
@@ -255,6 +262,7 @@ mod tests {
             status,
             duration_ms: 5,
             error: None,
+            probe: None,
         }
     }
 

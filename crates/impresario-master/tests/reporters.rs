@@ -38,6 +38,7 @@ fn step(line: usize, source: &str, status: Status, duration_ms: u64) -> StepRepo
             }),
             _ => None,
         },
+        probe: None,
     }
 }
 

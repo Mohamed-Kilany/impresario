@@ -6,11 +6,13 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use base64::Engine as _;
+use impresario_core::probe::{Observation, ProbeResult};
 
 use crate::report::{
     ActReport, AttemptReport, DeviceReport, FailureReport, PlayReport, RunReport, Status,
     StepReport,
 };
+use crate::time_fmt;
 
 use super::{act_duration, failing_step, format_duration};
 
@@ -193,6 +195,11 @@ fn write_attempt(html: &mut String, attempt: &AttemptReport, multiple: bool, run
                 write_step_row(html, step);
             }
             html.push_str("</table>\n");
+            for step in &stage.steps {
+                if let Some(probe) = &step.probe {
+                    write_probe(html, step, probe);
+                }
+            }
         }
         html.push_str("</div>\n");
     }
@@ -222,6 +229,83 @@ fn write_step_row(html: &mut String, step: &StepReport) {
         },
         error
     ));
+}
+
+/// Evidence table for one probe step (TASK-3 section 3.2): verdicts,
+/// per-source observations, redacted observed values and the sampling window.
+fn write_probe(html: &mut String, step: &StepReport, probe: &ProbeResult) {
+    html.push_str("<details class=\"probe\"><summary>");
+    html.push_str(&format!(
+        "probe evidence · {} · {} · window {} ms",
+        escape(probe.overall().as_str()),
+        escape(probe.confidence.as_str()),
+        probe.window_ms
+    ));
+    html.push_str("</summary>\n");
+    html.push_str(&format!(
+        "<p class=\"meta\"><code>{}</code></p>\n",
+        escape(&step.source)
+    ));
+    if !probe.verdicts.is_empty() {
+        html.push_str(
+            "<table><tr><th>claim</th><th>verdict</th><th>confidence</th><th>reason</th></tr>\n",
+        );
+        for verdict in &probe.verdicts {
+            html.push_str(&format!(
+                "<tr class=\"{}\"><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                verdict.verdict.as_str(),
+                escape(&verdict.claim),
+                escape(verdict.verdict.as_str()),
+                escape(verdict.confidence.as_str()),
+                escape(verdict.reason.as_deref().unwrap_or(""))
+            ));
+        }
+        html.push_str("</table>\n");
+    }
+    if !probe.evidence.is_empty() {
+        html.push_str(
+            "<table><tr><th>source</th><th>class</th><th>signal</th><th>observation</th>\
+             <th>time</th><th>claims</th></tr>\n",
+        );
+        for evidence in &probe.evidence {
+            let observation = match &evidence.observation {
+                Observation::Text(text) | Observation::Enum(text) => text.clone(),
+                other => other.render(),
+            };
+            let mut claims = evidence
+                .supports
+                .iter()
+                .map(|claim| format!("+{claim}"))
+                .collect::<Vec<_>>();
+            claims.extend(evidence.contradicts.iter().map(|claim| format!("-{claim}")));
+            let time = if evidence.at_unix_ms == 0 {
+                String::new()
+            } else {
+                time_fmt::rfc3339_utc(evidence.at_unix_ms)
+            };
+            html.push_str(&format!(
+                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td>\
+                 <td class=\"meta\">{}</td><td>{}</td></tr>\n",
+                escape(evidence.source.as_str()),
+                escape(evidence.class.as_str()),
+                escape(&evidence.kind),
+                escape(&observation),
+                escape(&time),
+                escape(&claims.join(", "))
+            ));
+        }
+        html.push_str("</table>\n");
+    }
+    if !probe.observed.is_empty() {
+        html.push_str(&details_dl(&probe.observed));
+    }
+    if let Some(reason) = &probe.unverifiable_reason {
+        html.push_str(&format!(
+            "<p class=\"meta\">unverifiable: {}</p>\n",
+            escape(reason)
+        ));
+    }
+    html.push_str("</details>\n");
 }
 
 fn write_failure(
@@ -335,12 +419,94 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::{DeviceReport, RunReport, RunStatus};
+    use crate::report::{DeviceReport, RunReport, RunStatus, SpanJson, StageReport};
+    use impresario_core::probe::{
+        ClaimVerdict, Confidence, Evidence, EvidenceClass, EvidenceSource, Verdict,
+    };
     use std::collections::BTreeMap;
 
     #[test]
     fn escape_handles_markup() {
         assert_eq!(escape("<b>&\"'</b>"), "&lt;b&gt;&amp;&quot;&#39;&lt;/b&gt;");
+    }
+
+    #[test]
+    fn html_renders_probe_evidence_table() {
+        let probe = ProbeResult {
+            verdicts: vec![ClaimVerdict {
+                claim: "showing=present".to_string(),
+                verdict: Verdict::Pass,
+                confidence: Confidence::Authoritative,
+                reason: None,
+            }],
+            evidence: vec![Evidence::supporting(
+                EvidenceSource::Dom,
+                "loaded",
+                Observation::Bool(true),
+                EvidenceClass::Authoritative,
+                "showing=present",
+            )],
+            confidence: Confidence::Authoritative,
+            unverifiable_reason: None,
+            observed: BTreeMap::from([("coverage".to_string(), "98".to_string())]),
+            window_ms: 3000,
+        };
+        let report = RunReport {
+            schema_version: 3,
+            run_id: "20261016-185512-a1b2".to_string(),
+            started_at: "2026-10-16T18:55:12.000Z".to_string(),
+            duration_ms: 10,
+            status: RunStatus::Passed,
+            exit_code: 0,
+            devices: vec![DeviceReport {
+                name: "d".to_string(),
+                platform: "web".to_string(),
+                device_info: None,
+                error: None,
+                plays: vec![PlayReport {
+                    name: "P".to_string(),
+                    file: "plays/p.play".to_string(),
+                    acts: vec![ActReport {
+                        name: "A".to_string(),
+                        tags: vec![],
+                        example: BTreeMap::new(),
+                        status: Status::Passed,
+                        flaky: false,
+                        attempts: vec![AttemptReport {
+                            n: 1,
+                            status: Status::Passed,
+                            duration_ms: 10,
+                            stages: vec![StageReport {
+                                name: "Probe".to_string(),
+                                span: None,
+                                status: Status::Passed,
+                                steps: vec![StepReport {
+                                    source: "probe showing => TestScreen.A".to_string(),
+                                    span: SpanJson {
+                                        file: "<probe>".to_string(),
+                                        line: 1,
+                                        col: 1,
+                                        len: 1,
+                                    },
+                                    status: Status::Passed,
+                                    duration_ms: 10,
+                                    error: None,
+                                    probe: Some(probe),
+                                }],
+                            }],
+                            failure: None,
+                        }],
+                    }],
+                }],
+            }],
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let html = render(&report, dir.path()).expect("renders");
+        assert!(html.contains("probe evidence"), "{html}");
+        assert!(html.contains("showing=present"), "{html}");
+        assert!(html.contains("<code>dom</code>"), "{html}");
+        assert!(html.contains("coverage"), "{html}");
+        assert!(html.contains("window 3000 ms"), "{html}");
     }
 
     #[test]

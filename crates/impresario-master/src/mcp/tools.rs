@@ -81,6 +81,58 @@ pub(crate) fn definitions() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "impresario_probe_inspect",
+            "title": "Inspect probe evidence",
+            "description": "Run one live probe (showing, player or drm) against exactly one \
+        device and return the canonical evidence: per-claim verdicts and confidence, the \
+        source/class/observation table, observed values and the sampling window. Writes \
+        report.json and evidence.json under <report_output>/<run_id>; read the bundle with \
+        impresario_artifact_get. Requires a piece (Scene.Piece) or a raw selector, never \
+        both. Serialized with runs and device checks (one device-side operation at a time).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["showing", "player", "drm"],
+                        "description": "Probe family.",
+                    },
+                    "device": {
+                        "type": "string",
+                        "description": "Exactly one device name (or a group that resolves to one).",
+                    },
+                    "app": {
+                        "type": "string",
+                        "description": "App definition to launch before probing. Default: none.",
+                    },
+                    "piece": {
+                        "type": "string",
+                        "description": "Piece to probe as Scene.Piece, resolved through the \
+        device platform's selector fallback chain.",
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "Raw selector for the device platform (like a scene \
+        selector value, without quotes).",
+                    },
+                    "claims": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Claim ids to assert (like --claim). Prefix with 'not ' \
+        to invert. Showing always includes showing=present.",
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["none", "inferred", "corroborated", "authoritative"],
+                        "description": "Minimum confidence required for a claim to pass. \
+        Default: corroborated.",
+                    },
+                },
+                "required": ["kind", "device"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
             "name": "impresario_run",
             "title": "Run plays",
             "description": "Plan and execute plays on the selected devices through their \
@@ -455,6 +507,7 @@ pub(crate) fn call(server: &Server, params: &Value) -> RpcResult {
         "impresario_validate" => handlers::validate(server, &arguments),
         "impresario_devices_list" => handlers::devices_list(server, &arguments),
         "impresario_devices_check" => handlers::devices_check(server, &arguments),
+        "impresario_probe_inspect" => handlers::probe_inspect(server, &arguments),
         "impresario_run" => handlers::run(server, &arguments),
         "impresario_report_get" => handlers::report_get(server, &arguments),
         "impresario_artifacts_list" => handlers::artifacts_list(server, &arguments),
@@ -564,7 +617,7 @@ mod tests {
     #[test]
     fn definitions_are_unique_and_schemaful() {
         let tools = definitions();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 21);
         let mut names = std::collections::BTreeSet::new();
         for tool in &tools {
             let name = tool["name"].as_str().expect("name").to_string();

@@ -18,6 +18,7 @@ use impresario_core::diag::{Code, Diagnostic, Diagnostics};
 use impresario_core::home::Home;
 use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::platforms::Platform;
+use impresario_core::probe::{Confidence, ProbeKind};
 use impresario_core::settings::{self, EffectiveSettings, LayerSource, SettingValue, SettingsFile};
 use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::{self, WorkspaceSource};
@@ -147,6 +148,8 @@ pub enum Command {
     Sign(crate::artifact_cmd::SignArgs),
     /// Plan and execute plays on devices (spec section 8.2/8.3).
     Run(RunArgs),
+    /// Inspect one live probe (showing, player or drm) on one device.
+    Probe(ProbeArgs),
     /// Save and inspect reusable run profiles (`profiles:` in config.yaml).
     Profile(crate::profile_cmd::ProfileArgs),
     /// Schedules for unattended runs (resident runner).
@@ -372,6 +375,75 @@ pub struct RunArgs {
     pub job_label: Option<String>,
 }
 
+/// Probe families accepted by `impresario probe`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ProbeKindArg {
+    Showing,
+    Player,
+    Drm,
+}
+
+impl ProbeKindArg {
+    #[must_use]
+    pub fn kind(self) -> ProbeKind {
+        match self {
+            ProbeKindArg::Showing => ProbeKind::Showing,
+            ProbeKindArg::Player => ProbeKind::Player,
+            ProbeKindArg::Drm => ProbeKind::Drm,
+        }
+    }
+}
+
+/// Minimum-confidence levels accepted by `impresario probe --confidence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ConfidenceArg {
+    None,
+    Inferred,
+    Corroborated,
+    Authoritative,
+}
+
+impl ConfidenceArg {
+    #[must_use]
+    pub fn confidence(self) -> Confidence {
+        match self {
+            ConfidenceArg::None => Confidence::None,
+            ConfidenceArg::Inferred => Confidence::Inferred,
+            ConfidenceArg::Corroborated => Confidence::Corroborated,
+            ConfidenceArg::Authoritative => Confidence::Authoritative,
+        }
+    }
+}
+
+/// `impresario probe`: one live inspection, optionally repeated.
+#[derive(Debug, Args)]
+pub struct ProbeArgs {
+    /// Probe family.
+    #[arg(value_enum)]
+    pub kind: ProbeKindArg,
+    /// Device name, or a group that resolves to exactly one device.
+    #[arg(long, visible_alias = "actor", value_name = "NAME|@GROUP")]
+    pub device: String,
+    /// App definition to launch before probing.
+    #[arg(long, value_name = "NAME")]
+    pub app: Option<String>,
+    /// Piece to probe, as `Scene.Piece`.
+    #[arg(long, value_name = "SCENE.PIECE", conflicts_with = "selector")]
+    pub piece: Option<String>,
+    /// Raw selector for the device platform.
+    #[arg(long, value_name = "SELECTOR")]
+    pub selector: Option<String>,
+    /// Claim id to assert (repeatable); prefix with `not ` to invert.
+    #[arg(long, value_name = "CLAIM")]
+    pub claim: Vec<String>,
+    /// Minimum confidence required for a claim to pass.
+    #[arg(long, value_enum, value_name = "LEVEL")]
+    pub confidence: Option<ConfidenceArg>,
+    /// Repeat the probe until Ctrl-C.
+    #[arg(long)]
+    pub watch: bool,
+}
+
 /// Entry point used by `main.rs`.
 #[must_use]
 pub fn run() -> i32 {
@@ -482,6 +554,9 @@ pub fn run_with(argv: &[String]) -> i32 {
             args,
             cli.no_color,
         ),
+        Command::Probe(args) => {
+            crate::inspect::run_command(&base, &config_path, &devices_path, args)
+        }
         Command::Profile(args) => crate::profile_cmd::run(&home, args),
         Command::Schedule(args) => {
             crate::resident::run_schedule(args, &home, &base, &config_path, &devices_path)

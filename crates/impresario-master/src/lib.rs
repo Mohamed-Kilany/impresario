@@ -20,6 +20,7 @@ pub mod cli;
 pub mod definitions;
 pub mod doctor;
 pub mod exec;
+pub mod inspect;
 pub mod install;
 pub mod jobs;
 pub mod jobs_cmd;

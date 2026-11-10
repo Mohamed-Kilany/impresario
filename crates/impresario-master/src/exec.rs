@@ -22,7 +22,9 @@ use impresario_core::apps::AppConfig;
 use impresario_core::ast::AppOp;
 use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
-use impresario_core::probe::{ProbeKind, UnverifiablePolicy, Verdict};
+use impresario_core::probe::{
+    EvidenceSource, Observation, ProbeKind, ProbeResult, UnverifiablePolicy, Verdict,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::{Id, JoinHandle, JoinSet};
@@ -317,7 +319,7 @@ pub async fn execute(plan: &ExecutionPlan, options: &ExecOptions) -> ExecOutcome
         RunStatus::Passed
     };
     let report = RunReport {
-        schema_version: 2,
+        schema_version: 3,
         run_id: options.run_id.clone(),
         started_at: rfc3339_utc(started_ms),
         duration_ms: now_millis().saturating_sub(started_ms),
@@ -796,25 +798,20 @@ enum SendOutcome {
     Aborted,
 }
 
-enum StepOutcome {
-    Passed {
-        duration_ms: u64,
-        wire: bool,
-    },
-    Failed {
-        error: WireError,
-        duration_ms: u64,
-        wire: bool,
-    },
-    Unverifiable {
-        error: WireError,
-        duration_ms: u64,
-        wire: bool,
-    },
-    Aborted {
-        duration_ms: u64,
-        wire: bool,
-    },
+struct StepOutcome {
+    status: Status,
+    duration_ms: u64,
+    wire: bool,
+    error: Option<WireError>,
+    /// Canonical probe result, attached only by probe steps (section 3.2).
+    probe: Option<Box<ProbeResult>>,
+}
+
+impl StepOutcome {
+    fn with_probe(mut self, probe: ProbeResult) -> Self {
+        self.probe = Some(Box::new(probe));
+        self
+    }
 }
 
 impl DeviceRun<'_> {
@@ -1058,113 +1055,45 @@ impl DeviceRun<'_> {
                     },
                 );
                 let outcome = self.run_step(step).await;
-                match outcome {
-                    StepOutcome::Passed { duration_ms, wire } => {
-                        emit(
-                            self.shared.options.events.as_ref(),
-                            ExecEvent::StepFinished {
-                                device: self.device.name.clone(),
-                                play: play_name.to_string(),
-                                act: act_name.to_string(),
-                                stage: stage.name.clone(),
-                                index: step_index,
-                                status: "passed".to_string(),
-                                duration_ms,
-                                error: None,
-                                details: BTreeMap::new(),
-                            },
-                        );
-                        stage_report.steps.push(step_report(
-                            self.shared,
-                            step,
-                            Status::Passed,
-                            duration_ms,
-                            None,
-                        ));
-                        wire_results += usize::from(wire);
+                let status = outcome.status;
+                emit(
+                    self.shared.options.events.as_ref(),
+                    ExecEvent::StepFinished {
+                        device: self.device.name.clone(),
+                        play: play_name.to_string(),
+                        act: act_name.to_string(),
+                        stage: stage.name.clone(),
+                        index: step_index,
+                        status: status.as_str().to_string(),
+                        duration_ms: outcome.duration_ms,
+                        error: outcome
+                            .error
+                            .as_ref()
+                            .map(|error| self.shared.redactor.redact(&error.message)),
+                        details: outcome
+                            .error
+                            .as_ref()
+                            .map(|error| redacted_details(&self.shared.redactor, error))
+                            .unwrap_or_default(),
+                    },
+                );
+                stage_report.steps.push(step_report(
+                    self.shared,
+                    step,
+                    status,
+                    outcome.duration_ms,
+                    outcome.error.as_ref(),
+                    outcome.probe.as_deref(),
+                ));
+                wire_results += usize::from(outcome.wire);
+                match status {
+                    Status::Failed => {
+                        if let Some(error) = outcome.error {
+                            failure = Some((step_index, error));
+                        }
                     }
-                    StepOutcome::Failed {
-                        error,
-                        duration_ms,
-                        wire,
-                    } => {
-                        emit(
-                            self.shared.options.events.as_ref(),
-                            ExecEvent::StepFinished {
-                                device: self.device.name.clone(),
-                                play: play_name.to_string(),
-                                act: act_name.to_string(),
-                                stage: stage.name.clone(),
-                                index: step_index,
-                                status: "failed".to_string(),
-                                duration_ms,
-                                error: Some(self.shared.redactor.redact(&error.message)),
-                                details: redacted_details(&self.shared.redactor, &error),
-                            },
-                        );
-                        stage_report.steps.push(step_report(
-                            self.shared,
-                            step,
-                            Status::Failed,
-                            duration_ms,
-                            Some(&error),
-                        ));
-                        wire_results += usize::from(wire);
-                        failure = Some((step_index, error));
-                    }
-                    StepOutcome::Unverifiable {
-                        error,
-                        duration_ms,
-                        wire,
-                    } => {
-                        emit(
-                            self.shared.options.events.as_ref(),
-                            ExecEvent::StepFinished {
-                                device: self.device.name.clone(),
-                                play: play_name.to_string(),
-                                act: act_name.to_string(),
-                                stage: stage.name.clone(),
-                                index: step_index,
-                                status: "unverifiable".to_string(),
-                                duration_ms,
-                                error: Some(self.shared.redactor.redact(&error.message)),
-                                details: redacted_details(&self.shared.redactor, &error),
-                            },
-                        );
-                        stage_report.steps.push(step_report(
-                            self.shared,
-                            step,
-                            Status::Unverifiable,
-                            duration_ms,
-                            Some(&error),
-                        ));
-                        wire_results += usize::from(wire);
-                    }
-                    StepOutcome::Aborted { duration_ms, wire } => {
-                        emit(
-                            self.shared.options.events.as_ref(),
-                            ExecEvent::StepFinished {
-                                device: self.device.name.clone(),
-                                play: play_name.to_string(),
-                                act: act_name.to_string(),
-                                stage: stage.name.clone(),
-                                index: step_index,
-                                status: "aborted".to_string(),
-                                duration_ms,
-                                error: None,
-                                details: BTreeMap::new(),
-                            },
-                        );
-                        stage_report.steps.push(step_report(
-                            self.shared,
-                            step,
-                            Status::Aborted,
-                            duration_ms,
-                            None,
-                        ));
-                        wire_results += usize::from(wire);
-                        aborted = true;
-                    }
+                    Status::Aborted => aborted = true,
+                    _ => {}
                 }
                 step_index += 1;
             }
@@ -1205,14 +1134,10 @@ impl DeviceRun<'_> {
         match &step.work {
             PlannedWork::Wait { duration_ms } => {
                 tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(*duration_ms)) => StepOutcome::Passed {
-                        duration_ms: elapsed_ms(started),
-                        wire: false,
+                    _ = tokio::time::sleep(Duration::from_millis(*duration_ms)) => {
+                        passed_step(started, false)
                     },
-                    _ = self.shared.options.shutdown.cancelled() => StepOutcome::Aborted {
-                        duration_ms: elapsed_ms(started),
-                        wire: false,
-                    },
+                    _ = self.shared.options.shutdown.cancelled() => aborted_step(started, false),
                 }
             }
             PlannedWork::Screenshot { file_name } => {
@@ -1273,10 +1198,7 @@ impl DeviceRun<'_> {
             send_wire(self.shared, &connection.session, command, step.timeout_ms).await
         };
         match result {
-            SendOutcome::Aborted => StepOutcome::Aborted {
-                duration_ms: elapsed_ms(started),
-                wire: false,
-            },
+            SendOutcome::Aborted => aborted_step(started, false),
             SendOutcome::Done(Ok(outcome)) if outcome.ok => {
                 if let Some(result) = &outcome.probe {
                     // Agents produce evidence only. Recompute every verdict
@@ -1290,54 +1212,45 @@ impl DeviceRun<'_> {
                             _ => None,
                         })
                         .unwrap_or_else(|| result.clone());
-                    let result = &canonical;
-                    match result.overall() {
-                        Verdict::Pass => {}
+                    match canonical.overall() {
+                        Verdict::Pass => return passed_step(started, true).with_probe(canonical),
                         Verdict::Fail => {
-                            let summary = result.summary();
+                            let summary = canonical.summary();
                             let mut error = WireError::new(
                                 WireErrorCode::CheckFailed,
                                 format!("probe failed: {summary}"),
                             );
                             error.details.insert("probe".to_string(), summary);
-                            return failed_step(error, started, true);
+                            return failed_step(error, started, true).with_probe(canonical);
                         }
                         Verdict::Unverifiable => {
-                            let reason = impresario_core::probe::unverifiable_reason(result)
-                                .unwrap_or("the required evidence was not available");
-                            let summary = result.summary();
+                            let reason = impresario_core::probe::unverifiable_reason(&canonical)
+                                .unwrap_or("the required evidence was not available")
+                                .to_string();
+                            let summary = canonical.summary();
                             let mut error = WireError::new(
                                 WireErrorCode::Unverifiable,
                                 format!("probe unverifiable: {reason}"),
                             );
                             error.details.insert("probe".to_string(), summary);
-                            error
-                                .details
-                                .insert("reason".to_string(), reason.to_string());
-                            for (key, value) in &result.observed {
+                            error.details.insert("reason".to_string(), reason);
+                            for (key, value) in &canonical.observed {
                                 error
                                     .details
                                     .insert(format!("observed.{key}"), value.clone());
                             }
                             return match self.shared.options.config.unverifiable_policy {
-                                UnverifiablePolicy::Fail => StepOutcome::Failed {
-                                    error,
-                                    duration_ms: elapsed_ms(started),
-                                    wire: true,
-                                },
-                                UnverifiablePolicy::Warn => StepOutcome::Unverifiable {
-                                    error,
-                                    duration_ms: elapsed_ms(started),
-                                    wire: true,
-                                },
+                                UnverifiablePolicy::Fail => {
+                                    failed_step(error, started, true).with_probe(canonical)
+                                }
+                                UnverifiablePolicy::Warn => {
+                                    unverifiable_step(error, started, true).with_probe(canonical)
+                                }
                             };
                         }
                     }
                 }
-                StepOutcome::Passed {
-                    duration_ms: elapsed_ms(started),
-                    wire: true,
-                }
+                passed_step(started, true)
             }
             SendOutcome::Done(Ok(outcome)) => failed_step(
                 outcome.error.unwrap_or_else(|| {
@@ -1387,17 +1300,11 @@ impl DeviceRun<'_> {
             send_wire(self.shared, &connection.session, command, step.timeout_ms).await
         };
         match result {
-            SendOutcome::Aborted => StepOutcome::Aborted {
-                duration_ms: elapsed_ms(started),
-                wire: false,
-            },
+            SendOutcome::Aborted => aborted_step(started, false),
             SendOutcome::Done(Ok(outcome)) if outcome.ok => {
                 if outcome.screenshot_png.is_empty() {
                     // `ok` without bytes: nothing to write, still a pass.
-                    StepOutcome::Passed {
-                        duration_ms: elapsed_ms(started),
-                        wire: true,
-                    }
+                    passed_step(started, true)
                 } else if write_screenshot(
                     &self.shared.run_dir,
                     &device_dir_name(self.device),
@@ -1406,10 +1313,7 @@ impl DeviceRun<'_> {
                 )
                 .is_some()
                 {
-                    StepOutcome::Passed {
-                        duration_ms: elapsed_ms(started),
-                        wire: true,
-                    }
+                    passed_step(started, true)
                 } else {
                     failed_step(
                         WireError::new(
@@ -1626,6 +1530,7 @@ fn skipped_step(step: &PlannedStep) -> StepReport {
         status: Status::Skipped,
         duration_ms: 0,
         error: None,
+        probe: None,
     }
 }
 
@@ -1635,6 +1540,7 @@ fn step_report(
     status: Status,
     duration_ms: u64,
     error: Option<&WireError>,
+    probe: Option<&ProbeResult>,
 ) -> StepReport {
     StepReport {
         source: step.source_text.clone(),
@@ -1642,7 +1548,50 @@ fn step_report(
         status,
         duration_ms,
         error: error.map(|error| error_json(shared, error)),
+        probe: probe.map(|probe| redact_probe(shared, probe)),
     }
+}
+
+/// Redact every free-text field of a canonical probe result before it is
+/// stored in a report, an event or an evidence bundle (spec 5.6).
+fn redact_probe(shared: &Shared, probe: &ProbeResult) -> ProbeResult {
+    let redact = |text: &str| shared.redactor.redact(text);
+    let mut redacted = probe.clone();
+    for verdict in &mut redacted.verdicts {
+        verdict.claim = redact(&verdict.claim);
+        if let Some(reason) = &verdict.reason {
+            verdict.reason = Some(redact(reason));
+        }
+    }
+    for evidence in &mut redacted.evidence {
+        if let EvidenceSource::Other(name) = &mut evidence.source {
+            *name = redact(name);
+        }
+        evidence.kind = redact(&evidence.kind);
+        match &mut evidence.observation {
+            Observation::Text(text) | Observation::Enum(text) => *text = redact(text),
+            Observation::Bool(_) | Observation::Number(_) | Observation::Range { .. } => {}
+        }
+        evidence.supports = evidence
+            .supports
+            .iter()
+            .map(|claim| redact(claim))
+            .collect();
+        evidence.contradicts = evidence
+            .contradicts
+            .iter()
+            .map(|claim| redact(claim))
+            .collect();
+    }
+    if let Some(reason) = &redacted.unverifiable_reason {
+        redacted.unverifiable_reason = Some(redact(reason));
+    }
+    redacted.observed = redacted
+        .observed
+        .iter()
+        .map(|(key, value)| (redact(key), redact(value)))
+        .collect();
+    redacted
 }
 
 /// Re-evaluate agent evidence with the core claim/assertion rules (D-27).
@@ -1681,11 +1630,43 @@ fn canonicalize_probe(
     canonical
 }
 
-fn failed_step(error: WireError, started: Instant, wire: bool) -> StepOutcome {
-    StepOutcome::Failed {
-        error,
+fn passed_step(started: Instant, wire: bool) -> StepOutcome {
+    StepOutcome {
+        status: Status::Passed,
         duration_ms: elapsed_ms(started),
         wire,
+        error: None,
+        probe: None,
+    }
+}
+
+fn failed_step(error: WireError, started: Instant, wire: bool) -> StepOutcome {
+    StepOutcome {
+        status: Status::Failed,
+        duration_ms: elapsed_ms(started),
+        wire,
+        error: Some(error),
+        probe: None,
+    }
+}
+
+fn unverifiable_step(error: WireError, started: Instant, wire: bool) -> StepOutcome {
+    StepOutcome {
+        status: Status::Unverifiable,
+        duration_ms: elapsed_ms(started),
+        wire,
+        error: Some(error),
+        probe: None,
+    }
+}
+
+fn aborted_step(started: Instant, wire: bool) -> StepOutcome {
+    StepOutcome {
+        status: Status::Aborted,
+        duration_ms: elapsed_ms(started),
+        wire,
+        error: None,
+        probe: None,
     }
 }
 
@@ -1745,6 +1726,7 @@ mod tests {
             status,
             duration_ms: 0,
             error: None,
+            probe: None,
         };
         let stage = |steps: Vec<StepReport>| StageReport {
             name: "S".to_string(),

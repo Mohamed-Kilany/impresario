@@ -3158,6 +3158,7 @@ watchers:
             status,
             duration_ms: 1,
             error: None,
+            probe: None,
         };
         RunReport {
             schema_version: 2,
