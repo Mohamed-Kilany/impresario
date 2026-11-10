@@ -23,7 +23,7 @@ use crate::service::{
     WorkspaceEdit,
 };
 use crate::text::{Doc, Position};
-use yaml_edit::Document;
+use yaml_edit::YamlFile;
 
 impl Language {
     /// Resolve the symbol under a position.
@@ -1441,7 +1441,7 @@ impl RenameLayer {
     fn candidate(&self) -> String {
         let mut text = self.source.clone();
         let mut raw = self.raw.clone();
-        raw.sort_by(|left, right| right.0.cmp(&left.0));
+        raw.sort_by_key(|left| std::cmp::Reverse(left.0));
         for (start, end, replacement) in raw {
             text.replace_range(start..end, &replacement);
         }
@@ -1455,8 +1455,12 @@ fn rename_layer(
     new_name: &str,
     source: &DeviceConfigSource,
 ) -> Result<RenameLayer, String> {
-    let document = Document::from_str(&source.text)
+    let file = YamlFile::from_str(&source.text)
         .map_err(|error| format!("cannot parse {}: {error}", source.path.display()))?;
+    // `Document::from_str` rejects stream-level comments before the document
+    // (a leading `#` comment is common in devices files), so use YamlFile and
+    // only read byte ranges from the first document.
+    let document = file.ensure_document();
     let mut layer = RenameLayer {
         path: source.path.clone(),
         source: source.text.clone(),
