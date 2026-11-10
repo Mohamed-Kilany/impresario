@@ -180,7 +180,9 @@ or derived-only actors and cross-layer cycles. Covered by language unit tests
 and an LSP rename test that checks both the play and the devices file. The
 standalone extension now keeps the devices/apps path and text on the same file
 when it falls back to the global config, so a rename edit can never target a
-missing workspace file. The optional tray icon is decided against (I-180).
+missing workspace file. CI run `42777506246` at `454308d` passed all eight
+jobs for I-189; the earlier attempts exposed only a missing lock-file edge, a
+leading-comment parse failure and two redundant casts. The optional tray icon is decided against (I-180).
 Section 10 parity is complete except the MCP `probe_inspect` and evidence/dump
 bundle slice, which is deferred pending hardware evidence; LSP code actions
 (including the stage-coverage quick fixes) and actor/group rename are in place.
