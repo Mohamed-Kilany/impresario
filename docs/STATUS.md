@@ -187,7 +187,10 @@ Section 10 parity is complete: the live `impresario probe` command, the
 `impresario_probe_inspect` MCP tool and the `evidence.json` bundle are
 implemented (I-190), including report schema 3 and the HTML evidence table.
 They are covered by mock-agent CLI/MCP tests; physical-device runs of the new
-command remain deferred with the other hardware items. LSP code actions
+command remain deferred with the other hardware items. CI run `42809008384`
+at `babd025` passed all eight jobs; the first attempt at `81a9b77` failed
+clippy and cargo test only because the inspect test helper `report` shadowed
+the local `RunReport` binding, which `babd025` renamed to `probe_report`. LSP code actions
 (including the stage-coverage quick fixes) and actor/group rename are in place.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
