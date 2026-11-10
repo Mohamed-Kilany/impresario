@@ -91,10 +91,10 @@ pub fn run_command(
         claims: &args.claim,
         confidence: args.confidence.map(crate::cli::ConfidenceArg::confidence),
     };
-    run_cli(&request, args.watch)
+    run_cli(&request, args.watch, args.json)
 }
 
-fn run_cli(request: &ProbeRequest<'_>, watch: bool) -> i32 {
+fn run_cli(request: &ProbeRequest<'_>, watch: bool, json: bool) -> i32 {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -114,7 +114,17 @@ fn run_cli(request: &ProbeRequest<'_>, watch: bool) -> i32 {
             }
             match probe_async(request, shutdown.child_token()).await {
                 Ok(outcome) => {
-                    print_outcome(&outcome, watch);
+                    if json {
+                        match serde_json::to_string_pretty(&outcome_json(&outcome)) {
+                            Ok(text) => println!("{text}"),
+                            Err(error) => {
+                                eprintln!("probe: cannot render JSON: {error}");
+                                break EXIT_INFRA;
+                            }
+                        }
+                    } else {
+                        print_outcome(&outcome, watch);
+                    }
                     if !watch
                         || outcome.exit_code == EXIT_INTERRUPTED
                         || outcome.exit_code == EXIT_INFRA
@@ -713,5 +723,44 @@ mod tests {
 
         let claims = build_claims(ProbeKind::Player, &[]).expect("claims");
         assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn outcome_json_reports_the_probe_contract() {
+        use impresario_core::selectors::Strategy;
+
+        let report = probe_report(passing_probe(), 0, RunStatus::Passed);
+        let outcome = ProbeOutcome {
+            run_id: report.run_id.clone(),
+            run_dir: PathBuf::from("runs").join(&report.run_id),
+            report,
+            probe: Some(passing_probe()),
+            exit_code: EXIT_OK,
+            poll_interval_ms: 1000,
+            kind: ProbeKind::Showing,
+            device: "web1".to_string(),
+            platform: Platform::Web,
+            selector: Selector {
+                key: Platform::Web,
+                strategy: Strategy::Css,
+                value: "#video".to_string(),
+                index: 0,
+            },
+            selector_label: "piece TestScreen.Video".to_string(),
+            claims: vec![Claim::new("showing=present")],
+        };
+        let value = outcome_json(&outcome);
+        assert_eq!(value["ok"], json!(true));
+        assert_eq!(value["run_id"], json!("20261110-120000-test"));
+        assert_eq!(value["status"], json!("passed"));
+        assert_eq!(value["exit_code"], json!(EXIT_OK));
+        assert_eq!(value["kind"], json!("showing"));
+        assert_eq!(value["device"], json!("web1"));
+        assert_eq!(value["platform"], json!("web"));
+        assert_eq!(value["selector"]["strategy"], json!("CSS"));
+        assert_eq!(value["selector"]["value"], json!("#video"));
+        assert_eq!(value["selector_label"], json!("piece TestScreen.Video"));
+        assert_eq!(value["report"], json!("report.json"));
+        assert_eq!(value["evidence_artifact"], json!("evidence.json"));
     }
 }

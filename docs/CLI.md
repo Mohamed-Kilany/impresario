@@ -146,7 +146,11 @@ probing; without it the probe does not require app control. Exactly one of
 chain) or `--selector` (a raw selector for that platform) is required.
 `showing` always asserts `showing=present`; each `--claim` adds a claim id and
 a leading `not ` inverts it. `--confidence none|inferred|corroborated|authoritative`
-sets the minimum confidence (default `corroborated`).
+sets the minimum confidence (default `corroborated`). `--json` prints the
+structured result used by the web console and MCP (run id and directory,
+status, exit code, kind, device, platform, selector, claims, verdict,
+confidence, window, verdicts, evidence, observed values and artifact names);
+it conflicts with `--watch`.
 
 Each invocation writes `report_output/<run_id>/report.json` (schema 3, with the
 canonical result under the step's `probe`) and, when evidence exists,
@@ -780,6 +784,45 @@ first-run overlay is not shown again while that workspace remains open.
 - The TUI never owns a job. Quitting, crashing or closing the terminal only
   ends the viewer; the daemon and the detached jobs keep running, and
   `/attach`, `impresario attach`, `jobs` and `report` still find them.
+
+## Web console
+
+`impresario web` serves the same workspace through an embedded browser console
+on a dedicated port. The console is a CLI client like the TUI: reads use the
+shared library functions or the CLI's JSON output, and mutations spawn the
+current executable, so validation, exit codes, redaction, device leases and
+resident locks are never reimplemented.
+
+```powershell
+impresario web                                  # http://127.0.0.1:7810/
+impresario web --port 0                         # ephemeral port, URL printed
+impresario web --open                           # also open the default browser
+impresario web --bind 0.0.0.0 --allow-remote    # trusted networks only
+```
+
+The HTML, CSS, JavaScript and favicon are compiled into the binary; there is no
+npm, CDN or external font. The console starts with a guided checklist
+(workspace, validate, devices, preview, run, inspect), then exposes Runs,
+Tests, Coverage, Probe, Groups, Devices, Apps, Config, Resident, Docs and API
+screens. The API screen contains the live action schema, endpoint list and
+copyable `curl` examples for agents.
+
+Defaults and safety:
+
+- `127.0.0.1:7810`; a non-loopback `--bind` requires `--allow-remote` and is
+  trusted-network-only (no TLS, no authentication).
+- Reads require a loopback `Host` unless remote mode is explicitly enabled;
+  mutations require `Content-Type: application/json` and a matching
+  `Origin`/`Host` pair. The action names and parameters are a fixed allowlist;
+  values starting with `-` are rejected.
+- The console can switch the active workspace after `workspace use` or
+  `workspace new`; mutations serialize on one server-wide lock.
+
+The complete user flow, API envelope, action catalogue and security model are
+in `docs/WEB.md` (also served as `GET /api/docs/web` and
+`impresario://docs/web`). Mutating actions return the child's `exit_code`,
+`passed`, `stdout` and `stderr`; a run without `dry_run` is always detached and
+reports a `job_id`.
 
 ## Acceptance tests
 

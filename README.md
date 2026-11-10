@@ -45,6 +45,13 @@ target* (or next to it) instead of shelling out screen taps from the host.
   `logs`, `stop`, `rm`, `report` and `wait` work from any shell, device leases
   prevent two jobs from driving one device, and profiles save run selections —
   `docs/CLI.md`.
+- **An embedded web console** (`impresario web`): a guided browser UI on a
+  dedicated loopback port with the same workspace, runs, tests, coverage,
+  probes, devices, apps, config, resident and docs screens. The HTML/CSS/JS is
+  compiled into the binary (no npm, CDN or external font); reads use the same
+  library/CLI data and mutations spawn the CLI, so validation, locks and
+  redaction stay single-sourced. The API screen documents every endpoint and
+  action for AI agents — `docs/WEB.md`.
 
 ## Repository layout
 
@@ -55,12 +62,12 @@ target* (or next to it) instead of shelling out screen taps from the host.
 | `crates/impresario-clients` | master-side `AgentClient`, device transports, `MockAgent` |
 | `crates/impresario-apple-device` | pure-Rust Apple pairing/RSD/signing/install/DDI/XCUITest library |
 | `crates/impresario-connector` | web/webOS/Tizen executor over CDP (raw + chromiumoxide backends) |
-| `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server |
+| `crates/impresario-master` | the `impresario` CLI: planner, executor, reporters, LSP, MCP server, web console |
 | `agents/android` | Kotlin agent: `:agent` app, `:agent-instrumentation`, `:agent-core`, `:driver-uiautomator`, `:agent-target-stub`, `:impresario-hook` |
 | `agents/apple` | Impresario Agent for iOS/tvOS: Swift package builds + unit-tests on Linux, `ImpresarioHook` SDK, XCUITest bundle (macOS/Xcode only to build the artifact; the Rust host path installs/starts it) |
 | `sdk/` | web JavaScript hook SDK; the Android and Swift SDKs live with their agents (`agents/android/impresario-hook`, `agents/apple/Sources/ImpresarioHook`) |
 | `editors/vscode` | VS Code client (LSP or standalone WASM) + TextMate grammar |
-| `docs/` | DSL, probes, protocol, devices, parity, LSP, MCP, CLI/TUI, errors, decisions, status |
+| `docs/` | DSL, probes, protocol, devices, parity, LSP, MCP, web console, CLI/TUI, errors, decisions, status |
 | `examples/`, `fixtures/` | the example workspace written by `impresario workspace new --example` (table scenes, `theatres/login.theatre`, theatrical play), CDP fixture pages |
 
 ## Requirements
@@ -211,6 +218,7 @@ cargo test --workspace          # mock-driven; no device required
 | `docs/PARITY.md` | action/check/key support per platform, generated + reconciled |
 | `docs/LSP.md` | language server features, settings, editor setup |
 | `docs/MCP.md` | MCP server: tools, resources, per-client wiring |
+| `docs/WEB.md` | embedded web console: guided flow, screens, JSON API, action catalogue, security model |
 | `docs/CLI.md` | TUI screens/keys, slash commands, jobs/daemon, leases, profiles, test explorer, three-shell checklist |
 | `docs/ERRORS.md` | every `IMP-*` code with cause and fix |
 | `docs/DECISIONS.md` | the binding decision log (spec + implementation) |

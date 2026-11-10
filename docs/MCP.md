@@ -120,6 +120,7 @@ Notes:
 | `impresario://docs/mcp` | This document. |
 | `impresario://docs/scheduling` | Schedules, watchers, resident delivery and notification reference (`docs/SCHEDULING.md`). |
 | `impresario://docs/probes` | Probe evidence model: kinds, evidence sources and confidence, per-platform reachability, fallback rungs and the in-app SDK contract (`docs/PROBES.md`). |
+| `impresario://docs/web` | Embedded browser console (`docs/WEB.md`): guided flow, screens, JSON API, curated actions, security model and AI-agent workflow. |
 | `impresario://workspace/info` | Live JSON of the workspace summary (same payload as `impresario_workspace_info`). |
 
 Embedding the docs means the agent always reads the documentation that

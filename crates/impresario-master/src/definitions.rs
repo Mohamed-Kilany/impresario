@@ -1030,7 +1030,7 @@ fn list_devices(home: &Home, workspace_path: &Path, json: bool) -> i32 {
     EXIT_OK
 }
 
-fn device_names(path: &Path) -> HashSet<String> {
+pub(crate) fn device_names(path: &Path) -> HashSet<String> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|source| config::parse_devices(&source, path).config)
@@ -1454,7 +1454,7 @@ fn list_apps(home: &Home, workspace_path: &Path, json: bool) -> i32 {
     EXIT_OK
 }
 
-fn app_names(path: &Path) -> HashSet<String> {
+pub(crate) fn app_names(path: &Path) -> HashSet<String> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|source| apps::parse_apps(&source, path).config)

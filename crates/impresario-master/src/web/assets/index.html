@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Impresario console</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">I</span>
+      <div>
+        <h1>Impresario</h1>
+        <p id="brand-sub">cross-platform UI test console</p>
+      </div>
+    </div>
+    <div class="workspace-picker">
+      <label for="workspace-select">Workspace</label>
+      <select id="workspace-select" aria-label="Active workspace"></select>
+      <button id="refresh-button" class="ghost" type="button" title="Reload this screen">Refresh</button>
+      <span id="server-pill" class="pill" title="Console status">connecting</span>
+    </div>
+  </header>
+
+  <nav id="nav" class="nav" aria-label="Sections"></nav>
+
+  <main id="app" class="main" aria-live="polite">
+    <section class="card"><p class="muted">Loading the console…</p></section>
+  </main>
+
+  <footer class="footer">
+    <span>Loopback by default. The console is a client of the same CLI as the TUI.</span>
+    <span id="footer-meta" class="muted"></span>
+  </footer>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+  <dialog id="dialog" class="dialog">
+    <div id="dialog-body"></div>
+  </dialog>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

@@ -38,4 +38,5 @@ pub mod tests_cmd;
 pub mod time_fmt;
 pub mod tools_cmd;
 pub mod tui;
+pub mod web;
 pub mod wizard;

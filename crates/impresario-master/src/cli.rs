@@ -191,6 +191,13 @@ pub enum Command {
     /// without shelling out. Stdout carries protocol messages only; every
     /// log, diagnostic and progress note goes to stderr.
     Mcp,
+    /// Serve the embedded browser console on a dedicated loopback port
+    /// (decision I-192).
+    ///
+    /// The console is a client of the same CLI as the TUI: reads reuse the
+    /// shared library functions or the CLI's JSON output, and every mutation
+    /// spawns `impresario` itself. All assets are compiled into the binary.
+    Web(crate::web::WebArgs),
     /// Serve the scripted mock device on loopback (no hardware needed).
     ///
     /// Automated-suite aid (decision I-77): the test harness points a `web`
@@ -442,6 +449,9 @@ pub struct ProbeArgs {
     /// Repeat the probe until Ctrl-C.
     #[arg(long)]
     pub watch: bool,
+    /// Print the structured probe result as JSON (conflicts with --watch).
+    #[arg(long, conflicts_with = "watch")]
+    pub json: bool,
 }
 
 /// Entry point used by `main.rs`.
@@ -584,6 +594,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         }
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&home, &base, &config_path, &devices_path),
+        Command::Web(args) => crate::web::run(&home, base, config_path, devices_path, args),
         Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }

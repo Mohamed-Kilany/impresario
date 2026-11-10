@@ -47,6 +47,13 @@ transport, concurrency and security notes.",
         text: include_str!("../../../../docs/MCP.md"),
     },
     Doc {
+        uri: "impresario://docs/web",
+        name: "Web console guide",
+        description: "The embedded browser console (`impresario web`): guided start-up flow, \
+screens, JSON API envelope, action catalogue, security model and AI-agent workflow.",
+        text: include_str!("../../../../docs/WEB.md"),
+    },
+    Doc {
         uri: "impresario://docs/scheduling",
         name: "Schedules, watchers and resident delivery",
         description: "Resident runner reference: layered schedule/watcher config, local-time \

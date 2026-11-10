@@ -497,6 +497,7 @@ fn modern_discover_protocol_errors_and_diagnostics() {
         .collect();
     assert!(uris.contains(&"impresario://docs/dsl"), "uris: {uris:?}");
     assert!(uris.contains(&"impresario://docs/scheduling"));
+    assert!(uris.contains(&"impresario://docs/web"));
     assert!(uris.contains(&"impresario://workspace/info"));
     let read = result_of(&mcp.request(
         9,
@@ -519,6 +520,16 @@ fn modern_discover_protocol_errors_and_diagnostics() {
         .expect("scheduling doc text");
     assert!(scheduling.contains("notifications:"));
     assert!(scheduling.contains("impresario_watcher_dumps"));
+
+    let web = result_of(&mcp.request(
+        12,
+        "resources/read",
+        json!({ "uri": "impresario://docs/web" }),
+    ))
+    .clone();
+    let web = web["contents"][0]["text"].as_str().expect("web doc text");
+    assert!(web.contains("impresario web"));
+    assert!(web.contains("/api/actions/"));
 
     let missing = mcp.request(11, "resources/read", json!({ "uri": "impresario://nope" }));
     assert_eq!(missing["error"]["code"], json!(-32602));
