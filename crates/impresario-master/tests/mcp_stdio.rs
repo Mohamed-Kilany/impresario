@@ -335,13 +335,23 @@ fn legacy_handshake_runs_and_reads_artifacts() {
     assert!(run_dir.join("report.json").is_file());
     assert!(run_dir.join("junit.xml").is_file());
 
-    // report_get returns the full Appendix-B document.
-    let report = structured(&mcp.tools_call(8, "impresario_report_get", json!({})));
+    // report_get returns the full Appendix-B document. The probe above wrote a
+    // second run in the same second, so name the run explicitly instead of
+    // relying on newest-first ordering within a timestamp.
+    let report = structured(&mcp.tools_call(
+        8,
+        "impresario_report_get",
+        json!({ "run_id": run["run_id"] }),
+    ));
     assert_eq!(report["report"]["status"], json!("passed"));
     assert_eq!(report["report"]["run_id"], run["run_id"]);
 
     // artifacts_list / artifact_get (text)
-    let listed = structured(&mcp.tools_call(9, "impresario_artifacts_list", json!({})));
+    let listed = structured(&mcp.tools_call(
+        9,
+        "impresario_artifacts_list",
+        json!({ "run_id": run["run_id"] }),
+    ));
     let paths: Vec<&str> = listed["artifacts"]
         .as_array()
         .expect("artifacts array")
@@ -352,7 +362,7 @@ fn legacy_handshake_runs_and_reads_artifacts() {
     let artifact = mcp.tools_call(
         10,
         "impresario_artifact_get",
-        json!({ "path": "report.json" }),
+        json!({ "path": "report.json", "run_id": run["run_id"] }),
     );
     let content = content_of(&artifact);
     assert_eq!(content[0]["type"], json!("text"));
