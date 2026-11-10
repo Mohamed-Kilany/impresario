@@ -594,7 +594,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         }
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&home, &base, &config_path, &devices_path),
-        Command::Web(args) => crate::web::run(&home, base, config_path, devices_path, args),
+        Command::Web(args) => crate::web::run(home, base, config_path, devices_path, args),
         Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }

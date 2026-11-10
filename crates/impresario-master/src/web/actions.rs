@@ -1446,7 +1446,8 @@ fn save_test(state: &WebState, params: &Map<String, Value>) -> Result<Executed, 
         state,
         vec!["validate".to_string(), target.display().to_string()],
     )?;
-    if output.output.code != 0 {
+    let rolled_back = output.output.code != 0;
+    if rolled_back {
         if let Some(previous) = previous {
             let _ = std::fs::write(&target, previous);
         } else {
@@ -1462,7 +1463,7 @@ fn save_test(state: &WebState, params: &Map<String, Value>) -> Result<Executed, 
         output: output.output,
         extra: json!({
             "path": relative,
-            "rolled_back": output.output.code != 0,
+            "rolled_back": rolled_back,
         }),
     })
 }
