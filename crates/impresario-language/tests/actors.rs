@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use impresario_core::platforms::Platform;
 use impresario_core::validation::DeviceRef;
 use impresario_language::model::SourceFile;
-use impresario_language::service::{CompletionItem, Language};
+use impresario_language::service::{CompletionItem, DeviceConfigSource, Language, TextEdit};
 use impresario_language::text::Position;
 
 const SCENE: &str = r#"Scene: ActorScene
@@ -568,4 +568,189 @@ fn stage_hover_lists_implementations_and_audiences() {
         hover.markdown
     );
     assert!(hover.markdown.contains("android"), "{}", hover.markdown);
+}
+
+const DEVICES_CONFIG: &str = r#"# devices used by the actor tests
+devices:
+  - name: web1
+    type: web
+    ip: 127.0.0.1
+  - name: android1
+    type: android
+    ip: 192.0.2.12
+
+groups:
+  # both mobile and desktop
+  both:
+    - web1
+    - android1
+  phones:
+    - '@both'
+"#;
+
+fn rename_language(play_text: &str, devices_text: &str) -> Language {
+    let files = files()
+        .into_iter()
+        .map(|mut file| {
+            if file.path == play() {
+                file.text = play_text.to_string();
+            }
+            file
+        })
+        .collect::<Vec<_>>();
+    let path = PathBuf::from("impresario.devices.config");
+    let outcome = impresario_core::config::parse_devices(devices_text, &path);
+    let config = outcome.config.expect("devices config");
+    let devices = config
+        .devices
+        .iter()
+        .map(|device| DeviceRef::new(device.name.clone(), device.platform))
+        .collect::<Vec<_>>();
+    Language::analyze_with_groups(
+        &files,
+        &devices,
+        &config.groups,
+        &[],
+        Some(PathBuf::from(".")),
+    )
+    .with_device_configs(vec![DeviceConfigSource {
+        path,
+        text: devices_text.to_string(),
+    }])
+}
+
+fn apply_text_edits(text: &str, edits: &[TextEdit]) -> String {
+    let mut lines = text
+        .split('\n')
+        .map(|line| line.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let mut edits = edits.to_vec();
+    edits.sort_by(|left, right| {
+        (right.span.line, right.span.col).cmp(&(left.span.line, left.span.col))
+    });
+    for edit in edits {
+        let line = &mut lines[(edit.span.line - 1) as usize];
+        let start = (edit.span.col - 1) as usize;
+        line.splice(start..start + edit.span.len, edit.new_text.chars());
+    }
+    lines
+        .into_iter()
+        .map(|line| line.into_iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn rename_group_edits_config_and_every_dsl_reference() {
+    let text = "Play: ActorPlay\nActors: @both\n\nAct: A\n    Perform For [@both]: Login\n";
+    let language = rename_language(text, DEVICES_CONFIG);
+    let position = position_of(text, "@both");
+    let prepared = language.prepare_rename(&play(), position).expect("prepare");
+    assert_eq!(prepared.placeholder, "both");
+    let edit = language
+        .rename(&play(), position, "shared")
+        .expect("rename");
+
+    let play_edits = edit
+        .changes
+        .iter()
+        .find(|(path, _)| path.ends_with("actor.play"))
+        .map(|(_, edits)| edits)
+        .expect("play edits");
+    assert_eq!(
+        play_edits
+            .iter()
+            .filter(|change| change.new_text == "@shared")
+            .count(),
+        2,
+        "{play_edits:?}"
+    );
+
+    let config_edits = edit
+        .changes
+        .iter()
+        .find(|(path, _)| path.ends_with("impresario.devices.config"))
+        .map(|(_, edits)| edits)
+        .expect("config edits");
+    assert!(
+        config_edits
+            .iter()
+            .any(|change| change.new_text == "shared"),
+        "{config_edits:?}"
+    );
+    assert!(
+        config_edits
+            .iter()
+            .any(|change| change.new_text == "\"@shared\""),
+        "{config_edits:?}"
+    );
+
+    let candidate = apply_text_edits(DEVICES_CONFIG, config_edits);
+    assert!(
+        candidate.contains("# both mobile and desktop"),
+        "{candidate}"
+    );
+    let outcome =
+        impresario_core::config::parse_devices(&candidate, Path::new("impresario.devices.config"));
+    let parsed = outcome.config.expect("valid renamed config");
+    assert!(parsed.groups.contains_key("shared"), "{candidate}");
+    assert!(!parsed.groups.contains_key("both"), "{candidate}");
+    assert_eq!(parsed.groups["phones"], vec!["@shared".to_string()]);
+}
+
+#[test]
+fn rename_actor_edits_device_name_and_group_members() {
+    let text = "Play: ActorPlay\nActors: @both, web1\n\nAct: A\n    Perform For [web1]: Login\n";
+    let language = rename_language(text, DEVICES_CONFIG);
+    let position = position_of(text, "web1");
+    let prepared = language.prepare_rename(&play(), position).expect("prepare");
+    assert_eq!(prepared.placeholder, "web1");
+    let edit = language.rename(&play(), position, "web9").expect("rename");
+
+    let play_edits = edit
+        .changes
+        .iter()
+        .find(|(path, _)| path.ends_with("actor.play"))
+        .map(|(_, edits)| edits)
+        .expect("play edits");
+    assert_eq!(
+        play_edits
+            .iter()
+            .filter(|change| change.new_text == "web9")
+            .count(),
+        2,
+        "{play_edits:?}"
+    );
+
+    let config_edits = edit
+        .changes
+        .iter()
+        .find(|(path, _)| path.ends_with("impresario.devices.config"))
+        .map(|(_, edits)| edits)
+        .expect("config edits");
+    let candidate = apply_text_edits(DEVICES_CONFIG, config_edits);
+    let outcome =
+        impresario_core::config::parse_devices(&candidate, Path::new("impresario.devices.config"));
+    let parsed = outcome.config.expect("valid renamed config");
+    assert!(parsed.devices.iter().any(|device| device.name == "web9"));
+    assert!(!parsed.devices.iter().any(|device| device.name == "web1"));
+    assert_eq!(parsed.groups["both"], vec!["web9", "android1"]);
+    assert_eq!(parsed.groups["phones"], vec!["@both".to_string()]);
+}
+
+#[test]
+fn rename_actor_rejects_collisions_and_missing_configs() {
+    let text = "Play: ActorPlay\nActors: @both, web1\n\nAct: A\n    Perform: Login\n";
+    let language = rename_language(text, DEVICES_CONFIG);
+    let position = position_of(text, "web1");
+    let error = language
+        .rename(&play(), position, "android1")
+        .expect_err("collision");
+    assert!(error.contains("already exists"), "{error}");
+
+    let without_config = two_device_language(text);
+    let error = without_config
+        .rename(&play(), position, "web9")
+        .expect_err("missing config");
+    assert!(error.contains("no devices configuration"), "{error}");
 }

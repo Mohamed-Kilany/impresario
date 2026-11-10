@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use impresario_core::apps;
 use impresario_core::config;
 use impresario_core::diag::{Code, Diagnostic as CoreDiagnostic, Diagnostics, Severity};
+use impresario_core::home::Home;
 use impresario_core::parser::{parse_play, parse_scene, parse_theatre};
 use impresario_core::settings;
 use impresario_core::span::Span;
@@ -19,7 +20,7 @@ use impresario_core::validation::{self, DeviceRef};
 use impresario_core::workspace::Workspace;
 use impresario_language::diagnostics::DiagnosticInfo;
 use impresario_language::model::{AppInfo, SourceFile as EditorSourceFile};
-use impresario_language::service::Language as EditorLanguage;
+use impresario_language::service::{DeviceConfigSource, Language as EditorLanguage};
 use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Uri,
 };
@@ -70,6 +71,17 @@ pub fn analyze(
     let devices_outcome = config::load_devices_merged(devices_path);
     sources.insert(devices_path.to_path_buf(), read_or_empty(devices_path));
     absorb(&mut raw, &devices_outcome.diagnostics, Some(devices_path));
+    let mut device_configs = Vec::new();
+    if let Some(source) = global_device_layer(devices_path) {
+        sources.insert(source.path.clone(), source.text.clone());
+        device_configs.push(source);
+    }
+    if let Some(text) = read_optional_layer(devices_path) {
+        device_configs.push(DeviceConfigSource {
+            path: devices_path.to_path_buf(),
+            text,
+        });
+    }
 
     let apps_path = base.join("impresario.apps.config");
     let apps_outcome = apps::load_apps_merged(&apps_path);
@@ -232,6 +244,7 @@ pub fn analyze(
             &app_infos,
             Some(base.to_path_buf()),
         )
+        .with_device_configs(device_configs)
     } else {
         EditorLanguage::analyze_with_groups(
             &editor_sources,
@@ -240,6 +253,7 @@ pub fn analyze(
             &app_infos,
             Some(base.to_path_buf()),
         )
+        .with_device_configs(device_configs)
     };
 
     let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
@@ -416,6 +430,30 @@ pub(super) fn resolve(base: &Path, path: PathBuf) -> PathBuf {
 
 fn read_or_empty(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
+}
+
+/// A config layer that actually exists and has content. Missing or empty
+/// layers are not passed to the language service because they carry no
+/// declaration to rename (and an empty YAML document is not a valid devices
+/// file).
+fn read_optional_layer(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// The global `~/.impresario/devices.yaml` layer, unless it is the same file
+/// the server was started with.
+fn global_device_layer(devices_path: &Path) -> Option<DeviceConfigSource> {
+    let path = Home::resolve().ok()?.devices_path();
+    if path.as_path() == devices_path {
+        return None;
+    }
+    let text = read_optional_layer(&path)?;
+    Some(DeviceConfigSource { path, text })
 }
 
 fn is_hidden(path: &Path) -> bool {

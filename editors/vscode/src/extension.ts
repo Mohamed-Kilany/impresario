@@ -375,15 +375,21 @@ class Standalone {
     appsText: string | undefined;
   } {
     const config = configuration();
-    const devices =
+    const configuredDevices =
       resolveAgainstRoot(this.root, config.get<string>("devices")) ??
       path.join(this.root ?? "", "impresario.devices.config");
-    const apps =
+    const configuredApps =
       resolveAgainstRoot(this.root, config.get<string>("apps")) ??
       path.join(this.root ?? "", "impresario.apps.config");
-    const devicesText =
-      readText(devices) ?? readText(homeFile("devices.yaml"));
-    const appsText = readText(apps) ?? readText(homeFile("apps.yaml"));
+    // Keep the path and text on the same file: when the workspace file is
+    // absent the global fallback is what the language service analyses, so
+    // rename edits must target that file rather than a missing workspace one.
+    const workspaceDevices = this.textOf(configuredDevices);
+    const devices = workspaceDevices === undefined ? homeFile("devices.yaml") : configuredDevices;
+    const devicesText = workspaceDevices ?? readText(devices);
+    const workspaceApps = this.textOf(configuredApps);
+    const apps = workspaceApps === undefined ? homeFile("apps.yaml") : configuredApps;
+    const appsText = workspaceApps ?? readText(apps);
     return { devices, devicesText, apps, appsText };
   }
 

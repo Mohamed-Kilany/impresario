@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use impresario_core::ast::{
     ActDecl, ActionVerb, CheckCondition, PerformDecl, PlayFile, SceneBlock, SceneFile, StageDecl,
@@ -17,11 +18,12 @@ use serde_json::json;
 
 use crate::model::{Index, SymbolKey};
 use crate::service::{
-    CodeLens, Command, DocumentSymbol, FoldingRange, HoverResult, InlayHint, Language,
-    PrepareRename, SemanticToken, Signature, SignatureHelp, SignatureParameter, TextEdit,
+    CodeLens, Command, DeviceConfigSource, DocumentSymbol, FoldingRange, HoverResult, InlayHint,
+    Language, PrepareRename, SemanticToken, Signature, SignatureHelp, SignatureParameter, TextEdit,
     WorkspaceEdit,
 };
 use crate::text::{Doc, Position};
+use yaml_edit::Document;
 
 impl Language {
     /// Resolve the symbol under a position.
@@ -543,10 +545,7 @@ impl Language {
     #[must_use]
     pub fn prepare_rename(&self, path: &Path, position: Position) -> Option<PrepareRename> {
         let occurrence = self.symbol_at(path, position)?;
-        if matches!(
-            occurrence.key,
-            SymbolKey::Play(_) | SymbolKey::Actor(_) | SymbolKey::Group(_)
-        ) {
+        if matches!(occurrence.key, SymbolKey::Play(_)) {
             return None;
         }
         Some(PrepareRename {
@@ -565,16 +564,17 @@ impl Language {
         let occurrence = self
             .symbol_at(path, position)
             .ok_or_else(|| "no renameable symbol at this position".to_string())?;
-        if matches!(occurrence.key, SymbolKey::Play(_)) {
-            return Err("plays are renamed by their file".to_string());
-        }
-        if matches!(occurrence.key, SymbolKey::Actor(_) | SymbolKey::Group(_)) {
-            return Err("actors and groups are renamed in impresario.devices.config".to_string());
+        let key = occurrence.key.clone();
+        match &key {
+            SymbolKey::Play(_) => return Err("plays are renamed by their file".to_string()),
+            SymbolKey::Actor(name) => return self.rename_actor_or_group(name, false, new_name),
+            SymbolKey::Group(name) => return self.rename_actor_or_group(name, true, new_name),
+            _ => {}
         }
         validate_name(new_name)?;
         let mut edit = WorkspaceEdit::default();
         let mut seen = BTreeSet::new();
-        for span in self.index.references(&occurrence.key, true) {
+        for span in self.index.references(&key, true) {
             if !seen.insert((span.file.clone(), span.line, span.col, span.len)) {
                 continue;
             }
@@ -582,6 +582,121 @@ impl Language {
                 span,
                 new_text: new_name.to_string(),
             });
+        }
+        Ok(edit)
+    }
+
+    /// Rename an actor (`@group` is a separate symbol) in every DSL reference
+    /// and in the loaded devices-config layers: the device `name:` value, group
+    /// keys and group membership references.
+    fn rename_actor_or_group(
+        &self,
+        old_name: &str,
+        is_group: bool,
+        new_name: &str,
+    ) -> Result<WorkspaceEdit, String> {
+        let new_name = new_name.trim();
+        let new_name = new_name.strip_prefix('@').unwrap_or(new_name);
+        if !impresario_core::config::valid_device_name(new_name) {
+            return Err("actor and group names must match ^[a-z0-9][a-z0-9_-]{0,62}$".to_string());
+        }
+        let mut edit = WorkspaceEdit::default();
+        if new_name == old_name {
+            return Ok(edit);
+        }
+        if self.device_configs.is_empty() {
+            return Err(format!(
+                "no devices configuration is loaded; cannot rename '{old_name}'"
+            ));
+        }
+
+        let mut layers = Vec::new();
+        let mut found = false;
+        for source in &self.device_configs {
+            let outcome = impresario_core::config::parse_devices(&source.text, &source.path);
+            let Some(parsed) = outcome.config else {
+                return Err(config_diagnostics_error(&source.path, &outcome.diagnostics));
+            };
+            for device in &parsed.devices {
+                if device.name == new_name {
+                    return Err(format!(
+                        "device '{new_name}' already exists in {}",
+                        source.path.display()
+                    ));
+                }
+            }
+            if parsed.groups.contains_key(new_name) {
+                return Err(format!(
+                    "group '{new_name}' already exists in {}",
+                    source.path.display()
+                ));
+            }
+            let layer = rename_layer(old_name, is_group, new_name, source)?;
+            found |= layer.found;
+            layers.push(layer);
+        }
+        let kind = if is_group { "group" } else { "actor" };
+        if !found {
+            return Err(format!(
+                "{kind} '{old_name}' is not declared with an explicit name in the devices configuration"
+            ));
+        }
+
+        let mut merged = impresario_core::config::DevicesConfig::default();
+        for layer in &layers {
+            let candidate = layer.candidate();
+            let outcome = impresario_core::config::parse_devices(&candidate, &layer.path);
+            let Some(parsed) = outcome.config else {
+                return Err(config_diagnostics_error(&layer.path, &outcome.diagnostics));
+            };
+            merge_config(&mut merged, parsed);
+        }
+        if let Some((code, message)) = merged.validate_groups().into_iter().next() {
+            return Err(format!("cannot rename: {}: {message}", code.as_str()));
+        }
+        let declared = if is_group {
+            merged.groups.contains_key(new_name)
+        } else {
+            merged.devices.iter().any(|device| device.name == new_name)
+        };
+        if !declared {
+            return Err(format!("cannot rename '{old_name}' to '{new_name}'"));
+        }
+        let still_declared = if is_group {
+            merged.groups.contains_key(old_name)
+        } else {
+            merged.devices.iter().any(|device| device.name == old_name)
+        };
+        if still_declared {
+            return Err(format!(
+                "cannot rename '{old_name}': another config layer still declares that name"
+            ));
+        }
+
+        let mut seen = BTreeSet::new();
+        let key = if is_group {
+            SymbolKey::Group(old_name.to_string())
+        } else {
+            SymbolKey::Actor(old_name.to_string())
+        };
+        let replacement = if is_group {
+            format!("@{new_name}")
+        } else {
+            new_name.to_string()
+        };
+        for span in self.index.references(&key, true) {
+            if !seen.insert((span.file.clone(), span.line, span.col, span.len)) {
+                continue;
+            }
+            edit.add(TextEdit {
+                span,
+                new_text: replacement.clone(),
+            });
+        }
+        for layer in layers {
+            for text_edit in layer.edits {
+                edit.add(text_edit);
+            }
         }
         Ok(edit)
     }
@@ -1298,6 +1413,156 @@ fn resolve_selector(
         }
     }
     None
+}
+
+/// One devices-config layer's pending rename edits.
+struct RenameLayer {
+    path: PathBuf,
+    source: String,
+    edits: Vec<TextEdit>,
+    raw: Vec<(usize, usize, String)>,
+    found: bool,
+}
+
+impl RenameLayer {
+    fn push(&mut self, path: &Path, text: &str, scalar: &yaml_edit::Scalar, replacement: String) {
+        let range = scalar.byte_range();
+        let start = range.start as usize;
+        let end = range.end as usize;
+        self.raw.push((start, end, replacement.clone()));
+        self.edits.push(TextEdit {
+            span: span_of_bytes(path, text, start, end),
+            new_text: replacement,
+        });
+    }
+
+    /// The layer text after every pending edit, used to validate the
+    /// prospective configuration before returning the workspace edit.
+    fn candidate(&self) -> String {
+        let mut text = self.source.clone();
+        let mut raw = self.raw.clone();
+        raw.sort_by(|left, right| right.0.cmp(&left.0));
+        for (start, end, replacement) in raw {
+            text.replace_range(start..end, &replacement);
+        }
+        text
+    }
+}
+
+fn rename_layer(
+    old_name: &str,
+    is_group: bool,
+    new_name: &str,
+    source: &DeviceConfigSource,
+) -> Result<RenameLayer, String> {
+    let document = Document::from_str(&source.text)
+        .map_err(|error| format!("cannot parse {}: {error}", source.path.display()))?;
+    let mut layer = RenameLayer {
+        path: source.path.clone(),
+        source: source.text.clone(),
+        edits: Vec::new(),
+        raw: Vec::new(),
+        found: false,
+    };
+    let devices_node = document.get("devices");
+    if let Some(devices) = devices_node.as_ref().and_then(|node| node.as_sequence()) {
+        for device in devices.values() {
+            let Some(mapping) = device.as_mapping() else {
+                continue;
+            };
+            let Some(name_node) = mapping.get("name") else {
+                continue;
+            };
+            let Some(name) = name_node.as_scalar() else {
+                continue;
+            };
+            if !is_group && name.as_string() == old_name {
+                layer.found = true;
+                layer.push(&source.path, &source.text, name, new_name.to_string());
+            }
+        }
+    }
+    if let Some(groups) = document.get_mapping("groups") {
+        for (key_node, members_node) in groups.iter() {
+            let Some(key) = key_node.as_scalar() else {
+                continue;
+            };
+            if is_group && key.as_string() == old_name {
+                layer.found = true;
+                layer.push(&source.path, &source.text, key, new_name.to_string());
+            }
+            let Some(members) = members_node.as_sequence() else {
+                continue;
+            };
+            for member_node in members.values() {
+                let Some(member) = member_node.as_scalar() else {
+                    continue;
+                };
+                let value = member.as_string();
+                let replace = if is_group {
+                    value.strip_prefix('@') == Some(old_name)
+                } else {
+                    value == old_name
+                };
+                if replace {
+                    let replacement = if is_group {
+                        // `@` is a YAML reserved indicator, so a group
+                        // reference must stay quoted.
+                        format!("\"@{new_name}\"")
+                    } else {
+                        new_name.to_string()
+                    };
+                    layer.push(&source.path, &source.text, member, replacement);
+                }
+            }
+        }
+    }
+    Ok(layer)
+}
+
+fn merge_config(
+    merged: &mut impresario_core::config::DevicesConfig,
+    layer: impresario_core::config::DevicesConfig,
+) {
+    for device in layer.devices {
+        if let Some(existing) = merged
+            .devices
+            .iter_mut()
+            .find(|candidate| candidate.name == device.name)
+        {
+            *existing = device;
+        } else {
+            merged.devices.push(device);
+        }
+    }
+    for (name, members) in layer.groups {
+        merged.groups.insert(name, members);
+    }
+}
+
+fn config_diagnostics_error(
+    path: &Path,
+    diagnostics: &impresario_core::diag::Diagnostics,
+) -> String {
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| format!("{}: {}", diagnostic.code.as_str(), diagnostic.message))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if messages.is_empty() {
+        format!("cannot parse {}", path.display())
+    } else {
+        format!("cannot rename in {}: {messages}", path.display())
+    }
+}
+
+fn span_of_bytes(path: &Path, text: &str, start: usize, end: usize) -> Span {
+    let before = &text[..start];
+    let line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+    let col = text[line_start..start].chars().count() + 1;
+    let len = text[start..end].chars().count();
+    Span::new(path, line, col, len)
 }
 
 fn validate_name(name: &str) -> Result<(), String> {

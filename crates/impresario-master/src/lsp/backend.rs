@@ -190,6 +190,12 @@ impl Inner {
             )
         });
         language.sources.insert(path.to_path_buf(), text);
+        for config in &mut language.device_configs {
+            if let Some(text) = self.document_text(&config.path) {
+                config.text = text.clone();
+                language.sources.insert(config.path.clone(), text);
+            }
+        }
         Some(language)
     }
 

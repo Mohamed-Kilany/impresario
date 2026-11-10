@@ -185,6 +185,15 @@ pub struct PrepareRename {
     pub placeholder: String,
 }
 
+/// One loaded devices-config layer. The text is kept so an actor/group
+/// rename can edit the declaration in place (comments and ordering survive).
+/// Later layers win when the same device or group appears in more than one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceConfigSource {
+    pub path: PathBuf,
+    pub text: String,
+}
+
 /// The complete editor language service.
 #[derive(Clone)]
 pub struct Language {
@@ -194,6 +203,9 @@ pub struct Language {
     pub devices: Vec<DeviceInfo>,
     /// Named actor groups from `impresario.devices.config`.
     pub groups: BTreeMap<String, Vec<String>>,
+    /// The global and workspace devices-config layers, lowest precedence
+    /// first.
+    pub device_configs: Vec<DeviceConfigSource>,
     pub apps: Vec<AppInfo>,
     pub diagnostics: BTreeMap<PathBuf, Vec<DiagnosticInfo>>,
     pub root: Option<PathBuf>,
@@ -280,10 +292,24 @@ impl Language {
                 })
                 .collect(),
             groups: groups.clone(),
+            device_configs: Vec::new(),
             apps: apps.to_vec(),
             diagnostics,
             root,
         }
+    }
+
+    /// Attach the devices-config layers that declarations are renamed in.
+    /// Their text is also exposed through [`Self::source`] so workspace edits
+    /// can be converted to editor ranges.
+    #[must_use]
+    pub fn with_device_configs(mut self, configs: Vec<DeviceConfigSource>) -> Self {
+        for config in &configs {
+            self.sources
+                .insert(config.path.clone(), config.text.clone());
+        }
+        self.device_configs = configs;
+        self
     }
 
     /// Diagnostics for one file.

@@ -306,6 +306,71 @@ fn prepare_rename_references_and_rename_are_workspace_wide() {
 }
 
 #[test]
+fn rename_group_edits_dsl_references_and_devices_config() {
+    runtime().block_on(async {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base = temp.path();
+        let (_scene, _theatre, play) = workspace(base);
+        let devices = base.join("impresario.devices.config");
+        lsp::write(
+            &devices,
+            "devices:\n  - name: web1\n    type: web\n    ip: 127.0.0.1\n  - name: android1\n    type: android\n    ip: 192.0.2.12\ngroups:\n  both:\n    - web1\n    - android1\n  phones:\n    - '@both'\n",
+        );
+        let text =
+            "Play: Login\nActors: @both\n\nAct: A\n    Perform: Auth.Fill(user = 'alice')\n";
+        let mut server = TestLsp::start(base).await;
+        let mark = server.mark();
+        server.start_session(Some(&["utf-16"])).await;
+        server.open(&play, text, 1).await;
+        server.wait_version(&play, 1, mark).await;
+
+        let (line, character) = at(text, "@both", 1);
+        let prepared = server
+            .at("textDocument/prepareRename", &play, line, character)
+            .await;
+        assert_eq!(prepared["placeholder"], json!("both"), "{prepared}");
+
+        let rename = server
+            .request(
+                "textDocument/rename",
+                json!({
+                    "textDocument": {"uri": TestLsp::uri(&play)},
+                    "position": {"line": line, "character": character},
+                    "newName": "shared"
+                }),
+            )
+            .await;
+        let changes = rename["changes"].as_object().expect("changes");
+        let play_edits = changes
+            .get(&TestLsp::uri(&play))
+            .and_then(Value::as_array)
+            .expect("play changes");
+        assert!(
+            play_edits
+                .iter()
+                .any(|edit| edit["newText"] == json!("@shared")),
+            "{rename}"
+        );
+        let config_edits = changes
+            .get(&TestLsp::uri(&devices))
+            .and_then(Value::as_array)
+            .expect("devices changes");
+        assert!(
+            config_edits
+                .iter()
+                .any(|edit| edit["newText"] == json!("shared")),
+            "{rename}"
+        );
+        assert!(
+            config_edits
+                .iter()
+                .any(|edit| edit["newText"] == json!("\"@shared\"")),
+            "{rename}"
+        );
+    });
+}
+
+#[test]
 fn formatting_range_and_on_type_cover_all_three_file_kinds() {
     runtime().block_on(async {
         let temp = tempfile::tempdir().expect("tempdir");

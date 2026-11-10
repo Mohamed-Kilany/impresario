@@ -10,6 +10,7 @@ license.workspace = true
 impresario-core = { path = "../impresario-core" }
 serde.workspace = true
 serde_json.workspace = true
+yaml-edit.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

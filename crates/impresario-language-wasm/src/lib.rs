@@ -16,7 +16,7 @@ use impresario_core::platforms::Platform;
 use impresario_core::validation::DeviceRef;
 use impresario_language::diagnostics::DiagnosticInfo;
 use impresario_language::model::{AppInfo, SourceFile};
-use impresario_language::service::Language;
+use impresario_language::service::{DeviceConfigSource, Language};
 use impresario_language::text::Position;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -237,11 +237,18 @@ fn with_language_workspace(
 
 fn analyze(request: &Request) -> Result<Value, String> {
     let mut diagnostics = std::collections::BTreeMap::new();
+    let mut device_configs = Vec::new();
     let (devices, groups) = match (&request.devices_yaml, request.devices_path.as_deref()) {
         (Some(source), path) => {
             let path = PathBuf::from(path.unwrap_or("impresario.devices.config"));
             let outcome = config::parse_devices(source, &path);
             collect_core(&mut diagnostics, &outcome.diagnostics, &path);
+            if outcome.config.is_some() {
+                device_configs.push(DeviceConfigSource {
+                    path: path.clone(),
+                    text: source.clone(),
+                });
+            }
             outcome.config.map_or_else(
                 || (Vec::new(), std::collections::BTreeMap::new()),
                 |config| (device_refs(&config), config.groups.clone()),
@@ -294,8 +301,10 @@ fn analyze(request: &Request) -> Result<Value, String> {
     let root = request.root.clone().map(PathBuf::from);
     let language = if check_apps {
         Language::analyze_with_apps_and_groups(&sources, &devices, &groups, &apps, root)
+            .with_device_configs(device_configs)
     } else {
         Language::analyze_with_groups(&sources, &devices, &groups, &apps, root)
+            .with_device_configs(device_configs)
     };
     for (path, infos) in &language.diagnostics {
         diagnostics
