@@ -199,7 +199,8 @@ failure-dump bundles are now readable over MCP too (I-191):
 `reports/watch/<watcher>/<dump>`; `tests/mcp_stdio.rs` lists and reads a
 `dump.json` bundle and rejects partial or mixed selectors, with a resolver unit
 test for traversal. Newest-run selection now skips non-timestamped directories
-so the reserved `watch/` tree is never read as a run. LSP code actions
+so the reserved `watch/` tree is never read as a run. CI run `42862609579` at
+`fdb263d` passed all eight jobs. LSP code actions
 (including the stage-coverage quick fixes) and actor/group rename are in place.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
