@@ -991,7 +991,8 @@ fn report_output_dir(server: &Server) -> Result<PathBuf, String> {
 }
 
 /// The named run directory, or the newest one (run ids start with a
-/// timestamp, so a name sort is a time sort).
+/// timestamp, so a name sort is a time sort). Non-run directories such as the
+/// reserved `watch/` dump tree under the default `reports` output are ignored.
 fn resolve_run_dir(report_dir: &Path, run_id: Option<&str>) -> Result<PathBuf, String> {
     let Some(run_id) = run_id else {
         let entries = std::fs::read_dir(report_dir)
@@ -1000,25 +1001,75 @@ fn resolve_run_dir(report_dir: &Path, run_id: Option<&str>) -> Result<PathBuf, S
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.as_bytes().first())
+                    .is_some_and(u8::is_ascii_digit)
+            })
             .collect();
         runs.sort();
         return runs
             .pop()
             .ok_or_else(|| format!("no runs found under {}", report_dir.display()));
     };
-    if run_id.is_empty()
-        || run_id.contains(['/', '\\'])
-        || run_id.contains("..")
-        || run_id.starts_with('.')
-    {
-        return Err(format!("invalid run id '{run_id}'"));
-    }
+    checked_dir_name(run_id, "run id")?;
     let candidate = report_dir.join(run_id);
     if candidate.is_dir() {
         Ok(candidate)
     } else {
         Err(format!("no run '{run_id}' under {}", report_dir.display()))
     }
+}
+
+/// Resolve a run directory or a watcher failure-dump directory for the
+/// artifact tools. Dumps live under `<workspace>/reports/watch/<watcher>/<dump>`
+/// and are addressed with `watcher` + `dump`, never by a path.
+fn resolve_artifact_dir(
+    server: &Server,
+    run_id: Option<&str>,
+    watcher: Option<&str>,
+    dump: Option<&str>,
+) -> Result<PathBuf, String> {
+    match (watcher, dump) {
+        (None, None) => {
+            let report_dir = report_output_dir(server)?;
+            resolve_run_dir(&report_dir, run_id)
+        }
+        (Some(watcher), Some(dump)) => {
+            if run_id.is_some() {
+                return Err("use either 'run_id' or 'watcher' with 'dump', not both".to_string());
+            }
+            resolve_dump_dir(&server.base, watcher, dump)
+        }
+        _ => Err("provide both 'watcher' and 'dump' (or neither)".to_string()),
+    }
+}
+
+fn resolve_dump_dir(base: &Path, watcher: &str, dump: &str) -> Result<PathBuf, String> {
+    let root = base.join("reports").join("watch");
+    let watcher = checked_dir_name(watcher, "watcher")?;
+    let dump = checked_dir_name(dump, "dump")?;
+    let dir = root.join(watcher).join(dump);
+    if dir.is_dir() {
+        Ok(dir)
+    } else {
+        Err(format!(
+            "no dump '{dump}' for watcher '{watcher}' under {}",
+            root.display()
+        ))
+    }
+}
+
+fn checked_dir_name<'a>(value: &'a str, label: &str) -> Result<&'a str, String> {
+    if value.is_empty()
+        || value.contains(['/', '\\'])
+        || value.contains("..")
+        || value.starts_with('.')
+    {
+        return Err(format!("invalid {label} '{value}'"));
+    }
+    Ok(value)
 }
 
 pub(crate) fn report_get(server: &Server, arguments: &Value) -> ToolOutput {
@@ -1069,11 +1120,20 @@ pub(crate) fn artifacts_list(server: &Server, arguments: &Value) -> ToolOutput {
         Ok(run_id) => run_id,
         Err(message) => return ToolOutput::error(message),
     };
-    let report_dir = match report_output_dir(server) {
-        Ok(dir) => dir,
+    let watcher = match arg_string(arguments, "watcher") {
+        Ok(watcher) => watcher,
         Err(message) => return ToolOutput::error(message),
     };
-    let run_dir = match resolve_run_dir(&report_dir, run_id.as_deref()) {
+    let dump = match arg_string(arguments, "dump") {
+        Ok(dump) => dump,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let run_dir = match resolve_artifact_dir(
+        server,
+        run_id.as_deref(),
+        watcher.as_deref(),
+        dump.as_deref(),
+    ) {
         Ok(dir) => dir,
         Err(message) => return ToolOutput::error(message),
     };
@@ -1151,7 +1211,7 @@ pub(crate) fn artifact_get(server: &Server, arguments: &Value) -> ToolOutput {
     let relative = match arg_string(arguments, "path") {
         Ok(Some(path)) if !path.trim().is_empty() => path,
         Ok(_) => {
-            return ToolOutput::error("'path' is required (relative to the run directory)");
+            return ToolOutput::error("'path' is required (relative to the run or dump directory)");
         }
         Err(message) => return ToolOutput::error(message),
     };
@@ -1159,11 +1219,20 @@ pub(crate) fn artifact_get(server: &Server, arguments: &Value) -> ToolOutput {
         Ok(run_id) => run_id,
         Err(message) => return ToolOutput::error(message),
     };
-    let report_dir = match report_output_dir(server) {
-        Ok(dir) => dir,
+    let watcher = match arg_string(arguments, "watcher") {
+        Ok(watcher) => watcher,
         Err(message) => return ToolOutput::error(message),
     };
-    let run_dir = match resolve_run_dir(&report_dir, run_id.as_deref()) {
+    let dump = match arg_string(arguments, "dump") {
+        Ok(dump) => dump,
+        Err(message) => return ToolOutput::error(message),
+    };
+    let run_dir = match resolve_artifact_dir(
+        server,
+        run_id.as_deref(),
+        watcher.as_deref(),
+        dump.as_deref(),
+    ) {
         Ok(dir) => dir,
         Err(message) => return ToolOutput::error(message),
     };
@@ -1669,11 +1738,24 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir(temp.path().join("20261001-000000-aaaa")).expect("run 1");
         std::fs::create_dir(temp.path().join("20261002-000000-bbbb")).expect("run 2");
+        std::fs::create_dir_all(temp.path().join("watch/soak/20261106-120000")).expect("dump tree");
         let latest = resolve_run_dir(temp.path(), None).expect("latest");
         assert!(latest.ends_with("20261002-000000-bbbb"));
         let named = resolve_run_dir(temp.path(), Some("20261001-000000-aaaa")).expect("named");
         assert!(named.ends_with("20261001-000000-aaaa"));
         assert!(resolve_run_dir(temp.path(), Some("../escape")).is_err());
         assert!(resolve_run_dir(temp.path(), Some("missing")).is_err());
+    }
+
+    #[test]
+    fn resolve_dump_dir_confines_reads_to_the_watcher_dump() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("reports/watch/soak/20261106-120000"))
+            .expect("dump");
+        let found = resolve_dump_dir(temp.path(), "soak", "20261106-120000").expect("dump dir");
+        assert!(found.ends_with("20261106-120000"));
+        assert!(resolve_dump_dir(temp.path(), "soak", "../escape").is_err());
+        assert!(resolve_dump_dir(temp.path(), "../soak", "20261106-120000").is_err());
+        assert!(resolve_dump_dir(temp.path(), "soak", "missing").is_err());
     }
 }

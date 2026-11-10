@@ -538,6 +538,12 @@ fn resident_tools_join_state_and_edit_config_layers() {
     );
     std::fs::create_dir_all(temp.path().join("reports/watch/soak/20261106-120000"))
         .expect("dump directory");
+    std::fs::write(
+        temp.path()
+            .join("reports/watch/soak/20261106-120000/dump.json"),
+        "{\"requested\":[\"report\"]}\n",
+    )
+    .expect("dump.json");
 
     let mut mcp = Mcp::spawn(temp.path());
 
@@ -625,6 +631,43 @@ fn resident_tools_join_state_and_edit_config_layers() {
     ));
     assert_eq!(run["exit_code"], json!(0));
     assert_eq!(run["status"], json!("passed"));
+
+    // Watcher failure dumps are readable with watcher + dump, never by path.
+    let dump_list = structured(&mcp.tools_call(
+        14,
+        "impresario_artifacts_list",
+        json!({ "watcher": "soak", "dump": "20261106-120000" }),
+    ));
+    let dump_paths: Vec<&str> = dump_list["artifacts"]
+        .as_array()
+        .expect("dump artifacts")
+        .iter()
+        .filter_map(|artifact| artifact["path"].as_str())
+        .collect();
+    assert_eq!(dump_paths, vec!["dump.json"]);
+    let dump_file = mcp.tools_call(
+        15,
+        "impresario_artifact_get",
+        json!({ "watcher": "soak", "dump": "20261106-120000", "path": "dump.json" }),
+    );
+    assert_eq!(content_of(&dump_file)[0]["type"], json!("text"));
+    assert_eq!(
+        content_of(&dump_file)[0]["text"],
+        json!("{\"requested\":[\"report\"]}\n")
+    );
+
+    let partial = mcp.tools_call(
+        16,
+        "impresario_artifacts_list",
+        json!({ "watcher": "soak" }),
+    );
+    assert_eq!(result_of(&partial)["isError"], json!(true));
+    let mixed = mcp.tools_call(
+        17,
+        "impresario_artifacts_list",
+        json!({ "run_id": "any", "watcher": "soak", "dump": "20261106-120000" }),
+    );
+    assert_eq!(result_of(&mixed)["isError"], json!(true));
 
     mcp.assert_clean();
 }

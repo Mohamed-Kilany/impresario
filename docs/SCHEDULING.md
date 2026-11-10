@@ -257,8 +257,11 @@ mutations go through the same lossless YAML helpers as the CLI:
   `impresario_schedule_run_now`, `impresario_watchers_list`,
   `impresario_watcher_start`, `impresario_watcher_stop` and
   `impresario_watcher_dumps`. The `impresario://docs/scheduling` resource
-  serves this document. Mutating tools are serialized with runs and
-  config edits and never expose secrets.
+  serves this document. A dump bundle is read back with
+  `impresario_artifacts_list`/`impresario_artifact_get` by passing `watcher`
+  and `dump` together (never `run_id`); paths stay inside the dump directory.
+  Mutating tools are serialized with runs and config edits and never expose
+  secrets.
 - TUI: the **Resident** screen (read-only, refreshed every two seconds while
   open) shows service health, schedules with the next fire, watchers with live
   iteration status, and the last dump. Edits still go through the CLI or MCP.

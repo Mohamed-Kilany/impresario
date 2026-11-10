@@ -238,13 +238,25 @@ pub(crate) fn definitions() -> Vec<Value> {
             "name": "impresario_artifacts_list",
             "title": "List run artifacts",
             "description": "List the files of a run (report.json, junit.xml, report.html, \
-        screenshots/<device>/*.png) with sizes and kinds. Without run_id the newest run is used.",
+        screenshots/<device>/*.png, evidence.json) with sizes and kinds. Without run_id the newest \
+        run is used. Pass watcher and dump together to list a watcher failure-dump bundle under \
+        reports/watch/<watcher>/<dump> instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "run_id": {
                         "type": "string",
-                        "description": "Run id. Default: the newest run.",
+                        "description": "Run id. Default: the newest run. Mutually exclusive with \
+        watcher+dump.",
+                    },
+                    "watcher": {
+                        "type": "string",
+                        "description": "Watcher name for a failure-dump bundle. Requires dump.",
+                    },
+                    "dump": {
+                        "type": "string",
+                        "description": "Dump directory name under reports/watch/<watcher>. \
+        Requires watcher.",
                     },
                 },
                 "additionalProperties": false,
@@ -253,20 +265,30 @@ pub(crate) fn definitions() -> Vec<Value> {
         json!({
             "name": "impresario_artifact_get",
             "title": "Get run artifact",
-            "description": "Read one artifact of a run. PNG/JPEG/WebP artifacts (failure \
-        screenshots) come back as images so you can look at them; text artifacts come back as \
-        text. Paths are relative to the run directory and may not escape it.",
+            "description": "Read one artifact of a run or watcher dump. PNG/JPEG/WebP artifacts \
+        (failure screenshots) come back as images so you can look at them; text artifacts come \
+        back as text. Paths are relative to the run or dump directory and may not escape it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Artifact path relative to the run directory, e.g. \
+                        "description": "Artifact path relative to the run or dump directory, e.g. \
         report.json or screenshots/tv/failure-1.png.",
                     },
                     "run_id": {
                         "type": "string",
-                        "description": "Run id. Default: the newest run.",
+                        "description": "Run id. Default: the newest run. Mutually exclusive with \
+        watcher+dump.",
+                    },
+                    "watcher": {
+                        "type": "string",
+                        "description": "Watcher name for a failure-dump bundle. Requires dump.",
+                    },
+                    "dump": {
+                        "type": "string",
+                        "description": "Dump directory name under reports/watch/<watcher>. \
+        Requires watcher.",
                     },
                 },
                 "required": ["path"],
