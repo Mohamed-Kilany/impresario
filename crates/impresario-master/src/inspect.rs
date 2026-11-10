@@ -601,7 +601,7 @@ mod tests {
         StepReport,
     };
 
-    fn report(probe: ProbeResult, exit_code: i32, status: RunStatus) -> RunReport {
+    fn probe_report(probe: ProbeResult, exit_code: i32, status: RunStatus) -> RunReport {
         RunReport {
             schema_version: 3,
             run_id: "20261110-120000-test".to_string(),
@@ -674,25 +674,25 @@ mod tests {
 
     #[test]
     fn exit_code_follows_the_probe_verdict() {
-        let report = report(passing_probe(), 0, RunStatus::Passed);
+        let report = probe_report(passing_probe(), 0, RunStatus::Passed);
         assert_eq!(
             probe_exit_code(&report, find_probe(&report).as_ref()),
             EXIT_OK
         );
 
-        let report = report(passing_probe(), 1, RunStatus::Failed);
+        let report = probe_report(passing_probe(), 1, RunStatus::Failed);
         assert_eq!(
             probe_exit_code(&report, find_probe(&report).as_ref()),
             EXIT_FAILURE
         );
 
-        let report = report(passing_probe(), 3, RunStatus::Error);
+        let report = probe_report(passing_probe(), 3, RunStatus::Error);
         assert_eq!(
             probe_exit_code(&report, find_probe(&report).as_ref()),
             EXIT_INFRA
         );
 
-        let report = report(passing_probe(), 130, RunStatus::Interrupted);
+        let report = probe_report(passing_probe(), 130, RunStatus::Interrupted);
         assert_eq!(
             probe_exit_code(&report, find_probe(&report).as_ref()),
             EXIT_INTERRUPTED
