@@ -629,8 +629,8 @@ fn apply_text_edits(text: &str, edits: &[TextEdit]) -> String {
         (right.span.line, right.span.col).cmp(&(left.span.line, left.span.col))
     });
     for edit in edits {
-        let line = &mut lines[(edit.span.line - 1) as usize];
-        let start = (edit.span.col - 1) as usize;
+        let line = &mut lines[edit.span.line - 1];
+        let start = edit.span.col - 1;
         line.splice(start..start + edit.span.len, edit.new_text.chars());
     }
     lines
