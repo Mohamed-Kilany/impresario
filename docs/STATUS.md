@@ -211,7 +211,9 @@ canonicalized and confined (including symlink targets), and Host/Origin/
 content-type checks block rebinding and CSRF. `impresario://docs/web` exposes
 `docs/WEB.md` to MCP agents. Unit tests cover HTTP parsing, routing, the
 allowlist, security checks and path confinement; `tests/web_cli.rs` drives the
-real binary on `--port 0` against a `MockAgent`. LSP code actions
+real binary on `--port 0` against a `MockAgent`. CI run `42896141002` at
+`68af918` passed all eight jobs after the first attempt exposed only two
+compile errors. LSP code actions
 (including the stage-coverage quick fixes) and actor/group rename are in place.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
