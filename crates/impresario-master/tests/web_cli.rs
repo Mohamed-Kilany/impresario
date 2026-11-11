@@ -143,9 +143,18 @@ fn console_serves_reads_and_runs_curated_actions() {
     let index = get(port, "/");
     assert_eq!(index.status, 200);
     assert!(index.body.contains("<title>Impresario console</title>"));
+    assert!(index.body.contains("data-theme=\"light\""));
+    assert!(index.body.contains("id=\"theme-toggle\""));
+    let stylesheet = get(port, "/assets/app.css");
+    assert_eq!(stylesheet.status, 200);
+    assert!(stylesheet.body.contains(":root[data-theme=\"dark\"]"));
     let script = get(port, "/assets/app.js");
     assert_eq!(script.status, 200);
     assert!(script.body.contains("'use strict'"));
+    assert!(script.body.contains("impresario.theme"));
+    let favicon = get(port, "/favicon.svg");
+    assert_eq!(favicon.status, 200);
+    assert!(favicon.body.contains("#0f766e"));
 
     // Read metadata and embedded documentation.
     let meta = get(port, "/api/meta").json();

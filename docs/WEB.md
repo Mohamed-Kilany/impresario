@@ -36,6 +36,29 @@ remote mode has no TLS and no authentication (see **Security model**).
 `impresario web` exits with the usual codes: `2` for an invalid bind address or
 a missing `--allow-remote`, `3` when the port cannot be bound.
 
+## Interface
+
+The console is light-first: a warm off-white canvas, white cards, a teal accent
+and the system font stack. The topbar toggle switches to a dark theme and back;
+the choice is stored in `localStorage` under `impresario.theme`. A fresh
+browser starts light regardless of the operating-system preference, and the
+toggle keeps `aria-pressed`, its label/title and `meta[name="theme-color"]` in
+sync. The theme belongs to the browser profile; it is not a workspace setting
+and has no API endpoint.
+
+Everything remains embedded and CSP-compatible: no inline scripts or styles, no
+CDN font and no new network request. The brand mark and navigation icons are
+inline SVG, while select chevrons are CSS `data:` images permitted by
+`img-src`. The sticky chrome groups the workspace picker, server status,
+refresh and theme controls; every screen uses the same editorial page heading
+and card system.
+
+The Runs screen uses a full-width jobs table with separate selected-job and
+reports cards, so long logs and artifact lists keep the full width. Tables
+scroll horizontally on narrow screens, forms collapse to one column below
+720 px, and `prefers-reduced-motion` disables the animations. Focus styles,
+`aria-current` navigation and the existing `aria-live` regions remain in place.
+
 ## The guided flow
 
 The Start screen is the default route and mirrors the recommended order. Each

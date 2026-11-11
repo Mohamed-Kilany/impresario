@@ -36,6 +36,56 @@ const state = {
 
 const $ = (selector, root = document) => root.querySelector(selector);
 
+const THEME_KEY = 'impresario.theme';
+const THEMES = ['light', 'dark'];
+
+function storedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return THEMES.includes(value) ? value : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
+function applyTheme(theme, persist = false) {
+  const next = THEMES.includes(theme) ? theme : 'light';
+  document.documentElement.dataset.theme = next;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      /* Private mode can make storage unavailable; the session still works. */
+    }
+  }
+  const toggle = $('#theme-toggle');
+  if (toggle) {
+    const dark = next === 'dark';
+    toggle.setAttribute('aria-pressed', String(dark));
+    toggle.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+    toggle.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', next === 'dark' ? '#0f1615' : '#f6f4ef');
+}
+
+applyTheme(storedTheme());
+
+const ICONS = {
+  start: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></svg>',
+  runs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12h4l2.5-6 4 12 2.5-6H21"/></svg>',
+  tests: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9 3h6M10 3v6l-5 8.5A2 2 0 0 0 6.7 21h10.6a2 2 0 0 0 1.7-3.5L14 9V3"/><path d="M7.5 15h9"/></svg>',
+  coverage: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>',
+  probe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="5"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>',
+  groups: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M17 4.2a3.5 3.5 0 0 1 0 6.6M21 20v-1.5a4 4 0 0 0-3-3.8"/></svg>',
+  devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+  apps: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3 21 7.5v9L12 21 3 16.5v-9L12 3Z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></svg>',
+  config: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h8M16 6h4M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="14" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></svg>',
+  resident: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  docs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5V5.5Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/></svg>',
+  api: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m8 10 3 3-3 3M14 16h3"/></svg>',
+};
+
 function layerScope(source) {
   return source === 'global' ? 'global' : 'workspace';
 }
@@ -119,12 +169,12 @@ function kv(rows) {
 }
 
 function screenHead(title, subtitle, actions = []) {
-  return h('div', { class: 'card-head' },
-    h('div', {},
+  return h('header', { class: 'page-head' },
+    h('div', { class: 'page-heading' },
       h('h2', { text: title }),
-      subtitle ? h('p', { class: 'muted small', text: subtitle }) : null,
+      subtitle ? h('p', { class: 'page-subtitle', text: subtitle }) : null,
     ),
-    h('div', { class: 'row' }, actions),
+    h('div', { class: 'page-actions' }, actions),
   );
 }
 
@@ -221,10 +271,10 @@ function option(value, label, selected = false) {
 }
 
 function field(label, control, hint) {
-  return h('label', { class: 'stack' },
-    h('span', { class: 'small muted', text: label }),
+  return h('label', { class: 'field' },
+    h('span', { class: 'field-label', text: label }),
     control,
-    hint ? h('span', { class: 'tiny muted', text: hint }) : null,
+    hint ? h('span', { class: 'field-hint', text: hint }) : null,
   );
 }
 
@@ -236,12 +286,17 @@ function renderNav(active) {
   const nav = $('#nav');
   clear(nav);
   for (const [route, label] of ROUTES) {
-    nav.appendChild(h('button', {
+    const item = h('button', {
       type: 'button',
       class: route === active ? 'active' : '',
-      text: label,
+      title: label,
       onclick: () => { location.hash = `#/${route}`; },
-    }));
+    });
+    const icon = h('span', { class: 'nav-icon', 'aria-hidden': 'true' });
+    icon.innerHTML = ICONS[route] || '';
+    item.append(icon, h('span', { text: label }));
+    if (route === active) item.setAttribute('aria-current', 'page');
+    nav.appendChild(item);
   }
 }
 
@@ -294,6 +349,9 @@ async function switchWorkspace(path) {
 
 async function boot() {
   $('#refresh-button').addEventListener('click', () => route());
+  $('#theme-toggle').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true);
+  });
   $('#workspace-select').addEventListener('change', (event) => {
     if (event.target.value) switchWorkspace(event.target.value);
   });
@@ -443,7 +501,7 @@ async function screenStart() {
     pill(`${overview.counts.scenes} scenes · ${overview.counts.theatres} theatres · ${overview.counts.plays} plays`, 'info'),
     pill(overview.validation.ok ? 'workspace valid' : 'needs attention', overview.validation.ok ? 'ok' : 'bad'),
   ]));
-  main.appendChild(h('div', { class: 'grid two' },
+  main.appendChild(h('div', { class: 'grid two stretch' },
     h('section', { class: 'card' },
       h('h3', { text: 'First-run checklist' }),
       h('p', { class: 'muted small', text: 'Every step calls the same CLI the TUI uses.' }),
@@ -461,8 +519,9 @@ async function screenStart() {
       h('pre', { class: 'output', text: overview.validation.errors.join('\n') }),
     ));
   }
-  main.appendChild(h('div', { class: 'grid two' },
-    h('section', { class: 'card' }, h('h3', { text: 'Console' }), consolePanel),
+  main.appendChild(h('div', { class: 'grid two stretch' },
+    h('section', { class: 'card' }, h('h3', { text: 'Console' }), consolePanel,
+      h('p', { class: 'console-hint', text: 'CLI output from the actions on this screen appears here.' })),
     h('section', { class: 'card' }, h('h3', { text: 'Next steps' }), nextSteps,
       h('p', { class: 'muted small', text: `Jobs: ${overview.jobs.running} running, ${overview.jobs.passed} passed, ${overview.jobs.failed} failed.` }),
       h('p', { class: 'muted small', text: overview.resident && overview.resident.running ? 'Resident runner is running.' : 'Resident runner is stopped.' }),
@@ -483,7 +542,7 @@ async function screenRuns(arg) {
   state.jobs = jobsData.jobs || [];
   state.runs = runsData.runs || [];
 
-  const list = h('div', { class: 'table-wrap' });
+  const list = h('div', { class: 'table-wrap jobs' });
   const table = h('table', {},
     h('thead', {}, h('tr', {},
       h('th', { text: 'Job' }), h('th', { text: 'Status' }), h('th', { text: 'Label' }),
@@ -496,7 +555,15 @@ async function screenRuns(arg) {
     body.appendChild(h('tr', {}, h('td', { colspan: '5', class: 'empty', text: 'No jobs yet.' })));
   }
   for (const job of state.jobs) {
-    const row = h('tr', { class: `clickable ${state.selectedJob === job.id ? 'selected' : ''}`, onclick: () => showJob(job.id) },
+    const row = h('tr', {
+      class: `clickable ${state.selectedJob === job.id ? 'selected' : ''}`,
+      dataset: { job: job.id },
+      onclick: () => showJob(job.id).then(() => {
+        const detail = $('#run-detail');
+        const card = detail ? detail.closest('.card') : null;
+        if (card) card.scrollIntoView({ block: 'start' });
+      }),
+    },
       h('td', { class: 'mono', text: job.id }),
       h('td', {}, pill(job.status, statusKind(job.status))),
       h('td', { text: job.label || '—' }),
@@ -534,14 +601,12 @@ async function screenRuns(arg) {
   main.appendChild(screenHead('Runs', 'Jobs from the supervisor and report directories on disk', [
     button('Refresh', () => route(), 'ghost'),
   ]));
-  main.appendChild(h('div', { class: 'split' },
-    h('section', { class: 'card' },
-      h('h3', { text: 'Jobs' }),
-      h('p', { class: 'muted small', text: 'Newest first. Select one to inspect its log, events, report and artifacts.' }),
-      list,
-    ),
-    h('section', { class: 'card' }, h('h3', { text: 'Selected job' }), detail),
+  main.appendChild(h('section', { class: 'card' },
+    h('h3', { text: 'Jobs' }),
+    h('p', { class: 'muted small', text: 'Newest first. Select one to inspect its log, events, report and artifacts.' }),
+    list,
   ));
+  main.appendChild(h('section', { class: 'card run-detail-card' }, h('h3', { text: 'Selected job' }), detail));
   main.appendChild(h('section', { class: 'card' },
     h('h3', { text: 'Reports on disk' }),
     h('p', { class: 'muted small', text: `Under ${runsData.report_output || 'report_output'}. Watcher dumps live in Resident.` }),
@@ -555,6 +620,9 @@ async function screenRuns(arg) {
 
 async function showJob(id) {
   state.selectedJob = id;
+  for (const row of document.querySelectorAll('tr[data-job]')) {
+    row.classList.toggle('selected', row.dataset.job === id);
+  }
   const panel = $('#run-detail');
   if (!panel) return;
   clear(panel);
@@ -687,11 +755,16 @@ async function showRun(id) {
     ]));
     const tabs = h('div', { class: 'tabs' });
     const body = h('div', { class: 'stack' });
-    tabs.appendChild(button('Report', () => {
+    const setActive = (target) => {
+      for (const child of tabs.children) child.classList.toggle('active', child === target);
+    };
+    const reportButton = button('Report', () => {
+      setActive(reportButton);
       clear(body);
       body.appendChild(h('pre', { class: 'output', text: JSON.stringify(report, null, 2) }));
-    }, 'small active'));
-    tabs.appendChild(button('Artifacts', () => {
+    }, 'small active');
+    const artifactsButton = button('Artifacts', () => {
+      setActive(artifactsButton);
       clear(body);
       renderArtifactList(body, artifacts.artifacts || [], async (path) => {
         try {
@@ -701,7 +774,8 @@ async function showRun(id) {
           body.appendChild(errorBanner(error));
         }
       });
-    }, 'small'));
+    }, 'small');
+    tabs.append(reportButton, artifactsButton);
     detail.appendChild(tabs);
     detail.appendChild(body);
     body.appendChild(h('pre', { class: 'output', text: JSON.stringify(report, null, 2) }));
@@ -730,7 +804,7 @@ async function screenTests() {
     treePanel.appendChild(group);
   };
   addGroup('Scenes', (tree.scenes || []).map((scene) => {
-    const row = h('div', { class: 'tree-item', onclick: () => openTestFile(scene.file) },
+    const row = h('div', { class: 'tree-item', dataset: { file: scene.file }, onclick: () => openTestFile(scene.file) },
       h('span', { class: 'kind', text: 'scene' }),
       h('span', { text: scene.name }),
       h('span', { class: 'count', text: `${(scene.pieces || []).length} pieces` }),
@@ -738,7 +812,7 @@ async function screenTests() {
     return row;
   }));
   addGroup('Theatres', (tree.theatres || []).map((theatre) => {
-    const row = h('div', { class: 'tree-item', onclick: () => openTestFile(theatre.file) },
+    const row = h('div', { class: 'tree-item', dataset: { file: theatre.file }, onclick: () => openTestFile(theatre.file) },
       h('span', { class: 'kind', text: 'theatre' }),
       h('span', { text: theatre.name }),
       h('span', { class: 'count', text: `${(theatre.stages || []).length} stages` }),
@@ -746,7 +820,7 @@ async function screenTests() {
     return row;
   }));
   addGroup('Plays', (tree.plays || []).map((play) => {
-    const row = h('div', { class: 'tree-item', onclick: () => openTestFile(play.file) },
+    const row = h('div', { class: 'tree-item', dataset: { file: play.file }, onclick: () => openTestFile(play.file) },
       h('span', { class: 'kind', text: 'play' }),
       h('span', { text: play.name }),
       h('span', { class: 'count', text: `${(play.acts || []).length} acts` }),
@@ -842,6 +916,9 @@ async function screenTests() {
     pathLabel.textContent = path;
     textarea.value = '';
     output.classList.add('hidden');
+    for (const item of treePanel.querySelectorAll('.tree-item')) {
+      item.classList.toggle('selected', item.dataset.file === path);
+    }
     try {
       const data = await getJSON(`/api/tests/file?path=${encodeURIComponent(path)}`);
       textarea.value = data.text;
@@ -937,9 +1014,10 @@ async function screenProbe() {
   const confidence = h('select', {}, option('', 'Default'), option('none', 'none'), option('inferred', 'inferred'), option('corroborated', 'corroborated'), option('authoritative', 'authoritative'));
   const output = outputPanel();
   const result = h('div', { class: 'stack' });
+  result.appendChild(h('p', { class: 'console-hint', text: 'Run a live probe to see verdicts, confidence and evidence.' }));
 
   const form = h('form', { class: 'stack' },
-    h('div', { class: 'grid two' },
+    h('div', { class: 'grid two compact' },
       field('Probe family', kind),
       field('Device', device),
       field('App', app),
@@ -1594,7 +1672,7 @@ async function screenDocs(arg) {
       if (needle && !`${doc.title} ${doc.description}`.toLowerCase().includes(needle)) continue;
       list.appendChild(h('button', {
         type: 'button',
-        class: `ghost small ${doc.slug === slug ? 'selected' : ''}`,
+        class: `ghost small doc-item ${doc.slug === slug ? 'selected' : ''}`,
         dataset: { slug: doc.slug },
         onclick: () => load(doc.slug),
       }, h('div', { class: 'stack' },

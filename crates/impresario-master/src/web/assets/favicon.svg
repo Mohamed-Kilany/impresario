@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Impresario">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#60a5fa"/>
+      <stop offset="0" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#115e59"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="#0d1117"/>
-  <rect x="6" y="6" width="52" height="52" rx="11" fill="url(#g)"/>
-  <path d="M23 18h18v6h-5v16h5v6H23v-6h5V24h-5z" fill="#062a27"/>
+  <rect width="64" height="64" rx="16" fill="#f6f4ef"/>
+  <rect x="6" y="6" width="52" height="52" rx="13" fill="url(#g)"/>
+  <path d="M20 18h24v6.4H36.2v15.2H44V46H20v-6.4h7.8V24.4H20z" fill="#ffffff"/>
 </svg>

@@ -1,31 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f6f4ef">
   <title>Impresario console</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">I</span>
-      <div>
-        <h1>Impresario</h1>
-        <p id="brand-sub">cross-platform UI test console</p>
+  <div class="chrome">
+    <header class="topbar">
+      <a class="brand" href="#/start" aria-label="Impresario console home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" focusable="false">
+            <path d="M7 5h10v2.6h-3.7v8.8H17V19H7v-2.6h3.7V7.6H7V5Z" fill="currentColor"/>
+          </svg>
+        </span>
+        <span class="brand-copy">
+          <span class="brand-name">Impresario</span>
+          <span id="brand-sub" class="brand-sub">cross-platform UI test console</span>
+        </span>
+      </a>
+      <div class="topbar-tools">
+        <div class="workspace-picker">
+          <label for="workspace-select">Workspace</label>
+          <select id="workspace-select" aria-label="Active workspace"></select>
+        </div>
+        <span id="server-pill" class="pill" title="Console status">connecting</span>
+        <button id="refresh-button" class="icon-button" type="button" title="Reload this screen" aria-label="Reload this screen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M20 11a8 8 0 1 0-2.35 5.65"/>
+            <path d="M20 5v6h-6"/>
+          </svg>
+        </button>
+        <button id="theme-toggle" class="icon-button" type="button" title="Switch to dark theme" aria-label="Switch to dark theme" aria-pressed="false">
+          <span class="theme-icon theme-icon-moon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/>
+            </svg>
+          </span>
+          <span class="theme-icon theme-icon-sun" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>
+            </svg>
+          </span>
+        </button>
       </div>
-    </div>
-    <div class="workspace-picker">
-      <label for="workspace-select">Workspace</label>
-      <select id="workspace-select" aria-label="Active workspace"></select>
-      <button id="refresh-button" class="ghost" type="button" title="Reload this screen">Refresh</button>
-      <span id="server-pill" class="pill" title="Console status">connecting</span>
-    </div>
-  </header>
+    </header>
 
-  <nav id="nav" class="nav" aria-label="Sections"></nav>
+    <nav id="nav" class="nav" aria-label="Sections"></nav>
+  </div>
 
   <main id="app" class="main" aria-live="polite">
     <section class="card"><p class="muted">Loading the console…</p></section>
