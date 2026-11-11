@@ -222,8 +222,8 @@ with separate selected-job and reports cards, Probe uses a compact grid, and
 responsive/reduced-motion rules cover narrow screens. Assets remain embedded
 and CSP-compatible with no inline scripts or styles. Headless Edge previews at
 1440×1100 and 390×844 covered every screen in light and dark;
-`tests/web_cli.rs` now guards the theme contract. CI evidence is recorded after
-the redesign run. LSP code actions
+`tests/web_cli.rs` now guards the theme contract. CI run `42969857112` at
+`7455401` passed all eight jobs. LSP code actions
 (including the stage-coverage quick fixes) and actor/group rename are in place.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
