@@ -95,10 +95,8 @@ fn contains_top_level_chain(value: &str) -> bool {
             b'"' | b'\'' => quote = Some(byte),
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
-            b'>' if depth == 0 => {
-                if bytes.get(index + 1) == Some(&b'>') {
-                    return true;
-                }
+            b'>' if depth == 0 && bytes.get(index + 1) == Some(&b'>') => {
+                return true;
             }
             _ => {}
         }

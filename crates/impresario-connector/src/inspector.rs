@@ -902,12 +902,6 @@ struct RectF {
     h: f64,
 }
 
-impl RectF {
-    fn area(self) -> f64 {
-        self.w.max(0.0) * self.h.max(0.0)
-    }
-}
-
 fn clip_rect(rect: RectF, clip: RectF) -> RectF {
     let x1 = rect.x.max(clip.x);
     let y1 = rect.y.max(clip.y);
@@ -1068,7 +1062,7 @@ fn normalize(
         h,
         dpr,
         nodes,
-        focused: _,
+        focused,
         truncated,
     } = raw;
     let viewport = RectF {
@@ -1081,7 +1075,12 @@ fn normalize(
         .into_iter()
         .map(|node| convert_node(node, request.include_raw))
         .collect();
-    let (capped, focused_id) = prune_nodes(&mut converted, request, viewport);
+    let (capped, pruned_focused_id) = prune_nodes(&mut converted, request, viewport);
+    let focused_id = if pruned_focused_id == 0 {
+        focused
+    } else {
+        pruned_focused_id
+    };
     let mut degraded = Vec::new();
     if truncated {
         degraded.push(

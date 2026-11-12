@@ -6,7 +6,7 @@
 //! delta can never be applied to the wrong revision. [`MockAgent`] replays
 //! scripted acquisitions for tests without any device or async runtime.
 
-use crate::diff::{apply, apply_plan, plan_update, UpdatePlan};
+use crate::diff::{apply, plan_update, UpdatePlan};
 use crate::snapshot::Snapshot;
 
 /// One scripted acquisition step.
@@ -223,6 +223,8 @@ mod tests {
     use crate::snapshot::{ScreenInfo, SnapshotNode};
     use impresario_core::platforms::Platform;
     use impresario_locator::{Rect, Role};
+
+    use crate::diff::apply_plan;
 
     fn snapshot(rev: u64, name: &str) -> Snapshot {
         let root = SnapshotNode::new(1, 0, Role::Generic, "", Rect::new(0.0, 0.0, 100.0, 100.0));

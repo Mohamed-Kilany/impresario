@@ -507,10 +507,19 @@ impl Actor {
         });
     }
 
-    async fn poll(&mut self, include_screenshot: bool) -> Result<(), String> {
+    fn connection(&self) -> Result<(InspectorClient, String, DeviceConfig), String> {
         let Some(attachment) = self.attachment.as_ref() else {
             return Err("no device is attached".to_string());
         };
+        Ok((
+            attachment.inspector.clone(),
+            attachment.session_id.clone(),
+            attachment.device.clone(),
+        ))
+    }
+
+    async fn poll(&mut self, include_screenshot: bool) -> Result<(), String> {
+        let (inspector, session_id, device) = self.connection()?;
         let request = pb::InspectorSnapshotRequest {
             include_system_ui: self.shared.config.inspector.include_system_ui,
             min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
@@ -519,16 +528,12 @@ impl Actor {
             include_raw: false,
             include_screenshot,
         };
-        let response = tokio::time::timeout(
-            SNAPSHOT_TIMEOUT,
-            attachment
-                .inspector
-                .snapshot(&attachment.session_id, request),
-        )
-        .await
-        .map_err(|_| "snapshot acquisition timed out".to_string())?
-        .map_err(|error| error.to_string())?;
-        let snapshot = convert::snapshot_from_proto(&response, &attachment.device);
+        let response =
+            tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.snapshot(&session_id, request))
+                .await
+                .map_err(|_| "snapshot acquisition timed out".to_string())?
+                .map_err(|error| error.to_string())?;
+        let snapshot = convert::snapshot_from_proto(&response, &device);
         self.shared.publish(snapshot);
         Ok(())
     }
@@ -537,16 +542,12 @@ impl Actor {
         &mut self,
         request: pb::InspectorInputRequest,
     ) -> Result<pb::InspectorInputResponse, String> {
-        let Some(attachment) = self.attachment.as_ref() else {
-            return Err("no device is attached".to_string());
-        };
-        let response = tokio::time::timeout(
-            SNAPSHOT_TIMEOUT,
-            attachment.inspector.input(&attachment.session_id, request),
-        )
-        .await
-        .map_err(|_| "input action timed out".to_string())?
-        .map_err(|error| error.to_string())?;
+        let (inspector, session_id, _) = self.connection()?;
+        let response =
+            tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.input(&session_id, request))
+                .await
+                .map_err(|_| "input action timed out".to_string())?
+                .map_err(|error| error.to_string())?;
         if let Err(error) = self.poll(false).await {
             tracing::debug!(%error, "post-input snapshot failed");
         }
@@ -557,9 +558,7 @@ impl Actor {
         &mut self,
         include_screenshot: bool,
     ) -> Result<pb::InspectorSnapshotResponse, String> {
-        let Some(attachment) = self.attachment.as_ref() else {
-            return Err("no device is attached".to_string());
-        };
+        let (inspector, session_id, _) = self.connection()?;
         let request = pb::InspectorSnapshotRequest {
             include_system_ui: self.shared.config.inspector.include_system_ui,
             min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
@@ -568,15 +567,10 @@ impl Actor {
             include_raw: true,
             include_screenshot,
         };
-        tokio::time::timeout(
-            SNAPSHOT_TIMEOUT,
-            attachment
-                .inspector
-                .snapshot(&attachment.session_id, request),
-        )
-        .await
-        .map_err(|_| "snapshot acquisition timed out".to_string())?
-        .map_err(|error| error.to_string())
+        tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.snapshot(&session_id, request))
+            .await
+            .map_err(|_| "snapshot acquisition timed out".to_string())?
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1096,7 +1090,14 @@ fn status_command(home: &Home, json_output: bool) -> i32 {
             return crate::cli::EXIT_INFRA;
         }
     };
-    let body: Value = match response.into_json() {
+    let text = match response.into_string() {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("inspector: cannot read the health response: {error}");
+            return crate::cli::EXIT_INFRA;
+        }
+    };
+    let body: Value = match serde_json::from_str(&text) {
         Ok(value) => value,
         Err(error) => {
             eprintln!("inspector: invalid health response: {error}");

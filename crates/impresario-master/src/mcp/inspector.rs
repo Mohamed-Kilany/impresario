@@ -58,9 +58,13 @@ impl Session {
             request = request.set("Authorization", &format!("Bearer {token}"));
         }
         let response = match body {
-            Some(body) => request
-                .set("Content-Type", "application/json")
-                .send_json(body.clone()),
+            Some(body) => {
+                let encoded = serde_json::to_string(body)
+                    .map_err(|error| format!("cannot encode the inspector request: {error}"))?;
+                request
+                    .set("Content-Type", "application/json")
+                    .send_string(&encoded)
+            }
             None => request.call(),
         };
         let response = match response {
