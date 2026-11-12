@@ -61,7 +61,8 @@ claimable without hardware or owner input).
 8. **`impresario-core` must stay async/gRPC-free** (D-16). The locator and
    inspector-core crates are pure/sync; the connector and master own async.
 9. **No local Rust build/test is available.** CI is the only compile/test
-   gate; local work is limited to `cargo fmt --all`. The notes never claim a
+   gate; local work is limited to `cargo fmt --all`. The final inspector CI
+   run `43267372004` at `e9838c8` is green (see §7). The notes never claim a
    hardware or local-test result that was not observed.
 
 ### 1.3 Baseline measurements (INS-0.3)
@@ -338,7 +339,11 @@ the implementation keeps the grammar in one module so a rename is local.
 
 ## 7. Test and benchmark log
 
-All local test runs are **not claimed** (no local Rust build/test). CI is the
+**CI status: green.** The final inspector CI run `43267372004` at `e9838c8`
+passed every job: rustfmt, clippy (`--workspace --all-targets --locked -- -D
+warnings`), `cargo test --workspace --locked --jobs 1`, the Windows release
+build, editor (TypeScript, WASM corpus, VS Code host), Android (JVM unit tests,
+APKs) and Apple (Swift package). No local Rust build/test ran; CI is the
 authority. New tests live next to their code:
 
 - `impresario-locator`: parser/printer round-trip, role map, matcher,
