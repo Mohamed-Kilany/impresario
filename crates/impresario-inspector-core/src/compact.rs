@@ -95,7 +95,7 @@ pub fn compact(snapshot: &Snapshot, options: &CompactOptions) -> String {
 
     if truncated {
         let skipped = snapshot.nodes.len().saturating_sub(rendered);
-        let _ = write!(out, "... truncated: {skipped} more nodes\n");
+        let _ = writeln!(out, "... truncated: {skipped} more nodes");
     }
     out
 }
@@ -282,8 +282,7 @@ fn render_line(node: &SnapshotNode, depth: usize, options: &CompactOptions, out:
 fn quote(value: &str) -> String {
     let mut out = String::with_capacity(value.len().saturating_add(2));
     out.push('"');
-    let mut count = 0usize;
-    for character in value.chars() {
+    for (count, character) in value.chars().enumerate() {
         if count >= 160 {
             out.push('\u{2026}');
             break;
@@ -294,7 +293,6 @@ fn quote(value: &str) -> String {
             '\n' | '\r' | '\t' => out.push(' '),
             other => out.push(other),
         }
-        count += 1;
     }
     out.push('"');
     out

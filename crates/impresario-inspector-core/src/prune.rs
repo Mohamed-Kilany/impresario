@@ -245,7 +245,8 @@ mod tests {
     #[test]
     fn prunes_offscreen_and_system_ui_but_keeps_focus_chain() {
         let mut snapshot = sample();
-        let report = prune_snapshot(&mut snapshot, PruningOptions::for_screen(&snapshot.screen));
+        let options = PruningOptions::for_screen(&snapshot.screen);
+        let report = prune_snapshot(&mut snapshot, options);
         assert_eq!(report.removed, 3);
         assert!(snapshot.find(3).is_some());
         assert!(snapshot.find(5).is_none(), "offscreen node");

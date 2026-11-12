@@ -1327,7 +1327,7 @@ fn prune_nodes(
         {
             node.parent_id = 0;
         }
-        if let Some(bounds) = node.bounds.clone() {
+        if let Some(bounds) = node.bounds {
             node.viewport_bounds = Some(clip_pb_rect(bounds, viewport));
         }
         out.push(node);

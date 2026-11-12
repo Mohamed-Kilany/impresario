@@ -278,6 +278,12 @@ impl SnapshotNode {
     }
 
     #[must_use]
+    pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    #[must_use]
     pub fn with_test_id(mut self, test_id: impl Into<String>) -> Self {
         self.test_id = Some(test_id.into());
         self
