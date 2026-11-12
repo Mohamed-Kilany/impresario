@@ -27,6 +27,7 @@ pub mod platforms;
 pub mod probe;
 pub mod resident;
 pub mod scanner;
+pub mod scene_edit;
 pub mod selectors;
 pub mod settings;
 pub mod span;

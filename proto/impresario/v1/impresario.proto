@@ -42,6 +42,7 @@ enum Capability {
   CAPABILITY_UNSPECIFIED = 0; MULTI_SESSION = 1; LOGS = 2; SCREENSHOT = 3;
   TOUCH_GESTURES = 4; DPAD_FOCUS = 5; PROGRAMMATIC_FOCUS = 6; KEY_EVENTS = 7; APP_CONTROL = 8;
   PROBE_SHOWING = 9; PROBE_PLAYER = 10; PROBE_DRM = 11; NET_METADATA = 12;
+  INSPECTOR = 13;                        // additive: Inspector.Snapshot / Inspector.Input
 }
 /// One evidence source advertised by an executor (TASK-3 section 3.3).
 message ProbeSourceInfo {
@@ -62,6 +63,7 @@ enum SelectorStrategy {
   CSS = 1; XPATH = 2; TEXT = 3; TEXT_CONTAINS = 4;
   ANDROID_ID = 5; ANDROID_DESC = 6; ANDROID_CLASS = 7;
   ACCESSIBILITY_ID = 8; LABEL = 9; LABEL_CONTAINS = 10; PREDICATE = 11; IOS_TYPE = 12;
+  LOCATOR = 13;  // additive canonical locator expression (impresario-locator)
 }
 message Selector { SelectorStrategy strategy = 1; string value = 2; uint32 index = 3; }
 
@@ -232,3 +234,118 @@ message LogEntry { int64 unix_ms = 1; LogLevel level = 2; string source = 3; str
 
 message ShutdownRequest { bool terminate_app = 1; }
 message ShutdownResponse {}
+
+// ---- Inspector (TASK-INSPECTOR) ------------------------------------------
+// Additive unary RPCs used by the standalone `impresario inspector` process.
+// They do not replace Agent.Session; an executor advertises INSPECTOR and
+// serves these methods when it can produce a normalized accessibility tree.
+service Inspector {
+  rpc Snapshot(InspectorSnapshotRequest) returns (InspectorSnapshotResponse);
+  rpc Input(InspectorInputRequest) returns (InspectorInputResponse);
+}
+
+message InspectorSnapshotRequest {
+  bool include_system_ui = 1;            // include status/navigation chrome
+  float min_visible_fraction = 2;        // 0..1; 0 keeps every intersecting node
+  uint32 max_nodes = 3;                  // hard cap after pruning, 0 = server default
+  uint32 max_depth = 4;                  // 0 = server default
+  bool include_raw = 5;                  // attach platform-native payloads
+  bool include_screenshot = 6;           // embed a frame in the response
+}
+
+message InspectorRect { float x = 1; float y = 2; float w = 3; float h = 4; }
+
+message InspectorNode {
+  uint64 id = 1;
+  uint64 parent_id = 2;                  // 0 for roots
+  string role = 3;                       // normalized role (button, textbox, ...)
+  string name = 4;
+  string text = 5;
+  string test_id = 6;
+  string raw_id = 7;                     // native id/resource-id when available
+  InspectorRect bounds = 8;              // logical units
+  InspectorRect viewport_bounds = 9;     // clipped to the viewport
+  bool focused = 10;
+  bool enabled = 11;
+  bool selected = 12;
+  optional bool checked = 13;
+  optional bool expanded = 14;
+  optional bool pressed = 15;
+  bool readonly = 16;
+  bool required = 17;
+  bool hidden = 18;                      // hidden from the accessibility tree
+  bool secure = 19;                      // password / secure text field
+  bool system_ui = 20;
+  bool scrollable = 21;
+  bool can_scroll_backward = 22;
+  bool can_scroll_forward = 23;
+  string scroll_axis = 24;               // vertical|horizontal|both
+  uint32 children_hidden_count = 25;     // children pruned by the viewport
+  string raw = 26;                       // platform-native payload (opt-in)
+  // Additive normalization fields used by the Web UI and MCP compact view.
+  string value = 27;                     // current value (empty for secure fields)
+  string label = 28;
+  string description = 29;
+  string placeholder = 30;
+  string alt = 31;
+  string title = 32;
+  string css_selector = 33;
+  string xpath = 34;
+  float visible_fraction = 35;           // 0..1 after ancestor/viewport clipping
+  bool escapes_clip = 36;                // fixed/sticky/transformed overlay
+  uint32 depth = 37;                     // 0-based tree depth
+  bool text_truncated = 38;              // text was clipped for transport
+}
+
+message InspectorSnapshotResponse {
+  uint64 rev = 1;
+  string device_name = 2;
+  Platform platform = 3;
+  float logical_width = 4;
+  float logical_height = 5;
+  float viewport_x = 6;
+  float viewport_y = 7;
+  float viewport_width = 8;
+  float viewport_height = 9;
+  float pixel_ratio = 10;
+  bool settled = 11;
+  uint32 acquisition_ms = 12;
+  repeated InspectorNode nodes = 13;
+  repeated string degraded = 14;         // structured "CODE: message"
+  uint64 focused_id = 15;
+  uint64 timestamp_unix_ms = 16;
+  ErrorInfo error = 17;
+  bytes screenshot_png = 18;
+  uint32 screenshot_width = 19;
+  uint32 screenshot_height = 20;
+  bool truncated = 21;                   // traversal/node budget was hit
+}
+
+enum InspectorInputKind {
+  INSPECTOR_INPUT_KIND_UNSPECIFIED = 0;
+  INSPECTOR_INPUT_KIND_TAP = 1;
+  INSPECTOR_INPUT_KIND_SCROLL = 2;
+  INSPECTOR_INPUT_KIND_KEY = 3;
+  INSPECTOR_INPUT_KIND_TYPE = 4;
+  INSPECTOR_INPUT_KIND_SWIPE = 5;
+}
+
+message InspectorInputRequest {
+  InspectorInputKind kind = 1;
+  uint64 node_id = 2;                    // tap/scroll target when set
+  float x = 3;
+  float y = 4;
+  float end_x = 5;
+  float end_y = 6;
+  string text = 7;
+  RemoteKey key = 8;
+  Direction direction = 9;
+  uint32 count = 10;
+  uint32 duration_ms = 11;
+}
+
+message InspectorInputResponse {
+  bool ok = 1;
+  ErrorInfo error = 2;
+  uint64 rev = 3;                        // revision after the immediate re-acquire
+}

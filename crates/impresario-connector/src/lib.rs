@@ -23,6 +23,8 @@
 //! - [`backends`]: [`backends::raw::RawCdpBackend`] (default) and the optional
 //!   `chromiumoxide` backend.
 //! - [`script`]: the embedded ES5 helper script (`window.__impresario`).
+//! - [`inspector`]: the additive `Inspector` service and viewport-only DOM
+//!   acquisition (TASK-INSPECTOR).
 //! - [`pages`]: DevTools page discovery (`/json/list`) and endpoint resolution.
 //! - [`keys`]: the web key table (spec 6.2) used for CDP and JS dispatch.
 
@@ -31,6 +33,7 @@ pub mod cli;
 pub mod errors;
 pub mod exec;
 pub mod focus;
+pub mod inspector;
 pub mod keys;
 pub mod launch;
 pub mod pages;

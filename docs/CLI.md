@@ -824,6 +824,49 @@ in `docs/WEB.md` (also served as `GET /api/docs/web` and
 `passed`, `stdout` and `stderr`; a run without `dry_run` is always detached and
 reports a `job_id`.
 
+## Element inspector
+
+`impresario inspector` starts the live element inspector on its own port. It
+holds the interactive device lease itself and talks to the connector's additive
+unary `Inspector` RPCs, so it never needs a second device connection:
+
+```powershell
+impresario inspector                       # http://127.0.0.1:7311/
+impresario inspector --device "LG TV"      # attach one device at startup
+impresario inspector --port 0 --open       # any free port, print the URL, open a browser
+impresario inspector --listen 0.0.0.0 --token "$env:INSPECTOR_TOKEN"
+impresario inspector status --json         # URL, device, revision of the running instance
+impresario inspector bench --scenario modal --json
+```
+
+The embedded SPA shows the live viewport snapshot, a filterable tree, the
+selected node's role/name/geometry/state/attributes, ranked locator candidates,
+a locator playground, the current screenshot and a scene editor. Edits are
+byte-preserving previews with a diff; commit is revision-checked and undo
+restores the previous source. The same JSON API is used by the `inspector_*`
+MCP tools (see `docs/MCP.md`), and the running instance is discovered through
+`~/.impresario/inspector.json`.
+
+Safety and limits:
+
+- `127.0.0.1:7311` by default; a non-loopback `--listen` requires `--token`
+  (or `inspector.token`). Loopback requests are trusted; remote requests need
+  `Authorization: Bearer`/`x-impresario-token`/`?token=`, and mutations also
+  require a matching `Origin`/`Host` and `Content-Type: application/json`.
+- The inspector is viewport-only and prunes off-screen subtrees before the
+  snapshot crosses the wire; the focused element and its ancestors are always
+  kept. `inspector.min_visible_percent` (default `0` = any non-zero
+  intersection) and `inspector.fps` (1-30, default 4) tune acquisition.
+- v1 acquires web, webOS and Tizen pages through the existing CDP connector.
+  Android, Apple and Flutter acquisition are not implemented and return a
+  structured `NOT_SUPPORTED` diagnosis; there is no jailbreak/root path.
+- `inspector.enabled` is reserved for resident auto-start; v1 starts the
+  inspector explicitly. Real-device latency acceptance is deferred with the
+  other hardware checks; `inspector bench` measures the hardware-free core
+  pipeline (prune, diff, apply, compact, serialize) and records payload sizes.
+- Scene authoring only accepts paths inside the workspace, refuses stale base
+  revisions, and requires `confirm` for cell replacement.
+
 ## Acceptance tests
 
 The interactive surface is covered automatically on Windows:

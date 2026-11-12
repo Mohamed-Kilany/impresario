@@ -19,6 +19,8 @@ use impresario_connector::server::{ConnectorService, SessionManager};
 use impresario_proto::v1 as pb;
 use impresario_proto::v1::agent_client::AgentClient;
 use impresario_proto::v1::agent_server::AgentServer;
+use impresario_proto::v1::inspector_client::InspectorClient;
+use impresario_proto::v1::inspector_server::InspectorServer;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
 use tonic::transport::Channel;
@@ -168,6 +170,7 @@ fn suite_options(backend: &str, page_match: &str) -> Vec<(String, String)> {
 
 struct Harness {
     client: AgentClient<Channel>,
+    inspector: InspectorClient<Channel>,
     manager: Arc<SessionManager>,
     token: Option<String>,
 }
@@ -180,9 +183,14 @@ impl Harness {
         let addr = listener.local_addr().expect("test server address");
         let service = ConnectorService::new(token.map(str::to_string));
         let manager = service.manager().clone();
+        let inspector_service = impresario_connector::inspector::InspectorService::new(
+            manager.clone(),
+            token.map(str::to_string),
+        );
         tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(AgentServer::new(service))
+                .add_service(InspectorServer::new(inspector_service))
                 .serve_with_incoming(TcpListenerStream::new(listener))
                 .await
                 .expect("test server");
@@ -190,8 +198,12 @@ impl Harness {
         let client = AgentClient::connect(format!("http://{addr}"))
             .await
             .expect("connect test client");
+        let inspector = InspectorClient::connect(format!("http://{addr}"))
+            .await
+            .expect("connect inspector client");
         Self {
             client,
+            inspector,
             manager,
             token: token.map(str::to_string),
         }
@@ -1560,6 +1572,43 @@ async fn auth_and_rpc_error_mapping() {
             .await
             .expect_err("missing session id");
         assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    }
+
+    // Inspector RPCs share the Agent token and session-id contract.
+    {
+        let mut client = harness.inspector.clone();
+        let status = client
+            .snapshot(pb::InspectorSnapshotRequest::default())
+            .await
+            .expect_err("inspector requires the token");
+        assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    }
+    {
+        let mut client = harness.inspector.clone();
+        let mut request = Request::new(pb::InspectorSnapshotRequest::default());
+        request
+            .metadata_mut()
+            .insert("x-impresario-token", "s3cret".parse().expect("token"));
+        let status = client
+            .snapshot(request)
+            .await
+            .expect_err("inspector requires a session id");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    }
+    {
+        let mut client = harness.inspector.clone();
+        let mut request = Request::new(pb::InspectorSnapshotRequest::default());
+        request
+            .metadata_mut()
+            .insert("x-impresario-session-id", "session-99".parse().expect("id"));
+        request
+            .metadata_mut()
+            .insert("x-impresario-token", "s3cret".parse().expect("token"));
+        let status = client
+            .snapshot(request)
+            .await
+            .expect_err("unknown inspector session");
+        assert_eq!(status.code(), tonic::Code::NotFound);
     }
 
     // Shutdown of an unknown session is idempotent (decision I-36).

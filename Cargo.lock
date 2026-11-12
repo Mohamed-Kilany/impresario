@@ -3424,6 +3424,7 @@ dependencies = [
  "clap",
  "futures",
  "impresario-core",
+ "impresario-locator",
  "impresario-proto",
  "png",
  "prost",
@@ -3455,11 +3456,24 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.21",
  "unicode-width 0.2.2",
  "url",
  "winnow 1.0.4",
  "yaml-edit",
+]
+
+[[package]]
+name = "impresario-inspector-core"
+version = "1.0.0"
+dependencies = [
+ "impresario-core",
+ "impresario-locator",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3484,6 +3498,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "impresario-locator"
+version = "1.0.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "impresario-master"
 version = "1.0.0"
 dependencies = [
@@ -3501,7 +3525,9 @@ dependencies = [
  "impresario-apple-device",
  "impresario-clients",
  "impresario-core",
+ "impresario-inspector-core",
  "impresario-language",
+ "impresario-locator",
  "impresario-proto",
  "insta",
  "interprocess",

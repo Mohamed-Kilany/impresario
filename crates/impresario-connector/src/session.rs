@@ -4,7 +4,7 @@
 //! and emits heartbeats, results, logs and `SessionClosed`.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -340,6 +340,7 @@ pub struct Session {
     console_pump: Mutex<Option<JoinHandle<()>>>,
     pub shutdown: CancellationToken,
     torn_down: AtomicBool,
+    inspector_rev: AtomicU64,
 }
 
 impl Session {
@@ -404,6 +405,7 @@ impl Session {
             console_pump: Mutex::new(Some(console_pump)),
             shutdown: CancellationToken::new(),
             torn_down: AtomicBool::new(false),
+            inspector_rev: AtomicU64::new(0),
         })
     }
 
@@ -496,6 +498,36 @@ impl Session {
         let output = self.executor.screenshot(&token).await?;
         let (width, height) = crate::png::png_dimensions(&output.screenshot_png).unwrap_or((0, 0));
         Ok((output.screenshot_png, width, height))
+    }
+
+    /// One viewport-only inspector snapshot (TASK-INSPECTOR section 4).
+    pub async fn inspector_snapshot(
+        &self,
+        request: &pb::InspectorSnapshotRequest,
+    ) -> Result<pb::InspectorSnapshotResponse, ConnectorError> {
+        crate::inspector::snapshot(
+            &self.executor,
+            self.platform,
+            &self.device,
+            &self.inspector_rev,
+            request,
+        )
+        .await
+    }
+
+    /// One inspector input action plus the immediate re-acquire.
+    pub async fn inspector_input(
+        &self,
+        request: &pb::InspectorInputRequest,
+    ) -> Result<pb::InspectorInputResponse, ConnectorError> {
+        crate::inspector::input(
+            &self.executor,
+            self.platform,
+            &self.device,
+            &self.inspector_rev,
+            request,
+        )
+        .await
     }
 
     /// Kill the browser, close the backend, stop pumps (idempotent).

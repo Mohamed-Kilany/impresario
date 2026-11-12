@@ -18,6 +18,7 @@
 pub mod adb;
 pub mod agent_client;
 pub mod convert;
+pub mod inspector_client;
 pub mod log;
 pub mod testing;
 pub mod tizen;
@@ -35,6 +36,7 @@ pub use agent_client::{
     AgentClient, AgentSession, Capability, CaptureOutcome, ClientError, DeviceInfo,
     HandshakeOutcome, HandshakeParams, SessionOptions, PROTOCOL_VERSION,
 };
+pub use inspector_client::InspectorClient;
 pub use log::{LogBuffer, LogLevel, LogRecord, LogStream};
 pub use transport::{
     connector_binary, transport_for, AdbTransport, AppleTransport, ConnectorTransport,

@@ -17,9 +17,11 @@ regex.workspace = true
 unicode-width.workspace = true
 url.workspace = true
 chrono.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 chrono-tz = "0.10"

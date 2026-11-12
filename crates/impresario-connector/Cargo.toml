@@ -22,6 +22,7 @@ tls = ["tonic/tls-ring"]
 
 [dependencies]
 impresario-core = { path = "../impresario-core" }
+impresario-locator = { path = "../impresario-locator" }
 impresario-proto = { path = "../impresario-proto" }
 tonic.workspace = true
 prost.workspace = true

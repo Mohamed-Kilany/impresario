@@ -329,11 +329,26 @@ impl Response {
     }
 }
 
+/// The web console's strict content security policy.
+pub const DEFAULT_CSP: &str = "default-src 'none'; script-src 'self'; \
+     style-src 'self'; img-src 'self' data:; connect-src 'self'; \
+     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 /// Write one response, including the shared security headers.
 pub fn write_response(
     stream: &mut TcpStream,
     response: &Response,
     head_only: bool,
+) -> std::io::Result<()> {
+    write_response_with_csp(stream, response, head_only, DEFAULT_CSP)
+}
+
+/// Write one response with an explicit Content-Security-Policy.
+pub fn write_response_with_csp(
+    stream: &mut TcpStream,
+    response: &Response,
+    head_only: bool,
+    csp: &str,
 ) -> std::io::Result<()> {
     let mut head = String::new();
     head.push_str(&format!(
@@ -349,11 +364,9 @@ pub fn write_response(
     head.push_str("X-Frame-Options: DENY\r\n");
     head.push_str("Referrer-Policy: no-referrer\r\n");
     head.push_str("Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n");
-    head.push_str(
-        "Content-Security-Policy: default-src 'none'; script-src 'self'; \
-         style-src 'self'; img-src 'self' data:; connect-src 'self'; \
-         base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\n",
-    );
+    head.push_str("Content-Security-Policy: ");
+    head.push_str(csp);
+    head.push_str("\r\n");
     for (name, value) in &response.extra_headers {
         head.push_str(name);
         head.push_str(": ");

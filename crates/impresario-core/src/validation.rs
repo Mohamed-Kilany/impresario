@@ -80,8 +80,9 @@ pub fn validate_with_actors(
 }
 
 /// Lints that need only the scene file itself: `IMP-DSL-021` (file/name
-/// mismatch) and `IMP-DSL-020` (naming).
-fn check_scene_identity(scene: &SceneFile, diagnostics: &mut Diagnostics) {
+/// mismatch) and `IMP-DSL-020` (naming). Public so scene authoring can
+/// validate an edited document without re-loading the whole workspace.
+pub fn check_scene_identity(scene: &SceneFile, diagnostics: &mut Diagnostics) {
     let stem = scene
         .path
         .file_stem()

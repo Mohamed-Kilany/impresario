@@ -183,6 +183,12 @@ impl Home {
         self.root.join("state.json")
     }
 
+    /// `inspector.json` - URL, token and device of a running inspector.
+    #[must_use]
+    pub fn inspector_state_path(&self) -> PathBuf {
+        self.root.join("inspector.json")
+    }
+
     /// `logs/` - rotated diagnostic logs.
     #[must_use]
     pub fn logs_dir(&self) -> PathBuf {

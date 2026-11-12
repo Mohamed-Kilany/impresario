@@ -149,6 +149,117 @@ pub struct ImpresarioConfig {
         skip_serializing_if = "crate::resident::Notifications::is_empty"
     )]
     pub notifications: crate::resident::Notifications,
+    /// Inspector Web UI and MCP settings (TASK-INSPECTOR section 12.1).
+    #[serde(default, skip_serializing_if = "InspectorConfig::is_default")]
+    pub inspector: InspectorConfig,
+}
+
+/// What to do when a run needs a device an interactive inspector holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectorRunConflict {
+    /// Downgrade the inspector to read-only for the duration of the run.
+    #[default]
+    Readonly,
+    /// Give the run exclusive access and detach the inspector.
+    Exclusive,
+    /// Refuse to start the run while the inspector is attached.
+    BlockRun,
+}
+
+impl InspectorRunConflict {
+    /// The YAML/config spelling.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InspectorRunConflict::Readonly => "readonly",
+            InspectorRunConflict::Exclusive => "exclusive",
+            InspectorRunConflict::BlockRun => "block_run",
+        }
+    }
+}
+
+fn inspector_port_default() -> u16 {
+    7311
+}
+fn inspector_listen_default() -> String {
+    "127.0.0.1".to_string()
+}
+fn inspector_fps_default() -> u8 {
+    4
+}
+fn inspector_screenshot_scale_default() -> u8 {
+    100
+}
+
+/// `inspector:` section (TASK-INSPECTOR section 12.1).
+///
+/// `enabled` only controls whether a resident/master process starts the UI
+/// automatically; an explicit `impresario inspector` always serves.
+/// `min_visible_percent` is an integer percentage so the whole configuration
+/// stays `Eq` (the spec's `min_visible_fraction` is a float).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectorConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "inspector_port_default")]
+    pub port: u16,
+    #[serde(default = "inspector_listen_default")]
+    pub listen: String,
+    /// Required for a non-loopback `listen` address.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub token: String,
+    #[serde(default)]
+    pub include_system_ui: bool,
+    /// Minimum visible area, 0..=100. `0` keeps any intersecting node.
+    #[serde(default)]
+    pub min_visible_percent: u8,
+    /// Snapshot polling rate for the live UI.
+    #[serde(default = "inspector_fps_default")]
+    pub fps: u8,
+    /// Screenshot scale percentage (10..=100).
+    #[serde(default = "inspector_screenshot_scale_default")]
+    pub screenshot_scale: u8,
+    #[serde(default)]
+    pub run_conflict: InspectorRunConflict,
+}
+
+impl Default for InspectorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: inspector_port_default(),
+            listen: inspector_listen_default(),
+            token: String::new(),
+            include_system_ui: false,
+            min_visible_percent: 0,
+            fps: inspector_fps_default(),
+            screenshot_scale: inspector_screenshot_scale_default(),
+            run_conflict: InspectorRunConflict::default(),
+        }
+    }
+}
+
+impl InspectorConfig {
+    /// True when every field is at its default.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The minimum visible fraction in `0.0..=1.0` for the inspector RPC.
+    #[must_use]
+    pub fn min_visible_fraction(&self) -> f32 {
+        f32::from(self.min_visible_percent.min(100)) / 100.0
+    }
+
+    /// Polling interval implied by `fps` (clamped to a sane range).
+    #[must_use]
+    pub fn poll_interval(&self) -> std::time::Duration {
+        let fps = self.fps.clamp(1, 30);
+        std::time::Duration::from_millis(1000 / u64::from(fps))
+    }
 }
 
 fn parallel_default() -> u32 {
@@ -671,6 +782,7 @@ const CONFIG_KEYS: &[&str] = &[
     "schedules",
     "watchers",
     "notifications",
+    "inspector",
 ];
 
 const DEVICE_KEYS: &[&str] = &["name", "type", "ip"];

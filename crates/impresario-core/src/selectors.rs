@@ -27,6 +27,10 @@ pub enum Strategy {
     LabelContains,
     Predicate,
     IosType,
+    /// A canonical locator expression (`role=button[name="Save"]`,
+    /// `testid=login.submit`, `within(...) >> ...`). Additive: legacy
+    /// `prefix:value` selectors keep their meaning.
+    Locator,
 }
 
 impl Strategy {
@@ -46,6 +50,7 @@ impl Strategy {
             Strategy::LabelContains => "labelContains",
             Strategy::Predicate => "predicate",
             Strategy::IosType => "type",
+            Strategy::Locator => "locator",
         }
     }
 
@@ -188,6 +193,18 @@ pub fn parse(
         return Err(invalid(format!("empty selector for platform '{key}'")));
     }
 
+    // Additive locator expressions are accepted on every selector key. The
+    // conservative detector mirrors `impresario_locator::is_locator_expression`
+    // so every existing `prefix:value` cell keeps its exact meaning.
+    if is_locator_expression(value) {
+        return Ok(Selector {
+            key,
+            strategy: Strategy::Locator,
+            value: value.trim().to_string(),
+            index,
+        });
+    }
+
     match key {
         Platform::Web | Platform::WebOs | Platform::Tizen => {
             if let Some(rest) = strip(value, Strategy::Css) {
@@ -265,6 +282,76 @@ fn strip(value: &str, strategy: Strategy) -> Option<&str> {
     let prefix = strategy.prefix();
     let rest = value.strip_prefix(prefix)?;
     rest.strip_prefix(':')
+}
+
+/// True when a scene cell should be routed to the shared locator parser
+/// instead of the legacy selector parser.
+///
+/// This deliberately mirrors `impresario_locator::is_locator_expression`:
+/// a cell is a locator only when it starts with a locator keyword, is exactly
+/// `focused`, contains a top-level `>>`, or starts with `within(`.
+#[must_use]
+pub fn is_locator_expression(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed == "focused" || trimmed.starts_with("focused[") {
+        return true;
+    }
+    if trimmed.starts_with("within(") {
+        return true;
+    }
+    if contains_top_level_chain(trimmed) {
+        return true;
+    }
+    let Some((key, _)) = trimmed.split_once('=') else {
+        return false;
+    };
+    matches!(
+        key.trim(),
+        "role"
+            | "text"
+            | "label"
+            | "placeholder"
+            | "alt"
+            | "title"
+            | "testid"
+            | "id"
+            | "css"
+            | "xpath"
+            | "region"
+    )
+}
+
+fn contains_top_level_chain(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0usize;
+    let mut depth = 0usize;
+    let mut quote: Option<u8> = None;
+    while let Some(&byte) = bytes.get(index) {
+        if let Some(active) = quote {
+            if byte == b'\\' {
+                index += 2;
+                continue;
+            }
+            if byte == active {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = Some(byte),
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b'>' if depth == 0 => {
+                if bytes.get(index + 1) == Some(&b'>') {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
 }
 
 fn non_empty(
@@ -448,5 +535,57 @@ mod tests {
         assert!(selector_help(Platform::Android).contains("id:"));
         assert!(selector_help(Platform::Ios).contains("predicate:"));
         assert!(selector_help(Platform::Tizen).contains("bare CSS"));
+    }
+
+    #[test]
+    fn locator_expressions_are_additive_and_cross_platform() {
+        for key in Platform::ALL {
+            let sel = parse(key, "role=button[name=\"Save\"]", 0, None).expect("locator");
+            assert_eq!(sel.strategy, Strategy::Locator);
+            assert_eq!(sel.value, "role=button[name=\"Save\"]");
+        }
+        assert_eq!(
+            parse(Platform::Android, "testid=login.submit", 0, None)
+                .expect("locator")
+                .strategy,
+            Strategy::Locator
+        );
+        assert_eq!(
+            parse(Platform::Ios, "within(role=dialog) >> role=button", 0, None)
+                .expect("locator")
+                .strategy,
+            Strategy::Locator
+        );
+        assert_eq!(
+            parse(Platform::Web, "focused", 0, None)
+                .expect("locator")
+                .strategy,
+            Strategy::Locator
+        );
+    }
+
+    #[test]
+    fn legacy_selectors_keep_their_meaning() {
+        assert_eq!(
+            parse(Platform::Web, "text:Welcome", 0, None)
+                .expect("legacy text")
+                .strategy,
+            Strategy::Text
+        );
+        assert_eq!(
+            parse(Platform::Android, "id:login", 0, None)
+                .expect("legacy id")
+                .strategy,
+            Strategy::AndroidId
+        );
+        assert_eq!(
+            parse(Platform::Web, "button[type='submit']", 0, None)
+                .expect("css")
+                .strategy,
+            Strategy::Css
+        );
+        assert!(!is_locator_expression("text:Welcome"));
+        assert!(!is_locator_expression("id:login"));
+        assert!(!is_locator_expression("button[type='submit']"));
     }
 }

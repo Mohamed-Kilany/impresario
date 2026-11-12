@@ -76,6 +76,7 @@ pub fn strategy_to_proto(strategy: Strategy) -> pb::SelectorStrategy {
         Strategy::LabelContains => pb::SelectorStrategy::LabelContains,
         Strategy::Predicate => pb::SelectorStrategy::Predicate,
         Strategy::IosType => pb::SelectorStrategy::IosType,
+        Strategy::Locator => pb::SelectorStrategy::Locator,
     }
 }
 
@@ -94,6 +95,7 @@ pub fn strategy_from_proto(value: i32) -> Result<Strategy, WireError> {
         Ok(pb::SelectorStrategy::LabelContains) => Ok(Strategy::LabelContains),
         Ok(pb::SelectorStrategy::Predicate) => Ok(Strategy::Predicate),
         Ok(pb::SelectorStrategy::IosType) => Ok(Strategy::IosType),
+        Ok(pb::SelectorStrategy::Locator) => Ok(Strategy::Locator),
         Ok(pb::SelectorStrategy::Unspecified) | Err(_) => Err(protocol_error(format!(
             "unknown selector strategy enum value {value}"
         ))),
@@ -823,6 +825,7 @@ mod tests {
             Strategy::LabelContains,
             Strategy::Predicate,
             Strategy::IosType,
+            Strategy::Locator,
         ];
         for strategy in all {
             let value = strategy_to_proto(strategy) as i32;

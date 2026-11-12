@@ -170,6 +170,7 @@ pub enum Capability {
     ProbePlayer,
     ProbeDrm,
     NetMetadata,
+    Inspector,
 }
 
 impl Capability {
@@ -188,6 +189,7 @@ impl Capability {
             Capability::ProbePlayer => "PROBE_PLAYER",
             Capability::ProbeDrm => "PROBE_DRM",
             Capability::NetMetadata => "NET_METADATA",
+            Capability::Inspector => "INSPECTOR",
         }
     }
 
@@ -205,6 +207,7 @@ impl Capability {
             Ok(pb::Capability::ProbePlayer) => Some(Capability::ProbePlayer),
             Ok(pb::Capability::ProbeDrm) => Some(Capability::ProbeDrm),
             Ok(pb::Capability::NetMetadata) => Some(Capability::NetMetadata),
+            Ok(pb::Capability::Inspector) => Some(Capability::Inspector),
             // Unknown capabilities are ignored for forward compatibility
             // (7.2.2: a newer executor may advertise more than we know).
             Ok(pb::Capability::Unspecified) | Err(_) => None,

@@ -122,39 +122,12 @@ impl ConnectorService {
     /// handshake's `auth_token` field. Without a configured token every call
     /// passes.
     fn authorize(&self, metadata: &MetadataMap, body_token: &str) -> Result<(), Status> {
-        let Some(expected) = self.token.as_deref() else {
-            return Ok(());
-        };
-        let provided = metadata
-            .get(TOKEN_KEY)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string)
-            .or_else(|| {
-                if body_token.is_empty() {
-                    None
-                } else {
-                    Some(body_token.to_string())
-                }
-            });
-        match provided {
-            Some(provided) if constant_time_eq(provided.as_bytes(), expected.as_bytes()) => Ok(()),
-            _ => Err(Status::unauthenticated(
-                "missing or invalid impresario token (spec 7.2.1)",
-            )),
-        }
+        authorize_token(self.token.as_deref(), metadata, body_token)
     }
 
     /// The session named by the `x-impresario-session-id` metadata.
     fn session_from_metadata(&self, metadata: &MetadataMap) -> Result<Arc<SessionHandle>, Status> {
-        let session_id = metadata
-            .get(SESSION_ID_KEY)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .ok_or_else(|| Status::invalid_argument("missing x-impresario-session-id metadata"))?;
-        self.manager
-            .get(&session_id)
-            .ok_or_else(|| Status::not_found(format!("unknown session '{session_id}'")))
+        session_from_metadata(&self.manager, metadata)
     }
 
     async fn handle_handshake(&self, request: pb::HandshakeRequest) -> pb::HandshakeResponse {
@@ -211,6 +184,51 @@ impl ConnectorService {
             probe_sources: probe_sources_for(platform),
         }
     }
+}
+
+/// Shared-token check (spec 7.2.1) used by both the `Agent` and `Inspector`
+/// services. Without a configured token every call passes.
+pub(crate) fn authorize_token(
+    expected: Option<&str>,
+    metadata: &MetadataMap,
+    body_token: &str,
+) -> Result<(), Status> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let provided = metadata
+        .get(TOKEN_KEY)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| {
+            if body_token.is_empty() {
+                None
+            } else {
+                Some(body_token.to_string())
+            }
+        });
+    match provided {
+        Some(provided) if constant_time_eq(provided.as_bytes(), expected.as_bytes()) => Ok(()),
+        _ => Err(Status::unauthenticated(
+            "missing or invalid impresario token (spec 7.2.1)",
+        )),
+    }
+}
+
+/// Resolve the session named by the `x-impresario-session-id` metadata.
+pub(crate) fn session_from_metadata(
+    manager: &SessionManager,
+    metadata: &MetadataMap,
+) -> Result<Arc<SessionHandle>, Status> {
+    let session_id = metadata
+        .get(SESSION_ID_KEY)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| Status::invalid_argument("missing x-impresario-session-id metadata"))?;
+    manager
+        .get(&session_id)
+        .ok_or_else(|| Status::not_found(format!("unknown session '{session_id}'")))
 }
 
 #[tonic::async_trait]
@@ -358,6 +376,7 @@ pub fn capabilities_for(platform: Platform) -> Vec<i32> {
         pb::Capability::ProbeShowing,
         pb::Capability::ProbePlayer,
         pb::Capability::ProbeDrm,
+        pb::Capability::Inspector,
     ];
     if platform != Platform::Web {
         capabilities.push(pb::Capability::DpadFocus);
@@ -475,6 +494,7 @@ mod tests {
         assert!(web.contains(&(pb::Capability::ProgrammaticFocus as i32)));
         assert!(web.contains(&(pb::Capability::KeyEvents as i32)));
         assert!(web.contains(&(pb::Capability::AppControl as i32)));
+        assert!(web.contains(&(pb::Capability::Inspector as i32)));
         assert!(!web.contains(&(pb::Capability::DpadFocus as i32)));
         assert!(!web.contains(&(pb::Capability::TouchGestures as i32)));
 

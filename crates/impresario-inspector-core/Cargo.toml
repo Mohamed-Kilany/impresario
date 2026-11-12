@@ -1,0 +1,14 @@
+[package]
+name = "impresario-inspector-core"
+description = "Pure snapshot, delta, pruning, selection, compact-view and scene-column engine for the inspector."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+impresario-core = { path = "../impresario-core" }
+impresario-locator = { path = "../impresario-locator" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

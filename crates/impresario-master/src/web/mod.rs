@@ -25,7 +25,7 @@
 mod actions;
 mod api;
 mod assets;
-mod http;
+pub(crate) mod http;
 mod resources;
 
 use std::collections::VecDeque;
@@ -376,7 +376,7 @@ fn handle_connection(mut stream: TcpStream, state: &WebState) {
 
 /// Open a URL in the platform browser (unlike `open::open_external`, a URL
 /// does not have to exist on disk).
-fn open_url(url: &str) -> Result<(), String> {
+pub(crate) fn open_url(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     let mut command = {
         let mut command = std::process::Command::new("cmd");

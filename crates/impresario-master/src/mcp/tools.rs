@@ -8,6 +8,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::mcp::handlers;
+use crate::mcp::inspector as inspector_tools;
 use crate::mcp::protocol::{RpcError, RpcResult, Server, INVALID_PARAMS};
 
 /// The MCP tool list, in a fixed order (clients page `tools/list`, so the
@@ -502,6 +503,348 @@ pub(crate) fn definitions() -> Vec<Value> {
                 "additionalProperties": false,
             },
         }),
+        json!({
+            "name": "inspector_list_devices",
+            "title": "List inspector devices",
+            "description": "List configured devices with their platform and whether the running \
+        inspector currently holds one attached. Reads the loopback inspector discovered from \
+        ~/.impresario/inspector.json; start one with `impresario inspector`.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "inspector_attach",
+            "title": "Attach inspector device",
+            "description": "Attach the running inspector to one configured device. The \
+        inspector takes the interactive lease and starts polling snapshots; it detaches any \
+        previous device first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "device": {
+                        "type": "string",
+                        "description": "Device name from impresario.devices.config.",
+                    },
+                },
+                "required": ["device"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_detach",
+            "title": "Detach inspector device",
+            "description": "Release the inspector's interactive lease and stop snapshot \
+        polling. The Web UI keeps serving but reports no attachment.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "inspector_get_view",
+            "title": "Get compact inspector view",
+            "description": "Return the current viewport snapshot as token-efficient text \
+        (one line per node with role, name, [ref=eN] and state hints), plus the revision and \
+        truncation flags. Use refs with inspector_describe and the interaction tools.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "max_nodes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum element lines. Default: 400.",
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum tree depth. Default: 32.",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_wait_for_change",
+            "title": "Wait for inspector change",
+            "description": "Block until the inspector revision advances past 'since' (or the \
+        timeout elapses) and return the new compact view. Omit 'since' to wait from the current \
+        revision.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "since": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Revision to wait past. Default: the current revision.",
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Maximum wait in milliseconds. Default: 20000, max 120000.",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_get_screenshot",
+            "title": "Get inspector screenshot",
+            "description": "Return the current device frame as a PNG image block, scaled by \
+        inspector.screenshot_scale. Acquisition failures are reported as tool errors.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "inspector_find",
+            "title": "Find by locator",
+            "description": "Resolve one locator against the current snapshot and return every \
+        match with refs, roles, names and visibility. Supports the additive locator grammar: \
+        role=, text=, name=, testid=, within(...), '>>' chains and focused.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "locator": {
+                        "type": "string",
+                        "description": "Locator expression, for example role=button[name=\"Play\"].",
+                    },
+                },
+                "required": ["locator"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_describe",
+            "title": "Describe inspector node",
+            "description": "Return every known field of one node: role, name, text, value, \
+        test id, native id, bounds, state, scroll info, CSS/XPath selectors and raw platform \
+        data. Secure field values are masked.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ref": {
+                        "type": "string",
+                        "description": "Node reference such as e12.",
+                    },
+                    "id": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Numeric node id (alternative to ref).",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_suggest_locators",
+            "title": "Suggest locators",
+            "description": "Return ranked, verified locator candidates for one node, with \
+        stability scores and notes. Prefer the first stable candidate when adding a scene cell.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string", "description": "Node reference such as e12." },
+                    "id": { "type": "integer", "minimum": 1, "description": "Numeric node id." },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_verify_locator",
+            "title": "Verify locator",
+            "description": "Count matches for one locator and report whether it is unique, \
+        visible and stable on the currently attached device.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "locator": { "type": "string", "description": "Locator expression." },
+                },
+                "required": ["locator"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_tap",
+            "title": "Tap inspector target",
+            "description": "Tap a node ref/id or logical screen coordinates through the \
+        inspector's interactive lease. Returns the post-action revision and compact view.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string", "description": "Node reference such as e12." },
+                    "id": { "type": "integer", "minimum": 1, "description": "Numeric node id." },
+                    "x": { "type": "number", "description": "Logical x coordinate." },
+                    "y": { "type": "number", "description": "Logical y coordinate." },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scroll",
+            "title": "Scroll inspector target",
+            "description": "Scroll a node ref/id or logical screen coordinates in one \
+        direction. Returns the post-action revision and compact view.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string", "description": "Node reference such as e12." },
+                    "id": { "type": "integer", "minimum": 1, "description": "Numeric node id." },
+                    "x": { "type": "number", "description": "Logical x coordinate." },
+                    "y": { "type": "number", "description": "Logical y coordinate." },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "Scroll direction. Default: down.",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Number of steps. Default: 1.",
+                    },
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_key",
+            "title": "Press inspector key",
+            "description": "Press one remote/hardware key through the inspector's interactive \
+        lease. Key names are the DSL names (back, up, down, left, right, ok, play, red, ...).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Remote key name." },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Number of presses. Default: 1.",
+                    },
+                    "ref": { "type": "string", "description": "Optional focused node ref." },
+                    "id": { "type": "integer", "minimum": 1, "description": "Optional node id." },
+                },
+                "required": ["key"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_type",
+            "title": "Type into inspector target",
+            "description": "Insert text into the focused field, or into one node ref/id. The \
+        executor decides whether it can focus the field; failures carry the wire error code.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Text to insert." },
+                    "ref": { "type": "string", "description": "Optional text field ref." },
+                    "id": { "type": "integer", "minimum": 1, "description": "Optional node id." },
+                },
+                "required": ["text"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scene_list",
+            "title": "List scenes",
+            "description": "List .scene files under the configured scenes directory with \
+        workspace-relative paths and byte sizes.",
+            "inputSchema": { "type": "object", "additionalProperties": false },
+        }),
+        json!({
+            "name": "inspector_scene_create",
+            "title": "Create scene",
+            "description": "Create a new scene skeleton with one column per platform and write \
+        it atomically. Fails if the file already exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative .scene path.",
+                    },
+                    "name": { "type": "string", "description": "Scene name." },
+                    "platforms": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Platforms to create columns for (web, webOS, tizenOS, android, androidtv, iOS, tvOS).",
+                    },
+                },
+                "required": ["path", "name"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scene_add_element",
+            "title": "Add scene element",
+            "description": "Preview (default) or commit an additive scene edit: add one piece \
+        row with a locator in the resolved platform column. The column is selected \
+        automatically from 'platform' unless 'column' names it. Returns the diff, revision and \
+        edit id; set commit=true to write it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative .scene path." },
+                    "row": { "type": "string", "description": "Piece name. Default: suggested from seed." },
+                    "column": { "type": "string", "description": "Exact column name (optional)." },
+                    "platform": { "type": "string", "description": "Platform used to select the column." },
+                    "locator": { "type": "string", "description": "Locator expression for the cell." },
+                    "seed": { "type": "string", "description": "Seed used to suggest a piece name." },
+                    "base_revision": { "type": "string", "description": "Revision the edit is based on." },
+                    "commit": { "type": "boolean", "description": "Write the edit immediately." },
+                },
+                "required": ["path", "locator"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scene_fill_cell",
+            "title": "Fill scene cell",
+            "description": "Preview (default) or commit filling an empty cell with a locator. \
+        Fails when the cell is already occupied; use inspector_scene_replace_cell for that.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative .scene path." },
+                    "row": { "type": "string", "description": "Existing piece name." },
+                    "column": { "type": "string", "description": "Exact column name (optional)." },
+                    "platform": { "type": "string", "description": "Platform used to select the column." },
+                    "locator": { "type": "string", "description": "Locator expression for the cell." },
+                    "base_revision": { "type": "string", "description": "Revision the edit is based on." },
+                    "commit": { "type": "boolean", "description": "Write the edit immediately." },
+                },
+                "required": ["path", "row", "locator"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scene_replace_cell",
+            "title": "Replace scene cell",
+            "description": "Preview (default) or commit replacing an occupied cell. The first \
+        call without confirm=true returns SCENE_CONFIRM_REQUIRED and the diff; repeat with \
+        confirm=true after reviewing it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative .scene path." },
+                    "row": { "type": "string", "description": "Existing piece name." },
+                    "column": { "type": "string", "description": "Exact column name (optional)." },
+                    "platform": { "type": "string", "description": "Platform used to select the column." },
+                    "locator": { "type": "string", "description": "Replacement locator expression." },
+                    "confirm": { "type": "boolean", "description": "Confirm replacing an occupied cell." },
+                    "base_revision": { "type": "string", "description": "Revision the edit is based on." },
+                    "commit": { "type": "boolean", "description": "Write the edit immediately." },
+                },
+                "required": ["path", "row", "locator"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "inspector_scene_validate",
+            "title": "Validate scene",
+            "description": "Parse and validate one scene without writing it; returns the \
+        diagnostics and the resolved columns.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative .scene path." },
+                },
+                "required": ["path"],
+                "additionalProperties": false,
+            },
+        }),
     ]
 }
 
@@ -545,6 +888,26 @@ pub(crate) fn call(server: &Server, params: &Value) -> RpcResult {
         "impresario_watcher_start" => handlers::watcher_start(server, &arguments),
         "impresario_watcher_stop" => handlers::watcher_stop(server, &arguments),
         "impresario_watcher_dumps" => handlers::watcher_dumps(server, &arguments),
+        "inspector_list_devices" => inspector_tools::list_devices(server, &arguments),
+        "inspector_attach" => inspector_tools::attach(server, &arguments),
+        "inspector_detach" => inspector_tools::detach(server, &arguments),
+        "inspector_get_view" => inspector_tools::get_view(server, &arguments),
+        "inspector_wait_for_change" => inspector_tools::wait_for_change(server, &arguments),
+        "inspector_get_screenshot" => inspector_tools::get_screenshot(server, &arguments),
+        "inspector_find" => inspector_tools::find(server, &arguments),
+        "inspector_describe" => inspector_tools::describe(server, &arguments),
+        "inspector_suggest_locators" => inspector_tools::suggest_locators(server, &arguments),
+        "inspector_verify_locator" => inspector_tools::verify_locator(server, &arguments),
+        "inspector_tap" => inspector_tools::tap(server, &arguments),
+        "inspector_scroll" => inspector_tools::scroll(server, &arguments),
+        "inspector_key" => inspector_tools::key(server, &arguments),
+        "inspector_type" => inspector_tools::type_text(server, &arguments),
+        "inspector_scene_list" => inspector_tools::scene_list(server, &arguments),
+        "inspector_scene_create" => inspector_tools::scene_create(server, &arguments),
+        "inspector_scene_add_element" => inspector_tools::scene_add_element(server, &arguments),
+        "inspector_scene_fill_cell" => inspector_tools::scene_fill_cell(server, &arguments),
+        "inspector_scene_replace_cell" => inspector_tools::scene_replace_cell(server, &arguments),
+        "inspector_scene_validate" => inspector_tools::scene_validate(server, &arguments),
         other => {
             return Err(RpcError::new(
                 INVALID_PARAMS,
@@ -639,7 +1002,7 @@ mod tests {
     #[test]
     fn definitions_are_unique_and_schemaful() {
         let tools = definitions();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 41);
         let mut names = std::collections::BTreeSet::new();
         for tool in &tools {
             let name = tool["name"].as_str().expect("name").to_string();

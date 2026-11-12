@@ -198,6 +198,13 @@ pub enum Command {
     /// shared library functions or the CLI's JSON output, and every mutation
     /// spawns `impresario` itself. All assets are compiled into the binary.
     Web(crate::web::WebArgs),
+    /// Serve the element inspector Web UI on a dedicated loopback port.
+    ///
+    /// The inspector attaches to one configured device through the additive
+    /// `Inspector` gRPC service and serves an embedded SPA plus a JSON API.
+    /// It never changes the run path; `inspector status` reads the state file
+    /// written by a running process.
+    Inspector(crate::inspector::InspectorArgs),
     /// Serve the scripted mock device on loopback (no hardware needed).
     ///
     /// Automated-suite aid (decision I-77): the test harness points a `web`
@@ -595,6 +602,9 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Lsp => cmd_lsp(&base, &config_path, &devices_path),
         Command::Mcp => cmd_mcp(&home, &base, &config_path, &devices_path),
         Command::Web(args) => crate::web::run(home, base, config_path, devices_path, args),
+        Command::Inspector(args) => {
+            crate::inspector::run(home, base, config_path, devices_path, args)
+        }
         Command::MockAgent { port } => cmd_mock_agent(*port),
     }
 }

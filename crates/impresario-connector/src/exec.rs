@@ -156,6 +156,7 @@ fn strategy_from_proto(value: i32) -> Option<Strategy> {
         Ok(pb::SelectorStrategy::LabelContains) => Some(Strategy::LabelContains),
         Ok(pb::SelectorStrategy::Predicate) => Some(Strategy::Predicate),
         Ok(pb::SelectorStrategy::IosType) => Some(Strategy::IosType),
+        Ok(pb::SelectorStrategy::Locator) => Some(Strategy::Locator),
         Ok(pb::SelectorStrategy::Unspecified) | Err(_) => None,
     }
 }
@@ -1875,6 +1876,18 @@ return {ok:true, complete:(info.max - info.top) <= 1};
             _ = cancel.cancelled() => Err(ConnectorError::cancelled()),
             result = evaluation => result.map_err(ConnectorError::from),
         }
+    }
+
+    /// Evaluate an expression and deserialize its JSON reply (inspector
+    /// acquisition and input live outside the command loop).
+    pub async fn evaluate_json<T: DeserializeOwned>(
+        &self,
+        expression: &str,
+        cancel: &CancellationToken,
+    ) -> Result<T, ConnectorError> {
+        let value = self.evaluate_value(expression, cancel).await?;
+        serde_json::from_value(value)
+            .map_err(|error| ConnectorError::internal(format!("unexpected page reply: {error}")))
     }
 
     /// Poll `body` until `satisfied` or the timeout elapses (spec 10.3

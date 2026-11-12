@@ -298,6 +298,25 @@ curl -s -X POST http://127.0.0.1:7810/api/actions/run \
   request headers, 2 MiB request bodies, and a 15-second read/write timeout.
   One request per connection; keep-alive and chunked bodies are not supported.
 
+## Inspector
+
+`impresario inspector` is a second, separate Web UI on its own port (default
+`http://127.0.0.1:7311/`). It is not the console and does not spawn CLI
+actions: it owns an interactive device lease, acquires viewport-only snapshots
+through the connector's `Inspector` RPCs, and serves an embedded SPA plus a
+JSON/SSE API. The page shows the live screenshot, the pruned element tree, node
+details, ranked locator candidates, a locator playground, a screenshot view and
+a scene editor with diff/commit/undo.
+
+The UI and the `inspector_*` MCP tools share one HTTP API and one snapshot
+revision; both discover the process through `~/.impresario/inspector.json`.
+Live updates use Server-Sent Events (full snapshot or delta) instead of the
+console's on-demand refresh. `--listen` beyond loopback requires `--token`;
+mutations require a matching `Origin`/`Host` and JSON content type. The v1
+acquisition path covers web/webOS/Tizen; other platforms return a structured
+`NOT_SUPPORTED` diagnosis. See `docs/CLI.md` for the commands and
+`docs/MCP.md` for the agent tools.
+
 ## For AI agents
 
 An agent that can reach the port needs no browser:

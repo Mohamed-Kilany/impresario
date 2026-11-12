@@ -81,6 +81,46 @@ does not exist, an argument is out of range) are tool errors
 | `impresario_watcher_stop` | `name`, `layer?` | Disable a watcher and write its stop control file; a running service ends after the in-flight iteration. |
 | `impresario_watcher_dumps` | `name?` | Timestamped dump directories under `reports/watch`, workspace-relative. Default: every watcher. |
 
+### Inspector tools
+
+The inspector tools are thin clients of a running `impresario inspector`
+process (see `docs/CLI.md`). That process owns the interactive device lease and
+the live snapshot; the tools discover its loopback URL and token from
+`~/.impresario/inspector.json`, so the UI and the agent always see the same
+revision. Without a running inspector they fail with a message that names the
+missing state file.
+
+| Tool | Arguments | What it does |
+| --- | --- | --- |
+| `inspector_list_devices` | — | Configured devices with platform, support and whether the inspector holds one attached. |
+| `inspector_attach` | `device` | Attach the inspector to one device (detaches the previous one) and start polling. |
+| `inspector_detach` | — | Release the lease and stop polling. |
+| `inspector_get_view` | `max_nodes?`, `max_depth?` | The current viewport as the compact, token-efficient tree with `[ref=eN]` handles. |
+| `inspector_wait_for_change` | `since?`, `timeout_ms?` | Long-poll until the snapshot revision changes (default 20 s, maximum 120 s). |
+| `inspector_get_screenshot` | — | The current frame as MCP image content. |
+| `inspector_find` | `locator` | Resolve one locator against the live view; returns matches with refs. |
+| `inspector_describe` | `ref` or `id` | Full node details, including raw attributes and geometry. |
+| `inspector_suggest_locators` | `ref` or `id` | Ranked, uniqueness-checked locator candidates for one node. |
+| `inspector_verify_locator` | `locator` | Match count and uniqueness for the attached device. |
+| `inspector_tap` | `ref`/`id` or `x`+`y` | Tap one node or coordinate, then return the post-action view delta. |
+| `inspector_scroll` | `ref`/`id?`, `direction?`, `count?` | Scroll a container (or the primary scroller) and return the delta. |
+| `inspector_key` | `key`, `count?` | Press a remote key and return the delta. |
+| `inspector_type` | `text`, `ref`/`id?` | Focus a field, insert text and return the delta. |
+| `inspector_scene_list` | — | Scene files in the workspace with sizes. |
+| `inspector_scene_create` | `path`, `name`, `platforms?` | Create an in-memory scene draft; commit it with the editor tools or the UI. |
+| `inspector_scene_add_element` | `path`, `row`, `locator`, `column?`, `platform?`, `seed?`, `commit?`, `base_revision?` | Preview (and optionally commit) an add-element edit. |
+| `inspector_scene_fill_cell` | `path`, `row`, `column`, `locator`, `platform?`, `commit?`, `base_revision?` | Fill an empty cell; refuses an occupied one. |
+| `inspector_scene_replace_cell` | `path`, `row`, `column`, `locator`, `confirm?`, `commit?`, `base_revision?` | Replace an occupied cell; the diff is returned unless `confirm` is true. |
+| `inspector_scene_validate` | `path` | Parse and validate one scene without writing it. |
+
+Scene writes are byte-preserving, stay inside the workspace, use SHA-256
+revisions and refuse to overwrite a file that changed since the preview. The
+compact view is viewport-only; off-screen subtrees are pruned, focus is kept,
+and truncation is reported explicitly. The optional MCP resource
+`impresario://inspector/{device}/view` and its
+`notifications/resources/updated` subscription are not implemented yet; use
+`inspector_wait_for_change` for the same effect.
+
 Notes:
 
 - **The console reporter is not available over MCP**: it writes to stdout,

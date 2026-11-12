@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::backends::raw::RawCdpBackend;
 use crate::backends::CdpBackend;
+use crate::inspector::InspectorService;
 use crate::pages::{self, HostPort};
 use crate::server::ConnectorService;
 
@@ -150,6 +151,7 @@ async fn serve(args: ServeArgs) -> Result<(), RunError> {
 
     let service = ConnectorService::new(args.token.clone());
     let manager = service.manager().clone();
+    let inspector = InspectorService::new(manager.clone(), args.token.clone());
     let mut builder = tonic::transport::Server::builder();
     if let Some((cert, key)) = tls {
         builder = configure_tls(builder, &cert, &key)?;
@@ -165,6 +167,7 @@ async fn serve(args: ServeArgs) -> Result<(), RunError> {
         .add_service(impresario_proto::v1::agent_server::AgentServer::new(
             service,
         ))
+        .add_service(impresario_proto::v1::inspector_server::InspectorServer::new(inspector))
         .serve_with_shutdown(address, shutdown)
         .await
         .map_err(|error| RunError::Runtime(format!("the gRPC server failed: {error}")))?;

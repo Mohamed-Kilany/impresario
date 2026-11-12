@@ -21,6 +21,7 @@
 //! serialize on a process-wide lock (see `handlers`).
 
 mod handlers;
+mod inspector;
 mod protocol;
 mod resources;
 mod tools;

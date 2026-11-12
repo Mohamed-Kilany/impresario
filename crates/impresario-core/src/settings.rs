@@ -18,7 +18,7 @@ use serde_yaml_ng::Value;
 use yaml_edit::path::YamlPath as _;
 use yaml_edit::YamlFile;
 
-use crate::config::{AppReset, ImpresarioConfig, Reporter};
+use crate::config::{AppReset, ImpresarioConfig, InspectorConfig, InspectorRunConflict, Reporter};
 use crate::diag::{suggest, Code, Diagnostic, Diagnostics};
 use crate::span::Span;
 
@@ -220,6 +220,72 @@ pub const SETTINGS: &[SettingDef] = &[
         default: "fail",
         scope: Scope::Both,
         doc: "Fail or warn when a probe cannot reach the required confidence.",
+    },
+    SettingDef {
+        key: "inspector.enabled",
+        kind: Kind::Bool,
+        default: "false",
+        scope: Scope::Both,
+        doc: "Reserved: start the inspector Web UI automatically. v1 starts it explicitly with `impresario inspector`.",
+    },
+    SettingDef {
+        key: "inspector.port",
+        kind: Kind::Int {
+            min: 1,
+            max: 65_535,
+        },
+        default: "7311",
+        scope: Scope::Both,
+        doc: "Loopback port for the inspector Web UI.",
+    },
+    SettingDef {
+        key: "inspector.listen",
+        kind: Kind::Text { max: 200 },
+        default: "127.0.0.1",
+        scope: Scope::Both,
+        doc: "Bind address for the inspector Web UI (non-loopback needs a token).",
+    },
+    SettingDef {
+        key: "inspector.token",
+        kind: Kind::Text { max: 500 },
+        default: "",
+        scope: Scope::Both,
+        doc: "Bearer token required by a non-loopback inspector bind.",
+    },
+    SettingDef {
+        key: "inspector.include_system_ui",
+        kind: Kind::Bool,
+        default: "false",
+        scope: Scope::Both,
+        doc: "Include status bars, navigation chrome and keyboards in snapshots.",
+    },
+    SettingDef {
+        key: "inspector.min_visible_percent",
+        kind: Kind::Int { min: 0, max: 100 },
+        default: "0",
+        scope: Scope::Both,
+        doc: "Minimum visible area for inspector nodes, in percent (0 = any overlap).",
+    },
+    SettingDef {
+        key: "inspector.fps",
+        kind: Kind::Int { min: 1, max: 30 },
+        default: "4",
+        scope: Scope::Both,
+        doc: "Snapshot polling rate for the live inspector UI.",
+    },
+    SettingDef {
+        key: "inspector.screenshot_scale",
+        kind: Kind::Int { min: 10, max: 100 },
+        default: "100",
+        scope: Scope::Both,
+        doc: "Screenshot scale percentage used by the inspector UI.",
+    },
+    SettingDef {
+        key: "inspector.run_conflict",
+        kind: Kind::Enum(&["readonly", "exclusive", "block_run"]),
+        default: "readonly",
+        scope: Scope::Both,
+        doc: "Policy when a run needs a device the inspector is attached to.",
     },
     SettingDef {
         key: "workspace",
@@ -773,6 +839,11 @@ impl EffectiveSettings {
             Some("warn") => crate::probe::UnverifiablePolicy::Warn,
             _ => crate::probe::UnverifiablePolicy::Fail,
         };
+        let run_conflict = match text("inspector.run_conflict").as_deref() {
+            Some("exclusive") => InspectorRunConflict::Exclusive,
+            Some("block_run") => InspectorRunConflict::BlockRun,
+            _ => InspectorRunConflict::Readonly,
+        };
         ImpresarioConfig {
             project,
             timeout_default_ms: u64::try_from(int("timeout_default_ms")).unwrap_or(30_000),
@@ -798,6 +869,23 @@ impl EffectiveSettings {
             schedules: Vec::new(),
             watchers: Vec::new(),
             notifications: crate::resident::Notifications::default(),
+            inspector: InspectorConfig {
+                enabled: boolean("inspector.enabled"),
+                port: u16::try_from(int("inspector.port")).unwrap_or(7311),
+                listen: text("inspector.listen")
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "127.0.0.1".to_string()),
+                token: text("inspector.token").unwrap_or_default(),
+                include_system_ui: boolean("inspector.include_system_ui"),
+                min_visible_percent: u8::try_from(int("inspector.min_visible_percent"))
+                    .unwrap_or(0)
+                    .min(100),
+                fps: u8::try_from(int("inspector.fps")).unwrap_or(4).clamp(1, 30),
+                screenshot_scale: u8::try_from(int("inspector.screenshot_scale"))
+                    .unwrap_or(100)
+                    .clamp(10, 100),
+                run_conflict,
+            },
         }
     }
 }
