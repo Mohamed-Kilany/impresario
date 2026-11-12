@@ -65,6 +65,15 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 | `command_grace_ms` | global + workspace | integer 0..=30000 | `2000` | Extra grace period after a command completes, in milliseconds. |
 | `reporters` | global + workspace | list of: console, junit, json, html | `console,junit,json` | Reporters attached to a run. |
 | `unverifiable_policy` | global + workspace | one of: fail, warn | `fail` | Fail or warn when a probe cannot reach the required confidence. |
+| `inspector.enabled` | global + workspace | bool | `false` | Reserved: start the inspector Web UI automatically. v1 starts it explicitly with `impresario inspector`. |
+| `inspector.port` | global + workspace | integer 1..=65535 | `7311` | Loopback port for the inspector Web UI. |
+| `inspector.listen` | global + workspace | string | `127.0.0.1` | Bind address for the inspector Web UI (non-loopback needs a token). |
+| `inspector.token` | global + workspace | string | (unset) | *** required by a non-loopback inspector bind. |
+| `inspector.include_system_ui` | global + workspace | bool | `false` | Include status bars, navigation chrome and keyboards in snapshots. |
+| `inspector.min_visible_percent` | global + workspace | integer 0..=100 | `0` | Minimum visible area for inspector nodes, in percent (0 = any overlap). |
+| `inspector.fps` | global + workspace | integer 1..=30 | `4` | Snapshot polling rate for the live inspector UI. |
+| `inspector.screenshot_scale` | global + workspace | integer 10..=100 | `100` | Screenshot scale percentage used by the inspector UI. |
+| `inspector.run_conflict` | global + workspace | one of: readonly, exclusive, block_run | `readonly` | Policy when a run needs a device the inspector is attached to. |
 | `workspace` | global | path | (unset) | Workspace the CLI uses when no flag, environment variable or marker applies. |
 | `workspaces` | global | list of paths | (unset) | Workspaces remembered by `impresario workspace add`. |
 | `ui.theme` | global + workspace | string | `auto` | TUI color theme (`auto`, `dark`, `light` or a theme name). |
