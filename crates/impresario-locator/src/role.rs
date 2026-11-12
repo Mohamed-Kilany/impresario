@@ -297,7 +297,8 @@ pub fn role_from_ios_type(element_type: &str) -> Role {
         .filter(|character| !matches!(character, '-' | '_' | ' '))
         .flat_map(char::to_lowercase)
         .collect::<String>();
-    match key.as_str() {
+    let key = key.strip_prefix("xcuielementtype").unwrap_or(&key);
+    match key {
         "button" | "toolbarbutton" | "menubutton" => Role::Button,
         "link" => Role::Link,
         "textfield" | "textview" => Role::TextBox,

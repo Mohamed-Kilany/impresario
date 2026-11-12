@@ -166,6 +166,12 @@ impl<'a> Parser<'a> {
             within.push(scope);
             self.skip_ws();
         }
+        if !within.is_empty() {
+            // A scope is normally followed by an explicit chain operator:
+            // `within(role=dialog) >> role=button`.
+            self.consume(">>");
+            self.skip_ws();
+        }
 
         let mut steps = Vec::new();
         let mut modifiers = Modifiers::default();
@@ -232,13 +238,17 @@ impl<'a> Parser<'a> {
                     modifiers.last = false;
                 }
                 "first" => {
+                    if modifiers.last {
+                        return Err(self.error("first and last cannot be combined"));
+                    }
                     modifiers.first = true;
-                    modifiers.last = false;
                     modifiers.nth = None;
                 }
                 "last" => {
+                    if modifiers.first {
+                        return Err(self.error("first and last cannot be combined"));
+                    }
                     modifiers.last = true;
-                    modifiers.first = false;
                     modifiers.nth = None;
                 }
                 "visible" => {

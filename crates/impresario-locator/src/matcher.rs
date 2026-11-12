@@ -457,7 +457,7 @@ mod tests {
             id,
             role,
             name,
-            text: name,
+            text: "",
             test_id: None,
             native_id: None,
             parent,
@@ -474,15 +474,19 @@ mod tests {
         let mut dialog = node("dialog", Role::Dialog, "Delete", Some(0));
         dialog.context = Context::Native;
         let mut confirm = node("confirm", Role::Button, "Delete", Some(1));
+        confirm.text = "Delete";
         confirm.test_id = Some("delete.confirm");
         confirm.native_id = Some("btn_delete");
         confirm.states = vec![(State::Focused, true), (State::Disabled, false)];
         confirm.rect = Rect::new(10.0, 10.0, 80.0, 30.0);
-        let cancel = node("cancel", Role::Button, "Cancel", Some(1));
-        let outside = node("outside", Role::Button, "Delete", Some(0));
+        let mut cancel = node("cancel", Role::Button, "Cancel", Some(1));
+        cancel.text = "Cancel";
+        let mut outside = node("outside", Role::Button, "Delete", Some(0));
+        outside.text = "Delete";
         let list = node("list", Role::List, "Items", Some(0));
         let item = node("item", Role::ListItem, "One", Some(5));
         let mut hidden = node("hidden", Role::Button, "Delete", Some(5));
+        hidden.text = "Delete";
         hidden.visible = false;
         let mut other = node("other", Role::Button, "Other", Some(5));
         other.text = "Other text";

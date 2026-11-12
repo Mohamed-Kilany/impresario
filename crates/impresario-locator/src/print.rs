@@ -12,6 +12,9 @@ pub fn print(locator: &Locator) -> String {
     for scope in &locator.within {
         let _ = write!(out, "within({}) ", print(scope));
     }
+    if !locator.within.is_empty() {
+        out.push_str(">> ");
+    }
     for (index, step) in locator.steps.iter().enumerate() {
         if index > 0 {
             out.push_str(" >> ");
@@ -82,7 +85,12 @@ fn print_step(step: &SimpleSelector) -> String {
         }
     }
     if let Some(filter) = &step.name {
-        let _ = write!(out, "[name={}]", print_filter(filter));
+        let _ = write!(
+            out,
+            "[name={}]{}",
+            print_filter_value(filter),
+            print_filter_suffix(filter)
+        );
     }
     for state in &step.states {
         out.push_str(&print_state(state));
@@ -97,11 +105,22 @@ fn print_step(step: &SimpleSelector) -> String {
 }
 
 fn print_filter(filter: &NameFilter) -> String {
-    let value = match filter.mode() {
+    format!(
+        "{}{}",
+        print_filter_value(filter),
+        print_filter_suffix(filter)
+    )
+}
+
+fn print_filter_value(filter: &NameFilter) -> String {
+    match filter.mode() {
         MatchMode::Regex => format!("/{}/", filter.value().replace('/', "\\/")),
         MatchMode::Contains | MatchMode::Exact => quote(filter.value()),
-    };
-    let mut out = value;
+    }
+}
+
+fn print_filter_suffix(filter: &NameFilter) -> String {
+    let mut out = String::new();
     if filter.mode() == MatchMode::Exact {
         out.push_str("[exact]");
     }
