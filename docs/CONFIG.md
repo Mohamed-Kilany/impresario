@@ -68,7 +68,7 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 | `inspector.enabled` | global + workspace | bool | `false` | Reserved: start the inspector Web UI automatically. v1 starts it explicitly with `impresario inspector`. |
 | `inspector.port` | global + workspace | integer 1..=65535 | `7311` | Loopback port for the inspector Web UI. |
 | `inspector.listen` | global + workspace | string | `127.0.0.1` | Bind address for the inspector Web UI (non-loopback needs a token). |
-| `inspector.token` | global + workspace | string | (unset) | *** required by a non-loopback inspector bind. |
+| `inspector.token` | global + workspace | string | (unset) | Bearer token required by a non-loopback inspector bind. |
 | `inspector.include_system_ui` | global + workspace | bool | `false` | Include status bars, navigation chrome and keyboards in snapshots. |
 | `inspector.min_visible_percent` | global + workspace | integer 0..=100 | `0` | Minimum visible area for inspector nodes, in percent (0 = any overlap). |
 | `inspector.fps` | global + workspace | integer 1..=30 | `4` | Snapshot polling rate for the live inspector UI. |
