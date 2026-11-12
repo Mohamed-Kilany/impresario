@@ -202,7 +202,7 @@ impl<'a> Parser<'a> {
         let mut modifiers = Modifiers::default();
         loop {
             self.skip_ws();
-            if !self.starts_with('[') {
+            if !self.starts_with("[") {
                 break;
             }
             self.bump();
@@ -585,7 +585,7 @@ impl<'a> Parser<'a> {
         if self.consume("false") {
             return Ok(false);
         }
-        if self.starts_with(']') || self.is_end() {
+        if self.starts_with("]") || self.is_end() {
             return Ok(true);
         }
         Err(self.error("expected true or false"))
