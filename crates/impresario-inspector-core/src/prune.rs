@@ -276,14 +276,22 @@ mod tests {
     #[test]
     fn clipping_respects_ancestor_bounds_and_escape_hatches() {
         let snapshot = sample();
-        let clip = clip_rect(&snapshot.nodes, 9, snapshot.screen.viewport());
+        let index = |id: u64| {
+            snapshot
+                .nodes
+                .iter()
+                .position(|node| node.id == id)
+                .expect("node is present")
+        };
+
+        let clip = clip_rect(&snapshot.nodes, index(9), snapshot.screen.viewport());
         assert_eq!(clip, Rect::new(0.0, 0.0, 100.0, 20.0));
         assert_eq!(
             visible_fraction(Rect::new(0.0, 50.0, 20.0, 20.0), clip),
             0.0
         );
 
-        let clip = clip_rect(&snapshot.nodes, 6, snapshot.screen.viewport());
+        let clip = clip_rect(&snapshot.nodes, index(6), snapshot.screen.viewport());
         assert_eq!(clip, snapshot.screen.viewport());
         assert!(visible_fraction(Rect::new(0.0, 50.0, 20.0, 20.0), clip) > 0.0);
     }
