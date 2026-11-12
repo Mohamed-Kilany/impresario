@@ -512,7 +512,7 @@ mod tests {
         );
         assert_eq!(
             resolve_text("role=button[name=\"Delete\"][disabled=true]").expect("resolve"),
-            vec![]
+            Vec::<usize>::new()
         );
         assert_eq!(resolve_text("focused").expect("resolve"), vec![2]);
         assert_eq!(
@@ -556,7 +556,7 @@ mod tests {
         );
         assert_eq!(
             resolve_text("role=list[has-not=(role=listitem)]").expect("resolve"),
-            vec![]
+            Vec::<usize>::new()
         );
         assert_eq!(
             resolve_text("role=button[has-not=(role=image)]").expect("resolve"),
@@ -588,7 +588,7 @@ mod tests {
         );
         assert_eq!(
             resolve_text("role=button[context=NATIVE]").expect("resolve"),
-            vec![]
+            Vec::<usize>::new()
         );
         assert_eq!(
             resolve_text("region=0.05,0.05,0.2,0.2").expect("resolve"),
@@ -596,7 +596,7 @@ mod tests {
         );
         assert_eq!(
             resolve_text("region=0.9,0.9,0.05,0.05").expect("resolve"),
-            vec![]
+            Vec::<usize>::new()
         );
     }
 

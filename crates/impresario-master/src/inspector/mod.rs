@@ -218,6 +218,7 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         home: Home,
         base: PathBuf,
