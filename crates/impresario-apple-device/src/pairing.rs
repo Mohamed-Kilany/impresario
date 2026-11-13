@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use idevice::remote_pairing::{
-    PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket, PAIRABLE_HOST_SERVICE_TYPE,
+    PairableHost, PairableHostInfo, RpPairingSocket, PAIRABLE_HOST_SERVICE_TYPE,
 };
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::time::timeout;
