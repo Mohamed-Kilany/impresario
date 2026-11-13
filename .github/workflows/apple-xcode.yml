@@ -45,13 +45,17 @@ jobs:
             https://github.com/grpc/grpc-swift.git "$PLUGINS/grpc-swift"
           (cd "$PLUGINS/swift-protobuf" && swift build -c release --product protoc-gen-swift)
           (cd "$PLUGINS/grpc-swift" && swift build -c release --product protoc-gen-grpc-swift)
+          SWIFT_BIN="$(cd "$PLUGINS/swift-protobuf" && swift build -c release --show-bin-path)"
+          GRPC_BIN="$(cd "$PLUGINS/grpc-swift" && swift build -c release --show-bin-path)"
+          test -x "$SWIFT_BIN/protoc-gen-swift"
+          test -x "$GRPC_BIN/protoc-gen-grpc-swift"
+          echo "PROTOC_GEN_SWIFT=$SWIFT_BIN/protoc-gen-swift" >> "$GITHUB_ENV"
+          echo "PROTOC_GEN_GRPC_SWIFT=$GRPC_BIN/protoc-gen-grpc-swift" >> "$GITHUB_ENV"
 
       - name: Generate wire sources
         run: |
           set -euo pipefail
-          PLUGINS="$RUNNER_TEMP/swift-plugins"
-          PATH="$PLUGINS/swift-protobuf/.build/release:$PLUGINS/grpc-swift/.build/release:$PATH" \
-            bash scripts/gen-swift.sh
+          bash scripts/gen-swift.sh
 
       - name: Upload generated sources
         uses: actions/upload-artifact@v4
