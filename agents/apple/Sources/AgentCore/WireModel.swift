@@ -408,18 +408,20 @@ public enum AgentCapability: String, Sendable, Equatable {
     case probeShowing
     case probePlayer
     case probeDrm
+    case inspector
 
     /// iOS advertises the touch gesture set; tvOS the D-pad set. Both speak
     /// `KEY_EVENTS` (iOS only for `home`, spec 6.2) and both implement the
     /// probe kinds, with the evidence limits recorded in docs/PROBES.md.
+    /// Both also serve the additive `Inspector` service (TASK-INSPECTOR 4.2).
     public static func forPlatform(_ platform: PlatformKind) -> [AgentCapability] {
         switch platform {
         case .ios:
             return [.logs, .screenshot, .touchGestures, .keyEvents, .appControl,
-                    .probeShowing, .probePlayer, .probeDrm]
+                    .probeShowing, .probePlayer, .probeDrm, .inspector]
         case .tvos:
             return [.logs, .screenshot, .dpadFocus, .keyEvents, .appControl,
-                    .probeShowing, .probePlayer, .probeDrm]
+                    .probeShowing, .probePlayer, .probeDrm, .inspector]
         }
     }
 }

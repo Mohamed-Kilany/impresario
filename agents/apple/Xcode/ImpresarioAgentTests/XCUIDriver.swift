@@ -23,7 +23,7 @@ import XCUIAutomation
 /// App lifecycle calls are the exception. XCUITest asserts that
 /// `XCUIApplication.launch/terminate/activate` run on the main thread; they are
 /// dispatched there, and the driver queue waits for the result.
-final class XCUIDriver: NSObject, UIDriver, DriverExtras {
+final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     /// Launch argument that asks the app under test to disable animations
     /// (`animations_disabled`, spec 12.3). Apple has no API that switches
     /// another app's animations off, so the app under test must honour this
@@ -40,6 +40,10 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
     /// the full-screen tvOS keyboard is not guaranteed to appear in the app's
     /// accessibility tree, so remember that we opened a session.
     private var typedIntoField = false
+    /// The inspector registry of the last capture: node id → live element and
+    /// its logical frame. Guarded by the driver queue.
+    private var inspectorElements: [UInt64: XCUIElement] = [:]
+    private var inspectorRects: [UInt64: CGRect] = [:]
 
     // ------------------------------------------------------------------
     // plumbing
@@ -668,6 +672,623 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras {
             let painted = luminance.filter { abs($0 - mean) > 6.0 }.count
             return Double(painted) * 100.0 / Double(luminance.count)
         }
+    }
+
+    // ------------------------------------------------------------------
+    // InspectorDriver (TASK-INSPECTOR)
+    // ------------------------------------------------------------------
+
+    private static let inspectorTraversalBudget = 20_000
+    private static let inspectorNameLimit = 200
+    private static let inspectorTextLimit = 1_000
+
+    func capture(_ options: InspectorCaptureOptions) throws -> InspectorCapture {
+        try onQueue {
+            let app = try application()
+            if app.state != .runningForeground, !appId.isEmpty {
+                // The inspector attaches to an app, like the Android driver's
+                // app window: bring it up when the transport only started the
+                // test runner (and not the app under test).
+                _ = onMain {
+                    var error: NSString?
+                    return IMPXCUShim.activate(app, error: &error)
+                }
+            }
+            let appFrame = app.frame
+            let viewport = CGRect(origin: .zero, size: appFrame.size)
+
+            var nodes: [InspectorNodeData] = []
+            var elements: [UInt64: XCUIElement] = [:]
+            var frames: [UInt64: CGRect] = [:]
+            var truncated = false
+
+            func walk(
+                _ element: XCUIElement,
+                parentId: UInt64,
+                depth: Int,
+                systemUi: Bool
+            ) {
+                if nodes.count >= Self.inspectorTraversalBudget {
+                    truncated = true
+                    return
+                }
+                if depth > options.maxDepth { return }
+                guard element.exists else { return }
+
+                let type = element.elementType
+                let isSystemUi = systemUi || type == .statusBar
+                if isSystemUi && !options.includeSystemUi { return }
+
+                let id = UInt64(nodes.count + 1)
+                let frame = element.frame
+                let role = Self.inspectorRole(type)
+                let identifier = element.identifier
+                let label = element.label
+                let placeholder = element.placeholderValue ?? ""
+                let rawValue = (element.value as? String) ?? ""
+                let secure = type == .secureTextField
+                let value = secure ? "" : rawValue
+                let input = Self.inspectorInputType(type)
+                let name = label.isEmpty
+                    ? (element.title.isEmpty ? identifier : element.title)
+                    : label
+                let text = input ? "" : label
+                let nameCapped = Self.capText(name, Self.inspectorNameLimit)
+                let textCapped = Self.capText(text, Self.inspectorTextLimit)
+                let valueCapped = Self.capText(value, Self.inspectorTextLimit)
+                let scrollable = Self.inspectorScrollable(type)
+
+                nodes.append(
+                    InspectorNodeData(
+                        id: id,
+                        parentId: parentId,
+                        role: role,
+                        name: nameCapped.text,
+                        text: textCapped.text,
+                        testId: identifier,
+                        rawId: identifier,
+                        bounds: InspectorRectData(
+                            x: Double(frame.minX),
+                            y: Double(frame.minY),
+                            w: Double(frame.width),
+                            h: Double(frame.height)
+                        ),
+                        focused: element.hasFocus,
+                        enabled: element.isEnabled,
+                        selected: element.isSelected,
+                        checked: Self.inspectorChecked(element),
+                        readonly: input && !element.isEnabled,
+                        hidden: false,
+                        secure: secure,
+                        systemUi: isSystemUi,
+                        scrollable: scrollable,
+                        scrollAxis: scrollable
+                            ? (frame.height >= frame.width ? "vertical" : "horizontal")
+                            : "",
+                        raw: options.includeRaw ? Self.inspectorRaw(element) : "",
+                        value: valueCapped.text,
+                        label: label,
+                        placeholder: placeholder,
+                        title: element.title,
+                        visibleFraction: Self.visibleFraction(frame, viewport),
+                        depth: UInt32(clamping: depth),
+                        textTruncated: nameCapped.truncated
+                            || textCapped.truncated
+                            || valueCapped.truncated
+                    )
+                )
+                elements[id] = element
+                frames[id] = frame
+
+                for child in element.children(matching: .any).allElementsBoundByIndex {
+                    walk(child, parentId: id, depth: depth + 1, systemUi: isSystemUi)
+                }
+            }
+
+            walk(app, parentId: 0, depth: 0, systemUi: false)
+
+            let pruned = Self.pruneInspectorNodes(
+                nodes,
+                options: options,
+                viewport: viewport
+            )
+            let keptIds = Set(pruned.nodes.map(\.id))
+            inspectorElements = elements.filter { keptIds.contains($0.key) }
+            inspectorRects = frames.filter { keptIds.contains($0.key) }
+
+            var degraded: [String] = []
+            if pruned.nodes.isEmpty {
+                degraded.append("UNAVAILABLE: the app tree has no visible accessibility nodes")
+            }
+            if truncated {
+                degraded.append(
+                    "PARTIAL: the accessibility tree hit the traversal budget; some nodes may be missing"
+                )
+            }
+            if pruned.capped {
+                degraded.append("PARTIAL: max_nodes truncated the snapshot")
+            }
+
+            let png = options.includeScreenshot ? try screenshotPNGOnQueue() : nil
+            return InspectorCapture(
+                nodes: pruned.nodes,
+                focusedId: pruned.focusedId,
+                truncated: truncated || pruned.capped,
+                degraded: degraded,
+                screenshotPng: png
+            )
+        }
+    }
+
+    func screenshot(scalePercent: Int) throws -> Data? {
+        try onQueue {
+            let image = XCUIScreen.main.screenshot().image
+            let percent = min(100, max(1, scalePercent))
+            if percent == 100 {
+                return image.pngData()
+            }
+            let size = CGSize(
+                width: max(1, image.size.width * CGFloat(percent) / 100),
+                height: max(1, image.size.height * CGFloat(percent) / 100)
+            )
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = image.scale
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            return renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }.pngData()
+        }
+    }
+
+    func inspectorInput(_ action: InspectorInputAction) throws {
+        try onQueue {
+            switch action {
+            case .tap(let nodeId, let x, let y):
+                try inspectorTap(nodeId: nodeId, x: x, y: y)
+            case .scroll(let direction, let count, let nodeId, _, _):
+                try inspectorScroll(direction: direction, count: count, nodeId: nodeId)
+            case .key(let key):
+                try inspectorKey(key)
+            case .type(let nodeId, let text):
+                try inspectorType(nodeId: nodeId, text: text)
+            case .swipe(let x1, let y1, let x2, let y2, _):
+                try inspectorSwipe(x1: x1, y1: y1, x2: x2, y2: y2)
+            }
+        }
+    }
+
+    // MARK: inspector actions (queue-held)
+
+    private func inspectorTap(nodeId: UInt64, x: Double, y: Double) throws {
+        #if os(tvOS)
+        throw AgentError.unsupportedAction(
+            "the inspector cannot tap on tvos (no touch input); use the key action"
+        )
+        #else
+        if let element = inspectorElements[nodeId], element.exists, element.isHittable {
+            var error: NSString?
+            if IMPXCUShim.tap(element, error: &error) {
+                return
+            }
+        }
+        let point = inspectorRects[nodeId].map { CGPoint(x: $0.midX, y: $0.midY) }
+            ?? CGPoint(x: x, y: y)
+        try tapScreen(point)
+        #endif
+    }
+
+    private func inspectorScroll(direction: Direction, count: Int, nodeId: UInt64) throws {
+        let steps = max(1, count)
+        #if os(tvOS)
+        let button: RemoteButton
+        switch direction {
+        case .up: button = .up
+        case .down: button = .down
+        case .left: button = .left
+        case .right: button = .right
+        }
+        for _ in 0..<steps {
+            try pressRemote(button)
+        }
+        #else
+        let target: XCUIElement
+        if let element = inspectorElements[nodeId],
+           element.exists,
+           element.elementType == .scrollView || element.elementType == .table
+            || element.elementType == .collectionView || element.elementType == .webView
+        {
+            target = element
+        } else {
+            target = try container(nil)
+        }
+        // `scroll` names the content direction (DSL 5); the finger moves the
+        // other way (mirrors the Android driver).
+        let finger: Direction
+        switch direction {
+        case .up: finger = .down
+        case .down: finger = .up
+        case .left: finger = .right
+        case .right: finger = .left
+        }
+        for _ in 0..<steps {
+            try drag(target, finger: finger)
+        }
+        #endif
+    }
+
+    private func inspectorKey(_ key: RemoteKey) throws {
+        let platform: PlatformKind
+        #if os(tvOS)
+        platform = .tvos
+        #else
+        platform = .ios
+        #endif
+        switch KeyTable.resolve(key, platform: platform) {
+        case .remote(let button):
+            try pressRemote(button)
+        case .home:
+            XCUIDevice.shared.press(.home)
+            typedIntoField = false
+        case .unsupported(let message):
+            throw AgentError.unsupportedAction(message)
+        }
+    }
+
+    private func inspectorType(nodeId: UInt64, text: String) throws {
+        let app = try application()
+        let element: XCUIElement
+        if nodeId != 0 {
+            guard let found = inspectorElements[nodeId], found.exists else {
+                throw AgentError.elementNotFound("the inspector node no longer exists")
+            }
+            element = found
+            try ensureEditable(element)
+        } else {
+            element = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true"))
+                .firstMatch
+            guard element.exists else {
+                throw AgentError.notInteractable("no inspector node is focused")
+            }
+        }
+        guard !text.isEmpty else { return }
+        try onMain {
+            var error: NSString?
+            guard IMPXCUShim.type(text, into: element, error: &error) else {
+                throw AgentError.notInteractable(
+                    "inspector typing failed: \(message(error))"
+                )
+            }
+        }
+        typedIntoField = true
+    }
+
+    private func inspectorSwipe(x1: Double, y1: Double, x2: Double, y2: Double) throws {
+        #if os(tvOS)
+        throw AgentError.unsupportedAction(
+            "the inspector cannot swipe on tvos (no touch input); use the key action"
+        )
+        #else
+        let app = try application()
+        let frame = app.frame
+        guard frame.width > 1, frame.height > 1 else {
+            throw AgentError.notInteractable("the app has no visible extent")
+        }
+        let start = app.coordinate(
+            withNormalizedOffset: CGVector(
+                dx: (x1 - Double(frame.minX)) / Double(frame.width),
+                dy: (y1 - Double(frame.minY)) / Double(frame.height)
+            )
+        )
+        let end = app.coordinate(
+            withNormalizedOffset: CGVector(
+                dx: (x2 - Double(frame.minX)) / Double(frame.width),
+                dy: (y2 - Double(frame.minY)) / Double(frame.height)
+            )
+        )
+        try onMain {
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        #endif
+    }
+
+    private func tapScreen(_ point: CGPoint) throws {
+        #if os(tvOS)
+        throw AgentError.unsupportedAction("touch input is unavailable on tvos")
+        #else
+        let app = try application()
+        let frame = app.frame
+        guard frame.width > 1, frame.height > 1 else {
+            throw AgentError.notInteractable("the app has no visible extent")
+        }
+        let coordinate = app.coordinate(
+            withNormalizedOffset: CGVector(
+                dx: (point.x - frame.minX) / frame.width,
+                dy: (point.y - frame.minY) / frame.height
+            )
+        )
+        try onMain {
+            coordinate.tap()
+        }
+        #endif
+    }
+
+    private func pressRemote(_ button: RemoteButton) throws {
+        #if os(tvOS)
+        let mapped: XCUIRemote.Button
+        switch button {
+        case .up: mapped = .up
+        case .down: mapped = .down
+        case .left: mapped = .left
+        case .right: mapped = .right
+        case .select: mapped = .select
+        case .menu: mapped = .menu
+        case .home: mapped = .home
+        case .playPause: mapped = .playPause
+        case .pageUp: mapped = .pageUp
+        case .pageDown: mapped = .pageDown
+        }
+        XCUIRemote.shared.press(mapped)
+        #else
+        _ = button
+        throw AgentError.unsupportedAction("remote input is unavailable on ios")
+        #endif
+    }
+
+    // MARK: inspector normalization
+
+    private func screenshotPNGOnQueue() throws -> Data {
+        // tvOS 26.1's `pngRepresentation` renders repeated text down the
+        // frame; encode the screenshot image through UIKit instead.
+        Thread.sleep(forTimeInterval: 0.5)
+        let image = XCUIScreen.main.screenshot().image
+        guard let png = image.pngData(), !png.isEmpty, Png.dimensions(png) != nil else {
+            throw AgentError.internalError("the screenshot did not produce a PNG")
+        }
+        return png
+    }
+
+    private static func inspectorRole(_ type: XCUIElement.ElementType) -> String {
+        switch type {
+        case .button, .toolbarButton, .menuButton, .popUpButton, .disclosureTriangle:
+            return "button"
+        case .link:
+            return "link"
+        case .textField, .secureTextField, .textView, .searchField, .comboBox:
+            return "textbox"
+        case .checkBox:
+            return "checkbox"
+        case .radioButton:
+            return "radio"
+        case .switch, .toggle:
+            return "switch"
+        case .slider, .valueIndicator:
+            return "slider"
+        case .picker, .pickerWheel:
+            return "combobox"
+        case .table, .collectionView, .scrollView, .outline, .browser:
+            return "list"
+        case .tableRow, .outlineRow:
+            return "row"
+        case .cell:
+            return "cell"
+        case .image, .icon:
+            return "image"
+        case .staticText:
+            return "text"
+        case .alert:
+            return "alert"
+        case .sheet, .dialog, .popover:
+            return "dialog"
+        case .progressIndicator, .activityIndicator:
+            return "progressbar"
+        case .tab:
+            return "tab"
+        case .tabBar, .tabGroup:
+            return "tablist"
+        case .navigationBar:
+            return "navigation"
+        case .toolbar:
+            return "toolbar"
+        case .menu, .menuBar:
+            return "menu"
+        case .menuItem, .menuBarItem:
+            return "menuitem"
+        default:
+            return "generic"
+        }
+    }
+
+    private static func inspectorInputType(_ type: XCUIElement.ElementType) -> Bool {
+        switch type {
+        case .textField, .secureTextField, .textView, .searchField, .comboBox:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func inspectorScrollable(_ type: XCUIElement.ElementType) -> Bool {
+        switch type {
+        case .scrollView, .table, .collectionView, .textView, .webView, .outline,
+             .browser, .pickerWheel:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func inspectorChecked(_ element: XCUIElement) -> Bool? {
+        switch element.elementType {
+        case .switch, .toggle:
+            let value = ((element.value as? String) ?? "").lowercased()
+            if value == "1" || value == "on" { return true }
+            if value == "0" || value == "off" { return false }
+            return element.isSelected
+        case .checkBox, .radioButton:
+            return element.isSelected
+        default:
+            return nil
+        }
+    }
+
+    private static func inspectorRaw(_ element: XCUIElement) -> String {
+        let frame = element.frame
+        let object: [String: Any] = [
+            "type": String(describing: element.elementType),
+            "identifier": element.identifier,
+            "label": element.label,
+            "value": (element.value as? String) ?? "",
+            "placeholder": element.placeholderValue ?? "",
+            "frame": [
+                "x": Double(frame.minX),
+                "y": Double(frame.minY),
+                "w": Double(frame.width),
+                "h": Double(frame.height),
+            ],
+        ]
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        else {
+            return ""
+        }
+        return text
+    }
+
+    private static func capText(_ value: String, _ limit: Int) -> (text: String, truncated: Bool) {
+        if value.count > limit {
+            return (String(value.prefix(limit)), true)
+        }
+        return (value, false)
+    }
+
+    private static func visibleFraction(_ rect: CGRect, _ viewport: CGRect) -> Double {
+        let area = rect.width * rect.height
+        guard area > 0 else { return 0 }
+        let clipped = rect.intersection(viewport)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return 0 }
+        return min(1, max(0, Double((clipped.width * clipped.height) / area)))
+    }
+
+    private static func clipInspectorRect(
+        _ rect: InspectorRectData,
+        _ viewport: CGRect
+    ) -> InspectorRectData {
+        let clipped = CGRect(
+            x: rect.x,
+            y: rect.y,
+            width: rect.w,
+            height: rect.h
+        ).intersection(viewport)
+        guard !clipped.isNull else {
+            return InspectorRectData(x: rect.x, y: rect.y, w: 0, h: 0)
+        }
+        return InspectorRectData(
+            x: Double(clipped.minX),
+            y: Double(clipped.minY),
+            w: Double(clipped.max(0, clipped.width)),
+            h: Double(clipped.max(0, clipped.height))
+        )
+    }
+
+    /// Viewport pruning mirrors the Android driver and the connector: keep the
+    /// focused chain, drop off-screen/system nodes, then cap `max_nodes`.
+    private static func pruneInspectorNodes(
+        _ nodes: [InspectorNodeData],
+        options: InspectorCaptureOptions,
+        viewport: CGRect
+    ) -> (nodes: [InspectorNodeData], focusedId: UInt64, capped: Bool) {
+        if nodes.isEmpty { return ([], 0, false) }
+
+        var byId: [UInt64: Int] = [:]
+        for (index, node) in nodes.enumerated() { byId[node.id] = index }
+        var keep = [Bool](repeating: false, count: nodes.count)
+
+        for index in nodes.indices {
+            let node = nodes[index]
+            if node.systemUi && !options.includeSystemUi { continue }
+            if Int(node.depth) > options.maxDepth { continue }
+            if node.hidden && !node.focused { continue }
+            let area = Double(node.bounds.w) * Double(node.bounds.h)
+            if area <= 0 { continue }
+            if node.focused {
+                keep[index] = true
+                continue
+            }
+            if node.visibleFraction > 0
+                && (options.minVisibleFraction <= 0
+                    || node.visibleFraction >= options.minVisibleFraction)
+            {
+                keep[index] = true
+            }
+        }
+
+        for index in nodes.indices where keep[index] {
+            var parent = nodes[index].parentId
+            var guardCount = 0
+            while parent != 0 && guardCount < 1_024 {
+                guard let parentIndex = byId[parent] else { break }
+                if keep[parentIndex] { break }
+                keep[parentIndex] = true
+                parent = nodes[parentIndex].parentId
+                guardCount += 1
+            }
+        }
+
+        var keptCount = keep.filter { $0 }.count
+        var capped = false
+        if keptCount > options.maxNodes {
+            capped = true
+            var priority = [Bool](repeating: false, count: nodes.count)
+            for index in nodes.indices where nodes[index].focused {
+                var current: Int? = index
+                var guardCount = 0
+                while let currentIndex = current, guardCount < 1_024, !priority[currentIndex] {
+                    priority[currentIndex] = true
+                    let parent = nodes[currentIndex].parentId
+                    current = parent == 0 ? nil : byId[parent]
+                    guardCount += 1
+                }
+            }
+            for index in nodes.indices.reversed() where keptCount > options.maxNodes {
+                if keep[index] && !priority[index] {
+                    keep[index] = false
+                    keptCount -= 1
+                }
+            }
+            for index in nodes.indices.reversed() where keptCount > options.maxNodes {
+                if keep[index] && !nodes[index].focused {
+                    keep[index] = false
+                    keptCount -= 1
+                }
+            }
+        }
+
+        var hiddenCounts: [UInt64: UInt32] = [:]
+        for index in nodes.indices where !keep[index] {
+            let parent = nodes[index].parentId
+            if parent != 0, let parentIndex = byId[parent], keep[parentIndex] {
+                hiddenCounts[parent, default: 0] += 1
+            }
+        }
+
+        var kept: [InspectorNodeData] = []
+        kept.reserveCapacity(keptCount)
+        for index in nodes.indices where keep[index] {
+            var node = nodes[index]
+            node.childrenHiddenCount += hiddenCounts[node.id] ?? 0
+            if node.parentId != 0 {
+                let parentKept = byId[node.parentId].map { keep[$0] } ?? false
+                if !parentKept {
+                    node.parentId = 0
+                }
+            }
+            node.viewportBounds = clipInspectorRect(node.bounds, viewport)
+            kept.append(node)
+        }
+        let focusedId = kept.first(where: { $0.focused })?.id ?? 0
+        return (kept, focusedId, capped)
     }
 
     // ------------------------------------------------------------------

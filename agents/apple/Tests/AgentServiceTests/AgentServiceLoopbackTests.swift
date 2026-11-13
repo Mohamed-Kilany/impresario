@@ -61,7 +61,7 @@ final class AgentServiceLoopbackTests: XCTestCase {
             Set(response.capabilities),
             [
                 .logs, .screenshot, .dpadFocus, .keyEvents, .appControl,
-                .probeShowing, .probePlayer, .probeDrm,
+                .probeShowing, .probePlayer, .probeDrm, .inspector,
             ]
         )
         XCTAssertTrue(

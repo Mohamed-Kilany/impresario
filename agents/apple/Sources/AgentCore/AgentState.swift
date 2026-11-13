@@ -29,6 +29,7 @@ public final class AgentState: @unchecked Sendable {
 
     private struct Session {
         let id: String
+        let appId: String
         let executor: CommandExecutor
     }
 
@@ -53,6 +54,16 @@ public final class AgentState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return session?.id
+    }
+
+    /// The app under test for an active session, or `nil` for a foreign or
+    /// released session. The additive `Inspector` RPCs use the same session as
+    /// `Agent` (TASK-INSPECTOR 4.2/6.3).
+    public func inspectorSession(_ sessionId: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let session, session.id == sessionId else { return nil }
+        return session.appId
     }
 
     // ------------------------------------------------------------------
@@ -105,7 +116,7 @@ public final class AgentState: @unchecked Sendable {
             }
         )
         let sessionId = sessionIdFactory()
-        session = Session(id: sessionId, executor: executor)
+        session = Session(id: sessionId, appId: request.appId, executor: executor)
         lock.unlock()
 
         (driver as? DriverExtras)?.prepare(

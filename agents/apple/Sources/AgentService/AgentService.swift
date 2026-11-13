@@ -69,6 +69,7 @@ public final class AgentService: @unchecked Sendable {
 
     private let state: AgentState
     private let provider: AgentProvider
+    private let inspectorProvider: InspectorProvider
     private let group: MultiThreadedEventLoopGroup
     private let shutdownStream: AsyncStream<Void>
     private let shutdownContinuation: AsyncStream<Void>.Continuation
@@ -95,12 +96,13 @@ public final class AgentService: @unchecked Sendable {
             heartbeatIntervalMs: config.heartbeatIntervalMs,
             onShutdown: { continuation.yield(()) }
         )
+        self.inspectorProvider = InspectorProvider(state: state, token: config.token)
     }
 
     /// Binds the port and (optionally) publishes the Bonjour service.
     public func start() throws -> AgentServiceHandle {
         let server = try Server.insecure(group: group)
-            .withServiceProviders([provider])
+            .withServiceProviders([provider, inspectorProvider])
             .bind(host: config.host, port: config.port)
             .wait()
         let port = server.channel.localAddress?.port ?? config.port
