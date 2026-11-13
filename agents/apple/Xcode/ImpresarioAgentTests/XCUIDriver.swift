@@ -347,7 +347,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     func remote(_ b: RemoteButton, `repeat` count: Int, interval: TimeInterval) throws {
         #if os(tvOS)
-        try onQueue {
+        onQueue {
             let button: XCUIRemote.Button
             switch b {
             case .up: button = .up
@@ -537,7 +537,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     func longPressSelect(duration: TimeInterval) throws -> Bool {
         #if os(tvOS)
-        try onQueue {
+        onQueue {
             XCUIRemote.shared.press(.select, forDuration: duration)
             return true
         }
@@ -821,7 +821,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     }
 
     func screenshot(scalePercent: Int) throws -> Data? {
-        try onQueue {
+        onQueue {
             let image = XCUIScreen.main.screenshot().image
             let percent = min(100, max(1, scalePercent))
             if percent == 100 {
@@ -831,7 +831,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 width: max(1, image.size.width * CGFloat(percent) / 100),
                 height: max(1, image.size.height * CGFloat(percent) / 100)
             )
-            let format = UIGraphicsImageRendererFormat.default()
+            let format = UIGraphicsImageRendererFormat()
             format.scale = image.scale
             let renderer = UIGraphicsImageRenderer(size: size, format: format)
             return renderer.image { _ in
@@ -1187,8 +1187,8 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         return InspectorRectData(
             x: Double(clipped.minX),
             y: Double(clipped.minY),
-            w: Double(clipped.max(0, clipped.width)),
-            h: Double(clipped.max(0, clipped.height))
+            w: Double(Swift.max(0, clipped.width)),
+            h: Double(Swift.max(0, clipped.height))
         )
     }
 
