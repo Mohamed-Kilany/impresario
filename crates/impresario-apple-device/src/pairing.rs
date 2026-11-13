@@ -5,11 +5,16 @@
 //! uploaded, or committed. The device recognizes the host by the public key;
 //! the `identifier` is the stable host identity used in the pairing protocol.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use mdns_sd::{ServiceDaemon, ServiceEvent};
+use idevice::remote_pairing::{
+    PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket, PAIRABLE_HOST_SERVICE_TYPE,
+};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -112,6 +117,28 @@ impl ApplePaths {
             }
         }
         host_identifier_from(machine_name().as_deref())
+    }
+
+    /// The host's own 16-byte mDNS identity key, created on first use.
+    ///
+    /// A device that pairs through the iOS 27 "Paired Macs" flow remembers this
+    /// key and uses it to recognize Impresario on later visits, so it must stay
+    /// stable across runs. It is not a pairing record and is never advertised
+    /// on its own.
+    pub fn host_alt_irk(&self) -> Result<[u8; 16]> {
+        let path = self.root.join("pairing-host-alt-irk");
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(irk) = <[u8; 16]>::try_from(bytes.as_slice()) {
+                return Ok(irk);
+            }
+        }
+        let irk: [u8; 16] = rand::random();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| Error::io(format!("create {}", parent.display()), error))?;
+        }
+        write_private(&path, &irk)?;
+        Ok(irk)
     }
 
     /// Load a saved pairing record for `key`.
@@ -280,6 +307,106 @@ where
         udid,
         port,
     })
+}
+
+/// Serve a device-initiated pairing (the iOS 27 "Paired Macs" flow).
+///
+/// Unlike [`pair_device`], the host advertises
+/// `_remotepairing-pairable-host._tcp` and the device connects. The device
+/// displays the host under "Other Devices"; `pin` receives the six-digit code
+/// the user must enter there.
+pub async fn pair_host<F, Fut>(
+    paths: &ApplePaths,
+    name: &str,
+    model: &str,
+    save: Option<&str>,
+    pin: F,
+) -> Result<PairingSummary>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .await
+        .map_err(|error| Error::io("bind the pairable-host listener", error))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| Error::io("read the pairable-host listener address", error))?
+        .port();
+    let local_ip = lan_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let host_id = paths.host_identifier();
+    let mut info = PairableHostInfo::generate(name, model);
+    info.identifier = host_id.clone();
+    info.alt_irk = paths.host_alt_irk()?;
+
+    let daemon = ServiceDaemon::new()
+        .map_err(|error| Error::Device(format!("cannot start mDNS advertiser: {error}")))?;
+    let properties: HashMap<String, String> = info.mdns_txt_records(&host_id).into_iter().collect();
+    let host_name = format!(
+        "{}.local.",
+        machine_name().unwrap_or_else(|| "impresario".to_string())
+    );
+    let service = ServiceInfo::new(
+        PAIRABLE_HOST_SERVICE_TYPE,
+        &host_id,
+        &host_name,
+        local_ip,
+        port,
+        properties,
+    )
+    .map_err(|error| Error::Device(format!("cannot advertise the pairable host: {error}")))?;
+    daemon
+        .register(service)
+        .map_err(|error| Error::Device(format!("cannot register the pairable host: {error}")))?;
+
+    let accepted = listener.accept().await;
+    let (stream, peer_addr) =
+        accepted.map_err(|error| Error::io("accept the device pairing connection", error))?;
+    tracing::info!(%peer_addr, "device connected for pairing");
+
+    let mut file = RpPairingFile::generate(&host_id);
+    file.identifier = host_id.clone();
+    let mut host = PairableHost::new(RpPairingSocket::new_device(stream), info);
+    let peer = match host.accept(&mut file, pin).await {
+        Ok(peer) => peer,
+        Err(error) => {
+            let _ = daemon.shutdown();
+            return Err(Error::Device(format!("pairing failed: {error}")));
+        }
+    };
+    let _ = daemon.shutdown();
+
+    let udid = peer.remotepairing_udid.trim().to_string();
+    let key = save.map(str::to_string).or_else(|| {
+        if udid.is_empty() {
+            None
+        } else {
+            Some(udid.clone())
+        }
+    });
+    let key = key.ok_or_else(|| {
+        Error::Device(
+            "the device did not report a UDID; pass --save to choose the pairing key".to_string(),
+        )
+    })?;
+    paths.save_pairing(&key, &file)?;
+    Ok(PairingSummary {
+        identifier: host_id,
+        saved_as: key,
+        name: Some(peer.name),
+        model: Some(peer.model),
+        udid: (!udid.is_empty()).then_some(udid),
+        port,
+    })
+}
+
+/// The LAN address used for mDNS adverts, picked by the default route.
+fn lan_ip() -> Option<IpAddr> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    // Connecting a UDP socket only selects a route; no packet is sent.
+    socket.connect((Ipv4Addr::new(8, 8, 8, 8), 80)).ok()?;
+    let address = socket.local_addr().ok()?.ip();
+    (!address.is_unspecified() && !address.is_loopback()).then_some(address)
 }
 
 /// A successful pairing, suitable for a one-line CLI result.

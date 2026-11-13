@@ -16,7 +16,7 @@ use impresario_apple_auth::dev::developer_session::DeveloperSession;
 use impresario_apple_auth::dev::teams::{DeveloperTeam, TeamsApi};
 use impresario_apple_device::ddi::{self, DdiAssets, DdiState};
 use impresario_apple_device::pairing::{
-    pair_device, ApplePaths, PairingSummary, IMPRESARIO_DEVICE_NAME,
+    pair_device, pair_host, ApplePaths, PairingSummary, IMPRESARIO_DEVICE_NAME,
 };
 use impresario_apple_device::products::ProductSet;
 use impresario_apple_device::provision::{
@@ -44,6 +44,9 @@ pub struct AppleArgs {
 pub enum AppleCommand {
     /// Put the Apple TV in pairing mode and pair this machine.
     Pair(PairArgs),
+    /// Advertise as a pairable host for iPhone/iPad (Settings > Developer >
+    /// Paired Macs).
+    PairHost(PairHostArgs),
     /// Import an existing pair plist (for example from pymobiledevice3).
     ImportPair(ImportPairArgs),
     /// Show what this machine has for Apple without touching a device.
@@ -89,6 +92,20 @@ pub struct PairArgs {
     /// it. Useful for scripted pairing; the code is never written to disk.
     #[arg(long)]
     pub code_stdin: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PairHostArgs {
+    /// Host name shown on the device.
+    #[arg(long, default_value = IMPRESARIO_DEVICE_NAME)]
+    pub name: String,
+    /// Host model shown on the device; iOS expects a Mac identifier.
+    #[arg(long, default_value = "Mac17,7")]
+    pub model: String,
+    /// Save the pairing under this key instead of the device UDID (the device
+    /// address makes it selectable when several pairings exist).
+    #[arg(long)]
+    pub save: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -346,6 +363,7 @@ pub fn run(args: &AppleArgs, home: &Home) -> i32 {
     let paths = ApplePaths::new(home.root());
     match &args.command {
         AppleCommand::Pair(args) => run_pair(args, &paths),
+        AppleCommand::PairHost(args) => run_pair_host(args, &paths),
         AppleCommand::ImportPair(args) => run_import_pair(args, &paths),
         AppleCommand::Status => run_status(&paths),
         AppleCommand::Doctor(args) => run_doctor(args, &paths),
@@ -406,6 +424,38 @@ fn run_pair(args: &PairArgs, paths: &ApplePaths) -> i32 {
             }
         }
     }
+    print_pairing(&summary, paths);
+    EXIT_OK
+}
+
+fn run_pair_host(args: &PairHostArgs, paths: &ApplePaths) -> i32 {
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+    println!("Advertising Impresario as a pairable host...");
+    println!(
+        "On the device: Settings > Developer > Paired Macs, tap {} under \
+         \"Other Devices\", then enter the code below.",
+        args.name
+    );
+    let pin = move |code: String| async move {
+        println!("Pairing code: {code}");
+        println!("Enter it on the device now.");
+    };
+    let summary = match runtime.block_on(pair_host(
+        paths,
+        &args.name,
+        &args.model,
+        args.save.as_deref(),
+        pin,
+    )) {
+        Ok(summary) => summary,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
     print_pairing(&summary, paths);
     EXIT_OK
 }
@@ -1520,7 +1570,7 @@ fn import_ddi(source: &Path, build: &str, paths: &ApplePaths) -> Result<PathBuf,
 fn print_pairing(summary: &PairingSummary, paths: &ApplePaths) {
     println!(
         "Paired {} with {}.",
-        summary.name.as_deref().unwrap_or("Apple TV"),
+        summary.name.as_deref().unwrap_or("Apple device"),
         paths.pairing_path(&summary.saved_as).display()
     );
     if let Some(model) = &summary.model {
