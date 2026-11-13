@@ -54,6 +54,7 @@ class AgentState(
     val expectedToken: String = "",
     val agentVersion: String = AgentVersion.VERSION,
     val logBus: LogBus = LogBus(),
+    val inspectorDriver: InspectorDriver? = driver as? InspectorDriver,
 ) {
     class SessionState(
         val id: String,
@@ -171,6 +172,7 @@ class AgentState(
                     Capability.PROBE_SHOWING,
                     Capability.PROBE_PLAYER,
                     Capability.PROBE_DRM,
+                    Capability.INSPECTOR,
                 )
             } else {
                 listOf(
@@ -182,6 +184,7 @@ class AgentState(
                     Capability.PROBE_SHOWING,
                     Capability.PROBE_PLAYER,
                     Capability.PROBE_DRM,
+                    Capability.INSPECTOR,
                 )
             }
 

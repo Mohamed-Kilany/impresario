@@ -251,6 +251,8 @@ message InspectorSnapshotRequest {
   uint32 max_depth = 4;                  // 0 = server default
   bool include_raw = 5;                  // attach platform-native payloads
   bool include_screenshot = 6;           // embed a frame in the response
+  bool screenshot_only = 7;              // return only a frame; nodes are empty
+  uint32 screenshot_scale = 8;           // percent (1-100), 0 = 100
 }
 
 message InspectorRect { float x = 1; float y = 2; float w = 3; float h = 4; }

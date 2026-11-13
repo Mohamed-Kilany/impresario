@@ -20,12 +20,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Regenerate the committed Swift protobuf/gRPC sources from the current
+  # proto with the pinned plugins (scripts/gen-swift.sh). The build job below
+  # consumes the artifact, so a stale committed copy can never mask a proto
+  # change; the artifact is also what a developer commits back to the repo.
+  wire:
+    name: "Swift wire sources (generated)"
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: brew install protobuf
+
+      - name: Build pinned protoc plugins
+        run: |
+          set -euo pipefail
+          PLUGINS="$RUNNER_TEMP/swift-plugins"
+          mkdir -p "$PLUGINS"
+          git clone --depth 1 --branch 1.39.0 \
+            https://github.com/apple/swift-protobuf.git "$PLUGINS/swift-protobuf"
+          git clone --depth 1 --branch 1.27.6 \
+            https://github.com/grpc/grpc-swift.git "$PLUGINS/grpc-swift"
+          (cd "$PLUGINS/swift-protobuf" && swift build -c release --product protoc-gen-swift)
+          (cd "$PLUGINS/grpc-swift" && swift build -c release --product protoc-gen-grpc-swift)
+
+      - name: Generate wire sources
+        run: |
+          set -euo pipefail
+          PLUGINS="$RUNNER_TEMP/swift-plugins"
+          PATH="$PLUGINS/swift-protobuf/.build/release:$PLUGINS/grpc-swift/.build/release:$PATH" \
+            scripts/gen-swift.sh
+
+      - name: Upload generated sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: impresario-swift-wire
+          if-no-files-found: error
+          path: agents/apple/Sources/ImpresarioWire/*.swift
+
   build:
     name: "macOS: generate + build tvOS/iOS (unsigned)"
+    needs: wire
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download generated wire sources
+        uses: actions/download-artifact@v4
+        with:
+          name: impresario-swift-wire
+          path: agents/apple/Sources/ImpresarioWire
 
       - name: Show tool versions
         run: |

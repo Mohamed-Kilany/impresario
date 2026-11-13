@@ -4,35 +4,72 @@
  * Impresario Inspector SPA.
  *
  * The server owns acquisition, pruning, locator resolution and scene edits.
- * This client only renders the latest normalized snapshot, applies SSE deltas,
+ * This client renders the latest normalized snapshot, applies SSE deltas,
  * maps pointer coordinates back to nodes, and calls the JSON API. No user text
  * is ever assigned through innerHTML.
+ *
+ * Freeze is deliberately client-side (TASK-INSPECTOR 10.4): the server keeps
+ * acquiring, while this page stops applying live snapshot/delta events so a
+ * transient state can be inspected. Unfreeze fetches one full snapshot.
  */
 
 const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
 const ROW_HEIGHT = 24;
+const FILTER_DEBOUNCE_MS = 180;
+
+const FALLBACK_KEYS = [
+  'ok', 'enter', 'back', 'up', 'down', 'left', 'right', 'home', 'menu',
+  'play', 'pause', 'playpause', 'rewind', 'fastforward', 'backspace',
+  'volumeup', 'volumedown', 'mute', 'channelup', 'channeldown', 'stop',
+  'record', 'info', 'guide', 'exit', 'subtitle', 'audio', 'search',
+  'settings', 'red', 'green', 'yellow', 'blue',
+  'num0', 'num1', 'num2', 'num3', 'num4', 'num5', 'num6', 'num7', 'num8', 'num9',
+];
 
 const state = {
   meta: null,
   status: null,
   snapshot: null,
+  nodeIndex: new Map(),
   pollMs: 250,
   frozen: false,
+  freezeInitialized: false,
+  eventsOk: false,
+  events: null,
   selectedId: 0,
   selectedFingerprint: null,
+  selectedNode: null,
+  selectionStale: false,
+  selectionOffscreen: false,
   detailsFor: 0,
-  detailsAt: 0,
+  detailsKey: '',
+  detailsSeq: 0,
+  detailsStale: false,
+  suggestions: [],
   hoverId: 0,
   matchIds: new Set(),
+  matchSource: '',
+  locatorFilter: null,
   collapsed: new Set(),
   filter: '',
+  filterTimer: 0,
+  filterSeq: 0,
   rows: [],
+  pendingRevealId: 0,
   scene: null,
+  sceneCell: null,
   edit: null,
+  pendingOp: null,
+  hasFrame: false,
+  frameNote: '',
   screenshotBusy: false,
   screenshotTimer: 0,
+  screenshotFailures: 0,
   toastTimer: 0,
   hoverFrame: 0,
+  drag: null,
+  wheelAt: 0,
+  statusTimer: 0,
 };
 
 function byId(id) {
@@ -40,6 +77,7 @@ function byId(id) {
 }
 
 function clear(element) {
+  if (!element) return;
   while (element.firstChild) element.removeChild(element.firstChild);
 }
 
@@ -88,7 +126,7 @@ async function api(path, options) {
   if (!payload || payload.ok !== true) {
     throw new ApiError((payload && payload.error) || {
       code: 'HTTP_' + response.status,
-      message: 'Request failed.',
+      message: 'Request failed with HTTP ' + response.status + '.',
     });
   }
   return payload.data;
@@ -114,30 +152,60 @@ function makeButton(label, onClick, className) {
   return button;
 }
 
+async function copyText(text, label) {
+  const value = String(text === undefined || text === null ? '' : text);
+  if (!value) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      document.body.removeChild(area);
+    }
+    toast((label || 'Value') + ' copied.');
+  } catch (error) {
+    toast('Could not copy: ' + error.message, true);
+  }
+}
+
+function setInputStatus(text, isError) {
+  const element = byId('input-status');
+  element.textContent = text || '';
+  element.classList.toggle('error', Boolean(isError));
+}
+
 // ---------------------------------------------------------------------------
 // Status and devices
 // ---------------------------------------------------------------------------
 
-async function refreshStatus() {
-  const data = await api('/api/status');
-  state.meta = data;
-  state.status = data.status;
-  state.pollMs = data.poll_interval_ms || 250;
-  state.frozen = Boolean(data.frozen);
-  byId('freeze').checked = state.frozen;
+function applyStatus(status) {
+  const wasAttached = Boolean(state.status && state.status.attached);
+  state.status = status || null;
+  if (wasAttached && !(status && status.attached)) clearSnapshot();
   renderStatus();
+  if (!wasAttached && status && status.attached) scheduleScreenshot();
 }
 
 function renderStatus() {
   const status = state.status;
   const meta = state.meta;
-  const pill = byId('attach-status');
   const attached = Boolean(status && status.attached);
+  const pill = byId('attach-status');
   pill.textContent = attached ? 'attached' : 'disconnected';
   pill.classList.toggle('on', attached);
   pill.classList.toggle('error', Boolean(status && status.error));
   byId('rev').textContent = status && status.rev ? 'rev ' + status.rev : '';
-  byId('fps').textContent = state.frozen ? 'frozen' : state.pollMs + ' ms poll';
+
+  let note = state.frozen ? 'frozen' : (state.eventsOk ? 'live · ' + state.pollMs + ' ms' : 'reconnecting…');
+  if (state.frameNote) note += ' · ' + state.frameNote;
+  byId('fps').textContent = note;
 
   const lines = [];
   if (meta) {
@@ -162,14 +230,60 @@ function renderStatus() {
     summary.push('rev ' + (status.rev || 0));
     summary.push((status.nodes || 0) + ' nodes');
     summary.push(status.settled ? 'settled' : 'updating');
+    if (state.selectionStale) summary.push('selection stale');
+    else if (state.selectionOffscreen) summary.push('selection offscreen');
     if (status.error) summary.push('error: ' + status.error);
   } else {
     summary.push('No device attached');
   }
   byId('status-text').textContent = summary.join('  ·  ');
-  byId('stage-empty').hidden = attached && Boolean(state.snapshot);
+
+  const empty = byId('stage-empty');
+  empty.hidden = attached && state.hasFrame;
+  empty.textContent = attached ? 'Waiting for the first frame…' : 'Attach a device to inspect its screen.';
+
   byId('attach').disabled = attached;
   byId('detach').disabled = !attached;
+  byId('freeze').disabled = !attached;
+
+  const enabled = attached && !state.frozen;
+  for (const id of [
+    'tap-selected', 'scroll-up', 'scroll-down', 'scroll-left', 'scroll-right',
+    'send-key', 'send-type',
+  ]) {
+    byId(id).disabled = !enabled;
+  }
+  byId('key-select').disabled = !enabled;
+  byId('type-text').disabled = !enabled;
+  for (const button of document.querySelectorAll('.dpad button[data-key]')) {
+    button.disabled = !enabled;
+  }
+}
+
+async function refreshStatus() {
+  const data = await api('/api/status');
+  state.meta = data;
+  state.pollMs = data.poll_interval_ms || 250;
+  if (!state.freezeInitialized) {
+    state.freezeInitialized = true;
+    state.frozen = Boolean(data.frozen);
+    byId('freeze').checked = state.frozen;
+  }
+  if (Array.isArray(data.keys) && data.keys.length) populateKeys(data.keys);
+  applyStatus(data.status);
+}
+
+async function pollStatus() {
+  if (document.hidden) return;
+  try {
+    const data = await api('/api/status');
+    state.meta = data;
+    state.pollMs = data.poll_interval_ms || state.pollMs;
+    applyStatus(data.status);
+  } catch (error) {
+    state.eventsOk = false;
+    renderStatus();
+  }
 }
 
 async function refreshDevices() {
@@ -195,11 +309,11 @@ async function attachDevice() {
     return;
   }
   try {
-    const status = await api('/api/attach', { body: { device: name } });
-    toast('Attached to ' + name + '.');
-    if (status && status.error) toast(status.error, true);
-    await refreshStatus();
-    await refreshDevices();
+    const data = await api('/api/attach', { body: { device: name } });
+    applyStatus(data.status);
+    if (data.status && data.status.error) toast(data.status.error, true);
+    else toast('Attached to ' + name + '.');
+    await Promise.all([refreshStatus(), refreshDevices()]);
     await refreshSnapshot();
     loadScreenshot();
   } catch (error) {
@@ -210,39 +324,68 @@ async function attachDevice() {
 async function detachDevice() {
   try {
     await api('/api/detach', { body: {} });
-    state.snapshot = null;
-    state.selectedId = 0;
-    state.selectedFingerprint = null;
-    state.matchIds.clear();
-    state.hoverId = 0;
-    state.rows = [];
-    clearTimeout(state.screenshotTimer);
-    byId('screenshot').removeAttribute('src');
-    renderTree();
-    drawOverlay();
-    byId('details').textContent = 'Nothing selected.';
-    clear(byId('suggestions'));
-    await refreshStatus();
-    await refreshDevices();
+    clearSnapshot();
+    await Promise.all([refreshStatus(), refreshDevices()]);
     toast('Detached.');
   } catch (error) {
     toast(error.message, true);
   }
 }
 
+function clearSnapshot() {
+  state.snapshot = null;
+  state.nodeIndex = new Map();
+  state.selectedId = 0;
+  state.selectedFingerprint = null;
+  state.selectedNode = null;
+  state.selectionStale = false;
+  state.selectionOffscreen = false;
+  state.detailsFor = 0;
+  state.detailsKey = '';
+  state.detailsSeq += 1;
+  state.detailsStale = false;
+  state.suggestions = [];
+  state.matchIds.clear();
+  state.matchSource = '';
+  state.locatorFilter = null;
+  state.hoverId = 0;
+  state.rows = [];
+  state.pendingRevealId = 0;
+  state.hasFrame = false;
+  state.frameNote = '';
+  state.screenshotFailures = 0;
+  clearTimeout(state.screenshotTimer);
+  byId('screenshot').removeAttribute('src');
+  byId('details').textContent = 'Nothing selected.';
+  clear(byId('suggestions'));
+  clear(byId('locator-result'));
+  renderTree();
+  drawOverlay();
+  renderStatus();
+}
+
 async function toggleFreeze() {
   const frozen = byId('freeze').checked;
+  const previous = state.frozen;
+  // Apply the client-side gate immediately: an SSE update can arrive while
+  // the freeze request is still in flight.
+  state.frozen = frozen;
+  if (frozen) clearTimeout(state.screenshotTimer);
+  renderStatus();
   try {
     await api('/api/freeze', { body: { frozen } });
-    state.frozen = frozen;
     if (frozen) {
-      clearTimeout(state.screenshotTimer);
+      toast('Frozen. Live updates are paused; the inspector keeps tracking.');
     } else {
+      await refreshSnapshot();
       loadScreenshot();
+      toast('Live updates resumed.');
     }
     renderStatus();
   } catch (error) {
-    byId('freeze').checked = state.frozen;
+    state.frozen = previous;
+    byId('freeze').checked = previous;
+    renderStatus();
     toast(error.message, true);
   }
 }
@@ -252,8 +395,7 @@ async function toggleFreeze() {
 // ---------------------------------------------------------------------------
 
 function findNode(id) {
-  if (!state.snapshot || !Array.isArray(state.snapshot.nodes)) return null;
-  return state.snapshot.nodes.find((node) => node.id === id) || null;
+  return state.nodeIndex.get(id) || null;
 }
 
 function fingerprintOf(node) {
@@ -262,7 +404,21 @@ function fingerprintOf(node) {
     name: node.name || '',
     text: node.text || '',
     test_id: node.test_id || '',
+    native_id: node.native_id || '',
   };
+}
+
+function nodeKey(node) {
+  if (!node) return '';
+  const bounds = node.bounds
+    ? [Math.round(node.bounds.x), Math.round(node.bounds.y), Math.round(node.bounds.w), Math.round(node.bounds.h)].join(',')
+    : '';
+  return [
+    node.id, node.role, node.name, node.text, node.value, node.test_id, node.native_id,
+    bounds, node.visible_fraction,
+    node.state ? JSON.stringify(node.state) : '',
+    node.scroll ? JSON.stringify(node.scroll) : '',
+  ].join('|');
 }
 
 function remapSelection(fingerprint) {
@@ -272,36 +428,18 @@ function remapSelection(fingerprint) {
     (node.name || '') === fingerprint.name &&
     (node.test_id || '') === fingerprint.test_id
   );
-  return candidates.length === 1 ? candidates[0] : null;
+  if (candidates.length === 1) return candidates[0];
+  const byText = candidates.filter((node) => (node.text || '') === fingerprint.text);
+  if (byText.length === 1) return byText[0];
+  const byNative = candidates.filter((node) => (node.native_id || '') === fingerprint.native_id);
+  return byNative.length === 1 ? byNative[0] : null;
 }
 
-function applyDelta(delta) {
-  const snapshot = state.snapshot;
-  if (!snapshot || !delta || delta.base_rev !== snapshot.rev) {
-    refreshSnapshot();
-    return;
-  }
-  let nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes.slice() : [];
-  const ops = Array.isArray(delta.ops) ? delta.ops : [];
-  for (const op of ops) {
-    if (!op || !op.op) continue;
-    if (op.op === 'remove') {
-      nodes = nodes.filter((node) => node.id !== op.id);
-    } else if (op.op === 'update' && op.node) {
-      const index = nodes.findIndex((node) => node.id === op.node.id);
-      if (index >= 0) nodes[index] = op.node;
-    } else if (op.op === 'add' && op.node) {
-      nodes.push(op.node);
-    } else if (op.op === 'move') {
-      const node = nodes.find((candidate) => candidate.id === op.id);
-      if (node) node.parent_id = op.parent_id;
-    } else if (op.op === 'reorder') {
-      const index = new Map(nodes.map((node) => [node.id, node]));
-      nodes = (op.ids || []).map((id) => index.get(id)).filter(Boolean);
-    }
-  }
-  snapshot.nodes = nodes;
-  snapshot.rev = delta.rev;
+function setSnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.nodes)) return;
+  state.snapshot = snapshot;
+  state.nodeIndex = new Map(snapshot.nodes.map((node) => [node.id, node]));
+  onSnapshot();
 }
 
 function onSnapshot() {
@@ -312,44 +450,80 @@ function onSnapshot() {
     renderStatus();
     return;
   }
-  if (state.selectedFingerprint) {
-    const current = findNode(state.selectedId);
-    if (!current) {
-      const remapped = remapSelection(state.selectedFingerprint);
-      if (remapped) {
-        state.selectedId = remapped.id;
-        state.selectedFingerprint = fingerprintOf(remapped);
-        toast('Selection remapped to e' + remapped.id + '.');
-        loadDetails(remapped.id);
-      } else {
-        state.selectedId = 0;
-        state.selectedFingerprint = null;
-        byId('details').textContent = 'The selected node is no longer in the snapshot.';
-        clear(byId('suggestions'));
-      }
-    }
-  }
+  resolveSelection();
   buildRows();
   renderTree();
   drawOverlay();
   renderStatus();
-  if (state.selectedId) {
-    const now = Date.now();
-    if (state.detailsFor !== state.selectedId || now - state.detailsAt > 1500) {
-      state.detailsFor = state.selectedId;
-      state.detailsAt = now;
-      loadDetails(state.selectedId);
-    }
+  if (state.pendingRevealId) {
+    const wanted = state.pendingRevealId;
+    state.pendingRevealId = 0;
+    revealRow(wanted);
   }
+  maybeLoadDetails();
+  // Keep a live locator filter accurate when the tree changes: snapshot ids
+  // can shift between acquisitions.
+  if (state.locatorFilter && state.snapshot &&
+      state.locatorFilter.rev !== state.snapshot.rev &&
+      state.filter.trim() && looksLikeLocator(state.filter.trim())) {
+    runFilter();
+  }
+}
+
+function resolveSelection() {
+  if (!state.selectedId && !state.selectedFingerprint) return;
+  const current = findNode(state.selectedId);
+  if (current) {
+    state.selectedNode = current;
+    state.selectedFingerprint = fingerprintOf(current);
+    state.selectionStale = false;
+    state.selectionOffscreen = current.visible_fraction === 0 ||
+      Boolean(current.state && current.state.hidden_by_a11y);
+    state.detailsStale = false;
+    return;
+  }
+  const remapped = remapSelection(state.selectedFingerprint);
+  if (remapped) {
+    const previous = state.selectedId;
+    state.selectedId = remapped.id;
+    state.selectedNode = remapped;
+    state.selectedFingerprint = fingerprintOf(remapped);
+    state.selectionStale = false;
+    state.selectionOffscreen = remapped.visible_fraction === 0;
+    state.detailsStale = false;
+    if (previous) toast('Selection remapped to e' + remapped.id + '.');
+    return;
+  }
+  state.selectionStale = true;
+  state.selectionOffscreen = false;
+  // Render the stale banner once instead of rebuilding it on every poll.
+  if (!state.detailsStale && state.selectedNode) {
+    state.detailsStale = true;
+    renderDetails(state.selectedNode, { stale: true });
+  }
+}
+
+function maybeLoadDetails() {
+  if (!state.selectedId) return;
+  const node = findNode(state.selectedId);
+  if (!node) return;
+  const key = nodeKey(node);
+  if (state.detailsFor === node.id && state.detailsKey === key) return;
+  loadDetails(node.id, key);
 }
 
 async function refreshSnapshot() {
   try {
-    state.snapshot = await api('/api/snapshot');
-    onSnapshot();
+    const data = await api('/api/snapshot');
+    if (data.status && data.status.status) {
+      state.meta = data.status;
+      applyStatus(data.status.status);
+    }
+    setSnapshot(data);
   } catch (error) {
     if (error.code === 'NO_SNAPSHOT') {
       state.snapshot = null;
+      state.nodeIndex = new Map();
       onSnapshot();
       return;
     }
@@ -361,6 +535,21 @@ function buildRows() {
   state.rows = [];
   if (!state.snapshot || !Array.isArray(state.snapshot.nodes)) return;
   const nodes = state.snapshot.nodes;
+
+  let keep = null;
+  if (state.locatorFilter) {
+    keep = new Set(state.locatorFilter.ids);
+  } else if (state.filter.trim()) {
+    const needle = state.filter.trim().toLowerCase();
+    const matching = new Set();
+    const textOf = (node) => [node.role, node.name, node.text, node.value, node.test_id, node.native_id]
+      .filter(Boolean).join(' ').toLowerCase();
+    for (const node of nodes) {
+      if (textOf(node).includes(needle)) matching.add(node.id);
+    }
+    keep = matching;
+  }
+
   const byParent = new Map();
   for (const node of nodes) {
     const parent = node.parent_id || 0;
@@ -373,7 +562,8 @@ function buildRows() {
     if (seen.has(node.id)) return;
     seen.add(node.id);
     const children = byParent.get(node.id) || [];
-    const expanded = !state.collapsed.has(node.id);
+    // A filter must reveal matches even inside collapsed branches.
+    const expanded = Boolean(keep) || !state.collapsed.has(node.id);
     rows.push({ node, depth, hasChildren: children.length > 0, expanded });
     if (expanded) {
       for (const child of children) walk(child, depth + 1);
@@ -383,26 +573,24 @@ function buildRows() {
   for (const node of nodes) {
     if (!seen.has(node.id)) rows.push({ node, depth: 0, hasChildren: false, expanded: false });
   }
-  if (!state.filter.trim()) {
+
+  if (!keep) {
     state.rows = rows;
     return;
   }
-  const needle = state.filter.trim().toLowerCase();
-  const matching = new Set();
+  // Keep ancestors so matched nodes stay reachable in the tree.
   const index = new Map(nodes.map((node) => [node.id, node]));
-  const textOf = (node) => [node.role, node.name, node.text, node.value, node.test_id, node.native_id]
-    .filter(Boolean).join(' ').toLowerCase();
-  for (const node of nodes) {
-    if (!textOf(node).includes(needle)) continue;
-    let current = node;
+  const visible = new Set(keep);
+  for (const id of keep) {
+    let current = index.get(id);
     let guard = 0;
-    while (current && guard < 200) {
-      matching.add(current.id);
+    while (current && guard < 400) {
+      visible.add(current.id);
       current = index.get(current.parent_id || 0);
       guard += 1;
     }
   }
-  state.rows = rows.filter((row) => matching.has(row.node.id));
+  state.rows = rows.filter((row) => visible.has(row.node.id));
 }
 
 function renderTree() {
@@ -410,6 +598,9 @@ function renderTree() {
   if (!state.rows.length) {
     clear(tree);
     tree.dataset.ready = '';
+    if (state.locatorFilter) tree.textContent = 'No nodes match this locator.';
+    else if (state.filter.trim()) tree.textContent = 'No nodes match this search.';
+    updateTreeCount();
     return;
   }
   if (tree.dataset.ready !== '1') {
@@ -436,6 +627,25 @@ function renderTree() {
     fragment.appendChild(rowElement(state.rows[i]));
   }
   layer.appendChild(fragment);
+  updateTreeCount();
+}
+
+function updateTreeCount() {
+  const element = byId('tree-count');
+  if (!element) return;
+  element.classList.remove('error');
+  const total = state.snapshot && Array.isArray(state.snapshot.nodes) ? state.snapshot.nodes.length : 0;
+  if (state.locatorFilter) {
+    element.textContent = state.locatorFilter.count + ' match' +
+      (state.locatorFilter.count === 1 ? '' : 'es') + ' · ' + total + ' nodes';
+    element.classList.add('ok');
+  } else if (state.filter.trim()) {
+    element.textContent = state.rows.length + ' shown · ' + total + ' nodes';
+    element.classList.remove('ok');
+  } else {
+    element.textContent = total + ' nodes';
+    element.classList.remove('ok');
+  }
 }
 
 function rowElement(row) {
@@ -448,6 +658,7 @@ function rowElement(row) {
   if (node.id === state.selectedId) element.classList.add('selected');
   if (node.id === state.hoverId) element.classList.add('hover');
   if (state.matchIds.has(node.id)) element.classList.add('match');
+  if (node.visible_fraction === 0) element.classList.add('offscreen');
 
   const twisty = document.createElement('span');
   twisty.className = 'twisty';
@@ -491,6 +702,18 @@ function rowElement(row) {
   reference.textContent = 'e' + node.id;
   element.appendChild(reference);
 
+  const bounds = node.bounds
+    ? Math.round(node.bounds.x) + ',' + Math.round(node.bounds.y) + ' ' +
+      Math.round(node.bounds.w) + '×' + Math.round(node.bounds.h)
+    : '';
+  element.title = [
+    'e' + node.id,
+    node.role || 'generic',
+    node.name || node.text || '',
+    node.test_id ? 'testid=' + node.test_id : '',
+    bounds,
+  ].filter(Boolean).join('  ');
+
   element.addEventListener('click', (event) => {
     event.stopPropagation();
     selectNode(node.id);
@@ -502,6 +725,16 @@ function rowElement(row) {
   element.addEventListener('mouseenter', () => setHover(node.id));
   element.addEventListener('mouseleave', () => setHover(0));
   return element;
+}
+
+function updateTreeClasses() {
+  const tree = byId('tree');
+  for (const element of tree.querySelectorAll('.tree-row')) {
+    const id = Number(element.dataset.id);
+    element.classList.toggle('selected', id === state.selectedId);
+    element.classList.toggle('hover', id === state.hoverId);
+    element.classList.toggle('match', state.matchIds.has(id));
+  }
 }
 
 function toggleCollapsed(id) {
@@ -527,18 +760,48 @@ function collapseAll() {
 function setHover(id) {
   if (state.hoverId === id) return;
   state.hoverId = id;
-  renderTree();
+  updateTreeClasses();
   drawOverlay();
 }
 
-function selectNode(id) {
+function selectNode(id, options) {
   const node = findNode(id);
   if (!node) return;
+  const changed = state.selectedId !== id;
   state.selectedId = id;
+  state.selectedNode = node;
   state.selectedFingerprint = fingerprintOf(node);
-  renderTree();
+  state.selectionStale = false;
+  state.selectionOffscreen = node.visible_fraction === 0 ||
+    Boolean(node.state && node.state.hidden_by_a11y);
+  state.detailsStale = false;
+  if (changed) {
+    state.detailsFor = 0;
+    state.detailsKey = '';
+    state.suggestions = [];
+    clear(byId('suggestions'));
+    byId('details').textContent = 'Loading…';
+  }
+  if (options && options.reveal) {
+    revealRow(id);
+  } else {
+    updateTreeClasses();
+  }
   drawOverlay();
-  loadDetails(id);
+  renderStatus();
+  maybeLoadDetails();
+}
+
+function revealRow(id) {
+  const index = state.rows.findIndex((row) => row.node.id === id);
+  if (index < 0) return;
+  const tree = byId('tree');
+  const top = index * ROW_HEIGHT;
+  const height = tree.clientHeight || 320;
+  if (top < tree.scrollTop) tree.scrollTop = top;
+  else if (top + ROW_HEIGHT > tree.scrollTop + height) tree.scrollTop = top + ROW_HEIGHT - height;
+  renderTree();
+  updateTreeClasses();
 }
 
 function moveSelection(delta) {
@@ -546,46 +809,83 @@ function moveSelection(delta) {
   const index = state.rows.findIndex((row) => row.node.id === state.selectedId);
   const next = index < 0 ? 0 : Math.max(0, Math.min(state.rows.length - 1, index + delta));
   const row = state.rows[next];
-  if (row) {
-    selectNode(row.node.id);
-    const element = byId('tree').querySelector('[data-id="' + row.node.id + '"]');
-    if (element) element.scrollIntoView({ block: 'nearest' });
-  }
+  if (row) selectNode(row.node.id, { reveal: true });
 }
 
-async function loadDetails(id) {
+async function loadDetails(id, key) {
+  const seq = state.detailsSeq + 1;
+  state.detailsSeq = seq;
+  state.detailsFor = id;
+  state.detailsKey = key;
   try {
-    const [node, suggestions] = await Promise.all([
-      api('/api/node?id=' + id),
-      api('/api/node/suggest?id=' + id),
-    ]);
-    if (state.selectedId !== id) return;
-    state.detailsFor = id;
-    state.detailsAt = Date.now();
-    renderDetails(node);
-    renderSuggestions(suggestions);
-  } catch (error) {
-    if (state.selectedId === id) {
-      byId('details').textContent = error.message;
-      clear(byId('suggestions'));
+    const node = await api('/api/node?id=' + id);
+    const suggestions = await api('/api/node/suggest?id=' + id).catch(() => null);
+    if (seq !== state.detailsSeq || state.selectedId !== id) return;
+    state.selectedNode = node;
+    if (!findNode(id)) {
+      // The node disappeared while the request was in flight; keep the stale
+      // banner instead of presenting the response as current.
+      state.selectionStale = true;
+      state.detailsStale = true;
+      renderDetails(node, { stale: true });
+      return;
     }
+    state.detailsStale = false;
+    renderDetails(node, { stale: false });
+    if (suggestions) {
+      state.suggestions = suggestions.suggestions || [];
+      renderSuggestions(suggestions);
+    }
+  } catch (error) {
+    if (seq !== state.detailsSeq || state.selectedId !== id) return;
+    // Let the next snapshot retry the details request.
+    state.detailsFor = 0;
+    state.detailsKey = '';
+    if (state.selectedNode) renderDetails(state.selectedNode, { stale: true, error: error.message });
   }
 }
 
-function renderDetails(node) {
+function renderDetails(node, options) {
   const details = byId('details');
   clear(details);
+  if (!node) {
+    details.textContent = 'Nothing selected.';
+    return;
+  }
+  const settings = options || {};
+  if (settings.stale) {
+    const banner = document.createElement('div');
+    banner.className = 'banner warn';
+    banner.textContent = state.selectionOffscreen
+      ? 'The selected node is outside the viewport. Showing the last known state.'
+      : 'The selected node is no longer in the current snapshot. Showing the last known state.';
+    details.appendChild(banner);
+    const actions = document.createElement('div');
+    actions.className = 'row';
+    if (state.selectionOffscreen || node.bounds) {
+      actions.appendChild(makeButton('Scroll to reveal', scrollToReveal, 'secondary'));
+    }
+    actions.appendChild(makeButton('Refresh snapshot', refreshSnapshot, 'secondary'));
+    details.appendChild(actions);
+    if (settings.error) {
+      const error = document.createElement('div');
+      error.className = 'meta error';
+      error.textContent = settings.error;
+      details.appendChild(error);
+    }
+  }
+
   const list = document.createElement('dl');
   const bounds = node.bounds
     ? Math.round(node.bounds.x) + ',' + Math.round(node.bounds.y) + ' ' +
       Math.round(node.bounds.w) + '×' + Math.round(node.bounds.h)
     : '';
   const fields = [
-    ['Ref', 'e' + node.id],
+    ['Ref', node.ref || ('e' + node.id)],
     ['Role', node.role],
     ['Name', node.name],
     ['Text', node.text],
-    ['Value', node.value],
+    ['Value', node.secure ? '***' : node.value],
     ['Test id', node.test_id],
     ['Native id', node.native_id],
     ['Bounds', bounds],
@@ -594,6 +894,7 @@ function renderDetails(node) {
     ['Scroll', scrollSummary(node.scroll)],
     ['CSS', node.css_selector],
     ['XPath', node.xpath],
+    ['Children', node.children === undefined ? '' : String(node.children)],
     ['Hidden children', node.children_hidden_count ? String(node.children_hidden_count) : ''],
     ['Secure', node.secure ? 'yes (value masked)' : ''],
   ];
@@ -607,6 +908,16 @@ function renderDetails(node) {
     list.appendChild(definition);
   }
   details.appendChild(list);
+
+  const actions = document.createElement('div');
+  actions.className = 'row copy-row';
+  actions.appendChild(makeButton('Copy ref', () => copyText(node.ref || ('e' + node.id), 'Ref'), 'secondary copy'));
+  actions.appendChild(makeButton('Copy JSON', () => copyText(JSON.stringify(node, null, 2), 'Node JSON'), 'secondary copy'));
+  if (state.suggestions.length) {
+    actions.appendChild(makeButton('Copy best locator', () => copyText(state.suggestions[0].locator, 'Locator'), 'secondary copy'));
+  }
+  details.appendChild(actions);
+
   if (node.raw && Object.keys(node.raw).length) {
     const pre = document.createElement('pre');
     pre.textContent = JSON.stringify(node.raw, null, 2);
@@ -634,6 +945,19 @@ function scrollSummary(scroll) {
   return parts.join(', ');
 }
 
+async function scrollToReveal() {
+  const node = state.selectedNode;
+  const screen = state.snapshot && state.snapshot.screen ? state.snapshot.screen : {};
+  let direction = 'down';
+  if (node && node.bounds && screen.logical_h) {
+    if (node.bounds.y + node.bounds.h <= 0) direction = 'up';
+    else if (node.bounds.y >= screen.logical_h) direction = 'down';
+    else direction = node.bounds.y < screen.logical_h / 2 ? 'up' : 'down';
+  }
+  await sendScroll(direction, 3);
+  await refreshSnapshot();
+}
+
 function renderSuggestions(data) {
   const container = byId('suggestions');
   clear(container);
@@ -643,6 +967,8 @@ function renderSuggestions(data) {
     return;
   }
   for (const suggestion of suggestions) {
+    const row = document.createElement('div');
+    row.className = 'suggestion-row';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'suggestion';
@@ -656,9 +982,11 @@ function renderSuggestions(data) {
     button.appendChild(score);
     button.addEventListener('click', () => {
       byId('locator-input').value = suggestion.locator;
-      resolveLocator(suggestion.locator);
+      resolveLocator(suggestion.locator, { reveal: true });
     });
-    container.appendChild(button);
+    row.appendChild(button);
+    row.appendChild(makeButton('Copy', () => copyText(suggestion.locator, 'Locator'), 'secondary copy'));
+    container.appendChild(row);
   }
 }
 
@@ -689,17 +1017,20 @@ function drawOverlay() {
   const screen = snapshot.screen || {};
   const scaleX = rect.width / (screen.logical_w || 1);
   const scaleY = rect.height / (screen.logical_h || 1);
-  const drawNode = (node, color, width) => {
+  const drawNode = (node, color, width, dashed) => {
     if (!node || !node.bounds) return;
     const bounds = node.bounds;
+    context.save();
     context.strokeStyle = color;
     context.lineWidth = width;
+    if (dashed) context.setLineDash([4, 3]);
     context.strokeRect(
       bounds.x * scaleX,
       bounds.y * scaleY,
       Math.max(1, bounds.w * scaleX),
       Math.max(1, bounds.h * scaleY)
     );
+    context.restore();
   };
   if (!Array.isArray(snapshot.nodes)) return;
   for (const node of snapshot.nodes) {
@@ -707,7 +1038,10 @@ function drawOverlay() {
   }
   for (const node of snapshot.nodes) {
     if (node.state && node.state.focused) drawNode(node, '#c792ea', 1.5);
-    if (node.scroll) drawNode(node, '#8d9ab0', 1);
+    if (node.scroll) {
+      drawNode(node, '#8d9ab0', 1, true);
+      drawScrollBadge(context, node, scaleX, scaleY);
+    }
   }
   const hover = findNode(state.hoverId);
   if (hover) drawNode(hover, '#5cc8ff', 1.5);
@@ -727,6 +1061,19 @@ function drawOverlay() {
       context.fillText(label, x + 4, y - 1);
     }
   }
+}
+
+function drawScrollBadge(context, node, scaleX, scaleY) {
+  if (!node.bounds) return;
+  const x = Math.max(0, node.bounds.x * scaleX + 2);
+  const y = Math.max(10, node.bounds.y * scaleY + 10);
+  context.save();
+  context.font = '10px "Segoe UI", system-ui, sans-serif';
+  context.fillStyle = 'rgba(10, 14, 20, 0.75)';
+  context.fillRect(x - 2, y - 9, 38, 12);
+  context.fillStyle = '#8d9ab0';
+  context.fillText(node.scroll && node.scroll.axis === 'horizontal' ? '↔ scroll' : '↕ scroll', x, y);
+  context.restore();
 }
 
 function stagePoint(event) {
@@ -756,20 +1103,41 @@ function nodesAt(point) {
     .sort((left, right) => area(left) - area(right));
 }
 
-function stageClick(event) {
+function stagePointerDown(event) {
+  if (event.button !== undefined && event.button !== 0) return;
   const point = stagePoint(event);
   if (!point) return;
-  const candidates = nodesAt(point);
-  if (!candidates.length) return;
-  let node = candidates[0];
-  if (event.altKey || event.metaKey) {
-    const index = candidates.findIndex((candidate) => candidate.id === state.selectedId);
-    node = candidates[(index + 1) % candidates.length];
+  state.drag = {
+    start: point,
+    last: point,
+    startX: event.clientX,
+    startY: event.clientY,
+    pointerId: event.pointerId,
+    moved: false,
+  };
+  const stage = byId('stage');
+  if (stage.setPointerCapture) {
+    try {
+      stage.setPointerCapture(event.pointerId);
+    } catch (error) {
+      // Pointer capture is a nicety; dragging still works inside the stage.
+    }
   }
-  selectNode(node.id);
+  stage.classList.add('dragging');
 }
 
-function stageMove(event) {
+function stagePointerMove(event) {
+  const drag = state.drag;
+  if (drag && drag.pointerId === event.pointerId) {
+    const point = stagePoint(event);
+    if (point) {
+      drag.last = point;
+      if (Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) > 10) {
+        drag.moved = true;
+      }
+    }
+    return;
+  }
   if (state.hoverFrame) return;
   state.hoverFrame = window.requestAnimationFrame(() => {
     state.hoverFrame = 0;
@@ -780,41 +1148,135 @@ function stageMove(event) {
   });
 }
 
+async function stagePointerUp(event) {
+  const drag = state.drag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  state.drag = null;
+  byId('stage').classList.remove('dragging');
+  if (drag.moved) {
+    await sendSwipe(drag.start.x, drag.start.y, drag.last.x, drag.last.y, 0);
+    return;
+  }
+  const point = stagePoint(event) || drag.start;
+  const candidates = nodesAt(point);
+  if (!candidates.length) return;
+  let node = candidates[0];
+  if (event.altKey || event.metaKey) {
+    const index = candidates.findIndex((candidate) => candidate.id === state.selectedId);
+    node = candidates[(index + 1) % candidates.length];
+  }
+  selectNode(node.id);
+}
+
+function stageWheel(event) {
+  if (!state.status || !state.status.attached || state.frozen) return;
+  event.preventDefault();
+  const now = Date.now();
+  if (now - state.wheelAt < 120) return;
+  state.wheelAt = now;
+  const direction = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+    ? (event.deltaY > 0 ? 'down' : 'up')
+    : (event.deltaX > 0 ? 'right' : 'left');
+  sendScroll(direction, 1);
+}
+
 // ---------------------------------------------------------------------------
-// Screenshot polling
+// Input
 // ---------------------------------------------------------------------------
 
-async function loadScreenshot() {
-  if (state.screenshotBusy) return;
-  if (state.frozen || !state.status || !state.status.attached) return;
-  state.screenshotBusy = true;
+function populateKeys(keys) {
+  const select = byId('key-select');
+  const previous = select.value;
+  clear(select);
+  for (const key of keys) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = key;
+    select.appendChild(option);
+  }
+  if (previous && keys.includes(previous)) select.value = previous;
+  if (!select.value && select.options.length > 0) select.value = 'ok';
+}
+
+async function sendInput(body, label) {
+  if (!state.status || !state.status.attached) {
+    toast('Attach a device first.', true);
+    return null;
+  }
+  if (state.frozen) {
+    toast('Unfreeze to interact with the device.', true);
+    return null;
+  }
   try {
-    const query = '?t=' + Date.now() + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '');
-    const response = await fetch('/api/screenshot' + query, { headers: authHeaders() });
-    if (!response.ok) throw new Error('screenshot request failed with HTTP ' + response.status);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const image = byId('screenshot');
-    await new Promise((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('the screenshot could not be decoded'));
-      image.src = objectUrl;
-    });
-    URL.revokeObjectURL(objectUrl);
-    byId('stage-empty').hidden = true;
-    drawOverlay();
+    const data = await api('/api/input', { body });
+    setInputStatus((label || body.kind) + ' · rev ' + data.rev);
+    if (data.status) applyStatus(data.status);
+    await refreshSnapshot();
+    loadScreenshot();
+    return data;
   } catch (error) {
-    // Keep the last good frame; acquisition errors are surfaced in status.
-  } finally {
-    state.screenshotBusy = false;
-    scheduleScreenshot();
+    setInputStatus((label || body.kind) + ' failed', true);
+    toast(error.message, true);
+    return null;
   }
 }
 
-function scheduleScreenshot() {
-  clearTimeout(state.screenshotTimer);
-  if (state.frozen || !state.status || !state.status.attached) return;
-  state.screenshotTimer = setTimeout(loadScreenshot, Math.max(100, state.pollMs));
+function selectionRef() {
+  if (!state.selectedId || state.selectionStale) return 0;
+  return state.selectedId;
+}
+
+async function tapSelected() {
+  if (!state.selectedId) {
+    toast('Select an element in the tree or on the screenshot first.', true);
+    return;
+  }
+  if (state.selectionStale) {
+    toast('The selected node is stale; refresh the snapshot first.', true);
+    return;
+  }
+  if (state.selectionOffscreen) {
+    toast('The selected node is outside the viewport; scroll to reveal it first.', true);
+    return;
+  }
+  await sendInput({ kind: 'tap', ref: 'e' + state.selectedId }, 'tap');
+}
+
+async function sendScroll(direction, count) {
+  const body = { kind: 'scroll', direction, count: count || 1 };
+  const ref = selectionRef();
+  if (ref) body.ref = 'e' + ref;
+  await sendInput(body, 'scroll ' + direction);
+}
+
+async function sendKey(name) {
+  await sendInput({ kind: 'key', key: name }, 'key ' + name);
+}
+
+async function sendType() {
+  const input = byId('type-text');
+  const text = input.value;
+  if (!text) {
+    toast('Enter text to type.', true);
+    return;
+  }
+  const body = { kind: 'type', text };
+  const ref = selectionRef();
+  if (ref) body.ref = 'e' + ref;
+  const result = await sendInput(body, 'type');
+  if (result) input.value = '';
+}
+
+async function sendSwipe(x1, y1, x2, y2, durationMs) {
+  const body = {
+    kind: 'swipe',
+    x: x1,
+    y: y1,
+    end_x: x2,
+    end_y: y2,
+    duration_ms: durationMs || 0,
+  };
+  await sendInput(body, 'swipe');
 }
 
 // ---------------------------------------------------------------------------
@@ -829,24 +1291,45 @@ function parseRef(value) {
   return Number.isFinite(id) ? id : 0;
 }
 
-async function resolveLocator(locator) {
+function looksLikeLocator(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  if (text === 'focused') return true;
+  if (text.includes('>>') || text.includes('within(')) return true;
+  return /(^|\s)(role|text|name|testid|id|css|xpath|region|state|index|nth|level|value)\s*=/i.test(text);
+}
+
+function applyMatches(data) {
+  state.matchIds = new Set((data.matches || []).map((match) => parseRef(match.id)));
+  state.matchSource = 'panel';
+}
+
+async function resolveLocator(locator, options) {
+  const settings = options || {};
   const value = (locator === undefined ? byId('locator-input').value : locator).trim();
   if (!value) {
     toast('Enter a locator first.', true);
-    return;
+    return null;
   }
   try {
     const data = await api('/api/locator/resolve', { body: { locator: value } });
-    state.matchIds = new Set((data.matches || []).map((match) => parseRef(match.id)));
+    applyMatches(data);
     renderLocatorResult(data);
+    if (settings.reveal && data.unique && data.matches && data.matches.length === 1) {
+      selectNode(parseRef(data.matches[0].id), { reveal: true });
+    }
     renderTree();
     drawOverlay();
+    return data;
   } catch (error) {
     state.matchIds.clear();
     renderTree();
     drawOverlay();
-    byId('locator-result').className = 'result error';
-    byId('locator-result').textContent = error.message;
+    const result = byId('locator-result');
+    result.className = 'result error';
+    result.textContent = error.message;
+    if (!settings.quiet) toast(error.message, true);
+    return null;
   }
 }
 
@@ -858,7 +1341,7 @@ async function verifyLocator() {
   }
   try {
     const data = await api('/api/locator/verify', { body: { locator: value } });
-    state.matchIds = new Set((data.matches || []).map((match) => parseRef(match.id)));
+    applyMatches(data);
     renderTree();
     drawOverlay();
     const result = byId('locator-result');
@@ -874,24 +1357,127 @@ async function verifyLocator() {
 function renderLocatorResult(data) {
   const result = byId('locator-result');
   result.className = 'result ' + (data.unique ? 'ok' : '');
-  const lines = ['count: ' + data.count + '  unique: ' + data.unique];
+  clear(result);
+  const summary = document.createElement('div');
+  summary.textContent = 'count: ' + data.count + '  unique: ' + data.unique;
+  result.appendChild(summary);
   for (const match of data.matches || []) {
-    lines.push('  ' + match.id + '  ' + match.role + '  ' + (match.name || '') +
-      (match.visible ? '' : '  (offscreen)'));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'match-link';
+    button.textContent = match.id + '  ' + match.role + '  ' + (match.name || '') +
+      (match.visible ? '' : '  (offscreen)');
+    button.addEventListener('click', () => selectNode(parseRef(match.id), { reveal: true }));
+    result.appendChild(button);
   }
-  result.textContent = lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Tree filter (substring or locator)
+// ---------------------------------------------------------------------------
+
+function onFilterInput(event) {
+  state.filter = event.target.value;
+  clearTimeout(state.filterTimer);
+  state.filterTimer = setTimeout(runFilter, FILTER_DEBOUNCE_MS);
+}
+
+async function runFilter() {
+  const value = state.filter.trim();
+  const seq = state.filterSeq + 1;
+  state.filterSeq = seq;
+  if (!looksLikeLocator(value)) {
+    state.locatorFilter = null;
+    if (state.matchSource === 'tree') {
+      state.matchIds.clear();
+      state.matchSource = '';
+      drawOverlay();
+    }
+    buildRows();
+    renderTree();
+    return;
+  }
+  try {
+    const data = await api('/api/locator/resolve', { body: { locator: value } });
+    if (seq !== state.filterSeq) return;
+    state.locatorFilter = {
+      ids: new Set((data.matches || []).map((match) => parseRef(match.id))),
+      count: data.count,
+      rev: data.rev,
+    };
+    state.matchIds = new Set(state.locatorFilter.ids);
+    state.matchSource = 'tree';
+    buildRows();
+    renderTree();
+    drawOverlay();
+  } catch (error) {
+    if (seq !== state.filterSeq) return;
+    state.locatorFilter = null;
+    if (state.matchSource === 'tree') {
+      state.matchIds.clear();
+      state.matchSource = '';
+    }
+    buildRows();
+    renderTree();
+    drawOverlay();
+    const count = byId('tree-count');
+    count.textContent = 'invalid locator: ' + error.message;
+    count.classList.add('error');
+  }
+}
+
+function clearMatches() {
+  state.matchIds.clear();
+  state.matchSource = '';
+  state.locatorFilter = null;
+  byId('locator-result').textContent = '';
+  byId('tree-filter').value = '';
+  state.filter = '';
+  buildRows();
+  renderTree();
+  drawOverlay();
 }
 
 // ---------------------------------------------------------------------------
 // Scene authoring
 // ---------------------------------------------------------------------------
 
+function platformKey(value) {
+  const key = String(value || '').toLowerCase();
+  if (key === 'tizenos') return 'tizen';
+  return key;
+}
+
+function platformOfSelection() {
+  return (state.status && state.status.platform) || undefined;
+}
+
+function sceneDocument() {
+  return state.edit || state.scene;
+}
+
+function selectorFor(piece, platform) {
+  if (!piece || !platform) return '';
+  const key = platformKey(platform);
+  const selector = (piece.selectors || []).find((candidate) => platformKey(candidate.key) === key);
+  return selector ? selector.raw : '';
+}
+
 async function refreshScenes() {
   const data = await api('/api/scenes');
   const select = byId('scene-select');
-  const previous = select.value;
+  const previous = state.scene ? state.scene.path : select.value;
   clear(select);
-  for (const scene of data.scenes || []) {
+  const scenes = data.scenes || [];
+  if (!scenes.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No scenes found';
+    option.disabled = true;
+    select.appendChild(option);
+    return;
+  }
+  for (const scene of scenes) {
     const option = document.createElement('option');
     option.value = scene.path;
     option.textContent = scene.path + '  (' + scene.bytes + ' B)';
@@ -907,10 +1493,13 @@ async function openScene(path) {
     toast('Choose a scene first.', true);
     return;
   }
+  if (state.edit && !window.confirm('Discard the previewed edit?')) return;
   try {
     const scene = await api('/api/scenes/open?path=' + encodeURIComponent(wanted));
     state.scene = scene;
     state.edit = null;
+    state.sceneCell = null;
+    state.pendingOp = null;
     clear(byId('scene-edit'));
     renderScene();
     byId('scene-select').value = scene.path;
@@ -922,24 +1511,134 @@ async function openScene(path) {
 function renderScene() {
   const scene = state.scene;
   const meta = byId('scene-meta');
-  const actions = byId('scene-actions');
-  clear(actions);
   if (!scene) {
     meta.textContent = 'No scene open.';
+    clear(byId('scene-table'));
+    renderSceneActions();
     return;
   }
-  const columns = (scene.columns || []).map((column) => column.name).join(', ');
+  const columns = (scene.columns || [])
+    .map((column) => column.name + (column.platform ? ' (' + column.platform + ')' : ''))
+    .join(', ');
   const diagnostics = scene.diagnostics || [];
-  meta.textContent = [
+  const lines = [
     scene.path,
     'revision: ' + String(scene.revision || '').slice(0, 12),
     'columns: ' + (columns || '(none)'),
     scene.has_errors ? 'diagnostics: ' + diagnostics.join('; ') : 'valid',
-  ].join('\n');
+  ];
+  if (state.edit) lines.push('preview pending (not committed)');
+  if (state.sceneCell) lines.push('cell: ' + state.sceneCell.row + ' / ' + state.sceneCell.column);
+  meta.textContent = lines.join('\n');
+  renderSceneTable();
+  renderSceneActions();
+}
+
+function renderSceneTable() {
+  const container = byId('scene-table');
+  const scrollTop = container.scrollTop;
+  const scrollLeft = container.scrollLeft;
+  clear(container);
+  const sceneDoc = sceneDocument();
+  if (!sceneDoc) {
+    container.textContent = 'No scene open.';
+    return;
+  }
+  container.classList.toggle('pending', Boolean(state.edit));
+  // The index column is shown separately; only platform columns are editable.
+  const columns = (sceneDoc.columns || []).filter((column) => Boolean(column.platform));
+  const pieces = (sceneDoc.scene && sceneDoc.scene.pieces) || [];
+  if (!columns.length) {
+    container.textContent = 'This scene has no table columns. Add one for the attached platform.';
+    return;
+  }
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const label of ['Piece', 'Index']) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  }
+  for (const column of columns) {
+    const th = document.createElement('th');
+    th.textContent = column.name;
+    th.title = column.platform || 'index';
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  if (!pieces.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = columns.length + 2;
+    td.className = 'empty-cell';
+    td.textContent = 'No pieces yet. Select an element and use “Add selected element”.';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+  for (const piece of pieces) {
+    const tr = document.createElement('tr');
+    const nameCell = document.createElement('td');
+    const code = document.createElement('code');
+    code.textContent = piece.name;
+    nameCell.appendChild(code);
+    tr.appendChild(nameCell);
+    const indexCell = document.createElement('td');
+    indexCell.textContent = String(piece.index || 0);
+    tr.appendChild(indexCell);
+    for (const column of columns) {
+      const td = document.createElement('td');
+      const raw = selectorFor(piece, column.platform);
+      td.className = 'cell' + (raw ? '' : ' empty-cell');
+      if (state.sceneCell && state.sceneCell.row === piece.name &&
+          state.sceneCell.column === column.name) {
+        td.classList.add('picked');
+      }
+      if (state.edit && state.edit.column === column.name) td.classList.add('pending');
+      td.textContent = raw || '—';
+      td.title = raw || 'Empty cell — select an element, then click here';
+      td.addEventListener('click', () => {
+        state.sceneCell = { row: piece.name, column: column.name, platform: column.platform };
+        renderScene();
+      });
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  container.appendChild(table);
+  container.scrollTop = scrollTop;
+  container.scrollLeft = scrollLeft;
+}
+
+function renderSceneActions() {
+  const actions = byId('scene-actions');
+  clear(actions);
+  if (!state.scene) return;
+  // Selection-dependent actions stay enabled and validate on click: the
+  // action row must not be rebuilt on every poll, or a click can land on a
+  // button that is replaced between mousedown and mouseup.
   actions.appendChild(makeButton('Add selected element', addSelectedElement, 'primary'));
-  actions.appendChild(makeButton('Fill cell', fillCell));
-  actions.appendChild(makeButton('Replace cell', replaceCell));
+
+  if (state.sceneCell) {
+    actions.appendChild(makeButton('Fill ' + state.sceneCell.row + ' / ' + state.sceneCell.column, fillCell, 'primary'));
+    actions.appendChild(makeButton('Replace ' + state.sceneCell.row + ' / ' + state.sceneCell.column, replaceCell, 'secondary'));
+  } else {
+    actions.appendChild(makeButton('Fill cell…', fillCell, 'secondary'));
+    actions.appendChild(makeButton('Replace cell…', replaceCell, 'secondary'));
+  }
+
+  const platform = platformOfSelection();
+  if (platform) {
+    actions.appendChild(makeButton('Add ' + platform + ' column', () => {
+      previewScene({ kind: 'add_column', platform });
+    }, 'secondary'));
+  }
   actions.appendChild(makeButton('Validate', validateScene, 'secondary'));
+  actions.appendChild(makeButton('Reload from disk', () => openScene(state.scene.path), 'secondary'));
   actions.appendChild(makeButton('Undo last inspector edit', undoScene, 'secondary'));
 }
 
@@ -949,7 +1648,7 @@ async function createScene() {
   const fallbackName = path.split('/').pop().replace(/\.scene$/i, '');
   const name = prompt('Scene name', fallbackName);
   if (!name) return;
-  const platform = (state.status && state.status.platform) || 'android';
+  const platform = platformOfSelection() || 'android';
   const raw = prompt('Platform columns (comma separated)', platform);
   if (raw === null) return;
   const platforms = raw.split(',').map((value) => value.trim()).filter(Boolean);
@@ -963,8 +1662,98 @@ async function createScene() {
   }
 }
 
-function platformOfSelection() {
-  return (state.status && state.status.platform) || undefined;
+async function bestLocatorForSelection() {
+  if (!state.selectedId || state.selectionStale) return '';
+  try {
+    const data = await api('/api/node/suggest?id=' + state.selectedId);
+    const best = (data.suggestions || [])[0];
+    return best ? best.locator : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+async function addSelectedElement() {
+  if (!state.selectedId || state.selectionStale) {
+    toast('Select an element in the tree or on the screenshot first.', true);
+    return;
+  }
+  try {
+    const suggestions = await api('/api/node/suggest?id=' + state.selectedId);
+    const best = (suggestions.suggestions || [])[0];
+    if (!best) {
+      toast('No locator candidate for this element.', true);
+      return;
+    }
+    const node = findNode(state.selectedId);
+    const seed = (node && (node.name || node.text || node.role)) || 'Element';
+    const rowName = prompt('Piece name', seed.replace(/[^A-Za-z0-9 _.-]/g, '').trim() || 'Element');
+    if (!rowName) return;
+    const locator = prompt('Locator', best.locator);
+    if (!locator) return;
+    const op = { kind: 'add_element', row: rowName, locator, seed };
+    const platform = platformOfSelection();
+    if (platform) op.platform = platform;
+    await previewScene(op);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function fillCell() {
+  if (!state.scene) {
+    toast('Open a scene first.', true);
+    return;
+  }
+  let row = state.sceneCell && state.sceneCell.row;
+  let column = state.sceneCell && state.sceneCell.column;
+  if (!row) {
+    row = prompt('Piece name to fill');
+    if (!row) return;
+  }
+  if (!column) {
+    const locator = byId('locator-input').value.trim() || await bestLocatorForSelection();
+    if (!locator) {
+      toast('Select an element or enter a locator.', true);
+      return;
+    }
+    const op = { kind: 'fill_cell', row, locator };
+    const platform = platformOfSelection();
+    if (platform) op.platform = platform;
+    await previewScene(op);
+    return;
+  }
+  const locator = byId('locator-input').value.trim() || await bestLocatorForSelection();
+  if (!locator) {
+    toast('Select an element or enter a locator.', true);
+    return;
+  }
+  await previewScene({ kind: 'fill_cell', row, column, locator });
+}
+
+async function replaceCell() {
+  if (!state.scene) {
+    toast('Open a scene first.', true);
+    return;
+  }
+  let row = state.sceneCell && state.sceneCell.row;
+  let column = state.sceneCell && state.sceneCell.column;
+  if (!row) {
+    row = prompt('Piece name to replace');
+    if (!row) return;
+  }
+  const locator = byId('locator-input').value.trim() || await bestLocatorForSelection();
+  if (!locator) {
+    toast('Select an element or enter a locator.', true);
+    return;
+  }
+  const op = { kind: 'replace_cell', row, locator, confirm: false };
+  if (column) op.column = column;
+  else {
+    const platform = platformOfSelection();
+    if (platform) op.platform = platform;
+  }
+  await previewScene(op);
 }
 
 async function previewScene(op, options) {
@@ -972,12 +1761,17 @@ async function previewScene(op, options) {
     toast('Open a scene first.', true);
     return;
   }
-  const body = { path: state.scene.path, op };
+  const body = {
+    path: state.scene.path,
+    base_revision: state.scene.revision,
+    op,
+  };
   if (options && options.base_revision) body.base_revision = options.base_revision;
   try {
     const edit = await api('/api/scenes/preview', { body });
     state.edit = edit;
     renderEdit(edit);
+    renderScene();
   } catch (error) {
     if (error.code === 'SCENE_CONFIRM_REQUIRED' && !op.confirm) {
       const diff = (error.details && error.details.diff) || '';
@@ -987,11 +1781,29 @@ async function previewScene(op, options) {
       }
       return;
     }
+    if (error.code === 'AMBIGUOUS_COLUMN') {
+      const candidates = (error.details && error.details.candidates) || [];
+      const chosen = prompt('Choose the column for this element:\n' + candidates.join('\n'), candidates[0] || '');
+      if (chosen) {
+        op.column = chosen;
+        delete op.platform;
+        return previewScene(op, options);
+      }
+      return;
+    }
     if (error.code === 'MISSING_COLUMN' && op.kind !== 'add_column') {
       const details = error.details || {};
-      if (details.platform && window.confirm(error.message + '\n\nAdd column "' +
-          (details.suggested || details.platform) + '"?')) {
+      const suggested = details.suggested || details.platform;
+      if (suggested && window.confirm(error.message + '\n\nAdd column "' + suggested + '"?')) {
+        state.pendingOp = { op, options };
         return previewScene({ kind: 'add_column', platform: details.platform }, options);
+      }
+      return;
+    }
+    if (error.code === 'SCENE_CONFLICT') {
+      if (window.confirm('The scene changed on disk. Reload it and discard this preview?')) {
+        state.edit = null;
+        await openScene(state.scene.path);
       }
       return;
     }
@@ -1009,7 +1821,13 @@ function renderEdit(edit) {
     (edit.has_errors ? ' · diagnostics: ' + (edit.diagnostics || []).join('; ') : '');
   container.appendChild(meta);
   const pre = document.createElement('pre');
-  pre.textContent = edit.diff || '(no textual diff)';
+  for (const line of String(edit.diff || '(no textual diff)').split('\n')) {
+    const span = document.createElement('div');
+    span.textContent = line;
+    if (line.startsWith('+') && !line.startsWith('+++')) span.className = 'diff-add';
+    else if (line.startsWith('-') && !line.startsWith('---')) span.className = 'diff-del';
+    pre.appendChild(span);
+  }
   container.appendChild(pre);
   const row = document.createElement('div');
   row.className = 'row';
@@ -1018,7 +1836,9 @@ function renderEdit(edit) {
   row.appendChild(commit);
   row.appendChild(makeButton('Discard', () => {
     state.edit = null;
+    state.pendingOp = null;
     clear(container);
+    renderScene();
   }, 'secondary'));
   container.appendChild(row);
 }
@@ -1027,78 +1847,16 @@ async function commitEdit(edit) {
   try {
     const result = await api('/api/scenes/commit', { body: { edit_id: edit.edit_id } });
     toast('Committed ' + result.path + ' (' + String(result.revision || '').slice(0, 12) + ').');
+    const pending = state.pendingOp;
+    state.pendingOp = null;
     state.edit = null;
     clear(byId('scene-edit'));
     await refreshScenes();
     await openScene(result.path);
+    if (pending) await previewScene(pending.op, pending.options);
   } catch (error) {
     toast(error.message, true);
   }
-}
-
-async function addSelectedElement() {
-  if (!state.selectedId) {
-    toast('Select an element in the tree or on the screenshot first.', true);
-    return;
-  }
-  try {
-    const suggestions = await api('/api/node/suggest?id=' + state.selectedId);
-    const best = (suggestions.suggestions || [])[0];
-    if (!best) {
-      toast('No locator candidate for this element.', true);
-      return;
-    }
-    const node = findNode(state.selectedId);
-    const seed = (node && (node.name || node.text || node.role)) || 'Element';
-    const rowName = prompt('Piece name', seed.replace(/[^A-Za-z0-9 _.-]/g, '').trim() || 'Element');
-    if (!rowName) return;
-    const locator = prompt('Locator', best.locator);
-    if (!locator) return;
-    await previewScene({
-      kind: 'add_element',
-      row: rowName,
-      platform: platformOfSelection(),
-      locator,
-      seed,
-    });
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
-async function fillCell() {
-  if (!state.scene) {
-    toast('Open a scene first.', true);
-    return;
-  }
-  const rowName = prompt('Piece name to fill');
-  if (!rowName) return;
-  const locator = prompt('Locator', byId('locator-input').value || '');
-  if (!locator) return;
-  await previewScene({
-    kind: 'fill_cell',
-    row: rowName,
-    platform: platformOfSelection(),
-    locator,
-  });
-}
-
-async function replaceCell() {
-  if (!state.scene) {
-    toast('Open a scene first.', true);
-    return;
-  }
-  const rowName = prompt('Piece name to replace');
-  if (!rowName) return;
-  const locator = prompt('Locator', byId('locator-input').value || '');
-  if (!locator) return;
-  await previewScene({
-    kind: 'replace_cell',
-    row: rowName,
-    platform: platformOfSelection(),
-    locator,
-    confirm: false,
-  });
 }
 
 async function validateScene() {
@@ -1110,10 +1868,10 @@ async function validateScene() {
     const data = await api('/api/scenes/preview', {
       body: { path: state.scene.path, op: { kind: 'validate' } },
     });
-    const document = data.document || {};
-    toast(document.has_errors
-      ? 'Validation found errors:\n' + (document.diagnostics || []).join('\n')
-      : 'Scene is valid.', document.has_errors);
+    const doc = data.document || {};
+    toast(doc.has_errors
+      ? 'Validation found errors:\n' + (doc.diagnostics || []).join('\n')
+      : 'Scene is valid.', doc.has_errors);
   } catch (error) {
     toast(error.message, true);
   }
@@ -1135,19 +1893,78 @@ async function undoScene() {
 }
 
 // ---------------------------------------------------------------------------
+// Screenshot polling
+// ---------------------------------------------------------------------------
+
+async function loadScreenshot() {
+  if (state.screenshotBusy) return;
+  if (state.frozen || !state.status || !state.status.attached) return;
+  state.screenshotBusy = true;
+  try {
+    const query = '?t=' + Date.now() + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '');
+    const response = await fetch('/api/screenshot' + query, { headers: authHeaders() });
+    if (!response.ok) {
+      let message = 'screenshot request failed with HTTP ' + response.status;
+      try {
+        const payload = await response.json();
+        if (payload && payload.error && payload.error.message) message = payload.error.message;
+      } catch (error) {
+        // Keep the HTTP status message.
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const image = byId('screenshot');
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('the screenshot could not be decoded'));
+      image.src = objectUrl;
+    });
+    URL.revokeObjectURL(objectUrl);
+    state.hasFrame = true;
+    state.screenshotFailures = 0;
+    state.frameNote = '';
+    byId('stage-empty').hidden = true;
+    drawOverlay();
+    renderStatus();
+  } catch (error) {
+    state.screenshotFailures = Math.min(6, state.screenshotFailures + 1);
+    state.frameNote = state.screenshotFailures > 1 ? 'screenshot unavailable' : '';
+    renderStatus();
+  } finally {
+    state.screenshotBusy = false;
+    scheduleScreenshot();
+  }
+}
+
+function scheduleScreenshot() {
+  clearTimeout(state.screenshotTimer);
+  if (state.frozen || !state.status || !state.status.attached) return;
+  const backoff = Math.min(4000, Math.max(100, state.pollMs) * Math.pow(2, state.screenshotFailures));
+  state.screenshotTimer = setTimeout(loadScreenshot, state.screenshotFailures ? backoff : Math.max(100, state.pollMs));
+}
+
+// ---------------------------------------------------------------------------
 // Live events and boot
 // ---------------------------------------------------------------------------
 
 function connectEvents() {
   const query = TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '';
   const source = new EventSource('/api/events' + query);
+  state.events = source;
+  source.onopen = () => {
+    state.eventsOk = true;
+    renderStatus();
+  };
+  source.onerror = () => {
+    state.eventsOk = false;
+    renderStatus();
+  };
   source.addEventListener('hello', (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.status) {
-        state.status = data.status;
-        renderStatus();
-      }
+      if (data.status) applyStatus(data.status);
     } catch (error) {
       // Ignore malformed keep-alive data.
     }
@@ -1155,9 +1972,11 @@ function connectEvents() {
   source.addEventListener('snapshot', (event) => {
     try {
       const data = JSON.parse(event.data);
-      state.snapshot = data.snapshot;
-      if (data.status) state.status = data.status;
-      onSnapshot();
+      // The initial SSE snapshot carries the full status document, whose
+      // attachment status is nested under `status`.
+      if (data.status) applyStatus(data.status.status || data.status);
+      if (state.frozen) return;
+      if (data.snapshot) setSnapshot(data.snapshot);
     } catch (error) {
       toast('The inspector sent an unreadable snapshot.', true);
     }
@@ -1165,18 +1984,56 @@ function connectEvents() {
   source.addEventListener('update', (event) => {
     try {
       const data = JSON.parse(event.data);
-      if (data.kind === 'full') state.snapshot = data.snapshot;
-      else if (data.kind === 'delta') applyDelta(data.delta);
-      if (data.status) state.status = data.status;
-      onSnapshot();
+      if (data.status) applyStatus(data.status);
+      if (data.kind === 'status') return;
+      if (state.frozen) return;
+      if (data.kind === 'full' && data.snapshot) {
+        setSnapshot(data.snapshot);
+        return;
+      }
+      if (data.kind === 'delta' && data.delta) {
+        if (!applyDelta(data.delta)) {
+          refreshSnapshot();
+          return;
+        }
+        if (data.screen) state.snapshot.screen = data.screen;
+        if (data.degraded) state.snapshot.degraded = data.degraded;
+        if (typeof data.settled === 'boolean') state.snapshot.settled = data.settled;
+        state.nodeIndex = new Map(state.snapshot.nodes.map((node) => [node.id, node]));
+        onSnapshot();
+      }
     } catch (error) {
       refreshSnapshot();
     }
   });
-  source.addEventListener('error', () => {
-    // EventSource reconnects on its own; the screenshot poll keeps the UI live.
-  });
   window.addEventListener('beforeunload', () => source.close());
+}
+
+function applyDelta(delta) {
+  const snapshot = state.snapshot;
+  if (!snapshot || !delta || delta.base_rev !== snapshot.rev) return false;
+  let nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes.slice() : [];
+  const ops = Array.isArray(delta.ops) ? delta.ops : [];
+  for (const op of ops) {
+    if (!op || !op.op) continue;
+    if (op.op === 'remove') {
+      nodes = nodes.filter((node) => node.id !== op.id);
+    } else if (op.op === 'update' && op.node) {
+      const index = nodes.findIndex((node) => node.id === op.node.id);
+      if (index >= 0) nodes[index] = op.node;
+    } else if (op.op === 'add' && op.node) {
+      nodes.push(op.node);
+    } else if (op.op === 'move') {
+      const node = nodes.find((candidate) => candidate.id === op.id);
+      if (node) node.parent_id = op.parent_id;
+    } else if (op.op === 'reorder') {
+      const index = new Map(nodes.map((node) => [node.id, node]));
+      nodes = (op.ids || []).map((id) => index.get(id)).filter(Boolean);
+    }
+  }
+  snapshot.nodes = nodes;
+  snapshot.rev = delta.rev;
+  return true;
 }
 
 function bindUi() {
@@ -1190,39 +2047,80 @@ function bindUi() {
   });
   byId('expand-all').addEventListener('click', expandAll);
   byId('collapse-all').addEventListener('click', collapseAll);
-  byId('tree-filter').addEventListener('input', (event) => {
-    state.filter = event.target.value;
-    buildRows();
-    renderTree();
-  });
-  byId('resolve').addEventListener('click', () => resolveLocator());
-  byId('verify').addEventListener('click', verifyLocator);
-  byId('clear-matches').addEventListener('click', () => {
-    state.matchIds.clear();
-    byId('locator-result').textContent = '';
-    renderTree();
-    drawOverlay();
-  });
-  byId('locator-input').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') resolveLocator();
-  });
-  byId('scene-open').addEventListener('click', () => openScene());
-  byId('scene-new').addEventListener('click', createScene);
+  byId('tree-filter').addEventListener('input', onFilterInput);
   byId('tree').addEventListener('scroll', () => {
     window.requestAnimationFrame(renderTree);
   });
-  byId('stage').addEventListener('click', stageClick);
-  byId('stage').addEventListener('mousemove', stageMove);
-  byId('stage').addEventListener('mouseleave', () => setHover(0));
+
+  byId('resolve').addEventListener('click', () => resolveLocator(undefined, { reveal: false }));
+  byId('verify').addEventListener('click', verifyLocator);
+  byId('clear-matches').addEventListener('click', clearMatches);
+  byId('locator-input').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') resolveLocator(undefined, { reveal: true });
+  });
+  let locatorTimer = 0;
+  byId('locator-input').addEventListener('input', (event) => {
+    clearTimeout(locatorTimer);
+    const value = event.target.value.trim();
+    if (!looksLikeLocator(value)) return;
+    locatorTimer = setTimeout(() => resolveLocator(value, { quiet: true }), 300);
+  });
+
+  byId('scene-open').addEventListener('click', () => openScene());
+  byId('scene-new').addEventListener('click', createScene);
+
+  byId('stage').addEventListener('pointerdown', stagePointerDown);
+  byId('stage').addEventListener('pointermove', stagePointerMove);
+  byId('stage').addEventListener('pointerup', stagePointerUp);
+  byId('stage').addEventListener('pointercancel', () => {
+    state.drag = null;
+    byId('stage').classList.remove('dragging');
+  });
+  byId('stage').addEventListener('pointerleave', () => setHover(0));
+  byId('stage').addEventListener('wheel', stageWheel, { passive: false });
+
+  byId('tap-selected').addEventListener('click', tapSelected);
+  byId('scroll-up').addEventListener('click', () => sendScroll('up', 1));
+  byId('scroll-down').addEventListener('click', () => sendScroll('down', 1));
+  byId('scroll-left').addEventListener('click', () => sendScroll('left', 1));
+  byId('scroll-right').addEventListener('click', () => sendScroll('right', 1));
+  byId('send-key').addEventListener('click', () => sendKey(byId('key-select').value));
+  byId('send-type').addEventListener('click', sendType);
+  byId('type-text').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      sendType();
+    }
+  });
+  for (const button of document.querySelectorAll('.dpad button[data-key]')) {
+    button.addEventListener('click', () => sendKey(button.dataset.key));
+  }
+
   window.addEventListener('resize', drawOverlay);
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(() => drawOverlay());
+    observer.observe(byId('screenshot'));
+    observer.observe(byId('stage'));
+  }
   document.addEventListener('keydown', (event) => {
     const tag = (event.target && event.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    const typing = tag === 'input' || tag === 'select' || tag === 'textarea' ||
+      tag === 'button' || tag === 'a';
+    if (typing) return;
     if (event.key === '/') {
       event.preventDefault();
       byId('tree-filter').focus();
     } else if (event.key === 'f') {
       byId('freeze').click();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      sendKey('back');
+    } else if (event.ctrlKey && event.key === 'Enter') {
+      event.preventDefault();
+      sendKey('ok');
+    } else if (event.ctrlKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      sendKey(event.key.slice(5).toLowerCase());
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       moveSelection(event.key === 'ArrowDown' ? 1 : -1);
@@ -1235,6 +2133,7 @@ function bindUi() {
 
 async function init() {
   bindUi();
+  populateKeys(FALLBACK_KEYS);
   connectEvents();
   try {
     await Promise.all([refreshStatus(), refreshDevices(), refreshScenes()]);
@@ -1243,6 +2142,7 @@ async function init() {
   }
   await refreshSnapshot();
   if (state.status && state.status.attached) loadScreenshot();
+  state.statusTimer = setInterval(pollStatus, 2000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -188,6 +188,26 @@ pub struct AttachmentStatus {
     pub frozen: bool,
 }
 
+/// Decide the master-owned revision for a new capture.
+///
+/// `None` means the capture renders identically to the last published content
+/// and must not wake SSE subscribers. Otherwise the revision is strictly
+/// greater than `last_rev` and never zero, so it stays monotonic across
+/// executor reconnects and reattach.
+fn next_publish_rev(
+    previous: Option<&Snapshot>,
+    last_rev: u64,
+    status_rev: u64,
+    candidate: &Snapshot,
+) -> Option<u64> {
+    if let Some(prev) = previous {
+        if prev.rev == last_rev && status_rev == prev.rev && prev.same_content(candidate) {
+            return None;
+        }
+    }
+    Some(last_rev.saturating_add(1).max(1))
+}
+
 /// Shared state for the HTTP threads and the device actor.
 pub(crate) struct Shared {
     pub home: Home,
@@ -214,6 +234,9 @@ pub(crate) struct Shared {
     pub undo: Mutex<std::collections::HashMap<PathBuf, UndoRecord>>,
     pub audit: Mutex<Vec<AuditEntry>>,
     pub frozen: AtomicBool,
+    /// Last master-owned revision. It survives detach/reattach and only
+    /// advances when the published content actually changes.
+    pub published_rev: AtomicU64,
     pub connections: AtomicUsize,
 }
 
@@ -259,6 +282,7 @@ impl Shared {
             undo: Mutex::new(std::collections::HashMap::new()),
             audit: Mutex::new(Vec::new()),
             frozen: AtomicBool::new(false),
+            published_rev: AtomicU64::new(0),
             connections: AtomicUsize::new(0),
         }
     }
@@ -310,19 +334,34 @@ impl Shared {
     }
 
     /// Publish a snapshot: choose a full/delta update, store it and fan out.
-    pub(crate) fn publish(&self, snapshot: Snapshot) {
+    ///
+    /// The executor owns its own wire revision and may increment it on every
+    /// poll. The master owns the published revision: it only advances when the
+    /// normalized content changes, so a static screen keeps one revision and
+    /// idle SSE clients see no traffic (TASK-INSPECTOR 6.5).
+    pub(crate) fn publish(&self, mut snapshot: Snapshot) {
         let previous = self.latest_snapshot();
-        if previous
-            .as_ref()
-            .is_some_and(|prev| prev.rev == snapshot.rev && prev.same_nodes(&snapshot))
-        {
+        let last_rev = self.published_rev.load(Ordering::Acquire);
+        let current = self.status();
+        let Some(rev) = next_publish_rev(previous.as_deref(), last_rev, current.rev, &snapshot)
+        else {
+            // Identical content: refresh the counters shown in the footer
+            // without advancing the revision or waking subscribers.
+            if let Some(prev) = previous.as_deref() {
+                self.refresh_status(prev, &snapshot);
+            }
             return;
-        }
+        };
+        snapshot.rev = rev;
+        self.published_rev.store(rev, Ordering::Release);
         let plan = match previous.as_deref() {
             Some(prev) if prev.rev != snapshot.rev => plan_update(prev, &snapshot),
             _ => UpdatePlan::Full(snapshot.clone()),
         };
         let status = self.status_with_snapshot(&snapshot);
+        let screen = snapshot.screen.clone();
+        let degraded = snapshot.degraded.clone();
+        let settled = snapshot.settled;
         let event = match &plan {
             UpdatePlan::Full(full) => json!({
                 "kind": "full",
@@ -332,6 +371,11 @@ impl Shared {
             UpdatePlan::Delta(delta) => json!({
                 "kind": "delta",
                 "delta": delta,
+                // A delta only carries nodes; screen rotation, degraded
+                // reasons and settled state still need to reach the client.
+                "screen": screen,
+                "degraded": degraded,
+                "settled": settled,
                 "status": status,
             }),
         };
@@ -367,6 +411,20 @@ impl Shared {
         self.changed_cv.notify_all();
     }
 
+    /// Refresh per-poll counters without publishing a revision.
+    fn refresh_status(&self, previous: &Snapshot, next: &Snapshot) {
+        let mut status = self
+            .status
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner());
+        status.rev = previous.rev;
+        status.settled = next.settled;
+        status.acquisition_ms = next.stats.acquisition_ms;
+        status.nodes = next.nodes.len();
+        status.truncated = next.degraded.iter().any(|entry| entry.partial);
+        status.error = None;
+    }
+
     fn status_with_snapshot(&self, snapshot: &Snapshot) -> AttachmentStatus {
         let mut status = self.status();
         status.rev = snapshot.rev;
@@ -374,6 +432,7 @@ impl Shared {
         status.acquisition_ms = snapshot.stats.acquisition_ms;
         status.nodes = snapshot.nodes.len();
         status.truncated = snapshot.degraded.iter().any(|entry| entry.partial);
+        status.error = None;
         status
     }
 
@@ -385,7 +444,7 @@ impl Shared {
                 .status
                 .write()
                 .unwrap_or_else(|poison| poison.into_inner());
-            *current = status;
+            *current = status.clone();
         }
         {
             let mut current = self
@@ -393,6 +452,14 @@ impl Shared {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             *current = rev;
+        }
+        {
+            let event = json!({ "kind": "status", "status": status }).to_string();
+            let mut subscribers = self
+                .subscribers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            subscribers.retain(|sender| sender.send(event.clone()).is_ok());
         }
         self.changed_cv.notify_all();
     }
@@ -425,13 +492,8 @@ pub(crate) enum DeviceCommand {
         request: pb::InspectorInputRequest,
         reply: oneshot::Sender<Result<pb::InspectorInputResponse, String>>,
     },
-    Snapshot {
-        include_screenshot: bool,
+    Screenshot {
         reply: oneshot::Sender<Result<pb::InspectorSnapshotResponse, String>>,
-    },
-    Pause {
-        paused: bool,
-        reply: oneshot::Sender<Result<(), String>>,
     },
     Stop,
 }
@@ -447,7 +509,6 @@ struct Attachment {
 struct Actor {
     shared: Arc<Shared>,
     attachment: Option<Attachment>,
-    paused: bool,
 }
 
 impl Actor {
@@ -501,6 +562,15 @@ impl Actor {
         } = attachment;
         let _ = agent.shutdown_session(&session_id, false).await;
         let _ = transport.teardown().await;
+        // A detached inspector has no current screen: the next attach must
+        // start from a full snapshot, and /api/snapshot must not serve the
+        // previous device's tree. The published revision itself stays
+        // monotonic across reattach.
+        *self
+            .shared
+            .latest
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         self.shared.set_status(AttachmentStatus {
             attached: false,
             error: None,
@@ -528,6 +598,8 @@ impl Actor {
             max_depth: 0,
             include_raw: false,
             include_screenshot,
+            screenshot_only: false,
+            screenshot_scale: u32::from(self.shared.config.inspector.screenshot_scale),
         };
         let response =
             tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.snapshot(&session_id, request))
@@ -555,22 +627,24 @@ impl Actor {
         Ok(response)
     }
 
-    async fn snapshot(
-        &mut self,
-        include_screenshot: bool,
-    ) -> Result<pb::InspectorSnapshotResponse, String> {
+    /// Capture one frame without acquiring a tree. The Web UI polls the
+    /// screenshot independently; avoiding a full traversal keeps the device
+    /// actor free for snapshot polls (TASK-INSPECTOR 6 / 10.2).
+    async fn screenshot(&mut self) -> Result<pb::InspectorSnapshotResponse, String> {
         let (inspector, session_id, _) = self.connection()?;
         let request = pb::InspectorSnapshotRequest {
-            include_system_ui: self.shared.config.inspector.include_system_ui,
-            min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
+            include_system_ui: false,
+            min_visible_fraction: 0.0,
             max_nodes: 0,
             max_depth: 0,
-            include_raw: true,
-            include_screenshot,
+            include_raw: false,
+            include_screenshot: true,
+            screenshot_only: true,
+            screenshot_scale: u32::from(self.shared.config.inspector.screenshot_scale),
         };
         tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.snapshot(&session_id, request))
             .await
-            .map_err(|_| "snapshot acquisition timed out".to_string())?
+            .map_err(|_| "screenshot acquisition timed out".to_string())?
             .map_err(|error| error.to_string())
     }
 }
@@ -688,7 +762,6 @@ async fn run_actor(
     let mut actor = Actor {
         shared: Arc::clone(&shared),
         attachment: None,
-        paused: false,
     };
     if let Some(name) = initial {
         if let Err(error) = actor.attach(&name).await {
@@ -719,27 +792,21 @@ async fn run_actor(
                         let result = actor.input(request).await;
                         let _ = reply.send(result);
                     }
-                    DeviceCommand::Snapshot {
-                        include_screenshot,
-                        reply,
-                    } => {
-                        let result = actor.snapshot(include_screenshot).await;
+                    DeviceCommand::Screenshot { reply } => {
+                        let result = actor.screenshot().await;
                         let _ = reply.send(result);
-                    }
-                    DeviceCommand::Pause { paused, reply } => {
-                        actor.paused = paused;
-                        let _ = reply.send(Ok(()));
                     }
                     DeviceCommand::Stop => break,
                 }
             }
             _ = ticker.tick() => {
-                if !actor.paused {
-                    if let Err(error) = actor.poll(false).await {
-                        let mut status = actor.shared.status();
-                        status.error = Some(error);
-                        actor.shared.set_status(status);
-                    }
+                // Freeze is a client-side view state (TASK-INSPECTOR 10.4):
+                // the server keeps acquiring so unfreeze can catch up with a
+                // full snapshot immediately.
+                if let Err(error) = actor.poll(false).await {
+                    let mut status = actor.shared.status();
+                    status.error = Some(error);
+                    actor.shared.set_status(status);
                 }
             }
         }
@@ -983,6 +1050,9 @@ fn try_enter(shared: &Shared) -> bool {
 }
 
 fn handle_connection(mut stream: TcpStream, shared: &Shared) {
+    // Accepted sockets inherit the listener's non-blocking flag on Windows;
+    // restore blocking mode so a separately-sent request body is awaited.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_nodelay(true);
@@ -1623,5 +1693,29 @@ mod tests {
         assert!(bench_report(0, 10, "scroll", None).is_err());
         assert!(bench_report(1, 0, "scroll", None).is_err());
         assert!(bench_report(1, 10, "unknown", None).is_err());
+    }
+
+    #[test]
+    fn publish_revision_only_advances_on_content_change() {
+        let first = mock_snapshot("scroll", 8, 0);
+        assert_eq!(next_publish_rev(None, 0, 0, &first), Some(1));
+
+        let mut same = first.clone();
+        same.rev = 99;
+        same.stats.acquisition_ms = 500;
+        assert_eq!(next_publish_rev(Some(&first), 1, 1, &same), None);
+
+        // Reattach resets the status revision but must not reset the master
+        // revision.
+        assert_eq!(next_publish_rev(Some(&first), 1, 0, &same), Some(2));
+
+        let mut changed = same.clone();
+        changed.nodes[1].name = "changed".to_string();
+        assert_eq!(next_publish_rev(Some(&first), 1, 1, &changed), Some(2));
+        assert_eq!(next_publish_rev(Some(&first), 7, 7, &same), None);
+        assert_eq!(next_publish_rev(Some(&first), 7, 7, &changed), Some(8));
+
+        // No previous snapshot (fresh process or after detach): full update.
+        assert_eq!(next_publish_rev(None, 7, 0, &same), Some(8));
     }
 }

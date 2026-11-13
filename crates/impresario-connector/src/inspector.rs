@@ -641,6 +641,24 @@ pub async fn snapshot(
 ) -> Result<pb::InspectorSnapshotResponse, ConnectorError> {
     let started = std::time::Instant::now();
     let cancel = CancellationToken::new();
+    if request.screenshot_only {
+        let revision = rev.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let mut response = pb::InspectorSnapshotResponse {
+            rev: revision,
+            device_name: device.model.clone(),
+            platform: platform_to_proto(platform) as i32,
+            settled: true,
+            timestamp_unix_ms: now_ms(),
+            ..pb::InspectorSnapshotResponse::default()
+        };
+        let output = executor.screenshot(&cancel).await?;
+        let (width, height) = crate::png::png_dimensions(&output.screenshot_png).unwrap_or((0, 0));
+        response.screenshot_png = output.screenshot_png;
+        response.screenshot_width = width;
+        response.screenshot_height = height;
+        response.acquisition_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        return Ok(response);
+    }
     executor.inject_helper(&cancel).await?;
     executor
         .evaluate_json::<serde_json::Value>(&inject_expression(), &cancel)

@@ -1,5 +1,6 @@
 package com.impresario.agent
 
+import io.grpc.BindableService
 import io.grpc.Server
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
 import java.net.InetSocketAddress
@@ -17,6 +18,8 @@ class AgentServer(
     /** The requested port: `0` asks the OS for a free ephemeral port. */
     private val requestedPort: Int = 0,
     private val host: String = "0.0.0.0",
+    /** The additive `Inspector` service; omitted by JVM-only tests. */
+    private val inspectorService: BindableService? = null,
 ) {
     private var server: Server? = null
 
@@ -24,15 +27,17 @@ class AgentServer(
     val port: Int get() = server?.port ?: -1
 
     fun start() {
-        val started = NettyServerBuilder.forAddress(InetSocketAddress(host, requestedPort))
+        val builder = NettyServerBuilder.forAddress(InetSocketAddress(host, requestedPort))
             .addService(service)
             .intercept(AuthInterceptor())
             .maxInboundMessageSize(16 * 1024 * 1024)
             .keepAliveTime(10, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
             .permitKeepAliveWithoutCalls(true)
-            .build()
-            .start()
+        if (inspectorService != null) {
+            builder.addService(inspectorService)
+        }
+        val started = builder.build().start()
         server = started
     }
 

@@ -140,13 +140,10 @@ fn route_post(shared: &Shared, request: &Request) -> Result<Response, ApiError> 
                 .get("frozen")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| ApiError::bad_request("'frozen' must be true or false"))?;
+            // Freeze only stops the client from applying live updates; the
+            // device loop keeps acquiring so unfreeze is instant
+            // (TASK-INSPECTOR 10.4). The flag is reported in status.
             shared.frozen.store(frozen, Ordering::Relaxed);
-            shared
-                .command(|reply| DeviceCommand::Pause {
-                    paused: frozen,
-                    reply,
-                })
-                .map_err(device_error)?;
             Ok(ok(status_json(shared)))
         }
         "/api/locator/resolve" => {
@@ -228,8 +225,11 @@ fn status_json(shared: &Shared) -> Value {
         "include_system_ui": shared.config.inspector.include_system_ui,
         "min_visible_percent": shared.config.inspector.min_visible_percent,
         "screenshot_scale": shared.config.inspector.screenshot_scale,
+        "fps": shared.config.inspector.fps,
         "token_required": !shared.loopback,
         "locator_grammar": "role= text= testid= within(...) >> focused",
+        "keys": RemoteKey::ALL.iter().map(|key| key.as_str()).collect::<Vec<_>>(),
+        "directions": ["up", "down", "left", "right"],
     })
 }
 
@@ -498,10 +498,7 @@ fn input_json(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
 
 fn screenshot(shared: &Shared) -> Result<Response, ApiError> {
     let response = shared
-        .command(|reply| DeviceCommand::Snapshot {
-            include_screenshot: true,
-            reply,
-        })
+        .command(|reply| DeviceCommand::Screenshot { reply })
         .map_err(device_error)?;
     if response.screenshot_png.is_empty() {
         return Err(ApiError::new(

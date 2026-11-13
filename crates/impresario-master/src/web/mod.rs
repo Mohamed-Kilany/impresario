@@ -356,6 +356,9 @@ fn serve(listener: &TcpListener, state: Arc<WebState>, shutdown: Arc<AtomicBool>
 }
 
 fn handle_connection(mut stream: TcpStream, state: &WebState) {
+    // A Windows listener's non-blocking flag is inherited by accepted
+    // sockets, so a body sent in a second packet would fail with WouldBlock.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_nodelay(true);

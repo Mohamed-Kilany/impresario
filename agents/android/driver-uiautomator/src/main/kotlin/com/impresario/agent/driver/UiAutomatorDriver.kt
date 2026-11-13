@@ -3,10 +3,14 @@ package com.impresario.agent.driver
 import android.app.Instrumentation
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect as AndroidRect
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Configurator
@@ -19,13 +23,19 @@ import com.impresario.agent.Direction
 import com.impresario.agent.DrmSnapshot
 import com.impresario.agent.DriverExtras
 import com.impresario.agent.ElementHandle
+import com.impresario.agent.InspectorCapture
+import com.impresario.agent.InspectorCaptureOptions
+import com.impresario.agent.InspectorDriver
 import com.impresario.agent.MediaSnapshot
 import com.impresario.agent.Rect
 import com.impresario.agent.SelectorSpec
 import com.impresario.agent.ShowingSnapshot
 import com.impresario.agent.UiDriver
+import impresario.v1.Impresario.InspectorNode
+import impresario.v1.Impresario.InspectorRect
 import impresario.v1.Impresario.SelectorStrategy
 import java.io.ByteArrayOutputStream
+import kotlin.math.roundToInt
 import org.json.JSONObject
 
 /** Screen-gesture endpoints in device pixels. */
@@ -104,7 +114,7 @@ class UiHandle(internal val object2: UiObject2) : ElementHandle
 class UiAutomatorDriver(
     private val instrumentation: Instrumentation,
     private val device: UiDevice = UiDevice.getInstance(instrumentation),
-) : UiDriver, DriverExtras {
+) : UiDriver, DriverExtras, InspectorDriver {
 
     init {
         // uiautomator waits up to 10 s for an idle window before every
@@ -114,6 +124,11 @@ class UiAutomatorDriver(
         // app state, so implicit idling is disabled here.
         Configurator.getInstance().setWaitForIdleTimeout(0)
     }
+
+    /** Last snapshot's native nodes and pixel rects, used by inspector input. */
+    private var inspectorNodes: Map<Long, AccessibilityNodeInfo> = emptyMap()
+    private var inspectorRects: Map<Long, Rect> = emptyMap()
+    private var inspectorPixelRatio: Float = 1f
 
     @Volatile
     var lastLaunchedPackage: String = ""
@@ -583,6 +598,529 @@ class UiAutomatorDriver(
     }
 
     // ------------------------------------------------------------------
+    // InspectorDriver (TASK-INSPECTOR 6.3)
+    // ------------------------------------------------------------------
+
+    /**
+     * Captures the active app window's accessibility tree, normalizes it to the
+     * shared role/rect model and prunes it to the viewport. The algorithm
+     * mirrors the connector's `prune_nodes` so both platforms produce the same
+     * shape for the Web UI and MCP views.
+     */
+    override fun capture(options: InspectorCaptureOptions): InspectorCapture {
+        val pixelRatio = if (options.pixelRatio > 0f) options.pixelRatio else 1f
+        val viewportWidth = options.displayWidthPx / pixelRatio
+        val viewportHeight = options.displayHeightPx / pixelRatio
+        val nodes = ArrayList<InspectorNode>(256)
+        val nativeNodes = HashMap<Long, AccessibilityNodeInfo>(256)
+        val nativeRects = HashMap<Long, Rect>(256)
+        var traversalTruncated = false
+
+        fun walk(node: AccessibilityNodeInfo?, parentId: Long, depth: Int, systemUi: Boolean) {
+            if (node == null) return
+            if (nodes.size >= INSPECTOR_TRAVERSAL_BUDGET) {
+                traversalTruncated = true
+                return
+            }
+            if (depth > options.maxDepth) return
+            val id = nodes.size.toLong() + 1
+            val pixelRect = AndroidRect()
+            try {
+                node.getBoundsInScreen(pixelRect)
+            } catch (_: Exception) {
+                return
+            }
+            val class_name = node.className?.toString().orEmpty()
+            val editable = try {
+                node.isEditable
+            } catch (_: Exception) {
+                false
+            }
+            val rawText = node.text?.toString().orEmpty()
+            val hint = try {
+                node.hintText?.toString().orEmpty()
+            } catch (_: Exception) {
+                ""
+            }
+            val description = node.contentDescription?.toString().orEmpty()
+            val capped = capText(rawText, INSPECTOR_TEXT_LIMIT)
+            val visibleText = if (editable) "" else capped.first
+            val value = if (editable) capped.first else ""
+            val checked = try {
+                if (node.isCheckable) node.isChecked else null
+            } catch (_: Exception) {
+                null
+            }
+            val scrollable = try {
+                node.isScrollable
+            } catch (_: Exception) {
+                false
+            }
+            val actions = try {
+                node.actionList
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val canScrollBackward = actions.any {
+                it.id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            }
+            val canScrollForward = actions.any {
+                it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            }
+            val resourceId = node.viewIdResourceName.orEmpty()
+            val builder = InspectorNode.newBuilder()
+                .setId(id)
+                .setParentId(parentId)
+                .setRole(roleFor(class_name, editable))
+                .setName(capText(description.ifEmpty { if (editable) hint else rawText }, INSPECTOR_NAME_LIMIT).first)
+                .setText(visibleText)
+                .setValue(value)
+                .setLabel(hint)
+                .setDescription(description)
+                .setPlaceholder(hint)
+                .setTestId(resourceId.substringAfter("id/", resourceId))
+                .setRawId(resourceId)
+                .setBounds(
+                    InspectorRect.newBuilder()
+                        .setX(pixelRect.left / pixelRatio)
+                        .setY(pixelRect.top / pixelRatio)
+                        .setW(pixelRect.width() / pixelRatio)
+                        .setH(pixelRect.height() / pixelRatio)
+                        .build(),
+                )
+                .setFocused(node.isFocused)
+                .setEnabled(node.isEnabled)
+                .setSelected(node.isSelected)
+                .setReadonly(editable && !node.isEditable)
+                .setHidden(!node.isVisibleToUser)
+                .setSecure(node.isPassword)
+                .setSystemUi(systemUi)
+                .setScrollable(scrollable)
+                .setCanScrollBackward(canScrollBackward)
+                .setCanScrollForward(canScrollForward)
+                .setScrollAxis(
+                    when {
+                        !scrollable -> ""
+                        pixelRect.height() >= pixelRect.width() -> "vertical"
+                        else -> "horizontal"
+                    },
+                )
+                .setVisibleFraction(visibleFraction(pixelRect, options.displayWidthPx, options.displayHeightPx))
+                .setDepth(depth)
+                .setTextTruncated(capped.second)
+            if (checked != null) builder.setChecked(checked)
+            if (options.includeRaw) {
+                builder.setRaw(
+                    JSONObject()
+                        .put("class", class_name)
+                        .put("package", node.packageName?.toString().orEmpty())
+                        .put("resource_id", resourceId)
+                        .put("clickable", node.isClickable)
+                        .put("long_clickable", node.isLongClickable)
+                        .put("focusable", node.isFocusable)
+                        .put("checkable", node.isCheckable)
+                        .put("checked", checked)
+                        .put("bounds", pixelRect.toString())
+                        .toString(),
+                )
+            }
+            nodes += builder.build()
+            nativeNodes[id] = node
+            // Input APIs take device pixels; the wire rects stay logical.
+            nativeRects[id] = Rect(pixelRect.left, pixelRect.top, pixelRect.right, pixelRect.bottom)
+            val childCount = try {
+                node.childCount
+            } catch (_: Exception) {
+                0
+            }
+            for (index in 0 until childCount) {
+                val child = try {
+                    node.getChild(index)
+                } catch (_: Exception) {
+                    null
+                }
+                walk(child, id, depth + 1, systemUi)
+            }
+        }
+
+        for (root in inspectorRoots(options)) {
+            walk(root.first, 0, 0, root.second)
+        }
+
+        val pruned = pruneInspectorNodes(nodes, options, viewportWidth, viewportHeight)
+        val keptIds = pruned.nodes.mapTo(HashSet()) { it.id }
+        inspectorNodes = nativeNodes.filterKeys { it in keptIds }
+        inspectorRects = nativeRects.filterKeys { it in keptIds }
+        inspectorPixelRatio = pixelRatio
+        val degraded = ArrayList<String>()
+        if (nodes.isEmpty()) {
+            degraded += "UNAVAILABLE: the active window has no accessibility root"
+        }
+        if (traversalTruncated) {
+            degraded += "PARTIAL: the accessibility tree hit the traversal budget; some nodes may be missing"
+        }
+        if (pruned.capped) {
+            degraded += "PARTIAL: max_nodes truncated the snapshot"
+        }
+        return InspectorCapture(
+            nodes = pruned.nodes,
+            focusedId = pruned.focusedId,
+            truncated = traversalTruncated || pruned.capped,
+            degraded = degraded,
+            screenshotPng = if (options.includeScreenshot) inspectorScreenshot() else null,
+        )
+    }
+
+    override fun tap(nodeId: Long, x: Float, y: Float) {
+        val node = if (nodeId != 0L) inspectorNodes[nodeId] else null
+        // Accessibility ACTION_CLICK is the same path a screen reader uses and
+        // is reliable on windows that swallow synthetic touch streams. Try the
+        // node itself, then its clickable ancestors: rows are often a
+        // non-clickable container around a clickable child.
+        val clickable = clickableAncestor(node)
+        if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+        val rect = if (nodeId != 0L) inspectorRects[nodeId] else null
+        val point = rect?.let { it.centerX to it.centerY }
+            ?: logicalPoint(x, y)
+        if (!device.click(point.first, point.second)) {
+            throw AgentException.notInteractable("the tap did not reach the screen")
+        }
+    }
+
+    private fun clickableAncestor(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        var current = node
+        var guard = 0
+        while (current != null && guard < INSPECTOR_MAX_ANCESTOR_WALK) {
+            if (current.isClickable) return current
+            current = try {
+                current.parent
+            } catch (_: Exception) {
+                null
+            }
+            guard++
+        }
+        return null
+    }
+
+    override fun scroll(direction: Direction, count: Int, nodeId: Long, x: Float, y: Float) {
+        val node = if (nodeId != 0L) inspectorNodes[nodeId] else null
+        val rect = if (nodeId != 0L) inspectorRects[nodeId] else null
+        repeat(count.coerceAtLeast(1)) {
+            val scrolled = node?.let { scrollNode(it, direction) } ?: false
+            if (!scrolled) {
+                val area = rect?.let { AndroidRect(it.left, it.top, it.right, it.bottom) }
+                    ?: AndroidRect(0, 0, device.displayWidth, device.displayHeight)
+                val path = scrollPathIn(direction, area)
+                device.swipe(path.startX, path.startY, path.endX, path.endY, SWIPE_STEPS)
+            }
+        }
+    }
+
+    override fun pressKey(code: Int) {
+        device.pressKeyCode(code)
+    }
+
+    override fun type(nodeId: Long, text: String) {
+        val node = if (nodeId != 0L) inspectorNodes[nodeId] else null
+        if (node == null) {
+            inputText(text)
+            return
+        }
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        if (text.isEmpty()) return
+        // The connector appends at the caret (`insert_text`); ACTION_SET_TEXT
+        // replaces, so append to the node's current text. An empty EditText
+        // reports its hint as text, which must not become field content.
+        val raw = node.text?.toString().orEmpty()
+        val hint = try {
+            node.hintText?.toString().orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        val current = if (raw.isNotEmpty() && raw == hint) "" else raw
+        val arguments = Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                current + text,
+            )
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+            inputText(text)
+        }
+    }
+
+    override fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long) {
+        val start = logicalPoint(x1, y1)
+        val end = logicalPoint(x2, y2)
+        val steps = if (durationMs > 0) {
+            (durationMs / INSPECTOR_SWIPE_STEP_MS).coerceIn(2, 120).toInt()
+        } else {
+            SWIPE_STEPS
+        }
+        device.swipe(start.first, start.second, end.first, end.second, steps)
+    }
+
+    /** Roots to traverse: the app window, plus system windows when opted in. */
+    private fun inspectorRoots(options: InspectorCaptureOptions): List<Pair<AccessibilityNodeInfo, Boolean>> {
+        val roots = ArrayList<Pair<AccessibilityNodeInfo, Boolean>>(2)
+        val windows = try {
+            instrumentation.uiAutomation.windows
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val appWindow = windows.firstOrNull { window ->
+            window.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                window.root?.packageName?.toString() == options.appId
+        } ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        appWindow?.root?.let { roots += it to false }
+        if (options.includeSystemUi) {
+            for (window in windows) {
+                if (window.type != AccessibilityWindowInfo.TYPE_SYSTEM) continue
+                window.root?.let { roots += it to true }
+            }
+        }
+        if (roots.isEmpty()) {
+            try {
+                instrumentation.uiAutomation.rootInActiveWindow?.let { roots += it to false }
+            } catch (_: Exception) {
+                // A vanished window leaves the capture empty; the service
+                // reports the degraded reason.
+            }
+        }
+        return roots
+    }
+
+    private data class PrunedCapture(
+        val nodes: List<InspectorNode>,
+        val focusedId: Long,
+        val capped: Boolean,
+    )
+
+    private fun pruneInspectorNodes(
+        nodes: List<InspectorNode>,
+        options: InspectorCaptureOptions,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ): PrunedCapture {
+        if (nodes.isEmpty()) return PrunedCapture(emptyList(), 0L, false)
+        val mutable = nodes.map { it.toBuilder() }.toMutableList()
+        val byId = HashMap<Long, Int>(mutable.size)
+        mutable.forEachIndexed { index, node -> byId[node.id] = index }
+        val keep = BooleanArray(mutable.size)
+        val minFraction = options.minVisibleFraction.coerceIn(0f, 1f)
+        for ((index, node) in mutable.withIndex()) {
+            if (node.systemUi && !options.includeSystemUi) continue
+            if (node.depth > options.maxDepth) continue
+            if (node.hidden && !node.focused) continue
+            val bounds = node.bounds
+            if (bounds.w <= 0f || bounds.h <= 0f) continue
+            if (node.focused) {
+                keep[index] = true
+                continue
+            }
+            val fraction = node.visibleFraction
+            if (fraction > 0f && (minFraction <= 0f || fraction >= minFraction)) {
+                keep[index] = true
+            }
+        }
+        // Keep the ancestor chain of every retained node so parent ids resolve.
+        for (index in mutable.indices) {
+            if (!keep[index]) continue
+            var parent = mutable[index].parentId
+            var guard = 0
+            while (parent != 0L && guard < INSPECTOR_MAX_ANCESTOR_WALK) {
+                val parentIndex = byId[parent] ?: break
+                if (keep[parentIndex]) break
+                keep[parentIndex] = true
+                parent = mutable[parentIndex].parentId
+                guard++
+            }
+        }
+        var keptCount = keep.count { it }
+        var capped = false
+        val maxNodes = options.maxNodes.coerceAtLeast(1)
+        if (keptCount > maxNodes) {
+            capped = true
+            val priority = BooleanArray(mutable.size)
+            for ((index, node) in mutable.withIndex()) {
+                if (node.focused) markAncestors(index, mutable, byId, priority)
+            }
+            for (index in mutable.indices.reversed()) {
+                if (keptCount <= maxNodes) break
+                if (keep[index] && !priority[index]) {
+                    keep[index] = false
+                    keptCount--
+                }
+            }
+            for (index in mutable.indices.reversed()) {
+                if (keptCount <= maxNodes) break
+                if (keep[index] && !mutable[index].focused) {
+                    keep[index] = false
+                    keptCount--
+                }
+            }
+        }
+        val hiddenCounts = HashMap<Long, Int>()
+        for ((index, node) in mutable.withIndex()) {
+            if (keep[index]) continue
+            val parent = node.parentId
+            if (parent != 0L && byId[parent]?.let { keep[it] } == true) {
+                hiddenCounts[parent] = (hiddenCounts[parent] ?: 0) + 1
+            }
+        }
+        val out = ArrayList<InspectorNode>(keptCount)
+        for ((index, node) in mutable.withIndex()) {
+            if (!keep[index]) continue
+            val builder = node
+            builder.setChildrenHiddenCount(
+                builder.childrenHiddenCount + (hiddenCounts[node.id] ?: 0),
+            )
+            if (builder.parentId != 0L && byId[builder.parentId]?.let { keep[it] } != true) {
+                builder.setParentId(0L)
+            }
+            builder.setViewportBounds(clipInspectorRect(node.bounds, viewportWidth, viewportHeight))
+            out += builder.build()
+        }
+        return PrunedCapture(
+            nodes = out,
+            focusedId = out.firstOrNull { it.focused }?.id ?: 0L,
+            capped = capped,
+        )
+    }
+
+    private fun markAncestors(
+        index: Int,
+        nodes: List<InspectorNode.Builder>,
+        byId: Map<Long, Int>,
+        priority: BooleanArray,
+    ) {
+        var current = index
+        var guard = 0
+        while (guard < INSPECTOR_MAX_ANCESTOR_WALK) {
+            priority[current] = true
+            val parent = nodes[current].parentId
+            if (parent == 0L) break
+            current = byId[parent] ?: break
+            guard++
+        }
+    }
+
+    private fun clipInspectorRect(rect: InspectorRect, width: Float, height: Float): InspectorRect {
+        val left = rect.x.coerceIn(0f, width)
+        val top = rect.y.coerceIn(0f, height)
+        val right = (rect.x + rect.w).coerceIn(left, width)
+        val bottom = (rect.y + rect.h).coerceIn(top, height)
+        return InspectorRect.newBuilder()
+            .setX(left)
+            .setY(top)
+            .setW(right - left)
+            .setH(bottom - top)
+            .build()
+    }
+
+    private fun visibleFraction(rect: AndroidRect, displayWidth: Int, displayHeight: Int): Float {
+        if (rect.width() <= 0 || rect.height() <= 0) return 0f
+        val left = rect.left.coerceAtLeast(0)
+        val top = rect.top.coerceAtLeast(0)
+        val right = rect.right.coerceAtMost(displayWidth)
+        val bottom = rect.bottom.coerceAtMost(displayHeight)
+        if (right <= left || bottom <= top) return 0f
+        val visible = (right - left).toLong() * (bottom - top).toLong()
+        val total = rect.width().toLong() * rect.height().toLong()
+        return (visible.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f)
+    }
+
+    private fun scrollNode(node: AccessibilityNodeInfo, direction: Direction): Boolean {
+        val action = when (direction) {
+            Direction.DOWN, Direction.RIGHT -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            Direction.UP, Direction.LEFT -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        }
+        return try {
+            node.performAction(action)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun scrollPathIn(direction: Direction, area: AndroidRect): SwipePath {
+        val centerX = area.centerX()
+        val centerY = area.centerY()
+        val travelX = (area.width() * INSPECTOR_SCROLL_FRACTION / 2f).toInt()
+        val travelY = (area.height() * INSPECTOR_SCROLL_FRACTION / 2f).toInt()
+        return when (direction) {
+            Direction.UP -> SwipePath(centerX, centerY + travelY, centerX, centerY - travelY)
+            Direction.DOWN -> SwipePath(centerX, centerY - travelY, centerX, centerY + travelY)
+            Direction.LEFT -> SwipePath(centerX + travelX, centerY, centerX - travelX, centerY)
+            Direction.RIGHT -> SwipePath(centerX - travelX, centerY, centerX + travelX, centerY)
+        }
+    }
+
+    private fun logicalPoint(x: Float, y: Float): Pair<Int, Int> {
+        val ratio = if (inspectorPixelRatio > 0f) inspectorPixelRatio else 1f
+        return (x * ratio).roundToInt() to (y * ratio).roundToInt()
+    }
+
+    override fun screenshot(scalePercent: Int): ByteArray? = inspectorScreenshot(scalePercent)
+
+    private fun inspectorScreenshot(scalePercent: Int = 100): ByteArray? {
+        val bitmap = try {
+            device.takeScreenshot()
+        } catch (_: Exception) {
+            return null
+        } ?: return null
+        val scale = scalePercent.coerceIn(1, 100)
+        val output = if (scale < 100) {
+            try {
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale / 100).coerceAtLeast(1),
+                    (bitmap.height * scale / 100).coerceAtLeast(1),
+                    true,
+                )
+            } catch (_: Exception) {
+                bitmap
+            }
+        } else {
+            bitmap
+        }
+        return try {
+            val out = ByteArrayOutputStream()
+            output.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        } catch (_: Exception) {
+            null
+        } finally {
+            if (output !== bitmap) output.recycle()
+            bitmap.recycle()
+        }
+    }
+
+    private fun roleFor(class_name: String, editable: Boolean): String {
+        val lower = class_name.lowercase()
+        return when {
+            lower.contains("imagebutton") -> "button"
+            lower.contains("button") -> "button"
+            lower.contains("edittext") || lower.contains("textfield") -> "textbox"
+            editable -> "textbox"
+            lower.contains("checkbox") -> "checkbox"
+            lower.contains("switch") || lower.contains("togglebutton") -> "switch"
+            lower.contains("radiobutton") -> "radio"
+            lower.contains("seekbar") || lower.contains("slider") -> "slider"
+            lower.contains("spinner") -> "combobox"
+            lower.contains("recyclerview") || lower.contains("listview") ||
+                lower.contains("gridview") -> "list"
+            lower.contains("image") -> "image"
+            lower.contains("textview") -> "text"
+            lower.contains("progressbar") -> "progressbar"
+            lower.contains("tab") -> "tab"
+            else -> "generic"
+        }
+    }
+
+    private fun capText(value: String, limit: Int): Pair<String, Boolean> =
+        if (value.length > limit) value.substring(0, limit) to true else value to false
+
+    // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
@@ -681,6 +1219,12 @@ class UiAutomatorDriver(
         const val SCROLL_PERCENT = 0.8f
         const val SWIPE_PERCENT = 0.5f
         const val SWIPE_STEPS = 20
+        const val INSPECTOR_TRAVERSAL_BUDGET = 20_000
+        const val INSPECTOR_TEXT_LIMIT = 1_000
+        const val INSPECTOR_NAME_LIMIT = 200
+        const val INSPECTOR_MAX_ANCESTOR_WALK = 1_024
+        const val INSPECTOR_SCROLL_FRACTION = 0.8f
+        const val INSPECTOR_SWIPE_STEP_MS = 16L
         val PACKAGE_NAME = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
         val REGEX_PLAYBACK_STATE = Regex("PlaybackState \\{[^}]*state=(-?\\d+)")
         val REGEX_SPEED = Regex("speed=(-?\\d+(?:\\.\\d+)?)")

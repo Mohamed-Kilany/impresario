@@ -46,6 +46,17 @@
     </div>
     <div id="locator-result" class="result"></div>
 
+    <h2>Remote</h2>
+    <div class="dpad" aria-label="Remote keys">
+      <button type="button" data-key="up" title="D-pad up">▲</button>
+      <button type="button" data-key="left" title="D-pad left">◀</button>
+      <button type="button" data-key="ok" title="OK / Enter">OK</button>
+      <button type="button" data-key="right" title="D-pad right">▶</button>
+      <button type="button" data-key="down" title="D-pad down">▼</button>
+      <button type="button" data-key="back" title="Back">Back</button>
+      <button type="button" data-key="home" title="Home">Home</button>
+    </div>
+
     <h2>Scene</h2>
     <label class="field">Scene
       <select id="scene-select" aria-label="Scene"></select>
@@ -55,6 +66,7 @@
       <button id="scene-new" class="secondary" type="button">New</button>
     </div>
     <div id="scene-meta" class="meta">No scene open.</div>
+    <div id="scene-table" class="scene-table"></div>
     <div id="scene-actions" class="stack"></div>
     <div id="scene-edit" class="scene-edit"></div>
   </aside>
@@ -65,6 +77,18 @@
       <canvas id="overlay" aria-hidden="true"></canvas>
       <div id="stage-empty" class="empty">Attach a device to inspect its screen.</div>
     </div>
+    <div class="inputbar" id="inputbar">
+      <button id="tap-selected" class="primary" type="button" title="Tap the selected element">Tap</button>
+      <button id="scroll-up" class="secondary" type="button" title="Scroll up">↑</button>
+      <button id="scroll-down" class="secondary" type="button" title="Scroll down">↓</button>
+      <button id="scroll-left" class="secondary" type="button" title="Scroll left">←</button>
+      <button id="scroll-right" class="secondary" type="button" title="Scroll right">→</button>
+      <select id="key-select" aria-label="Remote key"></select>
+      <button id="send-key" class="secondary" type="button">Key</button>
+      <input id="type-text" placeholder="Text to type" autocomplete="off">
+      <button id="send-type" class="secondary" type="button">Type</button>
+      <span id="input-status" class="muted"></span>
+    </div>
     <div class="statusline">
       <span id="status-text">No device attached</span>
       <span id="fps" class="muted"></span>
@@ -72,7 +96,10 @@
   </section>
 
   <aside class="right panel">
-    <h2>Tree</h2>
+    <div class="tree-head">
+      <h2>Tree</h2>
+      <span id="tree-count" class="tree-count" aria-live="polite"></span>
+    </div>
     <div id="tree" class="tree" role="tree" aria-label="Accessibility tree"></div>
     <h2>Selection</h2>
     <div id="details" class="details">Nothing selected.</div>

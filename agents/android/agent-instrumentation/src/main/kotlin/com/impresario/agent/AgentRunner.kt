@@ -35,7 +35,12 @@ class AgentRunner {
 
         val driver = UiAutomatorDriver(instrumentation)
         val state = AgentState(driver, expectedToken = token)
-        val server = AgentServer(AgentServiceImpl(state), port, bind)
+        val server = AgentServer(
+            AgentServiceImpl(state),
+            port,
+            bind,
+            InspectorServiceImpl(state),
+        )
 
         state.logBus.log(LogLevel.INFO, "agent", "impresario android agent starting on $bind:$port")
         server.start()

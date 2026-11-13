@@ -649,6 +649,23 @@ impl Snapshot {
     pub fn same_nodes(&self, other: &Self) -> bool {
         self.nodes == other.nodes
     }
+
+    /// True when a new capture would render identically to `other`.
+    ///
+    /// Revisions and acquisition counters are deliberately ignored: an executor
+    /// may stamp a fresh wire revision on every poll even when the screen did
+    /// not change. The master owns the published revision and only advances it
+    /// for content changes (TASK-INSPECTOR 6.5 "always monotonic rev").
+    #[must_use]
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.device_id == other.device_id
+            && self.device_name == other.device_name
+            && self.platform == other.platform
+            && self.screen == other.screen
+            && self.nodes == other.nodes
+            && self.degraded == other.degraded
+            && self.settled == other.settled
+    }
 }
 
 /// Snapshot validation errors.
@@ -754,5 +771,29 @@ mod tests {
             vec![a, b],
         );
         assert_eq!(snapshot.validate(), Err(SnapshotError::DuplicateId(1)));
+    }
+
+    #[test]
+    fn content_comparison_ignores_revision_and_acquisition_counters() {
+        let first = sample();
+        let mut second = first.clone();
+        second.rev = first.rev + 41;
+        second.stats.acquisition_ms = 999;
+        assert!(first.same_content(&second));
+
+        second.settled = false;
+        assert!(!first.same_content(&second));
+
+        let mut third = first.clone();
+        third.screen.logical_w += 1.0;
+        assert!(!first.same_content(&third));
+
+        let mut fourth = first.clone();
+        fourth.nodes[1].name = "Cancel".to_string();
+        assert!(!first.same_content(&fourth));
+
+        let mut fifth = first.clone();
+        fifth.device_id = "web-2".to_string();
+        assert!(!first.same_content(&fifth));
     }
 }
