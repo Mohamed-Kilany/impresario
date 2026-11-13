@@ -220,7 +220,7 @@ public enum ProtoConversion {
         case .labelContains: strategy = .labelContains
         case .predicate: strategy = .predicate
         case .iosType: strategy = .iosType
-        case .css, .xpath, .text, .textContains, .androidID, .androidDesc, .androidClass:
+        case .css, .xpath, .text, .textContains, .androidID, .androidDesc, .androidClass, .locator:
             throw AgentError.invalidSelector(
                 "selector strategy \(raw.strategy) is not supported on Apple platforms; "
                     + "use accessibility_id, label, label_contains, predicate or ios_type (docs/PARITY.md)"
