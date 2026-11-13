@@ -457,6 +457,259 @@ public enum Impresario_V1_AgentClientMetadata {
   }
 }
 
+/// ---- Inspector (TASK-INSPECTOR) ------------------------------------------
+/// Additive unary RPCs used by the standalone `impresario inspector` process.
+/// They do not replace Agent.Session; an executor advertises INSPECTOR and
+/// serves these methods when it can produce a normalized accessibility tree.
+///
+/// Usage: instantiate `Impresario_V1_InspectorClient`, then call methods of this protocol to make API calls.
+public protocol Impresario_V1_InspectorClientProtocol: GRPCClient {
+  var serviceName: String { get }
+  var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? { get }
+
+  func snapshot(
+    _ request: Impresario_V1_InspectorSnapshotRequest,
+    callOptions: CallOptions?
+  ) -> UnaryCall<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse>
+
+  func input(
+    _ request: Impresario_V1_InspectorInputRequest,
+    callOptions: CallOptions?
+  ) -> UnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>
+}
+
+extension Impresario_V1_InspectorClientProtocol {
+  public var serviceName: String {
+    return "impresario.v1.Inspector"
+  }
+
+  /// Unary call to Snapshot
+  ///
+  /// - Parameters:
+  ///   - request: Request to send to Snapshot.
+  ///   - callOptions: Call options.
+  /// - Returns: A `UnaryCall` with futures for the metadata, status and response.
+  public func snapshot(
+    _ request: Impresario_V1_InspectorSnapshotRequest,
+    callOptions: CallOptions? = nil
+  ) -> UnaryCall<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse> {
+    return self.makeUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.snapshot.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeSnapshotInterceptors() ?? []
+    )
+  }
+
+  /// Unary call to Input
+  ///
+  /// - Parameters:
+  ///   - request: Request to send to Input.
+  ///   - callOptions: Call options.
+  /// - Returns: A `UnaryCall` with futures for the metadata, status and response.
+  public func input(
+    _ request: Impresario_V1_InspectorInputRequest,
+    callOptions: CallOptions? = nil
+  ) -> UnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse> {
+    return self.makeUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.input.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeInputInterceptors() ?? []
+    )
+  }
+}
+
+@available(*, deprecated)
+extension Impresario_V1_InspectorClient: @unchecked Sendable {}
+
+@available(*, deprecated, renamed: "Impresario_V1_InspectorNIOClient")
+public final class Impresario_V1_InspectorClient: Impresario_V1_InspectorClientProtocol {
+  private let lock = Lock()
+  private var _defaultCallOptions: CallOptions
+  private var _interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol?
+  public let channel: GRPCChannel
+  public var defaultCallOptions: CallOptions {
+    get { self.lock.withLock { return self._defaultCallOptions } }
+    set { self.lock.withLockVoid { self._defaultCallOptions = newValue } }
+  }
+  public var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? {
+    get { self.lock.withLock { return self._interceptors } }
+    set { self.lock.withLockVoid { self._interceptors = newValue } }
+  }
+
+  /// Creates a client for the impresario.v1.Inspector service.
+  ///
+  /// - Parameters:
+  ///   - channel: `GRPCChannel` to the service host.
+  ///   - defaultCallOptions: Options to use for each service call if the user doesn't provide them.
+  ///   - interceptors: A factory providing interceptors for each RPC.
+  public init(
+    channel: GRPCChannel,
+    defaultCallOptions: CallOptions = CallOptions(),
+    interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? = nil
+  ) {
+    self.channel = channel
+    self._defaultCallOptions = defaultCallOptions
+    self._interceptors = interceptors
+  }
+}
+
+public struct Impresario_V1_InspectorNIOClient: Impresario_V1_InspectorClientProtocol {
+  public var channel: GRPCChannel
+  public var defaultCallOptions: CallOptions
+  public var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol?
+
+  /// Creates a client for the impresario.v1.Inspector service.
+  ///
+  /// - Parameters:
+  ///   - channel: `GRPCChannel` to the service host.
+  ///   - defaultCallOptions: Options to use for each service call if the user doesn't provide them.
+  ///   - interceptors: A factory providing interceptors for each RPC.
+  public init(
+    channel: GRPCChannel,
+    defaultCallOptions: CallOptions = CallOptions(),
+    interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? = nil
+  ) {
+    self.channel = channel
+    self.defaultCallOptions = defaultCallOptions
+    self.interceptors = interceptors
+  }
+}
+
+/// ---- Inspector (TASK-INSPECTOR) ------------------------------------------
+/// Additive unary RPCs used by the standalone `impresario inspector` process.
+/// They do not replace Agent.Session; an executor advertises INSPECTOR and
+/// serves these methods when it can produce a normalized accessibility tree.
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+public protocol Impresario_V1_InspectorAsyncClientProtocol: GRPCClient {
+  static var serviceDescriptor: GRPCServiceDescriptor { get }
+  var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? { get }
+
+  func makeSnapshotCall(
+    _ request: Impresario_V1_InspectorSnapshotRequest,
+    callOptions: CallOptions?
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse>
+
+  func makeInputCall(
+    _ request: Impresario_V1_InspectorInputRequest,
+    callOptions: CallOptions?
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>
+}
+
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+extension Impresario_V1_InspectorAsyncClientProtocol {
+  public static var serviceDescriptor: GRPCServiceDescriptor {
+    return Impresario_V1_InspectorClientMetadata.serviceDescriptor
+  }
+
+  public var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? {
+    return nil
+  }
+
+  public func makeSnapshotCall(
+    _ request: Impresario_V1_InspectorSnapshotRequest,
+    callOptions: CallOptions? = nil
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse> {
+    return self.makeAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.snapshot.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeSnapshotInterceptors() ?? []
+    )
+  }
+
+  public func makeInputCall(
+    _ request: Impresario_V1_InspectorInputRequest,
+    callOptions: CallOptions? = nil
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse> {
+    return self.makeAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.input.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeInputInterceptors() ?? []
+    )
+  }
+}
+
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+extension Impresario_V1_InspectorAsyncClientProtocol {
+  public func snapshot(
+    _ request: Impresario_V1_InspectorSnapshotRequest,
+    callOptions: CallOptions? = nil
+  ) async throws -> Impresario_V1_InspectorSnapshotResponse {
+    return try await self.performAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.snapshot.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeSnapshotInterceptors() ?? []
+    )
+  }
+
+  public func input(
+    _ request: Impresario_V1_InspectorInputRequest,
+    callOptions: CallOptions? = nil
+  ) async throws -> Impresario_V1_InspectorInputResponse {
+    return try await self.performAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.input.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeInputInterceptors() ?? []
+    )
+  }
+}
+
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+public struct Impresario_V1_InspectorAsyncClient: Impresario_V1_InspectorAsyncClientProtocol {
+  public var channel: GRPCChannel
+  public var defaultCallOptions: CallOptions
+  public var interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol?
+
+  public init(
+    channel: GRPCChannel,
+    defaultCallOptions: CallOptions = CallOptions(),
+    interceptors: Impresario_V1_InspectorClientInterceptorFactoryProtocol? = nil
+  ) {
+    self.channel = channel
+    self.defaultCallOptions = defaultCallOptions
+    self.interceptors = interceptors
+  }
+}
+
+public protocol Impresario_V1_InspectorClientInterceptorFactoryProtocol: Sendable {
+
+  /// - Returns: Interceptors to use when invoking 'snapshot'.
+  func makeSnapshotInterceptors() -> [ClientInterceptor<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse>]
+
+  /// - Returns: Interceptors to use when invoking 'input'.
+  func makeInputInterceptors() -> [ClientInterceptor<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>]
+}
+
+public enum Impresario_V1_InspectorClientMetadata {
+  public static let serviceDescriptor = GRPCServiceDescriptor(
+    name: "Inspector",
+    fullName: "impresario.v1.Inspector",
+    methods: [
+      Impresario_V1_InspectorClientMetadata.Methods.snapshot,
+      Impresario_V1_InspectorClientMetadata.Methods.input,
+    ]
+  )
+
+  public enum Methods {
+    public static let snapshot = GRPCMethodDescriptor(
+      name: "Snapshot",
+      path: "/impresario.v1.Inspector/Snapshot",
+      type: GRPCCallType.unary
+    )
+
+    public static let input = GRPCMethodDescriptor(
+      name: "Input",
+      path: "/impresario.v1.Inspector/Input",
+      type: GRPCCallType.unary
+    )
+  }
+}
+
 /// To build a server, implement a class that conforms to this protocol.
 public protocol Impresario_V1_AgentProvider: CallHandlerProvider {
   var interceptors: Impresario_V1_AgentServerInterceptorFactoryProtocol? { get }
@@ -705,6 +958,156 @@ public enum Impresario_V1_AgentServerMetadata {
     public static let shutdown = GRPCMethodDescriptor(
       name: "Shutdown",
       path: "/impresario.v1.Agent/Shutdown",
+      type: GRPCCallType.unary
+    )
+  }
+}
+/// ---- Inspector (TASK-INSPECTOR) ------------------------------------------
+/// Additive unary RPCs used by the standalone `impresario inspector` process.
+/// They do not replace Agent.Session; an executor advertises INSPECTOR and
+/// serves these methods when it can produce a normalized accessibility tree.
+///
+/// To build a server, implement a class that conforms to this protocol.
+public protocol Impresario_V1_InspectorProvider: CallHandlerProvider {
+  var interceptors: Impresario_V1_InspectorServerInterceptorFactoryProtocol? { get }
+
+  func snapshot(request: Impresario_V1_InspectorSnapshotRequest, context: StatusOnlyCallContext) -> EventLoopFuture<Impresario_V1_InspectorSnapshotResponse>
+
+  func input(request: Impresario_V1_InspectorInputRequest, context: StatusOnlyCallContext) -> EventLoopFuture<Impresario_V1_InspectorInputResponse>
+}
+
+extension Impresario_V1_InspectorProvider {
+  public var serviceName: Substring {
+    return Impresario_V1_InspectorServerMetadata.serviceDescriptor.fullName[...]
+  }
+
+  /// Determines, calls and returns the appropriate request handler, depending on the request's method.
+  /// Returns nil for methods not handled by this service.
+  public func handle(
+    method name: Substring,
+    context: CallHandlerContext
+  ) -> GRPCServerHandlerProtocol? {
+    switch name {
+    case "Snapshot":
+      return UnaryServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorSnapshotRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorSnapshotResponse>(),
+        interceptors: self.interceptors?.makeSnapshotInterceptors() ?? [],
+        userFunction: self.snapshot(request:context:)
+      )
+
+    case "Input":
+      return UnaryServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorInputRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorInputResponse>(),
+        interceptors: self.interceptors?.makeInputInterceptors() ?? [],
+        userFunction: self.input(request:context:)
+      )
+
+    default:
+      return nil
+    }
+  }
+}
+
+/// ---- Inspector (TASK-INSPECTOR) ------------------------------------------
+/// Additive unary RPCs used by the standalone `impresario inspector` process.
+/// They do not replace Agent.Session; an executor advertises INSPECTOR and
+/// serves these methods when it can produce a normalized accessibility tree.
+///
+/// To implement a server, implement an object which conforms to this protocol.
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+public protocol Impresario_V1_InspectorAsyncProvider: CallHandlerProvider, Sendable {
+  static var serviceDescriptor: GRPCServiceDescriptor { get }
+  var interceptors: Impresario_V1_InspectorServerInterceptorFactoryProtocol? { get }
+
+  func snapshot(
+    request: Impresario_V1_InspectorSnapshotRequest,
+    context: GRPCAsyncServerCallContext
+  ) async throws -> Impresario_V1_InspectorSnapshotResponse
+
+  func input(
+    request: Impresario_V1_InspectorInputRequest,
+    context: GRPCAsyncServerCallContext
+  ) async throws -> Impresario_V1_InspectorInputResponse
+}
+
+@available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+extension Impresario_V1_InspectorAsyncProvider {
+  public static var serviceDescriptor: GRPCServiceDescriptor {
+    return Impresario_V1_InspectorServerMetadata.serviceDescriptor
+  }
+
+  public var serviceName: Substring {
+    return Impresario_V1_InspectorServerMetadata.serviceDescriptor.fullName[...]
+  }
+
+  public var interceptors: Impresario_V1_InspectorServerInterceptorFactoryProtocol? {
+    return nil
+  }
+
+  public func handle(
+    method name: Substring,
+    context: CallHandlerContext
+  ) -> GRPCServerHandlerProtocol? {
+    switch name {
+    case "Snapshot":
+      return GRPCAsyncServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorSnapshotRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorSnapshotResponse>(),
+        interceptors: self.interceptors?.makeSnapshotInterceptors() ?? [],
+        wrapping: { try await self.snapshot(request: $0, context: $1) }
+      )
+
+    case "Input":
+      return GRPCAsyncServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorInputRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorInputResponse>(),
+        interceptors: self.interceptors?.makeInputInterceptors() ?? [],
+        wrapping: { try await self.input(request: $0, context: $1) }
+      )
+
+    default:
+      return nil
+    }
+  }
+}
+
+public protocol Impresario_V1_InspectorServerInterceptorFactoryProtocol: Sendable {
+
+  /// - Returns: Interceptors to use when handling 'snapshot'.
+  ///   Defaults to calling `self.makeInterceptors()`.
+  func makeSnapshotInterceptors() -> [ServerInterceptor<Impresario_V1_InspectorSnapshotRequest, Impresario_V1_InspectorSnapshotResponse>]
+
+  /// - Returns: Interceptors to use when handling 'input'.
+  ///   Defaults to calling `self.makeInterceptors()`.
+  func makeInputInterceptors() -> [ServerInterceptor<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>]
+}
+
+public enum Impresario_V1_InspectorServerMetadata {
+  public static let serviceDescriptor = GRPCServiceDescriptor(
+    name: "Inspector",
+    fullName: "impresario.v1.Inspector",
+    methods: [
+      Impresario_V1_InspectorServerMetadata.Methods.snapshot,
+      Impresario_V1_InspectorServerMetadata.Methods.input,
+    ]
+  )
+
+  public enum Methods {
+    public static let snapshot = GRPCMethodDescriptor(
+      name: "Snapshot",
+      path: "/impresario.v1.Inspector/Snapshot",
+      type: GRPCCallType.unary
+    )
+
+    public static let input = GRPCMethodDescriptor(
+      name: "Input",
+      path: "/impresario.v1.Inspector/Input",
       type: GRPCCallType.unary
     )
   }

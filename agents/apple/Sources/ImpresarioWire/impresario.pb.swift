@@ -104,6 +104,9 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
   case probePlayer // = 10
   case probeDrm // = 11
   case netMetadata // = 12
+
+  /// additive: Inspector.Snapshot / Inspector.Input
+  case inspector // = 13
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -125,6 +128,7 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     case 10: self = .probePlayer
     case 11: self = .probeDrm
     case 12: self = .netMetadata
+    case 13: self = .inspector
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -144,6 +148,7 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     case .probePlayer: return 10
     case .probeDrm: return 11
     case .netMetadata: return 12
+    case .inspector: return 13
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -163,6 +168,7 @@ public nonisolated enum Impresario_V1_Capability: SwiftProtobuf.Enum, Swift.Case
     .probePlayer,
     .probeDrm,
     .netMetadata,
+    .inspector,
   ]
 
 }
@@ -182,6 +188,9 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
   case labelContains // = 10
   case predicate // = 11
   case iosType // = 12
+
+  /// additive canonical locator expression (impresario-locator)
+  case locator // = 13
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -203,6 +212,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     case 10: self = .labelContains
     case 11: self = .predicate
     case 12: self = .iosType
+    case 13: self = .locator
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -222,6 +232,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     case .labelContains: return 10
     case .predicate: return 11
     case .iosType: return 12
+    case .locator: return 13
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -241,6 +252,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     .labelContains,
     .predicate,
     .iosType,
+    .locator,
   ]
 
 }
@@ -987,6 +999,56 @@ public nonisolated enum Impresario_V1_LogLevel: SwiftProtobuf.Enum, Swift.CaseIt
 
 }
 
+public nonisolated enum Impresario_V1_InspectorInputKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case tap // = 1
+  case scroll // = 2
+  case key // = 3
+  case type // = 4
+  case swipe // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .tap
+    case 2: self = .scroll
+    case 3: self = .key
+    case 4: self = .type
+    case 5: self = .swipe
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .tap: return 1
+    case .scroll: return 2
+    case .key: return 3
+    case .type: return 4
+    case .swipe: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Impresario_V1_InspectorInputKind] = [
+    .unspecified,
+    .tap,
+    .scroll,
+    .key,
+    .type,
+    .swipe,
+  ]
+
+}
+
 public nonisolated struct Impresario_V1_HandshakeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1706,6 +1768,477 @@ public nonisolated struct Impresario_V1_ShutdownResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Impresario_V1_InspectorSnapshotRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// include status/navigation chrome
+  public var includeSystemUi: Bool = false
+
+  /// 0..1; 0 keeps every intersecting node
+  public var minVisibleFraction: Float = 0
+
+  /// hard cap after pruning, 0 = server default
+  public var maxNodes: UInt32 = 0
+
+  /// 0 = server default
+  public var maxDepth: UInt32 = 0
+
+  /// attach platform-native payloads
+  public var includeRaw: Bool = false
+
+  /// embed a frame in the response
+  public var includeScreenshot: Bool = false
+
+  /// return only a frame; nodes are empty
+  public var screenshotOnly: Bool = false
+
+  /// percent (1-100), 0 = 100
+  public var screenshotScale: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_InspectorRect: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var x: Float = 0
+
+  public var y: Float = 0
+
+  public var w: Float = 0
+
+  public var h: Float = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_InspectorNode: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: UInt64 {
+    get {_storage._id}
+    set {_uniqueStorage()._id = newValue}
+  }
+
+  /// 0 for roots
+  public var parentID: UInt64 {
+    get {_storage._parentID}
+    set {_uniqueStorage()._parentID = newValue}
+  }
+
+  /// normalized role (button, textbox, ...)
+  public var role: String {
+    get {_storage._role}
+    set {_uniqueStorage()._role = newValue}
+  }
+
+  public var name: String {
+    get {_storage._name}
+    set {_uniqueStorage()._name = newValue}
+  }
+
+  public var text: String {
+    get {_storage._text}
+    set {_uniqueStorage()._text = newValue}
+  }
+
+  public var testID: String {
+    get {_storage._testID}
+    set {_uniqueStorage()._testID = newValue}
+  }
+
+  /// native id/resource-id when available
+  public var rawID: String {
+    get {_storage._rawID}
+    set {_uniqueStorage()._rawID = newValue}
+  }
+
+  /// logical units
+  public var bounds: Impresario_V1_InspectorRect {
+    get {_storage._bounds ?? Impresario_V1_InspectorRect()}
+    set {_uniqueStorage()._bounds = newValue}
+  }
+  /// Returns true if `bounds` has been explicitly set.
+  public var hasBounds: Bool {_storage._bounds != nil}
+  /// Clears the value of `bounds`. Subsequent reads from it will return its default value.
+  public mutating func clearBounds() {_uniqueStorage()._bounds = nil}
+
+  /// clipped to the viewport
+  public var viewportBounds: Impresario_V1_InspectorRect {
+    get {_storage._viewportBounds ?? Impresario_V1_InspectorRect()}
+    set {_uniqueStorage()._viewportBounds = newValue}
+  }
+  /// Returns true if `viewportBounds` has been explicitly set.
+  public var hasViewportBounds: Bool {_storage._viewportBounds != nil}
+  /// Clears the value of `viewportBounds`. Subsequent reads from it will return its default value.
+  public mutating func clearViewportBounds() {_uniqueStorage()._viewportBounds = nil}
+
+  public var focused: Bool {
+    get {_storage._focused}
+    set {_uniqueStorage()._focused = newValue}
+  }
+
+  public var enabled: Bool {
+    get {_storage._enabled}
+    set {_uniqueStorage()._enabled = newValue}
+  }
+
+  public var selected: Bool {
+    get {_storage._selected}
+    set {_uniqueStorage()._selected = newValue}
+  }
+
+  public var checked: Bool {
+    get {_storage._checked ?? false}
+    set {_uniqueStorage()._checked = newValue}
+  }
+  /// Returns true if `checked` has been explicitly set.
+  public var hasChecked: Bool {_storage._checked != nil}
+  /// Clears the value of `checked`. Subsequent reads from it will return its default value.
+  public mutating func clearChecked() {_uniqueStorage()._checked = nil}
+
+  public var expanded: Bool {
+    get {_storage._expanded ?? false}
+    set {_uniqueStorage()._expanded = newValue}
+  }
+  /// Returns true if `expanded` has been explicitly set.
+  public var hasExpanded: Bool {_storage._expanded != nil}
+  /// Clears the value of `expanded`. Subsequent reads from it will return its default value.
+  public mutating func clearExpanded() {_uniqueStorage()._expanded = nil}
+
+  public var pressed: Bool {
+    get {_storage._pressed ?? false}
+    set {_uniqueStorage()._pressed = newValue}
+  }
+  /// Returns true if `pressed` has been explicitly set.
+  public var hasPressed: Bool {_storage._pressed != nil}
+  /// Clears the value of `pressed`. Subsequent reads from it will return its default value.
+  public mutating func clearPressed() {_uniqueStorage()._pressed = nil}
+
+  public var readonly: Bool {
+    get {_storage._readonly}
+    set {_uniqueStorage()._readonly = newValue}
+  }
+
+  public var required: Bool {
+    get {_storage._required}
+    set {_uniqueStorage()._required = newValue}
+  }
+
+  /// hidden from the accessibility tree
+  public var hidden: Bool {
+    get {_storage._hidden}
+    set {_uniqueStorage()._hidden = newValue}
+  }
+
+  /// password / secure text field
+  public var secure: Bool {
+    get {_storage._secure}
+    set {_uniqueStorage()._secure = newValue}
+  }
+
+  public var systemUi: Bool {
+    get {_storage._systemUi}
+    set {_uniqueStorage()._systemUi = newValue}
+  }
+
+  public var scrollable: Bool {
+    get {_storage._scrollable}
+    set {_uniqueStorage()._scrollable = newValue}
+  }
+
+  public var canScrollBackward: Bool {
+    get {_storage._canScrollBackward}
+    set {_uniqueStorage()._canScrollBackward = newValue}
+  }
+
+  public var canScrollForward: Bool {
+    get {_storage._canScrollForward}
+    set {_uniqueStorage()._canScrollForward = newValue}
+  }
+
+  /// vertical|horizontal|both
+  public var scrollAxis: String {
+    get {_storage._scrollAxis}
+    set {_uniqueStorage()._scrollAxis = newValue}
+  }
+
+  /// children pruned by the viewport
+  public var childrenHiddenCount: UInt32 {
+    get {_storage._childrenHiddenCount}
+    set {_uniqueStorage()._childrenHiddenCount = newValue}
+  }
+
+  /// platform-native payload (opt-in)
+  public var raw: String {
+    get {_storage._raw}
+    set {_uniqueStorage()._raw = newValue}
+  }
+
+  /// Additive normalization fields used by the Web UI and MCP compact view.
+  public var value: String {
+    get {_storage._value}
+    set {_uniqueStorage()._value = newValue}
+  }
+
+  public var label: String {
+    get {_storage._label}
+    set {_uniqueStorage()._label = newValue}
+  }
+
+  public var description_p: String {
+    get {_storage._description_p}
+    set {_uniqueStorage()._description_p = newValue}
+  }
+
+  public var placeholder: String {
+    get {_storage._placeholder}
+    set {_uniqueStorage()._placeholder = newValue}
+  }
+
+  public var alt: String {
+    get {_storage._alt}
+    set {_uniqueStorage()._alt = newValue}
+  }
+
+  public var title: String {
+    get {_storage._title}
+    set {_uniqueStorage()._title = newValue}
+  }
+
+  public var cssSelector: String {
+    get {_storage._cssSelector}
+    set {_uniqueStorage()._cssSelector = newValue}
+  }
+
+  public var xpath: String {
+    get {_storage._xpath}
+    set {_uniqueStorage()._xpath = newValue}
+  }
+
+  /// 0..1 after ancestor/viewport clipping
+  public var visibleFraction: Float {
+    get {_storage._visibleFraction}
+    set {_uniqueStorage()._visibleFraction = newValue}
+  }
+
+  /// fixed/sticky/transformed overlay
+  public var escapesClip: Bool {
+    get {_storage._escapesClip}
+    set {_uniqueStorage()._escapesClip = newValue}
+  }
+
+  /// 0-based tree depth
+  public var depth: UInt32 {
+    get {_storage._depth}
+    set {_uniqueStorage()._depth = newValue}
+  }
+
+  /// text was clipped for transport
+  public var textTruncated: Bool {
+    get {_storage._textTruncated}
+    set {_uniqueStorage()._textTruncated = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Impresario_V1_InspectorSnapshotResponse: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var rev: UInt64 {
+    get {_storage._rev}
+    set {_uniqueStorage()._rev = newValue}
+  }
+
+  public var deviceName: String {
+    get {_storage._deviceName}
+    set {_uniqueStorage()._deviceName = newValue}
+  }
+
+  public var platform: Impresario_V1_Platform {
+    get {_storage._platform}
+    set {_uniqueStorage()._platform = newValue}
+  }
+
+  public var logicalWidth: Float {
+    get {_storage._logicalWidth}
+    set {_uniqueStorage()._logicalWidth = newValue}
+  }
+
+  public var logicalHeight: Float {
+    get {_storage._logicalHeight}
+    set {_uniqueStorage()._logicalHeight = newValue}
+  }
+
+  public var viewportX: Float {
+    get {_storage._viewportX}
+    set {_uniqueStorage()._viewportX = newValue}
+  }
+
+  public var viewportY: Float {
+    get {_storage._viewportY}
+    set {_uniqueStorage()._viewportY = newValue}
+  }
+
+  public var viewportWidth: Float {
+    get {_storage._viewportWidth}
+    set {_uniqueStorage()._viewportWidth = newValue}
+  }
+
+  public var viewportHeight: Float {
+    get {_storage._viewportHeight}
+    set {_uniqueStorage()._viewportHeight = newValue}
+  }
+
+  public var pixelRatio: Float {
+    get {_storage._pixelRatio}
+    set {_uniqueStorage()._pixelRatio = newValue}
+  }
+
+  public var settled: Bool {
+    get {_storage._settled}
+    set {_uniqueStorage()._settled = newValue}
+  }
+
+  public var acquisitionMs: UInt32 {
+    get {_storage._acquisitionMs}
+    set {_uniqueStorage()._acquisitionMs = newValue}
+  }
+
+  public var nodes: [Impresario_V1_InspectorNode] {
+    get {_storage._nodes}
+    set {_uniqueStorage()._nodes = newValue}
+  }
+
+  /// structured "CODE: message"
+  public var degraded: [String] {
+    get {_storage._degraded}
+    set {_uniqueStorage()._degraded = newValue}
+  }
+
+  public var focusedID: UInt64 {
+    get {_storage._focusedID}
+    set {_uniqueStorage()._focusedID = newValue}
+  }
+
+  public var timestampUnixMs: UInt64 {
+    get {_storage._timestampUnixMs}
+    set {_uniqueStorage()._timestampUnixMs = newValue}
+  }
+
+  public var error: Impresario_V1_ErrorInfo {
+    get {_storage._error ?? Impresario_V1_ErrorInfo()}
+    set {_uniqueStorage()._error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {_storage._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {_uniqueStorage()._error = nil}
+
+  public var screenshotPng: Data {
+    get {_storage._screenshotPng}
+    set {_uniqueStorage()._screenshotPng = newValue}
+  }
+
+  public var screenshotWidth: UInt32 {
+    get {_storage._screenshotWidth}
+    set {_uniqueStorage()._screenshotWidth = newValue}
+  }
+
+  public var screenshotHeight: UInt32 {
+    get {_storage._screenshotHeight}
+    set {_uniqueStorage()._screenshotHeight = newValue}
+  }
+
+  /// traversal/node budget was hit
+  public var truncated: Bool {
+    get {_storage._truncated}
+    set {_uniqueStorage()._truncated = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Impresario_V1_InspectorInputRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Impresario_V1_InspectorInputKind = .unspecified
+
+  /// tap/scroll target when set
+  public var nodeID: UInt64 = 0
+
+  public var x: Float = 0
+
+  public var y: Float = 0
+
+  public var endX: Float = 0
+
+  public var endY: Float = 0
+
+  public var text: String = String()
+
+  public var key: Impresario_V1_RemoteKey = .unspecified
+
+  public var direction: Impresario_V1_Direction = .unspecified
+
+  public var count: UInt32 = 0
+
+  public var durationMs: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_InspectorInputResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ok: Bool = false
+
+  public var error: Impresario_V1_ErrorInfo {
+    get {_error ?? Impresario_V1_ErrorInfo()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  /// revision after the immediate re-acquire
+  public var rev: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _error: Impresario_V1_ErrorInfo? = nil
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "impresario.v1"
@@ -1715,11 +2248,11 @@ nonisolated extension Impresario_V1_Platform: SwiftProtobuf._ProtoNameProviding 
 }
 
 nonisolated extension Impresario_V1_Capability: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CAPABILITY_UNSPECIFIED\0\u{1}MULTI_SESSION\0\u{1}LOGS\0\u{1}SCREENSHOT\0\u{1}TOUCH_GESTURES\0\u{1}DPAD_FOCUS\0\u{1}PROGRAMMATIC_FOCUS\0\u{1}KEY_EVENTS\0\u{1}APP_CONTROL\0\u{1}PROBE_SHOWING\0\u{1}PROBE_PLAYER\0\u{1}PROBE_DRM\0\u{1}NET_METADATA\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CAPABILITY_UNSPECIFIED\0\u{1}MULTI_SESSION\0\u{1}LOGS\0\u{1}SCREENSHOT\0\u{1}TOUCH_GESTURES\0\u{1}DPAD_FOCUS\0\u{1}PROGRAMMATIC_FOCUS\0\u{1}KEY_EVENTS\0\u{1}APP_CONTROL\0\u{1}PROBE_SHOWING\0\u{1}PROBE_PLAYER\0\u{1}PROBE_DRM\0\u{1}NET_METADATA\0\u{1}INSPECTOR\0")
 }
 
 nonisolated extension Impresario_V1_SelectorStrategy: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SELECTOR_STRATEGY_UNSPECIFIED\0\u{1}CSS\0\u{1}XPATH\0\u{1}TEXT\0\u{1}TEXT_CONTAINS\0\u{1}ANDROID_ID\0\u{1}ANDROID_DESC\0\u{1}ANDROID_CLASS\0\u{1}ACCESSIBILITY_ID\0\u{1}LABEL\0\u{1}LABEL_CONTAINS\0\u{1}PREDICATE\0\u{1}IOS_TYPE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SELECTOR_STRATEGY_UNSPECIFIED\0\u{1}CSS\0\u{1}XPATH\0\u{1}TEXT\0\u{1}TEXT_CONTAINS\0\u{1}ANDROID_ID\0\u{1}ANDROID_DESC\0\u{1}ANDROID_CLASS\0\u{1}ACCESSIBILITY_ID\0\u{1}LABEL\0\u{1}LABEL_CONTAINS\0\u{1}PREDICATE\0\u{1}IOS_TYPE\0\u{1}LOCATOR\0")
 }
 
 nonisolated extension Impresario_V1_ActionType: SwiftProtobuf._ProtoNameProviding {
@@ -1764,6 +2297,10 @@ nonisolated extension Impresario_V1_ErrorCode: SwiftProtobuf._ProtoNameProviding
 
 nonisolated extension Impresario_V1_LogLevel: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LOG_LEVEL_UNSPECIFIED\0\u{1}DEBUG\0\u{1}INFO\0\u{1}WARN\0\u{1}ERROR\0")
+}
+
+nonisolated extension Impresario_V1_InspectorInputKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0INSPECTOR_INPUT_KIND_UNSPECIFIED\0\u{1}INSPECTOR_INPUT_KIND_TAP\0\u{1}INSPECTOR_INPUT_KIND_SCROLL\0\u{1}INSPECTOR_INPUT_KIND_KEY\0\u{1}INSPECTOR_INPUT_KIND_TYPE\0\u{1}INSPECTOR_INPUT_KIND_SWIPE\0")
 }
 
 nonisolated extension Impresario_V1_HandshakeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -3243,6 +3780,779 @@ nonisolated extension Impresario_V1_ShutdownResponse: SwiftProtobuf.Message, Swi
   }
 
   public static func ==(lhs: Impresario_V1_ShutdownResponse, rhs: Impresario_V1_ShutdownResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorSnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorSnapshotRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}include_system_ui\0\u{3}min_visible_fraction\0\u{3}max_nodes\0\u{3}max_depth\0\u{3}include_raw\0\u{3}include_screenshot\0\u{3}screenshot_only\0\u{3}screenshot_scale\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.includeSystemUi) }()
+      case 2: try { try decoder.decodeSingularFloatField(value: &self.minVisibleFraction) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.maxNodes) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.maxDepth) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.includeRaw) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.includeScreenshot) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.screenshotOnly) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.screenshotScale) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.includeSystemUi != false {
+      try visitor.visitSingularBoolField(value: self.includeSystemUi, fieldNumber: 1)
+    }
+    if self.minVisibleFraction.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.minVisibleFraction, fieldNumber: 2)
+    }
+    if self.maxNodes != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxNodes, fieldNumber: 3)
+    }
+    if self.maxDepth != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxDepth, fieldNumber: 4)
+    }
+    if self.includeRaw != false {
+      try visitor.visitSingularBoolField(value: self.includeRaw, fieldNumber: 5)
+    }
+    if self.includeScreenshot != false {
+      try visitor.visitSingularBoolField(value: self.includeScreenshot, fieldNumber: 6)
+    }
+    if self.screenshotOnly != false {
+      try visitor.visitSingularBoolField(value: self.screenshotOnly, fieldNumber: 7)
+    }
+    if self.screenshotScale != 0 {
+      try visitor.visitSingularUInt32Field(value: self.screenshotScale, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorSnapshotRequest, rhs: Impresario_V1_InspectorSnapshotRequest) -> Bool {
+    if lhs.includeSystemUi != rhs.includeSystemUi {return false}
+    if lhs.minVisibleFraction != rhs.minVisibleFraction {return false}
+    if lhs.maxNodes != rhs.maxNodes {return false}
+    if lhs.maxDepth != rhs.maxDepth {return false}
+    if lhs.includeRaw != rhs.includeRaw {return false}
+    if lhs.includeScreenshot != rhs.includeScreenshot {return false}
+    if lhs.screenshotOnly != rhs.screenshotOnly {return false}
+    if lhs.screenshotScale != rhs.screenshotScale {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorRect: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorRect"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}x\0\u{1}y\0\u{1}w\0\u{1}h\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularFloatField(value: &self.x) }()
+      case 2: try { try decoder.decodeSingularFloatField(value: &self.y) }()
+      case 3: try { try decoder.decodeSingularFloatField(value: &self.w) }()
+      case 4: try { try decoder.decodeSingularFloatField(value: &self.h) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.x.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.x, fieldNumber: 1)
+    }
+    if self.y.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.y, fieldNumber: 2)
+    }
+    if self.w.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.w, fieldNumber: 3)
+    }
+    if self.h.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.h, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorRect, rhs: Impresario_V1_InspectorRect) -> Bool {
+    if lhs.x != rhs.x {return false}
+    if lhs.y != rhs.y {return false}
+    if lhs.w != rhs.w {return false}
+    if lhs.h != rhs.h {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorNode: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorNode"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}parent_id\0\u{1}role\0\u{1}name\0\u{1}text\0\u{3}test_id\0\u{3}raw_id\0\u{1}bounds\0\u{3}viewport_bounds\0\u{1}focused\0\u{1}enabled\0\u{1}selected\0\u{1}checked\0\u{1}expanded\0\u{1}pressed\0\u{1}readonly\0\u{1}required\0\u{1}hidden\0\u{1}secure\0\u{3}system_ui\0\u{1}scrollable\0\u{3}can_scroll_backward\0\u{3}can_scroll_forward\0\u{3}scroll_axis\0\u{3}children_hidden_count\0\u{1}raw\0\u{1}value\0\u{1}label\0\u{1}description\0\u{1}placeholder\0\u{1}alt\0\u{1}title\0\u{3}css_selector\0\u{1}xpath\0\u{3}visible_fraction\0\u{3}escapes_clip\0\u{1}depth\0\u{3}text_truncated\0")
+
+  fileprivate class _StorageClass {
+    var _id: UInt64 = 0
+    var _parentID: UInt64 = 0
+    var _role: String = String()
+    var _name: String = String()
+    var _text: String = String()
+    var _testID: String = String()
+    var _rawID: String = String()
+    var _bounds: Impresario_V1_InspectorRect? = nil
+    var _viewportBounds: Impresario_V1_InspectorRect? = nil
+    var _focused: Bool = false
+    var _enabled: Bool = false
+    var _selected: Bool = false
+    var _checked: Bool? = nil
+    var _expanded: Bool? = nil
+    var _pressed: Bool? = nil
+    var _readonly: Bool = false
+    var _required: Bool = false
+    var _hidden: Bool = false
+    var _secure: Bool = false
+    var _systemUi: Bool = false
+    var _scrollable: Bool = false
+    var _canScrollBackward: Bool = false
+    var _canScrollForward: Bool = false
+    var _scrollAxis: String = String()
+    var _childrenHiddenCount: UInt32 = 0
+    var _raw: String = String()
+    var _value: String = String()
+    var _label: String = String()
+    var _description_p: String = String()
+    var _placeholder: String = String()
+    var _alt: String = String()
+    var _title: String = String()
+    var _cssSelector: String = String()
+    var _xpath: String = String()
+    var _visibleFraction: Float = 0
+    var _escapesClip: Bool = false
+    var _depth: UInt32 = 0
+    var _textTruncated: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _id = source._id
+      _parentID = source._parentID
+      _role = source._role
+      _name = source._name
+      _text = source._text
+      _testID = source._testID
+      _rawID = source._rawID
+      _bounds = source._bounds
+      _viewportBounds = source._viewportBounds
+      _focused = source._focused
+      _enabled = source._enabled
+      _selected = source._selected
+      _checked = source._checked
+      _expanded = source._expanded
+      _pressed = source._pressed
+      _readonly = source._readonly
+      _required = source._required
+      _hidden = source._hidden
+      _secure = source._secure
+      _systemUi = source._systemUi
+      _scrollable = source._scrollable
+      _canScrollBackward = source._canScrollBackward
+      _canScrollForward = source._canScrollForward
+      _scrollAxis = source._scrollAxis
+      _childrenHiddenCount = source._childrenHiddenCount
+      _raw = source._raw
+      _value = source._value
+      _label = source._label
+      _description_p = source._description_p
+      _placeholder = source._placeholder
+      _alt = source._alt
+      _title = source._title
+      _cssSelector = source._cssSelector
+      _xpath = source._xpath
+      _visibleFraction = source._visibleFraction
+      _escapesClip = source._escapesClip
+      _depth = source._depth
+      _textTruncated = source._textTruncated
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularUInt64Field(value: &_storage._id) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._parentID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._role) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._name) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._text) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._testID) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._rawID) }()
+        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._bounds) }()
+        case 9: try { try decoder.decodeSingularMessageField(value: &_storage._viewportBounds) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._focused) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._enabled) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._selected) }()
+        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._checked) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._expanded) }()
+        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._pressed) }()
+        case 16: try { try decoder.decodeSingularBoolField(value: &_storage._readonly) }()
+        case 17: try { try decoder.decodeSingularBoolField(value: &_storage._required) }()
+        case 18: try { try decoder.decodeSingularBoolField(value: &_storage._hidden) }()
+        case 19: try { try decoder.decodeSingularBoolField(value: &_storage._secure) }()
+        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._systemUi) }()
+        case 21: try { try decoder.decodeSingularBoolField(value: &_storage._scrollable) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._canScrollBackward) }()
+        case 23: try { try decoder.decodeSingularBoolField(value: &_storage._canScrollForward) }()
+        case 24: try { try decoder.decodeSingularStringField(value: &_storage._scrollAxis) }()
+        case 25: try { try decoder.decodeSingularUInt32Field(value: &_storage._childrenHiddenCount) }()
+        case 26: try { try decoder.decodeSingularStringField(value: &_storage._raw) }()
+        case 27: try { try decoder.decodeSingularStringField(value: &_storage._value) }()
+        case 28: try { try decoder.decodeSingularStringField(value: &_storage._label) }()
+        case 29: try { try decoder.decodeSingularStringField(value: &_storage._description_p) }()
+        case 30: try { try decoder.decodeSingularStringField(value: &_storage._placeholder) }()
+        case 31: try { try decoder.decodeSingularStringField(value: &_storage._alt) }()
+        case 32: try { try decoder.decodeSingularStringField(value: &_storage._title) }()
+        case 33: try { try decoder.decodeSingularStringField(value: &_storage._cssSelector) }()
+        case 34: try { try decoder.decodeSingularStringField(value: &_storage._xpath) }()
+        case 35: try { try decoder.decodeSingularFloatField(value: &_storage._visibleFraction) }()
+        case 36: try { try decoder.decodeSingularBoolField(value: &_storage._escapesClip) }()
+        case 37: try { try decoder.decodeSingularUInt32Field(value: &_storage._depth) }()
+        case 38: try { try decoder.decodeSingularBoolField(value: &_storage._textTruncated) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._id != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._id, fieldNumber: 1)
+      }
+      if _storage._parentID != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._parentID, fieldNumber: 2)
+      }
+      if !_storage._role.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._role, fieldNumber: 3)
+      }
+      if !_storage._name.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._name, fieldNumber: 4)
+      }
+      if !_storage._text.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._text, fieldNumber: 5)
+      }
+      if !_storage._testID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._testID, fieldNumber: 6)
+      }
+      if !_storage._rawID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._rawID, fieldNumber: 7)
+      }
+      try { if let v = _storage._bounds {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+      } }()
+      try { if let v = _storage._viewportBounds {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+      } }()
+      if _storage._focused != false {
+        try visitor.visitSingularBoolField(value: _storage._focused, fieldNumber: 10)
+      }
+      if _storage._enabled != false {
+        try visitor.visitSingularBoolField(value: _storage._enabled, fieldNumber: 11)
+      }
+      if _storage._selected != false {
+        try visitor.visitSingularBoolField(value: _storage._selected, fieldNumber: 12)
+      }
+      try { if let v = _storage._checked {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 13)
+      } }()
+      try { if let v = _storage._expanded {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 14)
+      } }()
+      try { if let v = _storage._pressed {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 15)
+      } }()
+      if _storage._readonly != false {
+        try visitor.visitSingularBoolField(value: _storage._readonly, fieldNumber: 16)
+      }
+      if _storage._required != false {
+        try visitor.visitSingularBoolField(value: _storage._required, fieldNumber: 17)
+      }
+      if _storage._hidden != false {
+        try visitor.visitSingularBoolField(value: _storage._hidden, fieldNumber: 18)
+      }
+      if _storage._secure != false {
+        try visitor.visitSingularBoolField(value: _storage._secure, fieldNumber: 19)
+      }
+      if _storage._systemUi != false {
+        try visitor.visitSingularBoolField(value: _storage._systemUi, fieldNumber: 20)
+      }
+      if _storage._scrollable != false {
+        try visitor.visitSingularBoolField(value: _storage._scrollable, fieldNumber: 21)
+      }
+      if _storage._canScrollBackward != false {
+        try visitor.visitSingularBoolField(value: _storage._canScrollBackward, fieldNumber: 22)
+      }
+      if _storage._canScrollForward != false {
+        try visitor.visitSingularBoolField(value: _storage._canScrollForward, fieldNumber: 23)
+      }
+      if !_storage._scrollAxis.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._scrollAxis, fieldNumber: 24)
+      }
+      if _storage._childrenHiddenCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._childrenHiddenCount, fieldNumber: 25)
+      }
+      if !_storage._raw.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._raw, fieldNumber: 26)
+      }
+      if !_storage._value.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._value, fieldNumber: 27)
+      }
+      if !_storage._label.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._label, fieldNumber: 28)
+      }
+      if !_storage._description_p.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._description_p, fieldNumber: 29)
+      }
+      if !_storage._placeholder.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._placeholder, fieldNumber: 30)
+      }
+      if !_storage._alt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._alt, fieldNumber: 31)
+      }
+      if !_storage._title.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._title, fieldNumber: 32)
+      }
+      if !_storage._cssSelector.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._cssSelector, fieldNumber: 33)
+      }
+      if !_storage._xpath.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._xpath, fieldNumber: 34)
+      }
+      if _storage._visibleFraction.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._visibleFraction, fieldNumber: 35)
+      }
+      if _storage._escapesClip != false {
+        try visitor.visitSingularBoolField(value: _storage._escapesClip, fieldNumber: 36)
+      }
+      if _storage._depth != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._depth, fieldNumber: 37)
+      }
+      if _storage._textTruncated != false {
+        try visitor.visitSingularBoolField(value: _storage._textTruncated, fieldNumber: 38)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorNode, rhs: Impresario_V1_InspectorNode) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._id != rhs_storage._id {return false}
+        if _storage._parentID != rhs_storage._parentID {return false}
+        if _storage._role != rhs_storage._role {return false}
+        if _storage._name != rhs_storage._name {return false}
+        if _storage._text != rhs_storage._text {return false}
+        if _storage._testID != rhs_storage._testID {return false}
+        if _storage._rawID != rhs_storage._rawID {return false}
+        if _storage._bounds != rhs_storage._bounds {return false}
+        if _storage._viewportBounds != rhs_storage._viewportBounds {return false}
+        if _storage._focused != rhs_storage._focused {return false}
+        if _storage._enabled != rhs_storage._enabled {return false}
+        if _storage._selected != rhs_storage._selected {return false}
+        if _storage._checked != rhs_storage._checked {return false}
+        if _storage._expanded != rhs_storage._expanded {return false}
+        if _storage._pressed != rhs_storage._pressed {return false}
+        if _storage._readonly != rhs_storage._readonly {return false}
+        if _storage._required != rhs_storage._required {return false}
+        if _storage._hidden != rhs_storage._hidden {return false}
+        if _storage._secure != rhs_storage._secure {return false}
+        if _storage._systemUi != rhs_storage._systemUi {return false}
+        if _storage._scrollable != rhs_storage._scrollable {return false}
+        if _storage._canScrollBackward != rhs_storage._canScrollBackward {return false}
+        if _storage._canScrollForward != rhs_storage._canScrollForward {return false}
+        if _storage._scrollAxis != rhs_storage._scrollAxis {return false}
+        if _storage._childrenHiddenCount != rhs_storage._childrenHiddenCount {return false}
+        if _storage._raw != rhs_storage._raw {return false}
+        if _storage._value != rhs_storage._value {return false}
+        if _storage._label != rhs_storage._label {return false}
+        if _storage._description_p != rhs_storage._description_p {return false}
+        if _storage._placeholder != rhs_storage._placeholder {return false}
+        if _storage._alt != rhs_storage._alt {return false}
+        if _storage._title != rhs_storage._title {return false}
+        if _storage._cssSelector != rhs_storage._cssSelector {return false}
+        if _storage._xpath != rhs_storage._xpath {return false}
+        if _storage._visibleFraction != rhs_storage._visibleFraction {return false}
+        if _storage._escapesClip != rhs_storage._escapesClip {return false}
+        if _storage._depth != rhs_storage._depth {return false}
+        if _storage._textTruncated != rhs_storage._textTruncated {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorSnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorSnapshotResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rev\0\u{3}device_name\0\u{1}platform\0\u{3}logical_width\0\u{3}logical_height\0\u{3}viewport_x\0\u{3}viewport_y\0\u{3}viewport_width\0\u{3}viewport_height\0\u{3}pixel_ratio\0\u{1}settled\0\u{3}acquisition_ms\0\u{1}nodes\0\u{1}degraded\0\u{3}focused_id\0\u{3}timestamp_unix_ms\0\u{1}error\0\u{3}screenshot_png\0\u{3}screenshot_width\0\u{3}screenshot_height\0\u{1}truncated\0")
+
+  fileprivate class _StorageClass {
+    var _rev: UInt64 = 0
+    var _deviceName: String = String()
+    var _platform: Impresario_V1_Platform = .unspecified
+    var _logicalWidth: Float = 0
+    var _logicalHeight: Float = 0
+    var _viewportX: Float = 0
+    var _viewportY: Float = 0
+    var _viewportWidth: Float = 0
+    var _viewportHeight: Float = 0
+    var _pixelRatio: Float = 0
+    var _settled: Bool = false
+    var _acquisitionMs: UInt32 = 0
+    var _nodes: [Impresario_V1_InspectorNode] = []
+    var _degraded: [String] = []
+    var _focusedID: UInt64 = 0
+    var _timestampUnixMs: UInt64 = 0
+    var _error: Impresario_V1_ErrorInfo? = nil
+    var _screenshotPng: Data = Data()
+    var _screenshotWidth: UInt32 = 0
+    var _screenshotHeight: UInt32 = 0
+    var _truncated: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _rev = source._rev
+      _deviceName = source._deviceName
+      _platform = source._platform
+      _logicalWidth = source._logicalWidth
+      _logicalHeight = source._logicalHeight
+      _viewportX = source._viewportX
+      _viewportY = source._viewportY
+      _viewportWidth = source._viewportWidth
+      _viewportHeight = source._viewportHeight
+      _pixelRatio = source._pixelRatio
+      _settled = source._settled
+      _acquisitionMs = source._acquisitionMs
+      _nodes = source._nodes
+      _degraded = source._degraded
+      _focusedID = source._focusedID
+      _timestampUnixMs = source._timestampUnixMs
+      _error = source._error
+      _screenshotPng = source._screenshotPng
+      _screenshotWidth = source._screenshotWidth
+      _screenshotHeight = source._screenshotHeight
+      _truncated = source._truncated
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularUInt64Field(value: &_storage._rev) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._deviceName) }()
+        case 3: try { try decoder.decodeSingularEnumField(value: &_storage._platform) }()
+        case 4: try { try decoder.decodeSingularFloatField(value: &_storage._logicalWidth) }()
+        case 5: try { try decoder.decodeSingularFloatField(value: &_storage._logicalHeight) }()
+        case 6: try { try decoder.decodeSingularFloatField(value: &_storage._viewportX) }()
+        case 7: try { try decoder.decodeSingularFloatField(value: &_storage._viewportY) }()
+        case 8: try { try decoder.decodeSingularFloatField(value: &_storage._viewportWidth) }()
+        case 9: try { try decoder.decodeSingularFloatField(value: &_storage._viewportHeight) }()
+        case 10: try { try decoder.decodeSingularFloatField(value: &_storage._pixelRatio) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._settled) }()
+        case 12: try { try decoder.decodeSingularUInt32Field(value: &_storage._acquisitionMs) }()
+        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._nodes) }()
+        case 14: try { try decoder.decodeRepeatedStringField(value: &_storage._degraded) }()
+        case 15: try { try decoder.decodeSingularUInt64Field(value: &_storage._focusedID) }()
+        case 16: try { try decoder.decodeSingularUInt64Field(value: &_storage._timestampUnixMs) }()
+        case 17: try { try decoder.decodeSingularMessageField(value: &_storage._error) }()
+        case 18: try { try decoder.decodeSingularBytesField(value: &_storage._screenshotPng) }()
+        case 19: try { try decoder.decodeSingularUInt32Field(value: &_storage._screenshotWidth) }()
+        case 20: try { try decoder.decodeSingularUInt32Field(value: &_storage._screenshotHeight) }()
+        case 21: try { try decoder.decodeSingularBoolField(value: &_storage._truncated) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._rev != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._rev, fieldNumber: 1)
+      }
+      if !_storage._deviceName.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._deviceName, fieldNumber: 2)
+      }
+      if _storage._platform != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._platform, fieldNumber: 3)
+      }
+      if _storage._logicalWidth.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._logicalWidth, fieldNumber: 4)
+      }
+      if _storage._logicalHeight.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._logicalHeight, fieldNumber: 5)
+      }
+      if _storage._viewportX.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._viewportX, fieldNumber: 6)
+      }
+      if _storage._viewportY.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._viewportY, fieldNumber: 7)
+      }
+      if _storage._viewportWidth.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._viewportWidth, fieldNumber: 8)
+      }
+      if _storage._viewportHeight.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._viewportHeight, fieldNumber: 9)
+      }
+      if _storage._pixelRatio.bitPattern != 0 {
+        try visitor.visitSingularFloatField(value: _storage._pixelRatio, fieldNumber: 10)
+      }
+      if _storage._settled != false {
+        try visitor.visitSingularBoolField(value: _storage._settled, fieldNumber: 11)
+      }
+      if _storage._acquisitionMs != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._acquisitionMs, fieldNumber: 12)
+      }
+      if !_storage._nodes.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._nodes, fieldNumber: 13)
+      }
+      if !_storage._degraded.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._degraded, fieldNumber: 14)
+      }
+      if _storage._focusedID != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._focusedID, fieldNumber: 15)
+      }
+      if _storage._timestampUnixMs != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._timestampUnixMs, fieldNumber: 16)
+      }
+      try { if let v = _storage._error {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
+      } }()
+      if !_storage._screenshotPng.isEmpty {
+        try visitor.visitSingularBytesField(value: _storage._screenshotPng, fieldNumber: 18)
+      }
+      if _storage._screenshotWidth != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._screenshotWidth, fieldNumber: 19)
+      }
+      if _storage._screenshotHeight != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._screenshotHeight, fieldNumber: 20)
+      }
+      if _storage._truncated != false {
+        try visitor.visitSingularBoolField(value: _storage._truncated, fieldNumber: 21)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorSnapshotResponse, rhs: Impresario_V1_InspectorSnapshotResponse) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._rev != rhs_storage._rev {return false}
+        if _storage._deviceName != rhs_storage._deviceName {return false}
+        if _storage._platform != rhs_storage._platform {return false}
+        if _storage._logicalWidth != rhs_storage._logicalWidth {return false}
+        if _storage._logicalHeight != rhs_storage._logicalHeight {return false}
+        if _storage._viewportX != rhs_storage._viewportX {return false}
+        if _storage._viewportY != rhs_storage._viewportY {return false}
+        if _storage._viewportWidth != rhs_storage._viewportWidth {return false}
+        if _storage._viewportHeight != rhs_storage._viewportHeight {return false}
+        if _storage._pixelRatio != rhs_storage._pixelRatio {return false}
+        if _storage._settled != rhs_storage._settled {return false}
+        if _storage._acquisitionMs != rhs_storage._acquisitionMs {return false}
+        if _storage._nodes != rhs_storage._nodes {return false}
+        if _storage._degraded != rhs_storage._degraded {return false}
+        if _storage._focusedID != rhs_storage._focusedID {return false}
+        if _storage._timestampUnixMs != rhs_storage._timestampUnixMs {return false}
+        if _storage._error != rhs_storage._error {return false}
+        if _storage._screenshotPng != rhs_storage._screenshotPng {return false}
+        if _storage._screenshotWidth != rhs_storage._screenshotWidth {return false}
+        if _storage._screenshotHeight != rhs_storage._screenshotHeight {return false}
+        if _storage._truncated != rhs_storage._truncated {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorInputRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorInputRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{3}node_id\0\u{1}x\0\u{1}y\0\u{3}end_x\0\u{3}end_y\0\u{1}text\0\u{1}key\0\u{1}direction\0\u{1}count\0\u{3}duration_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.nodeID) }()
+      case 3: try { try decoder.decodeSingularFloatField(value: &self.x) }()
+      case 4: try { try decoder.decodeSingularFloatField(value: &self.y) }()
+      case 5: try { try decoder.decodeSingularFloatField(value: &self.endX) }()
+      case 6: try { try decoder.decodeSingularFloatField(value: &self.endY) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 8: try { try decoder.decodeSingularEnumField(value: &self.key) }()
+      case 9: try { try decoder.decodeSingularEnumField(value: &self.direction) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.count) }()
+      case 11: try { try decoder.decodeSingularUInt32Field(value: &self.durationMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 1)
+    }
+    if self.nodeID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.nodeID, fieldNumber: 2)
+    }
+    if self.x.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.x, fieldNumber: 3)
+    }
+    if self.y.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.y, fieldNumber: 4)
+    }
+    if self.endX.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.endX, fieldNumber: 5)
+    }
+    if self.endY.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.endY, fieldNumber: 6)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 7)
+    }
+    if self.key != .unspecified {
+      try visitor.visitSingularEnumField(value: self.key, fieldNumber: 8)
+    }
+    if self.direction != .unspecified {
+      try visitor.visitSingularEnumField(value: self.direction, fieldNumber: 9)
+    }
+    if self.count != 0 {
+      try visitor.visitSingularUInt32Field(value: self.count, fieldNumber: 10)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.durationMs, fieldNumber: 11)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorInputRequest, rhs: Impresario_V1_InspectorInputRequest) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.nodeID != rhs.nodeID {return false}
+    if lhs.x != rhs.x {return false}
+    if lhs.y != rhs.y {return false}
+    if lhs.endX != rhs.endX {return false}
+    if lhs.endY != rhs.endY {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.key != rhs.key {return false}
+    if lhs.direction != rhs.direction {return false}
+    if lhs.count != rhs.count {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorInputResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorInputResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{1}rev\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.rev) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.ok != false {
+      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if self.rev != 0 {
+      try visitor.visitSingularUInt64Field(value: self.rev, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorInputResponse, rhs: Impresario_V1_InspectorInputResponse) -> Bool {
+    if lhs.ok != rhs.ok {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.rev != rhs.rev {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
