@@ -201,7 +201,11 @@ fn next_publish_rev(
     candidate: &Snapshot,
 ) -> Option<u64> {
     if let Some(prev) = previous {
-        if prev.rev == last_rev && status_rev == prev.rev && prev.same_content(candidate) {
+        // The status revision is the one the master last showed the UI; when it
+        // still matches the published revision (no detach/reattach reset), an
+        // identical capture changes nothing. The snapshot's own wire rev is
+        // irrelevant here: the executor may increment it on every poll.
+        if status_rev == last_rev && prev.same_content(candidate) {
             return None;
         }
     }
