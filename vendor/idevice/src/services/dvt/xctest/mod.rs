@@ -70,7 +70,7 @@ use dtx_services::{
     XCT_LOG_MESSAGE, XCT_METHOD_DID_MEASURE_METRIC, XCT_RUNNER_READY_WITH_CAPABILITIES,
     XCT_SUITE_DID_FINISH, XCT_SUITE_DID_FINISH_ID, XCT_SUITE_DID_START, XCT_SUITE_DID_START_ID,
     XCT_UI_INIT_DID_FAIL, XCTEST_DRIVER_INTERFACE, XCTEST_MANAGER_DAEMON_CONNECTION_INTERFACE,
-    XCTEST_MANAGER_IDE_INTERFACE, XCTEST_PROXY_IDE_TO_DRIVER,
+    XCTEST_MANAGER_IDE_INTERFACE, XCTEST_PROXY_DRIVER_TO_IDE, XCTEST_PROXY_IDE_TO_DRIVER,
 };
 use listener::{XCTestCaseResult, XCUITestListener};
 use types::{
@@ -1107,7 +1107,7 @@ async fn register_early_driver_channel_handler(
     let xctest_config = xctest_config.clone();
     main_client
         .register_incoming_channel_initializer(
-            &[XCTEST_DRIVER_INTERFACE, XCTEST_PROXY_IDE_TO_DRIVER],
+            &[XCTEST_DRIVER_INTERFACE, XCTEST_PROXY_IDE_TO_DRIVER, XCTEST_PROXY_DRIVER_TO_IDE],
             move |mut channel, _identifier| {
                 let xctest_config = xctest_config.clone();
                 Box::pin(async move {

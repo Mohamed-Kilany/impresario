@@ -48,9 +48,22 @@ pub const XCTEST_DRIVER_INTERFACE: &str = "XCTestDriverInterface";
 pub const XCTEST_PROXY_IDE_TO_DAEMON: &str =
     "dtxproxy:XCTestManager_IDEInterface:XCTestManager_DaemonConnectionInterface";
 
-/// iOS 17+ proxy channel: IDE ↔ XCTestDriverInterface (reverse channel from runner).
+/// iOS 17+ proxy channel identifier in the locally initiated orientation.
+///
+/// Locally opened proxy channels name the local service first and the remote
+/// service second.
 pub const XCTEST_PROXY_IDE_TO_DRIVER: &str =
     "dtxproxy:XCTestManager_IDEInterface:XCTestDriverInterface";
+
+/// iOS 17+ reverse proxy channel requested by the test runner.
+///
+/// The runner's `_requestChannelWithCode:identifier:` names its own service
+/// (`XCTestDriverInterface`) first and the IDE-side service
+/// (`XCTestManager_IDEInterface`) second. This is the identifier that actually
+/// arrives from the device and must be matched when installing the early
+/// bootstrap handler.
+pub const XCTEST_PROXY_DRIVER_TO_IDE: &str =
+    "dtxproxy:XCTestDriverInterface:XCTestManager_IDEInterface";
 
 // ---------------------------------------------------------------------------
 // Xcode version reported to testmanagerd
