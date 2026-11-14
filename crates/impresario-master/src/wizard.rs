@@ -996,9 +996,11 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
     fn tvos_udid(&mut self) -> Result<Step, String> {
         let default = self.answers.connection.udid.clone();
         let _ = self.ui.say(
-            "Pair the Apple TV once with `impresario apple pair --host <ip>` (or import an \
-             existing pair plist with `impresario apple import-pair`). The UDID is the device's \
-             Apple UDID; `impresario apple status` lists saved pairings.",
+            "Pair the Apple TV once with `impresario apple pair --host <ip>` and enter the code \
+             shown on the TV (or import an existing pair plist with `impresario apple \
+             import-pair`). The UDID is the device's Apple UDID; `impresario apple status` lists \
+             saved pairings. iPhones/iPads pair from the device instead (Settings > Developer > \
+             Paired Macs, with `impresario apple pair-host`).",
         );
         match self
             .ui
@@ -1351,12 +1353,26 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                     }
                 }
             }
+            Platform::Ios => {
+                let _ = self.ui.say(
+                    "iOS is not probed while writing the definition. Pair the iPhone once: on \
+                     iOS 27+ run `impresario apple pair-host` here and open Settings > Developer \
+                     > Paired Macs on the phone; on older iOS, trust it over USB (Apple Mobile \
+                     Device Support), create a RemotePairing record with `pymobiledevice3 \
+                     lockdown remotepairing --pair`, and import it with `impresario apple \
+                     import-pair <pair.plist> --save <udid>`. After saving, run `impresario \
+                     device check <name>`; the first install must be trusted in Settings > \
+                     General > VPN & Device Management.",
+                );
+                Ok(Step::Next(Stage::Review))
+            }
             Platform::Tvos => {
                 let _ = self.ui.say(
-                    "tvOS is not probed while writing the definition. After saving, finish the \
-                     machine-global setup (`impresario apple pairing/signing/products/ddi`) and \
-                     run `impresario device check <name>`; it signs, installs and starts the \
-                     agent over the pure-Rust path.",
+                    "tvOS is not probed while writing the definition. Pair the Apple TV once \
+                     with `impresario apple pair --host <ip>` and enter the code the TV shows. \
+                     After saving, finish the machine-global setup (`impresario apple \
+                     signing/products/ddi`) and run `impresario device check <name>`; it signs, \
+                     installs and starts the agent over the pure-Rust path.",
                 );
                 Ok(Step::Next(Stage::Review))
             }
@@ -1469,6 +1485,11 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                         path.display()
                     ));
                     let next = match device.platform {
+                        Platform::Ios => {
+                            "next: bind an app with `impresario app add ...`; pair the iPhone \
+                             (`impresario apple pair-host`, or `apple import-pair` for older \
+                             iOS) and run `impresario device check <name>`"
+                        }
                         Platform::Tvos => {
                             "next: bind an app with `impresario app add ...`; after the \
                              machine-global Apple setup, run `impresario device check <name>`"

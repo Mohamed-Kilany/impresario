@@ -644,6 +644,9 @@ async fn collect_apple(
         "usable Apple signing set (identity, profiles and entitlements)".to_string(),
         "imported host/runner Apple agent products".to_string(),
         "personalized Developer Disk Image matching the device build".to_string(),
+        "the developer certificate trusted once on the device (Settings > General > VPN & Device \
+         Management)"
+            .to_string(),
     ];
     report.found.push(
         "no xcrun, xcodebuild, devicectl or simulator is used; configured devices are probed \
@@ -710,9 +713,19 @@ async fn collect_apple(
                     detail: error.to_string(),
                 });
                 report.fail();
+                let pairing = if platform == Platform::Ios {
+                    "pair it once with `impresario apple pair-host` (iOS 27+: Settings > \
+                     Developer > Paired Macs) or import an existing record with `impresario \
+                     apple import-pair <pair.plist> --save <udid>` (older iOS: trust the phone \
+                     over USB with Apple Mobile Device Support, then `pymobiledevice3 lockdown \
+                     remotepairing --pair`)"
+                } else {
+                    "pair it once with `impresario apple pair --host <host>`"
+                };
                 report.fixes.push(format!(
-                    "device '{}': check the configured IP, pair it with `impresario apple pair \
-                     --host <host>`, then run `impresario apple doctor --host <host>`",
+                    "device '{}': check the configured IP and {pairing}; trust the developer \
+                     certificate once in Settings > General > VPN & Device Management, then run \
+                     `impresario device check <name>`",
                     device.name
                 ));
             }
