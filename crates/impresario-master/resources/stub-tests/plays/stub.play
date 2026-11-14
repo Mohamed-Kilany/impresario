@@ -4,44 +4,44 @@ App: stub
 Tags: suite, smoke
 
 Act: Home
-    Tags: stub-home
+Tags: stub-home
     Perform: Home
 
 Act: Basic
-    Tags: stub-basic
+Tags: stub-basic
     Perform: Basic
 
 Act: Text
-    Tags: stub-text
+Tags: stub-text
     Perform: Text
 
 Act: Scroll
-    Tags: stub-scroll
+Tags: stub-scroll
     Perform: Scroll
 
 Act: Selection
-    Tags: stub-selection
+Tags: stub-selection
     Perform: Selection
 
 Act: Flags
-    Tags: stub-flags
+Tags: stub-flags
     Perform: Flags
 
 Act: Keys
-    Tags: stub-keys
+Tags: stub-keys
     Perform: Keys
 
 Act: Info
-    Tags: stub-info
+Tags: stub-info
     Perform: Info
 
 // A plain browser is excluded: its long press is a mouse hold, and the TV
 // fixture disables pointer input. Every device platform supports it.
 Act: LongPress
-    Tags: stub-longpress
-    Platforms: android, androidtv, ios, tvos, webos, tizen
+Tags: stub-longpress
+Platforms: android, androidtv, ios, tvos, webos, tizen
     Perform: LongPress
 
 Act: Media
-    Tags: stub-media
+Tags: stub-media
     Perform: Media
