@@ -341,6 +341,12 @@ where
 
     let daemon = ServiceDaemon::new()
         .map_err(|error| Error::Device(format!("cannot start mDNS advertiser: {error}")))?;
+    // mdns-sd's default 15-byte cap covers ordinary `_http._tcp`; Apple's
+    // pairable-host service type is longer, so use the daemon's documented
+    // maximum instead of silently failing to register.
+    daemon
+        .set_service_name_len_max(30)
+        .map_err(|error| Error::Device(format!("cannot advertise the pairable host: {error}")))?;
     let properties: HashMap<String, String> = info.mdns_txt_records(&host_id).into_iter().collect();
     let host_name = format!(
         "{}.local.",
