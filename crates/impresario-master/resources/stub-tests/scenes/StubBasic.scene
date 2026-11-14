@@ -1,0 +1,8 @@
+Scene: StubBasic
+
+| Piece   | web            | android          | ios                          |
+|---------|----------------|------------------|------------------------------|
+| Title   | #stub_title    | id:stub_title    | accessibilityId:stub_title   |
+| TapMe   | #stub_button   | id:stub_button   | accessibilityId:stub_button  |
+| Counter | #stub_counter  | id:stub_counter  | accessibilityId:stub_counter |
+| Status  | #stub_status   | id:stub_status   | accessibilityId:stub_status  |

@@ -137,6 +137,12 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::tools_cmd::ToolsCommand,
     },
+    /// Seed and print the embedded fixture-test suite (add `--json` to script it).
+    StubTests {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
     /// App definitions: add, edit, list, check, import, export.
     App {
         #[command(subcommand)]
@@ -509,6 +515,23 @@ pub fn run_with(argv: &[String]) -> i32 {
                 }
             }
         }
+        // First run also seeds the embedded fixture suite. Existing files are
+        // never overwritten; see install::ensure_stub_tests.
+        match crate::install::ensure_stub_tests(&home) {
+            Ok(report) if report.written > 0 && cli.verbose > 0 => {
+                eprintln!(
+                    "impresario: seeded {} fixture test file(s) in {}",
+                    report.written,
+                    report.dir.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if cli.verbose > 0 {
+                    eprintln!("impresario: fixture tests: {error}");
+                }
+            }
+        }
     }
     // The Apple account is machine-global and must work even when the current
     // workspace config is missing or invalid. Dispatch it before resolving a
@@ -561,6 +584,7 @@ pub fn run_with(argv: &[String]) -> i32 {
             crate::doctor::run(&home, &base, &config_path, &devices_path, *json)
         }
         Command::Tools { command } => crate::tools_cmd::run(command, &home),
+        Command::StubTests { json } => cmd_stub_tests(&home, *json),
         Command::Package(args) => crate::artifact_cmd::run_package(args),
         Command::Sign(args) => crate::artifact_cmd::run_sign(&home, args),
         Command::Run(args) => cmd_run(
@@ -2486,6 +2510,56 @@ fn cmd_home(home: &Home, base: &Path, config_path: &Path, devices_path: &Path, c
     println!("  impresario tests --tag smoke");
     println!("  impresario run --detach --tag smoke");
     println!("  impresario jobs --json");
+    println!();
+    println!("stub tests");
+    println!("  suite       {}", home.stub_tests_dir().display());
+    println!(
+        "  run it      impresario run --play \"{}\" --device <device> --app stub",
+        home.stub_tests_dir().display()
+    );
+    EXIT_OK
+}
+
+/// `impresario stub-tests`: seed the embedded fixture suite and print its path.
+fn cmd_stub_tests(home: &Home, json: bool) -> i32 {
+    let report = match crate::install::ensure_stub_tests(home) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("stub-tests: {error}");
+            return EXIT_INFRA;
+        }
+    };
+    let total = report.written + report.kept;
+    if json {
+        let payload = serde_json::json!({
+            "dir": report.dir.display().to_string(),
+            "files": total,
+            "written": report.written,
+            "kept": report.kept,
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(text) => println!("{text}"),
+            Err(error) => {
+                eprintln!("stub-tests: cannot encode JSON: {error}");
+                return EXIT_INFRA;
+            }
+        }
+        return EXIT_OK;
+    }
+    println!("stub fixture suite: {}", report.dir.display());
+    println!(
+        "  {total} file(s): {} written, {} kept",
+        report.written, report.kept
+    );
+    println!();
+    println!("run it");
+    println!(
+        "  impresario run --play \"{}\" --device <device> --app stub",
+        report.dir.display()
+    );
+    println!();
+    println!("The suite loads its scenes and theatres from the same directory.");
+    println!("`--app` is only needed when your workspace names the fixture differently.");
     EXIT_OK
 }
 
@@ -2698,11 +2772,31 @@ pub(crate) fn run_workspace_with_lease(
     let mut load_diagnostics = scenes.diagnostics;
     load_diagnostics.extend(theatres.diagnostics);
     load_diagnostics.extend(plays.diagnostics);
+    // An explicit --play path may be a self-contained suite directory (the
+    // seeded $IMPRESARIO_HOME/stub-tests is one): load its scenes and theatres
+    // beside the configured workspace so the play resolves without copying
+    // anything into the workspace. A configured file with the same name wins.
+    let mut merged_scenes = scenes.workspace.scenes;
+    for scene in plays.workspace.scenes {
+        if !merged_scenes.iter().any(|known| known.name == scene.name) {
+            merged_scenes.push(scene);
+        }
+    }
+    let mut merged_theatres = theatres.workspace.theatres;
+    for theatre in plays.workspace.theatres {
+        if !merged_theatres
+            .iter()
+            .any(|known| known.name == theatre.name)
+        {
+            merged_theatres.push(theatre);
+        }
+    }
     let ws = workspace::Workspace {
-        scenes: scenes.workspace.scenes,
-        theatres: theatres.workspace.theatres,
+        scenes: merged_scenes,
+        theatres: merged_theatres,
         plays: plays.workspace.plays,
     };
+    load_diagnostics.extend(workspace::stage_implementation_diagnostics(&ws));
     render::eprint_all(&load_diagnostics);
     if load_diagnostics.has_errors() {
         let message = format!(

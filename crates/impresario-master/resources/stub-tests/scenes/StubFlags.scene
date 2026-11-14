@@ -1,0 +1,10 @@
+Scene: StubFlags
+
+| Piece        | web               | android             | ios                             |
+|--------------|-------------------|---------------------|---------------------------------|
+| Title        | #stub_title       | id:stub_title       | accessibilityId:stub_title      |
+| Enabled      | #stub_enabled     | id:stub_enabled     | accessibilityId:stub_enabled    |
+| Disabled     | #stub_disabled    | id:stub_disabled    | accessibilityId:stub_disabled   |
+| VisibleLabel | #stub_visible     | id:stub_visible     | accessibilityId:stub_visible    |
+| HiddenLabel  | #stub_hidden      | id:stub_hidden      | accessibilityId:stub_hidden     |
+| Status       | #stub_status      | id:stub_status      | accessibilityId:stub_status     |

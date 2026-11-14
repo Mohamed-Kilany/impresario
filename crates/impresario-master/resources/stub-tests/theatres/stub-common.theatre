@@ -1,0 +1,156 @@
+// The cross-platform half of the stub suite. These stages only use
+// selectors and actions that exist on every stub target; the input-method
+// differences live in stub-touch.theatre and stub-remote.theatre.
+Theatre: Stub common stages
+
+Stage: Home
+    Timeout: 20s
+    Scene: StubHome
+        Check: StubTitle is visible
+        Check: StubTitle textContains 'Impresario'
+        Check: BasicRow is visible
+        Check: TextRow is visible
+        Check: ScrollRow is visible
+        Check: SelectRow is visible
+        Check: FlagsRow is visible
+        Check: KeysRow is visible
+        Check: InfoRow is visible
+        Check: MediaRow is visible
+        Action: screenshot 'stub-home'
+
+Stage: Basic
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => BasicRow
+    Scene: StubBasic
+        Check: Title text 'Basic controls'
+        Check: Counter text 'taps=0'
+        Action: click => TapMe
+        Check: Counter text 'taps=1'
+        Check: Status text 'status=clicked'
+        Action: screenshot 'stub-basic'
+        Action: click => TapMe
+        Check: Counter text 'taps=2'
+        Action: screenshot 'stub-basic-twice'
+    Scene: StubHome
+        Action: back
+        Check: BasicRow is visible
+
+Stage: Text
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => TextRow
+    Scene: StubText
+        Check: Title text 'Text entry'
+        Check: Status text 'status=idle'
+        Action: 'hello' => Input
+        Check: Echo text 'echo:hello'
+        Action: append ' world' => Input
+        Check: Echo text 'echo:hello world'
+        Action: clear => Input
+        Check: Echo text 'echo:'
+        Action: screenshot 'stub-text'
+    Scene: StubHome
+        Action: back
+        Check: TextRow is visible
+
+Stage: Scroll
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => ScrollRow
+    Scene: StubScroll
+        Check: Title text 'Scroller'
+        Check: Row0 is visible
+        Action: scroll down 1 => Scroller
+        Action: scrollto => Row29
+        Check: Row29 is visible
+        Action: screenshot 'stub-scroll-bottom'
+        Action: scrollto => Row0
+        Check: Row0 is visible
+        Action: screenshot 'stub-scroll-top'
+    Scene: StubHome
+        Action: back
+        Check: ScrollRow is visible
+
+Stage: Selection
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => SelectRow
+    Scene: StubSelection
+        Check: Title text 'Selection'
+        Action: click => Choose
+        Check: OptionA is visible
+        Check: OptionB is visible
+        Action: click => OptionB
+        Check: Status text 'status=chosen: Option B'
+        Action: screenshot 'stub-selection'
+    Scene: StubHome
+        Action: back
+        Check: SelectRow is visible
+
+Stage: Flags
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => FlagsRow
+    Scene: StubFlags
+        Check: Title text 'Flags'
+        Check: Enabled is enabled
+        Check: Disabled is disabled
+        Check: VisibleLabel text 'visible text'
+        Check: HiddenLabel is hidden
+        Action: click => Enabled
+        Check: Status text 'status=enabled-clicked'
+        Action: screenshot 'stub-flags'
+    Scene: StubHome
+        Action: back
+        Check: FlagsRow is visible
+
+// `web` reaches this stage from a browser runtime: clicks are pointer input.
+Stage: Keys
+    Audience: web
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => KeysRow
+    Scene: StubKeys
+        Check: Title text 'Key log'
+        Check: KeyLog text 'key=none'
+        Action: click => Alpha
+        Check: KeyLog text 'clicked=Alpha'
+        Action: click => Bravo
+        Check: KeyLog text 'clicked=Bravo'
+        Action: click => Charlie
+        Check: KeyLog text 'clicked=Charlie'
+        Action: screenshot 'stub-keys'
+    Scene: StubHome
+        Action: back
+        Check: KeysRow is visible
+
+Stage: Info
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => InfoRow
+    Scene: StubInfo
+        Check: Title text 'Device info'
+        Check: InfoText textContains 'pkg=com.impresario'
+        Check: InfoText textContains 'sdk='
+        Check: InfoText textContains 'tv='
+        Action: screenshot 'stub-info'
+    Scene: StubHome
+        Action: back
+        Check: InfoRow is visible
+
+Stage: Media
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => MediaRow
+    Scene: StubMedia
+        Check: MediaTitle text 'Playback fixture'
+        Check: Video is visible
+        Check: Poster is visible
+        Check: Missing is visible
+        Check: MediaStatus text 'playing' timeout 20s
+        Check: Player => Video Playing timeout 20s
+        Action: screenshot 'stub-media'
+    Scene: StubHome
+        Action: back
+        Check: MediaRow is visible

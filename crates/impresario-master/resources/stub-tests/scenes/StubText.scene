@@ -1,0 +1,8 @@
+Scene: StubText
+
+| Piece  | web           | android         | ios                         |
+|--------|---------------|-----------------|-----------------------------|
+| Title  | #stub_title   | id:stub_title   | accessibilityId:stub_title  |
+| Input  | #stub_input   | id:stub_input   | accessibilityId:stub_input  |
+| Echo   | #stub_echo    | id:stub_echo    | accessibilityId:stub_echo   |
+| Status | #stub_status  | id:stub_status  | accessibilityId:stub_status |

@@ -1,0 +1,37 @@
+// Touch phones and tablets: the same scenarios as the remote theatres, but
+// long press is a touch-and-hold and the key-log screen only sees taps.
+Theatre: Stub touch stages
+Audience: android, ios
+
+Stage: Keys
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => KeysRow
+    Scene: StubKeys
+        Check: Title text 'Key log'
+        Check: KeyLog text 'key=none'
+        Action: click => Alpha
+        Check: KeyLog text 'clicked=Alpha'
+        Action: click => Bravo
+        Check: KeyLog text 'clicked=Bravo'
+        Action: click => Charlie
+        Check: KeyLog text 'clicked=Charlie'
+        Action: screenshot 'stub-keys'
+    Scene: StubHome
+        Action: back
+        Check: KeysRow is visible
+
+Stage: LongPress
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => BasicRow
+    Scene: StubBasic
+        Check: Title text 'Basic controls'
+        Check: Counter text 'taps=0'
+        Action: longpress 1000ms => TapMe
+        Check: Status text 'status=long-pressed'
+        Check: Counter text 'taps=0'
+        Action: screenshot 'stub-longpress'
+    Scene: StubHome
+        Action: back
+        Check: BasicRow is visible

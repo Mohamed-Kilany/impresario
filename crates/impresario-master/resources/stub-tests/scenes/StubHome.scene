@@ -1,0 +1,13 @@
+Scene: StubHome
+
+| Piece     | web                  | android                    | ios                                |
+|-----------|----------------------|----------------------------|------------------------------------|
+| StubTitle | #stub_title          | id:stub_title              | accessibilityId:stub_title         |
+| BasicRow  | #stub_scenario_basic | id:stub_scenario_basic     | accessibilityId:stub_scenario_basic |
+| TextRow   | #stub_scenario_text  | id:stub_scenario_text      | accessibilityId:stub_scenario_text |
+| ScrollRow | #stub_scenario_scroll | id:stub_scenario_scroll   | accessibilityId:stub_scenario_scroll |
+| SelectRow | #stub_scenario_select | id:stub_scenario_select   | accessibilityId:stub_scenario_select |
+| FlagsRow  | #stub_scenario_flags | id:stub_scenario_flags     | accessibilityId:stub_scenario_flags |
+| KeysRow   | #stub_scenario_keys  | id:stub_scenario_keys      | accessibilityId:stub_scenario_keys |
+| InfoRow   | #stub_scenario_info  | id:stub_scenario_info      | accessibilityId:stub_scenario_info |
+| MediaRow  | #stub_scenario_media | id:stub_scenario_media     | accessibilityId:stub_scenario_media |

@@ -1,0 +1,6 @@
+Scene: StubInfo
+
+| Piece    | web            | android          | ios                          |
+|----------|----------------|------------------|------------------------------|
+| Title    | #stub_title    | id:stub_title    | accessibilityId:stub_title   |
+| InfoText | #stub_info     | id:stub_info     | accessibilityId:stub_info    |

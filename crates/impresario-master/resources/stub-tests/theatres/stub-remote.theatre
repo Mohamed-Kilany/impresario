@@ -1,0 +1,65 @@
+// Television: D-pad navigation, a held OK for long press, and a key log that
+// records the remote keys as the platform names them.
+Theatre: Stub remote stages
+Audience: androidtv, tvos, webos, tizen
+
+Stage: Keys
+    Audience: androidtv, tvos
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => KeysRow
+    Scene: StubKeys
+        Check: Title text 'Key log'
+        Check: KeyLog text 'key=none'
+        Action: click => Alpha
+        Check: KeyLog text 'clicked=Alpha'
+        Action: click => Bravo
+        Check: KeyLog text 'clicked=Bravo'
+        Action: click => Charlie
+        Check: KeyLog text 'clicked=Charlie'
+        Action: key down
+        Check: KeyLog text 'key=DPAD_DOWN'
+        Action: key up
+        Check: KeyLog text 'key=DPAD_UP'
+        Action: screenshot 'stub-keys'
+    Scene: StubHome
+        Action: back
+        Check: KeysRow is visible
+
+Stage: Keys
+    Audience: webos, tizen
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => KeysRow
+    Scene: StubKeys
+        Check: Title text 'Key log'
+        Check: KeyLog text 'key=none'
+        Action: click => Alpha
+        Check: KeyLog text 'clicked=Alpha'
+        Action: click => Bravo
+        Check: KeyLog text 'clicked=Bravo'
+        Action: click => Charlie
+        Check: KeyLog text 'clicked=Charlie'
+        Action: key down
+        Check: KeyLog text 'key=down'
+        Action: key up
+        Check: KeyLog text 'key=up'
+        Action: screenshot 'stub-keys'
+    Scene: StubHome
+        Action: back
+        Check: KeysRow is visible
+
+Stage: LongPress
+    Timeout: 20s
+    Scene: StubHome
+        Action: click => BasicRow
+    Scene: StubBasic
+        Check: Title text 'Basic controls'
+        Check: Counter text 'taps=0'
+        Action: longpress 1000ms => TapMe
+        Check: Status text 'status=long-pressed'
+        Check: Counter text 'taps=0'
+        Action: screenshot 'stub-longpress'
+    Scene: StubHome
+        Action: back
+        Check: BasicRow is visible

@@ -1,0 +1,8 @@
+Scene: StubScroll
+
+| Piece    | web              | android            | ios                            |
+|----------|------------------|--------------------|--------------------------------|
+| Title    | #stub_title      | id:stub_title      | accessibilityId:stub_title     |
+| Scroller | #stub_scroller   | id:stub_scroller   | accessibilityId:stub_scroller  |
+| Row0     | text:row 0       | text:row 0         | label:row 0                    |
+| Row29    | text:row 29      | text:row 29        | label:row 29                   |

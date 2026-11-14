@@ -1,0 +1,9 @@
+Scene: StubKeys
+
+| Piece  | web              | android            | ios                            |
+|--------|------------------|--------------------|--------------------------------|
+| Title  | #stub_title      | id:stub_title      | accessibilityId:stub_title     |
+| Alpha  | #stub_key_a      | id:stub_key_a      | accessibilityId:stub_key_a     |
+| Bravo  | #stub_key_b      | id:stub_key_b      | accessibilityId:stub_key_b     |
+| Charlie | #stub_key_c     | id:stub_key_c      | accessibilityId:stub_key_c     |
+| KeyLog | #stub_key_log    | id:stub_key_log    | accessibilityId:stub_key_log   |

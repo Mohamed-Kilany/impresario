@@ -67,6 +67,106 @@ pub fn ensure_on_path(home: &Home) -> Result<Option<Report>, String> {
     }))
 }
 
+/// What seeding the embedded fixture suite did.
+#[derive(Debug, Clone)]
+pub struct StubSuiteReport {
+    /// Directory holding the seeded suite.
+    pub dir: PathBuf,
+    /// Files written because they did not exist yet.
+    pub written: usize,
+    /// Files left untouched because the user already had them.
+    pub kept: usize,
+}
+
+/// The fixture suite shipped inside the binary. Paths are relative to
+/// `$IMPRESARIO_HOME/stub-tests`; the value is the exact file content.
+const STUB_SUITE: &[(&str, &str)] = &[
+    (
+        "README.md",
+        include_str!("../resources/stub-tests/README.md"),
+    ),
+    (
+        "plays/stub.play",
+        include_str!("../resources/stub-tests/plays/stub.play"),
+    ),
+    (
+        "scenes/StubBasic.scene",
+        include_str!("../resources/stub-tests/scenes/StubBasic.scene"),
+    ),
+    (
+        "scenes/StubFlags.scene",
+        include_str!("../resources/stub-tests/scenes/StubFlags.scene"),
+    ),
+    (
+        "scenes/StubHome.scene",
+        include_str!("../resources/stub-tests/scenes/StubHome.scene"),
+    ),
+    (
+        "scenes/StubInfo.scene",
+        include_str!("../resources/stub-tests/scenes/StubInfo.scene"),
+    ),
+    (
+        "scenes/StubKeys.scene",
+        include_str!("../resources/stub-tests/scenes/StubKeys.scene"),
+    ),
+    (
+        "scenes/StubMedia.scene",
+        include_str!("../resources/stub-tests/scenes/StubMedia.scene"),
+    ),
+    (
+        "scenes/StubScroll.scene",
+        include_str!("../resources/stub-tests/scenes/StubScroll.scene"),
+    ),
+    (
+        "scenes/StubSelection.scene",
+        include_str!("../resources/stub-tests/scenes/StubSelection.scene"),
+    ),
+    (
+        "scenes/StubText.scene",
+        include_str!("../resources/stub-tests/scenes/StubText.scene"),
+    ),
+    (
+        "theatres/stub-common.theatre",
+        include_str!("../resources/stub-tests/theatres/stub-common.theatre"),
+    ),
+    (
+        "theatres/stub-remote.theatre",
+        include_str!("../resources/stub-tests/theatres/stub-remote.theatre"),
+    ),
+    (
+        "theatres/stub-touch.theatre",
+        include_str!("../resources/stub-tests/theatres/stub-touch.theatre"),
+    ),
+];
+
+/// Seed `$IMPRESARIO_HOME/stub-tests` on first run.
+///
+/// Existing files are never overwritten: a user's edit to a scene or play is
+/// more valuable than an upgrade's copy. Missing files are added, so a partial
+/// deletion heals without clobbering the rest.
+pub fn ensure_stub_tests(home: &Home) -> Result<StubSuiteReport, String> {
+    let dir = home.stub_tests_dir();
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+    let mut written = 0;
+    let mut kept = 0;
+    for (relative, content) in STUB_SUITE {
+        let path = dir.join(relative);
+        if path.exists() {
+            kept += 1;
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        fs::write(&path, content)
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        written += 1;
+    }
+    Ok(StubSuiteReport { dir, written, kept })
+}
+
 fn executable_name() -> &'static str {
     if cfg!(windows) {
         "impresario.exe"
@@ -320,5 +420,39 @@ mod tests {
         assert_eq!(append_path_entry("one;", "bin"), "one;bin");
         assert_eq!(append_path_entry("", "bin"), "bin");
         assert_eq!(append_path_entry("  ", "bin"), "bin");
+    }
+
+    #[test]
+    fn stub_suite_is_written_once_and_edits_survive() {
+        let dir = tempfile::tempdir().expect("temp home");
+        let home = Home::at(dir.path());
+        let first = ensure_stub_tests(&home).expect("seed");
+        assert_eq!(first.written, STUB_SUITE.len());
+        assert_eq!(first.kept, 0);
+        assert!(first.dir.join("plays/stub.play").is_file());
+        assert!(first.dir.join("scenes/StubHome.scene").is_file());
+        assert!(first.dir.join("theatres/stub-remote.theatre").is_file());
+
+        let play = first.dir.join("plays/stub.play");
+        fs::write(&play, "Play: edited by the user\n").expect("edit");
+        let second = ensure_stub_tests(&home).expect("re-seed");
+        assert_eq!(second.written, 0);
+        assert_eq!(second.kept, STUB_SUITE.len());
+        assert_eq!(
+            fs::read_to_string(&play).expect("play"),
+            "Play: edited by the user\n"
+        );
+    }
+
+    #[test]
+    fn stub_suite_heals_a_missing_file() {
+        let dir = tempfile::tempdir().expect("temp home");
+        let home = Home::at(dir.path());
+        let first = ensure_stub_tests(&home).expect("seed");
+        let scene = first.dir.join("scenes/StubText.scene");
+        fs::remove_file(&scene).expect("remove");
+        let second = ensure_stub_tests(&home).expect("re-seed");
+        assert_eq!(second.written, 1);
+        assert!(scene.is_file());
     }
 }

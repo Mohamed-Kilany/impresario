@@ -195,6 +195,16 @@ impl Home {
         self.root.join("logs")
     }
 
+    /// `stub-tests/` - the embedded fixture suite seeded on first run.
+    ///
+    /// It holds its own `scenes/`, `theatres/` and `plays/`; `run --play` on
+    /// this directory loads them beside the play. Files are created once and
+    /// never overwritten, so edits survive upgrades.
+    #[must_use]
+    pub fn stub_tests_dir(&self) -> PathBuf {
+        self.root.join("stub-tests")
+    }
+
     /// Create the home and every directory the layout promises.
     ///
     /// Files are created lazily; missing directories are not an error for
@@ -210,6 +220,7 @@ impl Home {
             self.signing_dir(),
             self.service_dir(),
             self.logs_dir(),
+            self.stub_tests_dir(),
         ] {
             std::fs::create_dir_all(&path).map_err(|source| HomeError::Create {
                 path: path.clone(),
@@ -323,6 +334,7 @@ mod tests {
             home.jobs_dir(),
             home.cache_dir(),
             home.logs_dir(),
+            home.stub_tests_dir(),
         ] {
             assert!(path.is_dir(), "{}", path.display());
         }

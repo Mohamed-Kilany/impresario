@@ -603,7 +603,23 @@
   function openScenario(name) {
     lastScenario = 'stub_scenario_' + name;
     setScreen(name);
+    // A desktop browser reaches this page through the connector, whose `back`
+    // action is `history.back()`. TV runtimes deliver a Back key instead, so
+    // only the plain browser records scenario entries.
+    if (PLATFORM === 'web') {
+      try {
+        window.history.pushState({ screen: name }, '', '#' + name);
+      } catch (error) {
+        // `file://` documents refuse pushState; the page still works.
+      }
+    }
   }
+
+  window.addEventListener('popstate', function (event) {
+    if (PLATFORM !== 'web') { return; }
+    var state = event.state || {};
+    setScreen(state.screen || 'home');
+  });
 
   function openDialog() {
     dialogOpen = true;

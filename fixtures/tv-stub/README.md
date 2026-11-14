@@ -34,7 +34,10 @@ history.
 ## Remote-only behaviour
 
 - Home: D-pad up/down moves the focus ring; OK opens the focused scenario.
-- Scenario screens: Back returns home; OK activates only the focused row.
+- Scenario screens: Back returns home; OK activates only the focused row. In a
+  plain desktop browser each scenario is a history entry, so the connector's
+  `back` action (`history.back()`) returns home too; webOS/Tizen receive Back
+  as a key.
 - Scroller: D-pad up/down scrolls the 30-row list.
 - Selection: OK opens a dialog whose rows are navigated only with the D-pad.
 - Text: OK focuses the field; the TV's system IME supplies the characters.
