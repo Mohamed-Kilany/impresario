@@ -53,6 +53,9 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     /// `deviceInfo()` takes a screenshot; the screen does not change during a
     /// run, so cache it (every inspector snapshot asks for it).
     private var cachedDeviceInfo: AgentDeviceInfo?
+    /// The app window frame, read once for visibility tests. Every
+    /// `isVisible` used to query `app.windows` again (I-198).
+    private var cachedWindowFrame: CGRect?
 
     /// What the inspector keeps about a node so a later input can resolve the
     /// element with one query.
@@ -197,12 +200,10 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     func tap(_ e: ElementRef) throws {
         try onQueue {
             let element = try xcElement(e)
-            guard element.exists else {
-                throw AgentError.elementNotFound("the element no longer exists")
-            }
-            guard element.isHittable else {
-                throw AgentError.notInteractable("the element is not hittable")
-            }
+            // The caller (waitClickable, select) already established that the
+            // element exists and is hittable. Re-reading both here cost two
+            // more XCUITest round trips per click (I-198); the shim still
+            // reports a stale or covered element honestly.
             // XCUITest asserts that a tap runs on the main thread; keep the
             // driver queue held while dispatching there so a query cannot
             // interleave with the interaction.
@@ -220,12 +221,6 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     func press(_ e: ElementRef, duration: TimeInterval) throws {
         try onQueue {
             let element = try xcElement(e)
-            guard element.exists else {
-                throw AgentError.elementNotFound("the element no longer exists")
-            }
-            guard element.isHittable else {
-                throw AgentError.notInteractable("the element is not hittable")
-            }
             let (ok, error): (Bool, NSString?) = onMain {
                 var error: NSString?
                 let ok = IMPXCUShim.press(element, forDuration: duration, error: &error)
@@ -238,28 +233,18 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     }
 
     func text(_ e: ElementRef) -> String {
-        onQueue {
-            guard let element = try? xcElement(e), element.exists else {
-                return ""
-            }
-            // Spec 5.4: the value wins unless it is empty or the placeholder.
-            let value = (element.value as? String) ?? ""
-            let placeholder = element.placeholderValue ?? ""
-            if !value.isEmpty && value != placeholder {
-                return value
-            }
-            return element.label
-        }
+        attributes(e)?.text ?? ""
     }
 
     func typeText(_ e: ElementRef, _ t: String) throws {
         try onQueue {
             // XCUIElement.typeText asserts that it runs on the main thread.
             // Keep the driver queue held while dispatching there so a query
-            // cannot interleave with the keyboard session.
+            // cannot interleave with the keyboard session. The executor has
+            // already waited for an editable, hittable field and tapped it,
+            // so a repeated `ensureEditable` only added four round trips.
             try onMain {
                 let element = try xcElement(e)
-                try ensureEditable(element)
                 var error: NSString?
                 guard IMPXCUShim.type(t, into: element, error: &error) else {
                     throw AgentError.notInteractable("typing failed: \(message(error))")
@@ -269,22 +254,18 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         }
     }
 
-    func deleteAll(_ e: ElementRef) throws {
+    func deleteAll(_ e: ElementRef, currentText: String) throws {
         try onQueue {
             try onMain {
+                guard !currentText.isEmpty else { return }
                 let element = try xcElement(e)
-                try ensureEditable(element)
-                let current = (element.value as? String) ?? ""
-                guard !current.isEmpty else {
-                    return
-                }
                 // XCUITest has no "clear" API: press delete once per character.
-                // The executor rewrites the whole field (I-87), so this is the
-                // deterministic path (a locale-dependent Clear/Select-All menu
-                // would not be).
+                // The executor rewrites the whole field (I-87) and passes the
+                // text it already read (I-198), so this is the deterministic
+                // path without a second value read.
                 let deletes = String(
                     repeating: XCUIKeyboardKey.delete.rawValue,
-                    count: current.count
+                    count: currentText.count
                 )
                 var error: NSString?
                 guard IMPXCUShim.type(deletes, into: element, error: &error) else {
@@ -295,37 +276,60 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         }
     }
 
-    func isVisible(_ e: ElementRef) -> Bool {
+    /// Batch attribute read (I-198): one `XCUIElement.snapshot()` carries the
+    /// frame, enabled/focus flags, value, placeholder and label. `isHittable`
+    /// is not in Apple's snapshot and stays a separate read on the click path.
+    func attributes(_ e: ElementRef) -> ElementAttributes? {
         onQueue {
-            // Spec 5.4 (ios, tvos): exists, non-empty frame, intersects the
-            // app window.
-            guard
-                let element = try? xcElement(e),
-                element.exists
-            else {
-                return false
+            guard let element = try? xcElement(e),
+                  let snapshot = try? element.snapshot() else {
+                return ElementAttributes.missing
             }
-            let frame = element.frame
-            guard !frame.isEmpty else {
-                return false
+            let frame = snapshot.frame
+            let visible: Bool
+            if let window = windowFrame() {
+                visible = !frame.isEmpty && window.intersects(frame)
+            } else {
+                visible = false
             }
-            guard
-                let app = try? application(),
-                let window = app.windows.allElementsBoundByIndex.first
-            else {
-                return false
-            }
-            return window.frame.intersects(frame)
+            let value = (snapshot.value as? String) ?? ""
+            let placeholder = snapshot.placeholderValue ?? ""
+            let text = (!value.isEmpty && value != placeholder) ? value : snapshot.label
+            return ElementAttributes(
+                exists: true,
+                visible: visible,
+                enabled: snapshot.isEnabled,
+                focused: snapshot.hasFocus,
+                frame: frame,
+                text: text
+            )
         }
     }
 
-    func isEnabled(_ e: ElementRef) -> Bool {
-        onQueue {
-            guard let element = try? xcElement(e), element.exists else {
-                return false
-            }
-            return element.isEnabled
+    private func windowFrame() -> CGRect? {
+        if let cachedWindowFrame {
+            return cachedWindowFrame
         }
+        guard
+            let app = try? application(),
+            let window = app.windows.allElementsBoundByIndex.first
+        else {
+            return nil
+        }
+        let frame = window.frame
+        guard !frame.isEmpty else {
+            return nil
+        }
+        cachedWindowFrame = frame
+        return frame
+    }
+
+    func isVisible(_ e: ElementRef) -> Bool {
+        attributes(e)?.visible ?? false
+    }
+
+    func isEnabled(_ e: ElementRef) -> Bool {
+        attributes(e)?.enabled ?? false
     }
 
     func isHittable(_ e: ElementRef) -> Bool {
@@ -338,21 +342,11 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     }
 
     func hasFocus(_ e: ElementRef) -> Bool {
-        onQueue {
-            guard let element = try? xcElement(e), element.exists else {
-                return false
-            }
-            return element.hasFocus
-        }
+        attributes(e)?.focused ?? false
     }
 
     func frame(_ e: ElementRef) -> CGRect {
-        onQueue {
-            guard let element = try? xcElement(e), element.exists else {
-                return .zero
-            }
-            return element.frame
-        }
+        attributes(e)?.frame ?? .zero
     }
 
     func focusedFrame() -> CGRect? {
@@ -535,6 +529,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 self.appId = appId
                 self.app = nil
                 self.hasLaunched = false
+                self.cachedWindowFrame = nil
             }
             self.animationsDisabled = animationsDisabled
         }
@@ -1055,6 +1050,20 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             }
             element = found
             try ensureEditable(element)
+            // Focus the field exactly like the run path does. XCUITest types
+            // into the key window's focused responder; calling `typeText` on
+            // an unfocused field waits for the keyboard session and made the
+            // inspector request time out (I-198).
+            let (ok, error): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.tap(element, error: &error)
+                return (ok, error)
+            }
+            guard ok else {
+                throw AgentError.notInteractable(
+                    "the inspector field did not take focus: \(message(error))"
+                )
+            }
         } else {
             element = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "hasFocus == true"))

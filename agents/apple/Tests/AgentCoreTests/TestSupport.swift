@@ -165,6 +165,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     private var _crashed = false
     private var _selectValues: [(id: String, value: String)] = []
     private var _screenshotCalls = 0
+    private var _attributesCalls = 0
 
     private func locked<T>(_ body: () -> T) -> T {
         lock.lock()
@@ -191,6 +192,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var longPressDurations: [TimeInterval] { locked { _longPressDurations } }
     var selectValues: [(id: String, value: String)] { locked { _selectValues } }
     var screenshotCalls: Int { locked { _screenshotCalls } }
+    var attributesCalls: Int { locked { _attributesCalls } }
     var crashed: Bool {
         get { locked { _crashed } }
         set { locked { _crashed = newValue } }
@@ -240,7 +242,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
         }
     }
 
-    func deleteAll(_ e: ElementRef) throws {
+    func deleteAll(_ e: ElementRef, currentText: String) throws {
         let element = try fakeElement(e)
         locked { _deletes.append(element.id) }
         element.textValue = ""
@@ -305,6 +307,22 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
 
     func prepare(appId: String, animationsDisabled: Bool) {
         locked { _prepared = (appId, animationsDisabled) }
+    }
+
+    /// One batch read, like the XCUITest driver's snapshot (I-198).
+    func attributes(_ e: ElementRef) -> ElementAttributes? {
+        locked { _attributesCalls += 1 }
+        guard let element = e.handle as? FakeElement else {
+            return nil
+        }
+        return ElementAttributes(
+            exists: true,
+            visible: element.visible,
+            enabled: element.enabled,
+            focused: element.focused,
+            frame: element.frame,
+            text: element.textValue
+        )
     }
 
     func targetCrashed(appId: String) -> Bool { crashed }

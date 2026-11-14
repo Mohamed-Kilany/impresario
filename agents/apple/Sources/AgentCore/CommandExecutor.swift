@@ -152,11 +152,13 @@ public final class CommandExecutor: @unchecked Sendable {
 
     private func enterText(_ mode: EnterMode, _ action: RunActionSpec, _ timeout: Int) async throws -> Outcome {
         let spec = try requireSelector(action.selector, "text entry")
-        let element = try await waitInteractable(spec, timeout)
+        let resolved = try await waitInteractable(spec, timeout)
+        let element = resolved.element
 
         // Read the field *before* touching it (I-71): on TVs the activation
         // OK can reach an already-open keyboard and insert a stray keystroke.
-        let currentText = driver.text(element)
+        // The wait already paid for this attribute batch (I-198).
+        let currentText = resolved.attributes.text
 
         // Focus: tap on iOS; D-pad focus then Select (opens the keyboard) on
         // tvOS (spec 12.3). Once the keyboard is open it owns D-pad focus, so
@@ -185,13 +187,13 @@ public final class CommandExecutor: @unchecked Sendable {
         // the next value. The spec's tap-position cursor for `append` is not
         // guaranteed; delete + retype is deterministic and verified below.
         if !currentText.isEmpty {
-            try driver.deleteAll(element)
+            try driver.deleteAll(element, currentText: currentText)
         }
         if !next.isEmpty {
             try driver.typeText(element, next)
         }
 
-        let readBack = driver.text(element)
+        let readBack = attributes(element).text
         if readBack == next {
             return .ok(observedText: readBack)
         }
@@ -209,7 +211,8 @@ public final class CommandExecutor: @unchecked Sendable {
 
     private func longPress(_ action: RunActionSpec, _ timeout: Int) async throws -> Outcome {
         let spec = try requireSelector(action.selector, "longpress")
-        let element = try await waitInteractable(spec, timeout)
+        let resolved = try await waitInteractable(spec, timeout)
+        let element = resolved.element
         let duration = action.durationMs == 0 ? 1.0 : Double(action.durationMs) / 1000.0
         if options.platform.isTv {
             try await ensureFocused(spec, element)
@@ -245,7 +248,7 @@ public final class CommandExecutor: @unchecked Sendable {
             throw AgentError.unsupportedAction("select is not supported on tvos (spec 6.1)")
         }
         let spec = try requireSelector(action.selector, "select")
-        let trigger = try await waitInteractable(spec, timeout)
+        let trigger = try await waitInteractable(spec, timeout).element
         if let extras, try extras.selectValue(trigger, action.text) {
             return .ok(observedText: action.text)
         }
@@ -299,7 +302,8 @@ public final class CommandExecutor: @unchecked Sendable {
         while true {
             try Task.checkCancellation()
             let found = pick(spec, try driver.find(spec.lookup(), timeout: 0))
-            if let element = found, driver.isVisible(element) {
+            let target = found.map { attributes($0) }
+            if let target, target.visible {
                 return .ok()
             }
             if now() >= deadline || attempts >= options.scrollMaxAttempts {
@@ -311,19 +315,16 @@ public final class CommandExecutor: @unchecked Sendable {
             let fallback: Direction =
                 (scrollingUp || attempts >= options.scrollMaxAttempts / 2) ? .up : .down
             var direction = fallback
-            if let element = found {
-                let target = driver.frame(element)
-                if !target.isEmpty {
-                    if target.maxY <= 0 {
+            if let target, !target.frame.isEmpty {
+                if target.frame.maxY <= 0 {
+                    direction = .up
+                } else if screenHeight > 0, target.frame.minY >= screenHeight {
+                    direction = .down
+                } else if let focused = driver.focusedFrame(), !focused.isEmpty {
+                    if target.frame.maxY <= focused.minY {
                         direction = .up
-                    } else if screenHeight > 0, target.minY >= screenHeight {
+                    } else if target.frame.minY >= focused.maxY {
                         direction = .down
-                    } else if let focused = driver.focusedFrame(), !focused.isEmpty {
-                        if target.maxY <= focused.minY {
-                            direction = .up
-                        } else if target.minY >= focused.maxY {
-                            direction = .down
-                        }
                     }
                 }
             }
@@ -428,7 +429,7 @@ public final class CommandExecutor: @unchecked Sendable {
     ) -> CheckEvaluation {
         switch check.kind {
         case .visible, .hidden:
-            let visible = element.map { driver.isVisible($0) } ?? false
+            let visible = element.map { attributes($0).visible } ?? false
             let observed: String
             if element == nil {
                 observed = "missing"
@@ -443,7 +444,7 @@ public final class CommandExecutor: @unchecked Sendable {
                 matchedCount: matchedCount
             )
         case .enabled, .disabled:
-            let enabled = element.map { driver.isEnabled($0) } ?? false
+            let enabled = element.map { attributes($0).enabled } ?? false
             let observed: String
             if element == nil {
                 observed = "missing"
@@ -458,7 +459,7 @@ public final class CommandExecutor: @unchecked Sendable {
                 matchedCount: matchedCount
             )
         case .focused:
-            let focused = element.map { driver.hasFocus($0) } ?? false
+            let focused = element.map { attributes($0).focused } ?? false
             let observed: String
             if element == nil {
                 observed = "missing"
@@ -469,14 +470,14 @@ public final class CommandExecutor: @unchecked Sendable {
             }
             return CheckEvaluation(satisfied: focused, observed: observed, matchedCount: matchedCount)
         case .textEquals:
-            let text = element.map { driver.text($0) }
+            let text = element.map { attributes($0).text }
             return CheckEvaluation(
                 satisfied: element != nil && text == check.expectedText,
                 observed: text ?? "missing",
                 matchedCount: matchedCount
             )
         case .textContains:
-            let text = element.map { driver.text($0) }
+            let text = element.map { attributes($0).text }
             return CheckEvaluation(
                 satisfied: element != nil && (text ?? "").contains(check.expectedText),
                 observed: text ?? "missing",
@@ -585,54 +586,89 @@ public final class CommandExecutor: @unchecked Sendable {
         return fromEnd >= 0 && fromEnd < matches.count ? matches[fromEnd] : nil
     }
 
+    /// The batch attribute read for one element. The real Apple driver reads
+    /// one `XCUIElementSnapshot`; the fakes and any driver without the
+    /// optional capability fall back to the individual protocol calls.
+    private func attributes(_ element: ElementRef) -> ElementAttributes {
+        if let extras, let batch = extras.attributes(element) {
+            return batch
+        }
+        return ElementAttributes(
+            exists: true,
+            visible: driver.isVisible(element),
+            enabled: driver.isEnabled(element),
+            focused: driver.hasFocus(element),
+            frame: driver.frame(element),
+            text: driver.text(element)
+        )
+    }
+
+    private struct ResolvedElement {
+        let element: ElementRef
+        let attributes: ElementAttributes
+    }
+
     /// Waits until the indexed element exists, is visible and is enabled.
-    private func waitInteractable(_ spec: SelectorSpec, _ timeout: Int) async throws -> ElementRef {
-        let matches = try await awaitMatches(spec, timeout) { list in
-            guard let element = pick(spec, list) else { return false }
-            return driver.isVisible(element) && driver.isEnabled(element)
+    private func waitInteractable(_ spec: SelectorSpec, _ timeout: Int) async throws -> ResolvedElement {
+        let deadline = now() + max(1, timeout)
+        while true {
+            try Task.checkCancellation()
+            let matches = try driver.find(spec.lookup(), timeout: 0)
+            if let element = pick(spec, matches) {
+                let attrs = attributes(element)
+                if attrs.visible && attrs.enabled {
+                    return ResolvedElement(element: element, attributes: attrs)
+                }
+                if now() >= deadline {
+                    let reason = !attrs.visible ? "not visible" : "disabled"
+                    throw AgentError.notInteractable(
+                        "the element \(spec.describe()) is \(reason)",
+                        ["selector": spec.describe(), "reason": reason]
+                    )
+                }
+            } else if now() >= deadline {
+                throw AgentError.elementNotFound(
+                    "the element \(spec.describe()) was not found",
+                    spec.describe()
+                )
+            }
+            try await sleep(options.pollIntervalMs)
         }
-        guard let element = pick(spec, matches) else {
-            throw AgentError.elementNotFound("the element \(spec.describe()) was not found", spec.describe())
-        }
-        let visible = driver.isVisible(element)
-        let enabled = driver.isEnabled(element)
-        if !visible || !enabled {
-            let reason = !visible ? "not visible" : "disabled"
-            throw AgentError.notInteractable(
-                "the element \(spec.describe()) is \(reason)",
-                ["selector": spec.describe(), "reason": reason]
-            )
-        }
-        return element
     }
 
     /// `click` additionally needs hit-testability on iOS (spec 6.4).
     private func waitClickable(_ spec: SelectorSpec, _ timeout: Int) async throws -> ElementRef {
         let requireHittable = !options.platform.isTv
-        let matches = try await awaitMatches(spec, timeout) { list in
-            guard let element = pick(spec, list) else { return false }
-            let base = driver.isVisible(element) && driver.isEnabled(element)
-            return base && (!requireHittable || driver.isHittable(element))
+        let deadline = now() + max(1, timeout)
+        while true {
+            try Task.checkCancellation()
+            let matches = try driver.find(spec.lookup(), timeout: 0)
+            if let element = pick(spec, matches) {
+                let attrs = attributes(element)
+                // Only pay for the separate hittability read when the cheaper
+                // attributes already pass; a hidden or disabled element has a
+                // more specific error than "not hittable".
+                if attrs.visible, attrs.enabled,
+                   !requireHittable || driver.isHittable(element) {
+                    return element
+                }
+                if now() >= deadline {
+                    let reason = !attrs.visible
+                        ? "not visible"
+                        : (!attrs.enabled ? "disabled" : "not hittable")
+                    throw AgentError.notInteractable(
+                        "the element \(spec.describe()) is \(reason)",
+                        ["selector": spec.describe(), "reason": reason]
+                    )
+                }
+            } else if now() >= deadline {
+                throw AgentError.elementNotFound(
+                    "the element \(spec.describe()) was not found",
+                    spec.describe()
+                )
+            }
+            try await sleep(options.pollIntervalMs)
         }
-        guard let element = pick(spec, matches) else {
-            throw AgentError.elementNotFound("the element \(spec.describe()) was not found", spec.describe())
-        }
-        let visible = driver.isVisible(element)
-        let enabled = driver.isEnabled(element)
-        if !visible || !enabled {
-            let reason = !visible ? "not visible" : "disabled"
-            throw AgentError.notInteractable(
-                "the element \(spec.describe()) is \(reason)",
-                ["selector": spec.describe(), "reason": reason]
-            )
-        }
-        if requireHittable && !driver.isHittable(element) {
-            throw AgentError.notInteractable(
-                "the element \(spec.describe()) is not hittable",
-                ["selector": spec.describe(), "reason": "not hittable"]
-            )
-        }
-        return element
     }
 
     /// Waits until the indexed element exists (containers and swipes).

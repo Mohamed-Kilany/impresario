@@ -71,6 +71,18 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertNil(result.error)
     }
 
+    func testClickReadsOneAttributeBatch() async {
+        addButton("login")
+        let result = await execute(
+            .runAction(RunActionSpec(kind: .click, selector: select(.accessibilityId, "login")))
+        )
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        // find + one batch + the separate hittability read. The old path
+        // repeated visible/enabled/hittable before and inside the tap.
+        XCTAssertEqual(driver.attributesCalls, 1)
+        XCTAssertEqual(driver.taps, ["login"])
+    }
+
     func testClickWaitsForAnElementThatAppearsLater() async {
         let element = addButton("login", visible: false)
         driver.findHandler = { _, call in
@@ -713,6 +725,21 @@ final class CommandExecutorTests: XCTestCase {
         )
         assertError(mismatch, .checkFailed)
         XCTAssertEqual(mismatch.error?.details["observed"], "Hello world")
+    }
+
+    func testTextCheckReadsOneAttributeBatch() async {
+        addButton("label", text: "Hello world")
+        let result = await execute(
+            .validateCheck(
+                ValidateCheckSpec(
+                    kind: .textEquals,
+                    selector: select(.accessibilityId, "label"),
+                    expectedText: "Hello world"
+                )
+            )
+        )
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(driver.attributesCalls, 1)
     }
 
     func testCountChecks() async {

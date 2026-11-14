@@ -13,6 +13,47 @@ public struct ElementRef: @unchecked Sendable {
     }
 }
 
+/// One element's attributes as read in a single driver round trip.
+///
+/// XCUITest charges one accessibility IPC per attribute, and each call waits
+/// for the app to settle, so the executor reads this batch once per poll
+/// instead of calling `isVisible`, `isEnabled`, `frame` and `text` separately
+/// (I-198). `hittable` is not part of the Apple snapshot and stays a separate
+/// `UIDriver.isHittable` read on the click path.
+public struct ElementAttributes {
+    public var exists: Bool
+    public var visible: Bool
+    public var enabled: Bool
+    public var focused: Bool
+    public var frame: CGRect
+    public var text: String
+
+    public init(
+        exists: Bool,
+        visible: Bool,
+        enabled: Bool,
+        focused: Bool,
+        frame: CGRect,
+        text: String
+    ) {
+        self.exists = exists
+        self.visible = visible
+        self.enabled = enabled
+        self.focused = focused
+        self.frame = frame
+        self.text = text
+    }
+
+    public static let missing = ElementAttributes(
+        exists: false,
+        visible: false,
+        enabled: false,
+        focused: false,
+        frame: .zero,
+        text: ""
+    )
+}
+
 /// Buttons of `XCUIRemote` the driver can press (spec 6.2, tvos column).
 public enum RemoteButton: String, Sendable, Equatable {
     case up
@@ -36,7 +77,9 @@ public protocol UIDriver: AnyObject {
     func press(_ e: ElementRef, duration: TimeInterval) throws
     func text(_ e: ElementRef) -> String
     func typeText(_ e: ElementRef, _ t: String) throws
-    func deleteAll(_ e: ElementRef) throws
+    /// Deletes the known content of a field. The caller passes the current
+    /// text so XCUITest does not read the value again just to count deletes.
+    func deleteAll(_ e: ElementRef, currentText: String) throws
     func isVisible(_ e: ElementRef) -> Bool
     func isEnabled(_ e: ElementRef) -> Bool
     func isHittable(_ e: ElementRef) -> Bool
@@ -102,6 +145,10 @@ public protocol DriverExtras: AnyObject {
     /// The media source URL/name of the selected element, when the platform
     /// hook can prove it.
     func showingSource(_ e: ElementRef) -> String?
+
+    /// Batch attribute read (I-198). `nil` means the driver cannot batch and
+    /// the executor should use the individual `UIDriver` calls.
+    func attributes(_ e: ElementRef) -> ElementAttributes?
 }
 
 public extension DriverExtras {
@@ -116,4 +163,5 @@ public extension DriverExtras {
     func regionCoverage(png: Data, rect: CGRect) -> Double? { nil }
     func showingDecoded(_ e: ElementRef) -> Bool? { nil }
     func showingSource(_ e: ElementRef) -> String? { nil }
+    func attributes(_ e: ElementRef) -> ElementAttributes? { nil }
 }

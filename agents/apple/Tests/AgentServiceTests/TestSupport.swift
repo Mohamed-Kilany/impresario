@@ -223,7 +223,7 @@ final class FakeDriver: UIDriver, DriverExtras, @unchecked Sendable {
         element.textValue += t
     }
 
-    func deleteAll(_ e: ElementRef) throws {
+    func deleteAll(_ e: ElementRef, currentText: String) throws {
         (e.handle as? FakeElement)?.textValue = ""
     }
 
