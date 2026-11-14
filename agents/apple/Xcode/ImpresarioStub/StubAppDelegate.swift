@@ -52,18 +52,36 @@ final class StubAppDelegate: UIResponder, UIApplicationDelegate {
         // navigation stack gives the same one-screen-per-scenario flow and
         // lets the tvOS Menu button (Android back) return to the home screen.
         let home = StubViewController()
-        let navigation = UINavigationController(rootViewController: home)
-        navigation.setNavigationBarHidden(true, animated: false)
+        let nav = UINavigationController(rootViewController: home)
+        nav.setNavigationBarHidden(true, animated: false)
+        #if os(iOS)
+        // The fixture mirrors Android's activity-per-screen flow. Android has a
+        // system Back key and the tvOS remote has Menu, but an iPhone has
+        // neither, so the navigation bar supplies the visible back button.
+        // Keep it hidden on Home and show it over a scenario.
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = StubTheme.background
+        appearance.shadowColor = .clear
+        appearance.titleTextAttributes = [.foregroundColor: StubTheme.foreground]
+        appearance.buttonAppearance.normal.titleTextAttributes = [
+            .foregroundColor: StubTheme.foreground,
+        ]
+        nav.navigationBar.standardAppearance = appearance
+        nav.navigationBar.scrollEdgeAppearance = appearance
+        nav.navigationBar.compactAppearance = appearance
+        nav.navigationBar.tintColor = StubTheme.foreground
+        #endif
         #if os(tvOS)
         let router = StubMenuRouter()
-        router.navigation = navigation
+        router.navigation = nav
         let menu = UITapGestureRecognizer(target: router, action: #selector(StubMenuRouter.onMenu))
         menu.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
         menu.delegate = router
         window.addGestureRecognizer(menu)
         menuRouter = router
         #endif
-        window.rootViewController = navigation
+        window.rootViewController = nav
         window.makeKeyAndVisible()
         self.window = window
         return true

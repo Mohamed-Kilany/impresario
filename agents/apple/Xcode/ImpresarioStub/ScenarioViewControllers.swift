@@ -80,6 +80,15 @@ class ScenarioViewController: UIViewController {
         #endif
     }
 
+    #if os(iOS)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // iPhone has no Back key; the navigation bar's back button is the
+        // Android-Back/tvOS-Menu equivalent.
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+    }
+    #endif
+
     /// The scenario title, e.g. `Basic controls`.
     func scenarioTitle() -> String {
         preconditionFailure("scenarioTitle() must be overridden")
@@ -370,6 +379,13 @@ final class ScrollScenarioViewController: UIViewController {
         updateFocusIfNeeded()
         #endif
     }
+
+    #if os(iOS)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+    }
+    #endif
 }
 
 // ----------------------------------------------------------------------------

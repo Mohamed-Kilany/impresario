@@ -151,6 +151,7 @@ enum StubTheme {
         button.titleLabel?.font = .systemFont(ofSize: dp(18))
         button.setTitleColor(buttonTitle, for: .normal)
         button.setTitleColor(buttonDisabledTitle, for: .disabled)
+        button.installLongPressRecognizer()
         // Android's platform Button centers its label inside the 12 dp
         // horizontal content padding. The dialog rows below opt back into a
         // left-aligned label because AlertDialog list items are not Buttons.
@@ -314,34 +315,68 @@ final class StubButton: UIButton {
     /// can reach the button through UIKit's tracking path and the remote
     /// responder path, so coalesce duplicate primary actions.
     private static let actionCoalescing: TimeInterval = 0.25
+    /// A long press suppresses the primary action that UIKit may still deliver
+    /// on lift-off. The window only has to span the end of the touch.
+    private static let longPressSuppression: TimeInterval = 0.5
     private var selectStarted: Date?
     private var lastPrimaryAction: Date?
     private var suppressPrimaryUntil: Date?
     private var lastPressWasLong = false
+    private var longPressAt: Date?
+    private var longPressRecognizer: UILongPressGestureRecognizer?
 
     override var isEnabled: Bool {
         didSet { updateVisualState() }
     }
 
-    #if os(tvOS)
+    /// Installs the touch long-press recognizer on iOS. tvOS receives Select
+    /// through `pressesBegan`/`pressesEnded` instead; a touch recognizer never
+    /// fires there and would only add a dead code path.
+    func installLongPressRecognizer() {
+        #if !os(tvOS)
+        guard longPressRecognizer == nil else { return }
+        let recognizer = UILongPressGestureRecognizer(
+            target: self,
+            action: #selector(onLongPressGesture(_:))
+        )
+        recognizer.minimumPressDuration = Self.longPressDuration
+        recognizer.allowableMovement = 10
+        // Cancel the button's touch tracking once the press becomes a long
+        // press, so UIKit does not also deliver the normal primary action.
+        recognizer.cancelsTouchesInView = true
+        addGestureRecognizer(recognizer)
+        longPressRecognizer = recognizer
+        #endif
+    }
+
+    @objc private func onLongPressGesture(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began, isEnabled else { return }
+        lastPressWasLong = true
+        longPressAt = Date()
+        suppressPrimaryUntil = Date().addingTimeInterval(Self.longPressSuppression)
+        onLongPress?()
+    }
+
     override func sendActions(for controlEvents: UIControl.Event) {
         if controlEvents == .primaryActionTriggered {
             let now = Date()
             if let until = suppressPrimaryUntil {
+                suppressPrimaryUntil = nil
                 if now < until {
-                    suppressPrimaryUntil = nil
+                    lastPressWasLong = false
+                    longPressAt = nil
                     return
                 }
-                suppressPrimaryUntil = nil
             }
+            #if os(tvOS)
             if let last = lastPrimaryAction, now.timeIntervalSince(last) < Self.actionCoalescing {
                 return
             }
             lastPrimaryAction = now
+            #endif
         }
         super.sendActions(for: controlEvents)
     }
-    #endif
 
     /// True when the primary action being delivered belongs to a long select.
     /// Android suppresses the click after a long-click; the Basic screen uses
@@ -349,8 +384,17 @@ final class StubButton: UIButton {
     func consumeLongPress() -> Bool {
         if lastPressWasLong {
             lastPressWasLong = false
-            return true
+            // UIKit may deliver the primary action immediately after the
+            // long-press gesture cancels touch tracking. A later, unrelated
+            // tap must not inherit that suppression.
+            let fresh = longPressAt.map {
+                Date().timeIntervalSince($0)
+                    < Self.longPressDuration + Self.longPressSuppression
+            } ?? false
+            longPressAt = nil
+            return fresh
         }
+        longPressAt = nil
         if let started = selectStarted,
            Date().timeIntervalSince(started) >= Self.longPressDuration {
             return true
@@ -396,6 +440,7 @@ final class StubButton: UIButton {
             let held = Date().timeIntervalSince(started)
             if held >= Self.longPressDuration, let onLongPress {
                 lastPressWasLong = true
+                longPressAt = Date()
                 suppressPrimaryUntil = Date().addingTimeInterval(Self.actionCoalescing)
                 onLongPress()
             } else {

@@ -40,10 +40,25 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     /// the full-screen tvOS keyboard is not guaranteed to appear in the app's
     /// accessibility tree, so remember that we opened a session.
     private var typedIntoField = false
-    /// The inspector registry of the last capture: node id → live element and
-    /// its logical frame. Guarded by the driver queue.
-    private var inspectorElements: [UInt64: XCUIElement] = [:]
-    private var inspectorRects: [UInt64: CGRect] = [:]
+    /// The inspector registry of the last capture: node id → the attributes
+    /// needed to find the live element again. The capture itself walks one
+    /// `XCUIElementSnapshot` (a single accessibility IPC) instead of querying
+    /// every attribute of every live element, which takes minutes on a real
+    /// device. Guarded by the driver queue.
+    private var inspectorHandles: [UInt64: InspectorHandle] = [:]
+    /// `deviceInfo()` takes a screenshot; the screen does not change during a
+    /// run, so cache it (every inspector snapshot asks for it).
+    private var cachedDeviceInfo: AgentDeviceInfo?
+
+    /// What the inspector keeps about a node so a later input can resolve the
+    /// element with one query.
+    private struct InspectorHandle {
+        var identifier: String
+        var label: String
+        var title: String
+        var type: XCUIElement.ElementType
+        var frame = CGRect.zero
+    }
 
     // ------------------------------------------------------------------
     // plumbing
@@ -475,11 +490,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     func deviceInfo() -> AgentDeviceInfo {
         onQueue {
+            if let cachedDeviceInfo { return cachedDeviceInfo }
             let image = XCUIScreen.main.screenshot().image
             let scale = Double(image.scale)
             let width = Int((Double(image.size.width) * scale).rounded())
             let height = Int((Double(image.size.height) * scale).rounded())
-            return AgentDeviceInfo(
+            let info = AgentDeviceInfo(
                 model: Self.machineModel(),
                 osName: Self.osName,
                 osVersion: Self.osVersionText,
@@ -488,6 +504,8 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 pixelRatio: max(0, scale),
                 runtime: Self.runtime
             )
+            cachedDeviceInfo = info
+            return info
         }
     }
 
@@ -554,8 +572,13 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         return try onQueue {
             let app = try application()
             // UIKit's default identifier for the navigation-bar back button
-            // (spec 12.3 `back`), then the interactive-pop edge swipe.
-            let back = app.navigationBars.buttons["BackButton"]
+            // (spec 12.3 `back`), then any leading bar button, then the
+            // interactive-pop edge swipe.
+            let bar = app.navigationBars.firstMatch
+            var back = bar.buttons["BackButton"]
+            if !back.exists {
+                back = bar.buttons.firstMatch
+            }
             if back.exists && back.isHittable {
                 var error: NSString?
                 guard IMPXCUShim.tap(back, error: &error) else {
@@ -694,16 +717,28 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                     return IMPXCUShim.activate(app, error: &error)
                 }
             }
-            let appFrame = app.frame
+            // One bulk snapshot fetches the whole accessibility tree over a
+            // single XCUITest IPC. Querying every attribute of every live
+            // element (the obvious implementation) issues dozens of IPC calls
+            // per node and does not finish a real-device tree inside the
+            // master's 20 s snapshot timeout.
+            let root: XCUIElementSnapshot
+            do {
+                root = try app.snapshot()
+            } catch {
+                throw AgentError.internalError(
+                    "cannot snapshot the app under test: \(error.localizedDescription)"
+                )
+            }
+            let appFrame = root.frame
             let viewport = CGRect(origin: .zero, size: appFrame.size)
 
             var nodes: [InspectorNodeData] = []
-            var elements: [UInt64: XCUIElement] = [:]
-            var frames: [UInt64: CGRect] = [:]
+            var handles: [UInt64: InspectorHandle] = [:]
             var truncated = false
 
             func walk(
-                _ element: XCUIElement,
+                _ snapshot: XCUIElementSnapshot,
                 parentId: UInt64,
                 depth: Int,
                 systemUi: Bool
@@ -713,24 +748,24 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                     return
                 }
                 if depth > options.maxDepth { return }
-                guard element.exists else { return }
 
-                let type = element.elementType
+                let type = snapshot.elementType
                 let isSystemUi = systemUi || type == .statusBar
                 if isSystemUi && !options.includeSystemUi { return }
 
                 let id = UInt64(nodes.count + 1)
-                let frame = element.frame
+                let frame = snapshot.frame
                 let role = Self.inspectorRole(type)
-                let identifier = element.identifier
-                let label = element.label
-                let placeholder = element.placeholderValue ?? ""
-                let rawValue = (element.value as? String) ?? ""
+                let identifier = snapshot.identifier
+                let label = snapshot.label
+                let title = snapshot.title
+                let placeholder = snapshot.placeholderValue ?? ""
+                let rawValue = (snapshot.value as? String) ?? ""
                 let secure = type == .secureTextField
                 let value = secure ? "" : rawValue
                 let input = Self.inspectorInputType(type)
                 let name = label.isEmpty
-                    ? (element.title.isEmpty ? identifier : element.title)
+                    ? (title.isEmpty ? identifier : title)
                     : label
                 let text = input ? "" : label
                 let nameCapped = Self.capText(name, Self.inspectorNameLimit)
@@ -753,11 +788,15 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                             w: Double(frame.width),
                             h: Double(frame.height)
                         ),
-                        focused: element.hasFocus,
-                        enabled: element.isEnabled,
-                        selected: element.isSelected,
-                        checked: Self.inspectorChecked(element),
-                        readonly: input && !element.isEnabled,
+                        focused: snapshot.hasFocus,
+                        enabled: snapshot.isEnabled,
+                        selected: snapshot.isSelected,
+                        checked: Self.inspectorChecked(
+                            type: type,
+                            value: rawValue,
+                            selected: snapshot.isSelected
+                        ),
+                        readonly: input && !snapshot.isEnabled,
                         hidden: false,
                         secure: secure,
                         systemUi: isSystemUi,
@@ -765,11 +804,20 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                         scrollAxis: scrollable
                             ? (frame.height >= frame.width ? "vertical" : "horizontal")
                             : "",
-                        raw: options.includeRaw ? Self.inspectorRaw(element) : "",
+                        raw: options.includeRaw
+                            ? Self.inspectorRaw(
+                                type: type,
+                                identifier: identifier,
+                                label: label,
+                                value: rawValue,
+                                placeholder: placeholder,
+                                frame: frame
+                            )
+                            : "",
                         value: valueCapped.text,
                         label: label,
                         placeholder: placeholder,
-                        title: element.title,
+                        title: title,
                         visibleFraction: Self.visibleFraction(frame, viewport),
                         depth: UInt32(clamping: depth),
                         textTruncated: nameCapped.truncated
@@ -777,15 +825,20 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                             || valueCapped.truncated
                     )
                 )
-                elements[id] = element
-                frames[id] = frame
+                handles[id] = InspectorHandle(
+                    identifier: identifier,
+                    label: label,
+                    title: title,
+                    type: type,
+                    frame: frame
+                )
 
-                for child in element.children(matching: .any).allElementsBoundByIndex {
+                for child in snapshot.children {
                     walk(child, parentId: id, depth: depth + 1, systemUi: isSystemUi)
                 }
             }
 
-            walk(app, parentId: 0, depth: 0, systemUi: false)
+            walk(root, parentId: 0, depth: 0, systemUi: false)
 
             let pruned = Self.pruneInspectorNodes(
                 nodes,
@@ -793,8 +846,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 viewport: viewport
             )
             let keptIds = Set(pruned.nodes.map(\.id))
-            inspectorElements = elements.filter { keptIds.contains($0.key) }
-            inspectorRects = frames.filter { keptIds.contains($0.key) }
+            inspectorHandles = handles.filter { keptIds.contains($0.key) }
 
             var degraded: [String] = []
             if pruned.nodes.isEmpty {
@@ -859,19 +911,42 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     // MARK: inspector actions (queue-held)
 
+    /// Resolve a captured node id back to a live element. Capture keeps only
+    /// attributes (the bulk snapshot yields no element handles), so this is one
+    /// query, run only for an input action.
+    private func inspectorElement(_ nodeId: UInt64) -> XCUIElement? {
+        guard let handle = inspectorHandles[nodeId], let app = try? application() else {
+            return nil
+        }
+        let query: XCUIElementQuery
+        if !handle.identifier.isEmpty {
+            query = app.descendants(matching: .any).matching(identifier: handle.identifier)
+        } else if !handle.label.isEmpty {
+            query = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", handle.label))
+        } else if !handle.title.isEmpty {
+            query = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "title == %@", handle.title))
+        } else {
+            return nil
+        }
+        let candidates = query.allElementsBoundByIndex
+        return candidates.first(where: { $0.elementType == handle.type }) ?? candidates.first
+    }
+
     private func inspectorTap(nodeId: UInt64, x: Double, y: Double) throws {
         #if os(tvOS)
         throw AgentError.unsupportedAction(
             "the inspector cannot tap on tvos (no touch input); use the key action"
         )
         #else
-        if let element = inspectorElements[nodeId], element.exists, element.isHittable {
+        if let element = inspectorElement(nodeId), element.exists, element.isHittable {
             var error: NSString?
             if IMPXCUShim.tap(element, error: &error) {
                 return
             }
         }
-        let point = inspectorRects[nodeId].map { CGPoint(x: $0.midX, y: $0.midY) }
+        let point = inspectorHandles[nodeId].map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) }
             ?? CGPoint(x: x, y: y)
         try tapScreen(point)
         #endif
@@ -891,11 +966,14 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             try pressRemote(button)
         }
         #else
+        let scrollableTypes: Set<XCUIElement.ElementType> = [
+            .scrollView, .table, .collectionView, .webView,
+        ]
         let target: XCUIElement
-        if let element = inspectorElements[nodeId],
-           element.exists,
-           element.elementType == .scrollView || element.elementType == .table
-            || element.elementType == .collectionView || element.elementType == .webView
+        if let handle = inspectorHandles[nodeId],
+           scrollableTypes.contains(handle.type),
+           let element = inspectorElement(nodeId),
+           element.exists
         {
             target = element
         } else {
@@ -938,7 +1016,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         let app = try application()
         let element: XCUIElement
         if nodeId != 0 {
-            guard let found = inspectorElements[nodeId], found.exists else {
+            guard let found = inspectorElement(nodeId), found.exists else {
                 throw AgentError.elementNotFound("the inspector node no longer exists")
             }
             element = found
@@ -1118,28 +1196,38 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         }
     }
 
-    private static func inspectorChecked(_ element: XCUIElement) -> Bool? {
-        switch element.elementType {
+    private static func inspectorChecked(
+        type: XCUIElement.ElementType,
+        value: String,
+        selected: Bool
+    ) -> Bool? {
+        switch type {
         case .switch, .toggle:
-            let value = ((element.value as? String) ?? "").lowercased()
-            if value == "1" || value == "on" { return true }
-            if value == "0" || value == "off" { return false }
-            return element.isSelected
+            let normalized = value.lowercased()
+            if normalized == "1" || normalized == "on" { return true }
+            if normalized == "0" || normalized == "off" { return false }
+            return selected
         case .checkBox, .radioButton:
-            return element.isSelected
+            return selected
         default:
             return nil
         }
     }
 
-    private static func inspectorRaw(_ element: XCUIElement) -> String {
-        let frame = element.frame
+    private static func inspectorRaw(
+        type: XCUIElement.ElementType,
+        identifier: String,
+        label: String,
+        value: String,
+        placeholder: String,
+        frame: CGRect
+    ) -> String {
         let object: [String: Any] = [
-            "type": String(describing: element.elementType),
-            "identifier": element.identifier,
-            "label": element.label,
-            "value": (element.value as? String) ?? "",
-            "placeholder": element.placeholderValue ?? "",
+            "type": String(describing: type),
+            "identifier": identifier,
+            "label": label,
+            "value": value,
+            "placeholder": placeholder,
             "frame": [
                 "x": Double(frame.minX),
                 "y": Double(frame.minY),

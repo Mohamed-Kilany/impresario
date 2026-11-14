@@ -157,6 +157,13 @@ final class MediaViewController: UIViewController {
         }
     }
 
+    #if os(iOS)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+    }
+    #endif
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         hookTimer?.invalidate()

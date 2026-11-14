@@ -137,6 +137,15 @@ final class StubViewController: UIViewController {
         #endif
     }
 
+    #if os(iOS)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Home is the fixture's root: there is nothing to go back to, and the
+        // Android home screen has no action bar either.
+        navigationController?.setNavigationBarHidden(true, animated: animated)
+    }
+    #endif
+
     @objc private func openScenario(_ sender: StubButton) {
         guard let scenario = Self.scenarios.first(where: { $0.id == sender.accessibilityIdentifier }) else {
             return

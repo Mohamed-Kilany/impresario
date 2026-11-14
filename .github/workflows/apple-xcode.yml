@@ -111,6 +111,24 @@ jobs:
             --minimum-deployment-target 16.0 \
             --platform appletvos
 
+      - name: Validate iOS asset catalog
+        working-directory: agents/apple
+        run: |
+          rm -rf /tmp/impresario-actool-ios
+          mkdir -p /tmp/impresario-actool-ios
+          xcrun actool Xcode/Shared/Assets-iOS.xcassets \
+            --compile /tmp/impresario-actool-ios \
+            --output-format human-readable-text \
+            --notices --warnings \
+            --output-partial-info-plist /tmp/impresario-actool-ios-info.plist \
+            --app-icon AppIcon \
+            --compress-pngs \
+            --enable-on-demand-resources YES \
+            --development-region en \
+            --target-device iphone \
+            --minimum-deployment-target 16.0 \
+            --platform iphoneos
+
       - name: Build tvOS stub and agent tests (unsigned)
         working-directory: agents/apple
         run: |
