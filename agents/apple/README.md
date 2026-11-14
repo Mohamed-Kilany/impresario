@@ -244,12 +244,14 @@ D-19 forbids the host tools that could.
 ## 5. First-run local-network permission
 
 The host app and the test bundle declare `NSLocalNetworkUsageDescription` and
-`_impresario._tcp`. iOS may show a permission prompt on first run. On tvOS the
-`SystemAlerts` workarounds are compiled out: if the prompt appears, accept it
-once with the Apple TV remote; the permission is remembered afterwards.
-Whether or when the tvOS prompt appears is still unverified. The agent binds
-`0.0.0.0`, publishes `_impresario._tcp` when Bonjour is available, and prints
-its addresses in the device log.
+`_impresario._tcp`. iOS may show a permission prompt on first run; accept it
+once on the device and the permission is remembered. The agent cannot tap it
+programmatically: `testServe()` is async and has no XCTest main context, so
+every XCUI query (including `addUIInterruptionMonitor` and direct SpringBoard
+polling) aborts the run with `Current context must not be nil` (I-194). The
+device wizard and `impresario doctor` detect the blocked state and explain the
+one-time tap. The agent binds `0.0.0.0`, publishes `_impresario._tcp` when
+Bonjour is available, and prints its addresses in the device log.
 
 ## 6. Evidence and open work
 

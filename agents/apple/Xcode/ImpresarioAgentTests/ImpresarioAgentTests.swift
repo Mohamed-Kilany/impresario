@@ -31,12 +31,13 @@ final class ImpresarioAgentTests: XCTestCase {
         )
         let service = AgentService(config: config, driver: driver)
 
-        // Alerts must be handled before they block the first connection, but
-        // not with `addUIInterruptionMonitor`: it asks XCTest for its current
-        // context, and an async test that then serves for the whole run has no
-        // main XCTest context. Both iOS and tvOS abort the test with an
-        // uncaught exception (I-150). The one-time local-network prompt is
-        // handled directly through SpringBoard after the bind instead.
+        // Never touch XCUIApplication from this test. `testServe` is async and
+        // owns no XCTest main context, so *any* XCUI query that records a test
+        // activity aborts the run with `Current context must not be nil`
+        // (I-194). That rules out `addUIInterruptionMonitor` and direct
+        // SpringBoard polling. The one-time local-network prompt is granted by
+        // a human; the device wizard and `impresario doctor` detect and explain
+        // that state (see docs/DEVICES.md).
 
         let handle = try service.start()
         print(
@@ -47,13 +48,6 @@ final class ImpresarioAgentTests: XCTestCase {
                 token: !token.isEmpty
             )
         )
-
-        // The local-network prompt appears right after the first bind; tap it
-        // so a WLAN run needs no human (I-88). tvOS cannot tap, and polling
-        // SpringBoard for 20 s would only delay the agent, so skip it there.
-        #if !os(tvOS)
-        SystemAlerts.allowLocalNetworkIfPrompted()
-        #endif
         print("impresario agent: serving; waiting for a master (Shutdown ends the run)")
 
         await handle.serveUntilShutdown()

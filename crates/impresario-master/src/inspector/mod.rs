@@ -8,8 +8,10 @@
 //! serves the embedded SPA, JSON endpoints and an SSE stream. MCP tools call
 //! the same loopback API.
 //!
-//! Nothing here changes the run path: the inspector uses its own session and
-//! never opens the bidirectional `Agent.Session` stream.
+//! Nothing here changes the run path: the inspector uses its own handshake and
+//! only opens the bidirectional `Agent.Session` stream to launch the configured
+//! app under test (`AppControl`), keeping it open for the attachment because
+//! the agent releases the session when that stream ends.
 
 mod api;
 mod assets;
@@ -25,10 +27,13 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
-use impresario_clients::agent_client::{AgentClient, Capability, HandshakeParams};
+use impresario_clients::agent_client::{
+    AgentClient, AgentSession, Capability, HandshakeParams, SessionOptions,
+};
 use impresario_clients::inspector_client::InspectorClient;
 use impresario_clients::transport::{transport_for, DeviceTransport};
 use impresario_core::apps::{self, AppConfig};
+use impresario_core::command::{AppOp, Command};
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
@@ -507,6 +512,11 @@ struct Attachment {
     transport: Box<dyn DeviceTransport>,
     agent: AgentClient,
     session_id: String,
+    /// The `Agent.Session` stream opened to launch the configured app under
+    /// test. It must stay open for the whole attachment: the Apple agent
+    /// releases the handshake session as soon as the stream ends, which would
+    /// invalidate the `Inspector` RPCs that share its session id.
+    app_session: Option<AgentSession>,
     inspector: InspectorClient,
 }
 
@@ -562,9 +572,14 @@ impl Actor {
             mut transport,
             agent,
             session_id,
+            app_session,
             ..
         } = attachment;
-        let _ = agent.shutdown_session(&session_id, false).await;
+        if let Some(session) = app_session.as_ref() {
+            let _ = session.shutdown(false).await;
+        } else {
+            let _ = agent.shutdown_session(&session_id, false).await;
+        }
         let _ = transport.teardown().await;
         // A detached inspector has no current screen: the next attach must
         // start from a full snapshot, and /api/snapshot must not serve the
@@ -701,6 +716,63 @@ async fn connect(
             "NOT_SUPPORTED: the executor did not advertise the INSPECTOR capability".to_string(),
         );
     }
+
+    // Open the configured app under test before the first snapshot. The
+    // inspector shares the `Agent` session id, so the `Session` stream that
+    // carries `AppControl` stays open for the whole attachment: ending it
+    // releases the session and the `Inspector` RPCs would be rejected.
+    let app_id = app_entry.and_then(|entry| entry.id.clone());
+    let mut app_session = None;
+    if let Some(app_id) = app_id.filter(|id| !id.is_empty()) {
+        if !handshake.has_capability(Capability::AppControl) {
+            let _ = agent.shutdown_session(&handshake.session_id, false).await;
+            let _ = transport.teardown().await;
+            return Err(format!(
+                "NOT_SUPPORTED: the executor does not advertise APP_CONTROL, so the app \
+                 under test '{app_id}' cannot be opened"
+            ));
+        }
+        let session = match agent
+            .open_session(&handshake.session_id, SessionOptions::default())
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                let _ = agent.shutdown_session(&handshake.session_id, false).await;
+                let _ = transport.teardown().await;
+                return Err(format!("cannot open the agent session to launch '{app_id}': {error}"));
+            }
+        };
+        let timeout_ms = u32::try_from(shared.config.timeout_default_ms).unwrap_or(u32::MAX);
+        let launch = Command::AppControl {
+            op: AppOp::Launch,
+            clear_data: false,
+        };
+        match session
+            .send(&launch, timeout_ms, shared.config.command_grace_ms)
+            .await
+        {
+            Ok(outcome) if outcome.ok => {
+                tracing::info!(device = %device.name, app = %app_id, "opened the app under test");
+                app_session = Some(session);
+            }
+            Ok(outcome) => {
+                let detail = outcome
+                    .error
+                    .map(|error| format!("{}: {}", error.code.as_str(), error.message))
+                    .unwrap_or_else(|| "the executor reported a failed launch".to_string());
+                let _ = session.shutdown(false).await;
+                let _ = transport.teardown().await;
+                return Err(format!("cannot open the app under test '{app_id}': {detail}"));
+            }
+            Err(error) => {
+                let _ = session.shutdown(false).await;
+                let _ = transport.teardown().await;
+                return Err(format!("cannot open the app under test '{app_id}': {error}"));
+            }
+        }
+    }
+
     let inspector = match InspectorClient::connect(endpoint.address()).await {
         Ok(inspector) => inspector.with_token(token),
         Err(error) => {
@@ -714,6 +786,7 @@ async fn connect(
         transport,
         agent,
         session_id: handshake.session_id,
+        app_session,
         inspector,
     })
 }
