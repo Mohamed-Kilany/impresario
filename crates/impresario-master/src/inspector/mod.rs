@@ -33,7 +33,8 @@ use impresario_clients::agent_client::{
 use impresario_clients::inspector_client::InspectorClient;
 use impresario_clients::transport::{transport_for, DeviceTransport};
 use impresario_core::apps::{self, AppConfig};
-use impresario_core::command::{AppOp, Command};
+use impresario_core::ast::AppOp;
+use impresario_core::command::Command;
 use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
 use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
@@ -740,7 +741,9 @@ async fn connect(
             Err(error) => {
                 let _ = agent.shutdown_session(&handshake.session_id, false).await;
                 let _ = transport.teardown().await;
-                return Err(format!("cannot open the agent session to launch '{app_id}': {error}"));
+                return Err(format!(
+                    "cannot open the agent session to launch '{app_id}': {error}"
+                ));
             }
         };
         let timeout_ms = u32::try_from(shared.config.timeout_default_ms).unwrap_or(u32::MAX);
@@ -763,12 +766,16 @@ async fn connect(
                     .unwrap_or_else(|| "the executor reported a failed launch".to_string());
                 let _ = session.shutdown(false).await;
                 let _ = transport.teardown().await;
-                return Err(format!("cannot open the app under test '{app_id}': {detail}"));
+                return Err(format!(
+                    "cannot open the app under test '{app_id}': {detail}"
+                ));
             }
             Err(error) => {
                 let _ = session.shutdown(false).await;
                 let _ = transport.teardown().await;
-                return Err(format!("cannot open the app under test '{app_id}': {error}"));
+                return Err(format!(
+                    "cannot open the app under test '{app_id}': {error}"
+                ));
             }
         }
     }
@@ -776,7 +783,11 @@ async fn connect(
     let inspector = match InspectorClient::connect(endpoint.address()).await {
         Ok(inspector) => inspector.with_token(token),
         Err(error) => {
-            let _ = agent.shutdown_session(&handshake.session_id, false).await;
+            if let Some(session) = app_session.as_ref() {
+                let _ = session.shutdown(false).await;
+            } else {
+                let _ = agent.shutdown_session(&handshake.session_id, false).await;
+            }
             let _ = transport.teardown().await;
             return Err(error.to_string());
         }
