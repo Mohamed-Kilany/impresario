@@ -20,9 +20,13 @@ import XCUIAutomation
 /// `testServe()` is async, and blocking the main thread while waiting for the
 /// app under test can deadlock XCTest's own machinery.
 ///
-/// App lifecycle calls are the exception. XCUITest asserts that
-/// `XCUIApplication.launch/terminate/activate` run on the main thread; they are
-/// dispatched there, and the driver queue waits for the result.
+/// App lifecycle and interaction calls are the exception. XCUITest asserts
+/// that `XCUIApplication.launch/terminate/activate`, element taps, presses and
+/// drags, picker-wheel adjustments and device/remote button presses run on the
+/// main thread; they are dispatched there, and the driver queue waits for the
+/// result. The main thread is inside XCTest's own test invocation while the
+/// async `testServe()` awaits, so the main-thread XCTest context these calls
+/// record against is active.
 final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     /// Launch argument that asks the app under test to disable animations
     /// (`animations_disabled`, spec 12.3). Apple has no API that switches
@@ -199,8 +203,15 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             guard element.isHittable else {
                 throw AgentError.notInteractable("the element is not hittable")
             }
-            var error: NSString?
-            guard IMPXCUShim.tap(element, error: &error) else {
+            // XCUITest asserts that a tap runs on the main thread; keep the
+            // driver queue held while dispatching there so a query cannot
+            // interleave with the interaction.
+            let (ok, error): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.tap(element, error: &error)
+                return (ok, error)
+            }
+            guard ok else {
                 throw AgentError.notInteractable("the tap failed: \(message(error))")
             }
         }
@@ -215,8 +226,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             guard element.isHittable else {
                 throw AgentError.notInteractable("the element is not hittable")
             }
-            var error: NSString?
-            guard IMPXCUShim.press(element, forDuration: duration, error: &error) else {
+            let (ok, error): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.press(element, forDuration: duration, error: &error)
+                return (ok, error)
+            }
+            guard ok else {
                 throw AgentError.notInteractable("the press failed: \(message(error))")
             }
         }
@@ -382,7 +397,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             case .pageDown: button = .pageDown
             }
             for _ in 0..<max(1, count) {
-                XCUIRemote.shared.press(button)
+                onMain { XCUIRemote.shared.press(button) }
                 if interval > 0 {
                     Thread.sleep(forTimeInterval: interval)
                 }
@@ -397,7 +412,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     func pressHome() throws {
         onQueue {
-            XCUIDevice.shared.press(.home)
+            onMain { XCUIDevice.shared.press(.home) }
             typedIntoField = false
         }
     }
@@ -556,7 +571,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     func longPressSelect(duration: TimeInterval) throws -> Bool {
         #if os(tvOS)
         onQueue {
-            XCUIRemote.shared.press(.select, forDuration: duration)
+            onMain { XCUIRemote.shared.press(.select, forDuration: duration) }
             return true
         }
         #else
@@ -580,16 +595,27 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 back = bar.buttons.firstMatch
             }
             if back.exists && back.isHittable {
-                var error: NSString?
-                guard IMPXCUShim.tap(back, error: &error) else {
+                let (ok, error): (Bool, NSString?) = onMain {
+                    var error: NSString?
+                    let ok = IMPXCUShim.tap(back, error: &error)
+                    return (ok, error)
+                }
+                guard ok else {
                     throw AgentError.notInteractable("the back button did not tap: \(message(error))")
                 }
                 return true
             }
-            guard IMPXCUShim.drag(app, from: CGVector(dx: 0.005, dy: 0.5), to: CGVector(dx: 0.7, dy: 0.5), error: nil) else {
-                return false
+            let (dragged, _): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.drag(
+                    app,
+                    from: CGVector(dx: 0.005, dy: 0.5),
+                    to: CGVector(dx: 0.7, dy: 0.5),
+                    error: &error
+                )
+                return (ok, error)
             }
-            return true
+            return dragged
         }
         #endif
     }
@@ -600,8 +626,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             guard element.exists, element.elementType == .pickerWheel else {
                 return false
             }
-            var error: NSString?
-            guard IMPXCUShim.adjustPickerWheel(element, to: value, error: &error) else {
+            let (ok, error): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.adjustPickerWheel(element, to: value, error: &error)
+                return (ok, error)
+            }
+            guard ok else {
                 throw AgentError.notInteractable(
                     "the picker wheel did not accept '\(value)': \(message(error))"
                 )
@@ -941,8 +971,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         )
         #else
         if let element = inspectorElement(nodeId), element.exists, element.isHittable {
-            var error: NSString?
-            if IMPXCUShim.tap(element, error: &error) {
+            let (ok, _): (Bool, NSString?) = onMain {
+                var error: NSString?
+                let ok = IMPXCUShim.tap(element, error: &error)
+                return (ok, error)
+            }
+            if ok {
                 return
             }
         }
@@ -1005,7 +1039,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         case .remote(let button):
             try pressRemote(button)
         case .home:
-            XCUIDevice.shared.press(.home)
+            onMain { XCUIDevice.shared.press(.home) }
             typedIntoField = false
         case .unsupported(let message):
             throw AgentError.unsupportedAction(message)
@@ -1106,7 +1140,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         case .pageUp: mapped = .pageUp
         case .pageDown: mapped = .pageDown
         }
-        XCUIRemote.shared.press(mapped)
+        onMain { XCUIRemote.shared.press(mapped) }
         #else
         _ = button
         throw AgentError.unsupportedAction("remote input is unavailable on ios")
@@ -1439,8 +1473,12 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         case .left: from = CGVector(dx: 0.9, dy: 0.5); to = CGVector(dx: 0.1, dy: 0.5)
         case .right: from = CGVector(dx: 0.1, dy: 0.5); to = CGVector(dx: 0.9, dy: 0.5)
         }
-        var error: NSString?
-        guard IMPXCUShim.drag(target, from: from, to: to, error: &error) else {
+        let (ok, error): (Bool, NSString?) = onMain {
+            var error: NSString?
+            let ok = IMPXCUShim.drag(target, from: from, to: to, error: &error)
+            return (ok, error)
+        }
+        guard ok else {
             throw AgentError.notInteractable("the swipe failed: \(message(error))")
         }
     }
