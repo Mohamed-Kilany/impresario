@@ -1217,8 +1217,7 @@ pub(super) async fn start_executing_test_plan<R: ReadWrite + 'static>(
 
 fn decode_aux_archive(aux: &AuxValue) -> Result<Value, IdeviceError> {
     match aux {
-        AuxValue::Array(bytes) => ns_keyed_archive::decode::from_bytes(bytes)
-            .map_err(|_| IdeviceError::UnexpectedResponse("unexpected response".into())),
+        AuxValue::Array(bytes) => super::archive::decode(bytes),
         _ => Err(IdeviceError::UnexpectedResponse(
             "unexpected response".into(),
         )),
@@ -1532,6 +1531,10 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
                 && let Some(id) = XCTTestIdentifier::from_plist(&decoded)
             {
                 let method_name = id.test_method().unwrap_or("").to_owned();
+                debug!(
+                    components = ?id.components,
+                    "XCTest case started identifier"
+                );
                 listener
                     .test_case_did_start(id.test_class(), &method_name)
                     .await?;
@@ -1571,6 +1574,11 @@ pub(super) async fn dispatch_xct_message<L: XCUITestListener>(
             {
                 let test_class = id.test_class().to_owned();
                 let method_name = id.test_method().unwrap_or("").to_owned();
+                debug!(
+                    components = ?id.components,
+                    issue = ?issue,
+                    "XCTest case issue"
+                );
                 let file = issue
                     .source_code_context
                     .as_ref()

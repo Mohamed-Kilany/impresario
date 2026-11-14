@@ -31,16 +31,12 @@ final class ImpresarioAgentTests: XCTestCase {
         )
         let service = AgentService(config: config, driver: driver)
 
-        // Alerts must be handled before they block the first connection.
-        //
-        // `addUIInterruptionMonitor` is main-thread-only; this async test starts
-        // on a Swift-concurrency thread, so XCTest aborts with "No current
-        // XCTContext" on tvOS. tvOS also has no touch input, so a monitor could
-        // never tap Allow. The one-time local-network prompt is granted with
-        // the remote instead (see SystemAlerts.tapAllow).
-        #if !os(tvOS)
-        SystemAlerts.register(on: self)
-        #endif
+        // Alerts must be handled before they block the first connection, but
+        // not with `addUIInterruptionMonitor`: it asks XCTest for its current
+        // context, and an async test that then serves for the whole run has no
+        // main XCTest context. Both iOS and tvOS abort the test with an
+        // uncaught exception (I-150). The one-time local-network prompt is
+        // handled directly through SpringBoard after the bind instead.
 
         let handle = try service.start()
         print(

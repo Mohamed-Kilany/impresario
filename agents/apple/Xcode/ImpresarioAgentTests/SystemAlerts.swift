@@ -10,10 +10,11 @@ import XCTest
 ///   *first* run after an install blocks until somebody taps Allow;
 /// * permission dialogs the app under test raises.
 ///
-/// Two mechanisms, because neither suffices alone: `addUIInterruptionMonitor`
-/// fires on the *next* interaction, and the direct SpringBoard query below
-/// works right after the server starts. Both are best-effort — a run must never
-/// fail because an alert could not be tapped.
+/// The direct SpringBoard query below works right after the server starts and
+/// is the only mechanism used. `addUIInterruptionMonitor` needs the XCTest main
+/// context, which an async test that serves for the whole run does not have;
+/// calling it aborts the test with an uncaught exception (I-150). Handling is
+/// best-effort — a run must never fail because an alert could not be tapped.
 enum SystemAlerts {
     /// Affirmative buttons we know. Extend when a new device language shows up;
     /// the second-button rule below covers the remaining local-network cases.
@@ -41,20 +42,6 @@ enum SystemAlerts {
         "許可しない",
         "허용 안 함",
     ]
-
-    // MARK: - interruption monitor
-
-    /// Registers the monitor on `testCase`; it runs whenever an interaction
-    /// happens while a system alert is up.
-    static func register(on testCase: XCTestCase) {
-        testCase.addUIInterruptionMonitor(withDescription: "impresario system alerts") { alert in
-            guard let label = tapAllow(in: alert) else {
-                return false
-            }
-            print("impresario agent: interruption monitor tapped '\(label)'")
-            return true
-        }
-    }
 
     // MARK: - direct handling
 

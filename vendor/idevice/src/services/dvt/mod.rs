@@ -6,6 +6,8 @@ use crate::{Idevice, IdeviceError, ReadWrite, obf};
 
 #[cfg(feature = "application_listing")]
 pub mod application_listing;
+#[cfg(feature = "xctest")]
+pub(crate) mod archive;
 #[cfg(feature = "condition_inducer")]
 pub mod condition_inducer;
 #[cfg(feature = "device_info")]
