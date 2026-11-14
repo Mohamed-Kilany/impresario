@@ -26,7 +26,7 @@ fn embedded_stub_suite_parses_and_validates_on_every_platform() {
     let report = install::ensure_stub_tests(&home).expect("seed the suite");
     assert!(report.written > 0, "a new home seeds the suite");
     assert_eq!(report.kept, 0);
-    let loaded = workspace::load_paths(&[report.dir.clone()]);
+    let loaded = workspace::load_paths(std::slice::from_ref(&report.dir));
     assert_eq!(
         loaded.diagnostics.errors().count(),
         0,
@@ -44,7 +44,7 @@ fn embedded_stub_suite_parses_and_validates_on_every_platform() {
     let acts: Vec<&str> = play.acts.iter().map(|act| act.name.as_str()).collect();
     assert_eq!(
         acts,
-        vec![
+        [
             "Home",
             "Basic",
             "Text",
