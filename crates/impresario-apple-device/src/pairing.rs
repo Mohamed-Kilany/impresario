@@ -448,16 +448,17 @@ pub async fn pair_usb(
         loop {
             let pair = lockdown_pair_record(&device, paths, host_name, wait).await?;
             let stream = {
-                let mut mux = connect_usbmuxd().await?;
-                mux.connect_to_device(
-                    device.device_id,
-                    LockdownClient::LOCKDOWND_PORT,
-                    IMPRESARIO_DEVICE_NAME,
-                )
-                .await
-                .map_err(|error| {
-                    Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
-                })?
+                connect_usbmuxd()
+                    .await?
+                    .connect_to_device(
+                        device.device_id,
+                        LockdownClient::LOCKDOWND_PORT,
+                        IMPRESARIO_DEVICE_NAME,
+                    )
+                    .await
+                    .map_err(|error| {
+                        Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
+                    })?
             };
             let mut lockdown = LockdownClient::new(stream);
             match lockdown.start_session(&pair).await {
@@ -509,8 +510,9 @@ pub async fn pair_usb(
             ))
         })?;
     let mut stream = {
-        let mut mux = connect_usbmuxd().await?;
-        mux.connect_to_device(device.device_id, port, IMPRESARIO_DEVICE_NAME)
+        connect_usbmuxd()
+            .await?
+            .connect_to_device(device.device_id, port, IMPRESARIO_DEVICE_NAME)
             .await
             .map_err(|error| {
                 Error::Device(format!(
@@ -692,16 +694,17 @@ async fn lockdown_pair_record(
         .await
         .map_err(|error| Error::Device(format!("read the usbmuxd BUID: {error}")))?;
     let stream = {
-        let mut mux = connect_usbmuxd().await?;
-        mux.connect_to_device(
-            device.device_id,
-            LockdownClient::LOCKDOWND_PORT,
-            IMPRESARIO_DEVICE_NAME,
-        )
-        .await
-        .map_err(|error| {
-            Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
-        })?
+        connect_usbmuxd()
+            .await?
+            .connect_to_device(
+                device.device_id,
+                LockdownClient::LOCKDOWND_PORT,
+                IMPRESARIO_DEVICE_NAME,
+            )
+            .await
+            .map_err(|error| {
+                Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
+            })?
     };
     let mut lockdown = LockdownClient::new(stream);
     let host_id = paths.host_identifier();
