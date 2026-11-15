@@ -363,6 +363,13 @@ public final class CommandExecutor: @unchecked Sendable {
 
     private func back() async throws -> Outcome {
         if options.platform.isTv {
+            // tvOS's full-screen keyboard consumes the first Menu press. After
+            // text entry, dismiss that keyboard and then send the Menu the
+            // screen expects, otherwise `back` leaves the scene in place.
+            if extras?.keyboardVisible() == true {
+                try driver.remote(.menu, repeat: 1, interval: 0.1)
+                try await sleep(300)
+            }
             try driver.remote(.menu, repeat: 1, interval: 0.1)
             return .ok()
         }
@@ -701,7 +708,7 @@ public final class CommandExecutor: @unchecked Sendable {
         // reading the focus frame; otherwise the navigator can chase a stale
         // frame and overshoot the target.
         try await sleep(450)
-        let probe = ExecutorFocusProbe(driver: driver, element: element)
+        let probe = ExecutorFocusProbe(driver: driver, element: element, extras: extras)
         let result = FocusNavigator(probe: probe, maxSteps: options.focusMaxSteps).ensureTargetFocused()
         switch result {
         case .focused:
@@ -748,37 +755,49 @@ public final class CommandExecutor: @unchecked Sendable {
 }
 
 /// `FocusProbe` over the executor's driver (spec 6.3).
+///
+/// One focused-identity snapshot per press replaces the separate "before"
+/// frame, "after" frame, target frame and `hasFocus` reads the navigator used
+/// to pay for at every D-pad step (I-201). A tvOS home screen with eight rows
+/// otherwise spends the whole 20 s click budget before reaching the last row.
 private final class ExecutorFocusProbe: FocusProbe {
     private let driver: UIDriver
     private let element: ElementRef
+    private let extras: DriverExtras?
+    private var target: FocusIdentity?
+    private var focused: FocusIdentity?
 
-    init(driver: UIDriver, element: ElementRef) {
+    init(driver: UIDriver, element: ElementRef, extras: DriverExtras?) {
         self.driver = driver
         self.element = element
+        self.extras = extras
     }
 
-    func currentFocusLabel() -> String? { nil }
+    func currentFocusLabel() -> String? { focused?.label }
 
-    func currentFocusFrame() -> CGRect? { driver.focusedFrame() }
+    func currentFocusFrame() -> CGRect? {
+        if let focused {
+            return focused.frame
+        }
+        return refreshFocused()?.frame
+    }
 
     func targetFrame() -> CGRect? {
-        // Keep the raw frame even when the element is outside the viewport:
-        // the focus engine scrolls a container as focus moves, so an
-        // off-screen row (for example the last home row on tvOS) is still a
-        // valid direction target. Returning nil here made every off-screen
-        // target an immediate "blocked" failure.
-        let frame = driver.frame(element)
-        return frame.isEmpty ? nil : frame
+        guard let target = targetIdentity(), !target.frame.isEmpty else {
+            return nil
+        }
+        return target.frame
     }
 
     func press(_ direction: Direction) -> Bool {
         do {
-            let before = driver.focusedFrame()
+            let before = currentFocusFrame()
             try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
             // Focus movement and the following scroll are animated. Querying
-            // `hasFocus` immediately sees the pre-press focus and makes the
-            // navigator issue an extra step, which overshoots the last row.
+            // immediately sees the pre-press focus and makes the navigator
+            // issue an extra step, which overshoots the last row.
             Thread.sleep(forTimeInterval: 0.45)
+            let after = refreshFocused()?.frame
 
             // A scrollable focus container consumes the first press to scroll
             // an off-screen row into view. When the focus frame did not move
@@ -787,11 +806,12 @@ private final class ExecutorFocusProbe: FocusProbe {
             // the last home row (Playback) was visible after the scroll but
             // never focused, and the navigator tried a perpendicular axis.
             if let before,
-               let after = driver.focusedFrame(),
+               let after,
                after == before,
                targetIsInDirection(direction, from: before) {
                 try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
                 Thread.sleep(forTimeInterval: 0.45)
+                _ = refreshFocused()
             }
             return true
         } catch {
@@ -799,16 +819,63 @@ private final class ExecutorFocusProbe: FocusProbe {
         }
     }
 
-    private func targetIsInDirection(_ direction: Direction, from current: CGRect) -> Bool {
-        let target = driver.frame(element)
-        guard !target.isEmpty else { return false }
-        switch direction {
-        case .up: return target.midY < current.midY
-        case .down: return target.midY > current.midY
-        case .left: return target.midX < current.midX
-        case .right: return target.midX > current.midX
+    func isTargetFocused() -> Bool {
+        guard let target = targetIdentity() else {
+            return driver.hasFocus(element)
         }
+        if focused == nil {
+            _ = refreshFocused()
+        }
+        guard let focused else {
+            return false
+        }
+        if focused.matches(target) {
+            return true
+        }
+        // The focus engine may report a child node. Only then is `hasFocus` on
+        // the target worth another round trip; disjoint frames cannot be it.
+        if focused.frame.intersects(target.frame) {
+            return driver.hasFocus(element)
+        }
+        return false
     }
 
-    func isTargetFocused() -> Bool { driver.hasFocus(element) }
+    private func refreshFocused() -> FocusIdentity? {
+        if let identity = extras?.focusedIdentity() {
+            focused = identity
+        } else if let frame = driver.focusedFrame() {
+            focused = FocusIdentity(identifier: "", label: "", frame: frame)
+        } else {
+            focused = nil
+        }
+        return focused
+    }
+
+    private func targetIdentity() -> FocusIdentity? {
+        if let target {
+            return target
+        }
+        if let identity = extras?.elementIdentity(element) {
+            target = identity
+        } else {
+            target = FocusIdentity(
+                identifier: "",
+                label: driver.text(element),
+                frame: driver.frame(element)
+            )
+        }
+        return target
+    }
+
+    private func targetIsInDirection(_ direction: Direction, from current: CGRect) -> Bool {
+        guard let target = targetIdentity(), !target.frame.isEmpty else {
+            return false
+        }
+        switch direction {
+        case .up: return target.frame.midY < current.midY
+        case .down: return target.frame.midY > current.midY
+        case .left: return target.frame.midX < current.midX
+        case .right: return target.frame.midX > current.midX
+        }
+    }
 }

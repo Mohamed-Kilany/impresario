@@ -612,6 +612,13 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(driver.remotes.map(\.button), [.menu])
     }
 
+    func testBackDismissesTheTvKeyboardBeforeMenu() async {
+        driver.keyboardShown = true
+        let result = await execute(.runAction(RunActionSpec(kind: .back)), platform: .tvos)
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(driver.remotes.map(\.button), [.menu, .menu])
+    }
+
     // MARK: - checks
 
     func testVisibleCheckPasses() async {

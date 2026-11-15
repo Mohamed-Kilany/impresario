@@ -260,4 +260,43 @@ final class FocusNavigatorTests: XCTestCase {
         let json = FocusNavigator.trailJson(trail)
         XCTAssertTrue(json.contains("\"focused_label\":\"a\\\"b\\\\c\\nd\""), json)
     }
+
+    func testFocusIdentityPrefersTheIdentifier() {
+        let target = FocusIdentity(
+            identifier: "play",
+            label: "Play",
+            frame: CGRect(x: 200, y: 0, width: 100, height: 40)
+        )
+        let focused = FocusIdentity(
+            identifier: "play",
+            label: "",
+            frame: CGRect(x: 200, y: 0, width: 100, height: 40)
+        )
+        XCTAssertTrue(focused.matches(target))
+
+        let different = FocusIdentity(identifier: "home", label: "Home", frame: target.frame)
+        XCTAssertFalse(different.matches(target))
+    }
+
+    func testFocusIdentityMatchesAChildLabelInsideTheTargetFrame() {
+        let target = FocusIdentity(
+            identifier: "play",
+            label: "Play",
+            frame: CGRect(x: 200, y: 0, width: 100, height: 40)
+        )
+        let child = FocusIdentity(
+            identifier: "",
+            label: "Play",
+            frame: CGRect(x: 210, y: 5, width: 80, height: 30)
+        )
+        XCTAssertTrue(child.matches(target))
+    }
+
+    func testFocusIdentityFallsBackToTheFrame() {
+        let target = FocusIdentity(identifier: "", label: "", frame: CGRect(x: 1, y: 2, width: 3, height: 4))
+        let same = FocusIdentity(identifier: "", label: "", frame: CGRect(x: 1, y: 2, width: 3, height: 4))
+        let other = FocusIdentity(identifier: "", label: "", frame: CGRect(x: 5, y: 6, width: 3, height: 4))
+        XCTAssertTrue(same.matches(target))
+        XCTAssertFalse(other.matches(target))
+    }
 }

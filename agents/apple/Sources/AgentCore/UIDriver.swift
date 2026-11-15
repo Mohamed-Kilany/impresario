@@ -13,6 +13,39 @@ public struct ElementRef: @unchecked Sendable {
     }
 }
 
+/// One focusable element's identity, read in a single snapshot.
+///
+/// tvOS has no programmatic focus API: the executor moves the focus engine
+/// with remote presses and asks which element holds focus. Reading that
+/// element's identifier, label and frame in one snapshot lets the navigator
+/// recognise the destination without a second `hasFocus` round trip per step
+/// (I-201).
+public struct FocusIdentity: Equatable {
+    public var identifier: String
+    public var label: String
+    public var frame: CGRect
+
+    public init(identifier: String, label: String, frame: CGRect) {
+        self.identifier = identifier
+        self.label = label
+        self.frame = frame
+    }
+
+    /// Whether two snapshots describe the same focused element. The
+    /// accessibility identifier is authoritative; a matching label inside an
+    /// overlapping frame covers hosts that expose focus on a child node, and
+    /// an exact frame is the fallback for elements without either.
+    public func matches(_ other: FocusIdentity) -> Bool {
+        if !identifier.isEmpty && !other.identifier.isEmpty {
+            return identifier == other.identifier
+        }
+        if !label.isEmpty && label == other.label && frame.intersects(other.frame) {
+            return true
+        }
+        return frame == other.frame
+    }
+}
+
 /// One element's attributes as read in a single driver round trip.
 ///
 /// XCUITest charges one accessibility IPC per attribute, and each call waits
@@ -149,6 +182,14 @@ public protocol DriverExtras: AnyObject {
     /// Batch attribute read (I-198). `nil` means the driver cannot batch and
     /// the executor should use the individual `UIDriver` calls.
     func attributes(_ e: ElementRef) -> ElementAttributes?
+
+    /// The element that currently owns tvOS focus, in one snapshot (I-201).
+    /// `nil` when the driver cannot inspect the focus engine.
+    func focusedIdentity() -> FocusIdentity?
+
+    /// The selected element's identity, for matching against the focus
+    /// engine without re-reading the focused element (I-201).
+    func elementIdentity(_ e: ElementRef) -> FocusIdentity?
 }
 
 public extension DriverExtras {
@@ -164,4 +205,6 @@ public extension DriverExtras {
     func showingDecoded(_ e: ElementRef) -> Bool? { nil }
     func showingSource(_ e: ElementRef) -> String? { nil }
     func attributes(_ e: ElementRef) -> ElementAttributes? { nil }
+    func focusedIdentity() -> FocusIdentity? { nil }
+    func elementIdentity(_ e: ElementRef) -> FocusIdentity? { nil }
 }

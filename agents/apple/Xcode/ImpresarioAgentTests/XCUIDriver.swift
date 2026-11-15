@@ -350,6 +350,13 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     }
 
     func focusedFrame() -> CGRect? {
+        focusedIdentity()?.frame
+    }
+
+    /// One snapshot answers both "where is focus" and "which element is it".
+    /// The focus navigator uses the identity to avoid a separate `hasFocus`
+    /// query for every D-pad step (I-201).
+    func focusedIdentity() -> FocusIdentity? {
         onQueue {
             // The focus engine is tvOS's, but `hasFocus` reads keyboard focus on
             // iOS too, so one implementation serves both.
@@ -360,12 +367,30 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 .matching(NSPredicate(format: "hasFocus == true"))
                 .allElementsBoundByIndex
             for element in focused {
-                let frame = element.frame
-                if !frame.isEmpty {
-                    return frame
+                guard let snapshot = try? element.snapshot(), !snapshot.frame.isEmpty else {
+                    continue
                 }
+                return FocusIdentity(
+                    identifier: snapshot.identifier,
+                    label: snapshot.label,
+                    frame: snapshot.frame
+                )
             }
             return nil
+        }
+    }
+
+    func elementIdentity(_ e: ElementRef) -> FocusIdentity? {
+        onQueue {
+            guard let element = try? xcElement(e),
+                  let snapshot = try? element.snapshot() else {
+                return nil
+            }
+            return FocusIdentity(
+                identifier: snapshot.identifier,
+                label: snapshot.label,
+                frame: snapshot.frame
+            )
         }
     }
 
@@ -390,9 +415,9 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             case .pageUp: button = .pageUp
             case .pageDown: button = .pageDown
             }
-            for _ in 0..<max(1, count) {
+            for index in 0..<max(1, count) {
                 onMain { XCUIRemote.shared.press(button) }
-                if interval > 0 {
+                if interval > 0 && index + 1 < count {
                     Thread.sleep(forTimeInterval: interval)
                 }
             }
