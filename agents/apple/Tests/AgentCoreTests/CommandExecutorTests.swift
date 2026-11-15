@@ -196,6 +196,44 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(driver.remotes.map(\.button), [.right, .select])
     }
 
+    func testTvClickWaitsForADelayedFocusUpdateInsteadOfSkippingARow() async {
+        let keys = addButton(
+            "keys",
+            label: "Key log",
+            frame: CGRect(x: 0, y: 0, width: 500, height: 90)
+        )
+        let info = addButton(
+            "info",
+            label: "Device info",
+            frame: CGRect(x: 0, y: 96, width: 500, height: 90)
+        )
+        keys.focused = true
+        driver.remoteHandler = { button in
+            guard button == .down else { return }
+            keys.focused = false
+            info.focused = true
+        }
+        // The focus engine answers the first poll after a press with the
+        // pre-press element, as the real one does while the focus animation is
+        // still running. Retrying after a fixed pause pressed `down` twice and
+        // skipped the row in between (Info, 2026-11-15).
+        var stale = 1
+        driver.focusedIdentityProvider = {
+            if stale > 0, !driver.remotes.isEmpty {
+                stale -= 1
+                return FocusIdentity(identifier: "keys", label: "Key log", frame: keys.frame)
+            }
+            return nil
+        }
+
+        let result = await execute(
+            .runAction(RunActionSpec(kind: .click, selector: select(.accessibilityId, "info"))),
+            platform: .tvos
+        )
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(driver.remotes.map(\.button), [.down, .select])
+    }
+
     func testTvClickReportsFocusErrorInsteadOfTapping() async {
         addButton("play", hittable: true)
         // tvOS has no tap primitive: an unreachable focus target must fail

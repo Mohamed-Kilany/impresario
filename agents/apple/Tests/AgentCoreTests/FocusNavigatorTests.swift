@@ -299,4 +299,48 @@ final class FocusNavigatorTests: XCTestCase {
         XCTAssertTrue(same.matches(target))
         XCTAssertFalse(other.matches(target))
     }
+
+    func testFocusIdentityDoesNotMatchADifferentElementInTheSameFrame() {
+        let target = FocusIdentity(
+            identifier: "info",
+            label: "Device info",
+            frame: CGRect(x: 96, y: 800, width: 1728, height: 96)
+        )
+        let different = FocusIdentity(
+            identifier: "media",
+            label: "Playback",
+            frame: CGRect(x: 96, y: 800, width: 1728, height: 96)
+        )
+        XCTAssertFalse(different.matches(target))
+    }
+
+    func testFocusIdentitySameElementIgnoresAScrollOfTheFocusedRow() {
+        let before = FocusIdentity(
+            identifier: "keys",
+            label: "Key log",
+            frame: CGRect(x: 96, y: 900, width: 1728, height: 96)
+        )
+        let after = FocusIdentity(
+            identifier: "keys",
+            label: "Key log",
+            frame: CGRect(x: 96, y: 804, width: 1728, height: 96)
+        )
+        XCTAssertTrue(after.sameElement(as: before))
+        XCTAssertTrue(after.matches(before))
+
+        let next = FocusIdentity(
+            identifier: "info",
+            label: "Device info",
+            frame: CGRect(x: 96, y: 804, width: 1728, height: 96)
+        )
+        XCTAssertFalse(next.sameElement(as: before))
+    }
+
+    func testFocusIdentitySameElementUsesTheLabelWhenTheIdentifierIsMissing() {
+        let before = FocusIdentity(identifier: "", label: "Key log", frame: .zero)
+        let same = FocusIdentity(identifier: "", label: "Key log", frame: CGRect(x: 0, y: 1, width: 1, height: 1))
+        let other = FocusIdentity(identifier: "", label: "Device info", frame: CGRect(x: 0, y: 1, width: 1, height: 1))
+        XCTAssertTrue(same.sameElement(as: before))
+        XCTAssertFalse(other.sameElement(as: before))
+    }
 }

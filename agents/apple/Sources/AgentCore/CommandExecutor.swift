@@ -767,6 +767,13 @@ private final class ExecutorFocusProbe: FocusProbe {
     private var target: FocusIdentity?
     private var focused: FocusIdentity?
 
+    /// How long the focus engine may take to publish the result of one press,
+    /// and how often to ask while waiting. The first snapshot after the press
+    /// usually already sees the move; only a press consumed by scrolling pays
+    /// the full budget.
+    private static let focusSettle: TimeInterval = 1.5
+    private static let focusPoll: TimeInterval = 0.1
+
     init(driver: UIDriver, element: ElementRef, extras: DriverExtras?) {
         self.driver = driver
         self.element = element
@@ -783,7 +790,11 @@ private final class ExecutorFocusProbe: FocusProbe {
     }
 
     func targetFrame() -> CGRect? {
-        guard let target = targetIdentity(), !target.frame.isEmpty else {
+        // Refresh on every step. The container scrolls as focus moves, so a
+        // frame cached at click start points where the row used to be; the
+        // 2026-11-15 tvOS suite pressed `right` after scrolling had already
+        // moved the Info row (I-201).
+        guard let target = refreshTarget(), !target.frame.isEmpty else {
             return nil
         }
         return target.frame
@@ -791,27 +802,21 @@ private final class ExecutorFocusProbe: FocusProbe {
 
     func press(_ direction: Direction) -> Bool {
         do {
-            let before = currentFocusFrame()
+            let before = focused ?? refreshFocused()
             try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
-            // Focus movement and the following scroll are animated. Querying
-            // immediately sees the pre-press focus and makes the navigator
-            // issue an extra step, which overshoots the last row.
-            Thread.sleep(forTimeInterval: 0.45)
-            let after = refreshFocused()?.frame
+            let moved = waitForFocusChange(from: before)
 
-            // A scrollable focus container consumes the first press to scroll
-            // an off-screen row into view. When the focus frame did not move
-            // but the target is still that way, repeat once so the focus
-            // engine can actually land on the now-visible row. Without this,
-            // the last home row (Playback) was visible after the scroll but
-            // never focused, and the navigator tried a perpendicular axis.
-            if let before,
-               let after,
-               after == before,
-               targetIsInDirection(direction, from: before) {
-                try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
-                Thread.sleep(forTimeInterval: 0.45)
-                _ = refreshFocused()
+            // A scrollable focus container consumes the first press to bring
+            // an off-screen row into view, so the focused element stays put.
+            // Wait for the focus engine rather than guessing after a fixed
+            // pause: a slow update used to trigger a second press that then
+            // skipped the row in between (Info, 2026-11-15).
+            if !moved, let frame = before?.frame {
+                _ = refreshTarget()
+                if targetIsInDirection(direction, from: frame) {
+                    try driver.remote(direction.remoteButton, repeat: 1, interval: 0.1)
+                    _ = waitForFocusChange(from: before)
+                }
             }
             return true
         } catch {
@@ -820,7 +825,7 @@ private final class ExecutorFocusProbe: FocusProbe {
     }
 
     func isTargetFocused() -> Bool {
-        guard let target = targetIdentity() else {
+        guard let target = refreshTarget(), !target.frame.isEmpty else {
             return driver.hasFocus(element)
         }
         if focused == nil {
@@ -840,6 +845,30 @@ private final class ExecutorFocusProbe: FocusProbe {
         return false
     }
 
+    /// Polls the focus engine until the focused element changes or the settle
+    /// budget ends. Returns whether it changed.
+    private func waitForFocusChange(from before: FocusIdentity?) -> Bool {
+        let deadline = Date().addingTimeInterval(Self.focusSettle)
+        while true {
+            let current = refreshFocused()
+            if let before {
+                if let current {
+                    if !current.sameElement(as: before) {
+                        return true
+                    }
+                } else {
+                    return true
+                }
+            } else if current != nil {
+                return true
+            }
+            if Date() >= deadline {
+                return false
+            }
+            Thread.sleep(forTimeInterval: Self.focusPoll)
+        }
+    }
+
     private func refreshFocused() -> FocusIdentity? {
         if let identity = extras?.focusedIdentity() {
             focused = identity
@@ -851,13 +880,12 @@ private final class ExecutorFocusProbe: FocusProbe {
         return focused
     }
 
-    private func targetIdentity() -> FocusIdentity? {
-        if let target {
-            return target
-        }
+    private func refreshTarget() -> FocusIdentity? {
         if let identity = extras?.elementIdentity(element) {
             target = identity
-        } else {
+        } else if target == nil {
+            // A transient snapshot failure keeps the last identity; the
+            // navigator still has the element handle and its old frame.
             target = FocusIdentity(
                 identifier: "",
                 label: driver.text(element),
@@ -868,7 +896,7 @@ private final class ExecutorFocusProbe: FocusProbe {
     }
 
     private func targetIsInDirection(_ direction: Direction, from current: CGRect) -> Bool {
-        guard let target = targetIdentity(), !target.frame.isEmpty else {
+        guard let target, !target.frame.isEmpty else {
             return false
         }
         switch direction {

@@ -31,16 +31,33 @@ public struct FocusIdentity: Equatable {
         self.frame = frame
     }
 
-    /// Whether two snapshots describe the same focused element. The
-    /// accessibility identifier is authoritative; a matching label inside an
-    /// overlapping frame covers hosts that expose focus on a child node, and
-    /// an exact frame is the fallback for elements without either.
+    /// Whether two snapshots describe the same focused element. A matching
+    /// identifier is authoritative; a matching label inside an overlapping
+    /// frame covers hosts that expose focus on a child node, and an exact
+    /// frame is the fallback only when neither snapshot names the element
+    /// (I-201).
     public func matches(_ other: FocusIdentity) -> Bool {
-        if !identifier.isEmpty && !other.identifier.isEmpty {
-            return identifier == other.identifier
+        if !identifier.isEmpty && identifier == other.identifier {
+            return true
         }
         if !label.isEmpty && label == other.label && frame.intersects(other.frame) {
             return true
+        }
+        let anonymous = identifier.isEmpty && other.identifier.isEmpty
+            && label.isEmpty && other.label.isEmpty
+        return anonymous && frame == other.frame
+    }
+
+    /// Whether two snapshots describe the same element, strictly enough to
+    /// detect that a D-pad press moved the focus. Comparing frames is not
+    /// enough: a scroll-only press moves the focused row on screen without
+    /// changing which element has focus (I-201).
+    public func sameElement(as other: FocusIdentity) -> Bool {
+        if !identifier.isEmpty && !other.identifier.isEmpty {
+            return identifier == other.identifier
+        }
+        if !label.isEmpty && !other.label.isEmpty {
+            return label == other.label
         }
         return frame == other.frame
     }

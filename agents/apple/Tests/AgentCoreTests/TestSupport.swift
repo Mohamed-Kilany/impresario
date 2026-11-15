@@ -140,6 +140,8 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var scrollHandler: ((FakeElement?, Direction, Int) -> Void)?
     var selectValueHandler: ((FakeElement, String) -> Bool)?
     var focusedFrameProvider: (() -> CGRect?)?
+    var focusedIdentityProvider: (() -> FocusIdentity?)?
+    var elementIdentityProvider: ((FakeElement) -> FocusIdentity?)?
     var mediaSnapshotValue: MediaSnapshot?
     var drmSnapshotValue: DrmSnapshot?
     var regionCoverageValue: Double?
@@ -257,6 +259,18 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     func focusedFrame() -> CGRect? {
         if let focusedFrameProvider { return focusedFrameProvider() }
         return elements.first(where: { $0.focused })?.frame
+    }
+
+    func focusedIdentity() -> FocusIdentity? {
+        if let focusedIdentityProvider { return focusedIdentityProvider() }
+        guard let element = elements.first(where: { $0.focused }) else { return nil }
+        return FocusIdentity(identifier: element.id, label: element.label, frame: element.frame)
+    }
+
+    func elementIdentity(_ e: ElementRef) -> FocusIdentity? {
+        guard let element = e.handle as? FakeElement else { return nil }
+        if let elementIdentityProvider { return elementIdentityProvider(element) }
+        return FocusIdentity(identifier: element.id, label: element.label, frame: element.frame)
     }
 
     func remote(_ b: RemoteButton, `repeat` count: Int, interval: TimeInterval) throws {
