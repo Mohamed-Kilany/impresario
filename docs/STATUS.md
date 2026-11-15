@@ -260,6 +260,12 @@ in 215,241 ms (3m35s), down from 489,606 ms (8m09s) in the pre-I-198 baseline
 LongPress 11,408; Media 12,076 (act sum 153,667). The suite was seeded from the
 binary (I-196) and loaded with `--play ~/.impresario/stub-tests`; the run
 paused only for a stale device-side XCUITest runner, which a reboot cleared.
+The first-attach guidance was exercised with the `f617b15` Windows artifact:
+`device wizard` on a scratch iOS definition printed
+`pair-usb --save 192.0.2.2`, the `pair-host --save 192.0.2.2` alternative,
+Developer Mode and the certificate trust step, and `doctor` printed the same
+address-keyed fix for an unreachable iOS device. CI `43699810759` at `f617b15`
+is green across all eight jobs.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
 four-device rerun, plus paused playback, the local-network prompt and a fresh
