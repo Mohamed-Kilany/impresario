@@ -8,6 +8,7 @@
 
 pub mod ddi;
 pub mod error;
+pub mod icon;
 pub mod install;
 pub mod pairing;
 pub mod products;

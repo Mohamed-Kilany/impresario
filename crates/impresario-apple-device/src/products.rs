@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::install;
+use crate::{icon, install};
 use crate::{Error, Result};
 
 /// The host, stub and runner bundles of one agent build.
@@ -159,6 +159,10 @@ impl ProductSet {
             copy_dir_all(stub, &temporary.join("stub.app"))?;
         }
         copy_dir_all(&runner, &temporary.join("runner.app"))?;
+        // Xcode's generic XCTRunner shell has no icon; the host app built from
+        // the same asset catalog does. Give the runner the product mark before
+        // signing seals the bundle (I-200).
+        icon::apply_host_icon(&temporary.join("host.app"), &temporary.join("runner.app"))?;
         Self::load(&temporary)?;
         if destination.exists() {
             std::fs::remove_dir_all(destination)
