@@ -1574,7 +1574,8 @@ used the real personalized tvOS DDI (build 27A9269) through
 a known gap, not a successful mount. Both `tvos-523d45d` and `ios-523d45d`
 `runner.app` bundles contain `Assets.car` and `CFBundleIcons` with
 `CFBundlePrimaryIcon` "App Icon" copied from the host before signing (I-200);
-visual confirmation on the two Home screens is pending the device-owner check.
+the device owner confirmed the top-hat icon on both Home screens on
+2026-11-15.
 
 ---
 

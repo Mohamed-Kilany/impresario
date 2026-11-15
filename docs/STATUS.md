@@ -280,8 +280,8 @@ against the 20 s per-act timeout. Per-act durations (ms): Home 5,533; Basic
 23,775; Info 14,979; LongPress 8,371; Media 18,319. Both product sets carry the
 I-200 runner icon: `runner.app` in `tvos-523d45d` and `ios-523d45d` contains
 `Assets.car` and `CFBundleIcons` with `CFBundlePrimaryIcon` "App Icon", copied
-from the host before signing; visual confirmation on the two Home screens is
-pending the device-owner check.
+from the host before signing; the device owner confirmed the top-hat icon on
+both the iPhone and the Apple TV Home screens on 2026-11-15.
 The first-attach guidance was exercised with the `f617b15` Windows artifact:
 `device wizard` on a scratch iOS definition printed
 `pair-usb --save 192.0.2.2`, the `pair-host --save 192.0.2.2` alternative,
