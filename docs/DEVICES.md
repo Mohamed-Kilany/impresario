@@ -1560,6 +1560,22 @@ including `Player => Video Playing` (2026-11-15); paused playback, the one-time
 local-network prompt, a real FairPlay/DRM sample and iOS hook/decoder evidence
 remain unverified (HD-1).
 
+On 2026-11-15 the embedded 10-act suite was re-run on both Apple targets with
+the `523d45d` Apple Xcode product set. The iPhone (`iPhone13,2`, iOS 18.7.8
+build 22H352, Wi-Fi) passed `20261115-115058-403e`: 10/10 acts, 107/107 steps,
+207,419 ms, using the new `ios-523d45d` signing set. `RAMA (4)` (`AppleTV5,3`,
+tvOS 26.1) passed `20261115-114623-205f`: 10/10 acts, 111/111 steps,
+218,469 ms. That run included the Text keyboard-back check and the Keys, Info
+and Media acts that the earlier `20261115-105133-e0d2` baseline (6/10) failed
+at the old 20 s click budget. The stored tvOS DDI under
+`~/.impresario/apple/ddi/23J582` is a set of zero-byte placeholders, so the run
+used the real personalized tvOS DDI (build 27A9269) through
+`IMPRESARIO_APPLE_DDI`; `ddi status` calling zero-byte placeholders complete is
+a known gap, not a successful mount. Both `tvos-523d45d` and `ios-523d45d`
+`runner.app` bundles contain `Assets.car` and `CFBundleIcons` with
+`CFBundlePrimaryIcon` "App Icon" copied from the host before signing (I-200);
+visual confirmation on the two Home screens is pending the device-owner check.
+
 ---
 
 ## 4. Hardware acceptance backlog scheduled with the Phase 6/7 window

@@ -260,6 +260,28 @@ in 215,241 ms (3m35s), down from 489,606 ms (8m09s) in the pre-I-198 baseline
 LongPress 11,408; Media 12,076 (act sum 153,667). The suite was seeded from the
 binary (I-196) and loaded with `--play ~/.impresario/stub-tests`; the run
 paused only for a stale device-side XCUITest runner, which a reboot cleared.
+The iPhone suite was re-run with the `523d45d` build and a fresh iOS signing
+set `ios-523d45d` (identity `23F84E161C06E86D31F3FCD2935EE45`, profiles expire
+2026-11-22): `run 20261115-115058-403e` passed 10/10 acts and 107/107 steps in
+207,419 ms. Per-act durations (ms): Home 7,240; Basic 16,782; Text 17,819;
+Scroll 31,067; Selection 16,191; Flags 13,349; Keys 19,279; Info 9,504;
+LongPress 11,415; Media 11,982.
+The tvOS half then passed on `RAMA (4)` (`AppleTV5,3`, tvOS 26.1,
+`192.168.93.19`) with the same `523d45d` build and the real personalized tvOS
+DDI (build 27A9269) supplied through `IMPRESARIO_APPLE_DDI` because the stored
+`23J582` directory holds zero-byte placeholders: `run 20261115-114623-205f`
+passed 10/10 acts and 111/111 steps in 218,469 ms (3m38s), including the Text
+back-from-keyboard check and the Keys/Info/Media acts that timed out or failed
+in the `20261115-105133-e0d2` baseline (6/10). Home-row click duration grew
+with row distance but stayed bounded (ms): Basic 2,011; Text 3,551; Scroll
+5,076; Selection 6,495; Flags 8,523; Keys 9,699; Info 11,675; Media 13,102,
+against the 20 s per-act timeout. Per-act durations (ms): Home 5,533; Basic
+10,763; Text 15,268; Scroll 24,151; Selection 15,662; Flags 14,694; Keys
+23,775; Info 14,979; LongPress 8,371; Media 18,319. Both product sets carry the
+I-200 runner icon: `runner.app` in `tvos-523d45d` and `ios-523d45d` contains
+`Assets.car` and `CFBundleIcons` with `CFBundlePrimaryIcon` "App Icon", copied
+from the host before signing; visual confirmation on the two Home screens is
+pending the device-owner check.
 The first-attach guidance was exercised with the `f617b15` Windows artifact:
 `device wizard` on a scratch iOS definition printed
 `pair-usb --save 192.0.2.2`, the `pair-host --save 192.0.2.2` alternative,
@@ -269,9 +291,9 @@ is green across all eight jobs.
 The remaining deferred hardware items are HD-2's
 optional API-key path, HD-5 USB, HD-6 non-Windows Chromium and the HD-8
 four-device rerun, plus paused playback, the local-network prompt and a fresh
-DDI mount. Before another Apple TV run, refresh the Apple signing profiles: the
-long-id set expired on 2026-11-02 and the short-id set expires 2026-11-04. The
-tvOS narrative below remains the detailed P0 record.
+DDI mount. The tvOS `default` signing set was re-provisioned on 2026-11-15
+(profiles expire 2026-11-22); the iOS pair lives in `ios-523d45d` with the same
+expiry. The tvOS narrative below remains the detailed P0 record.
 
 ## 1.0.0 pre-release validation (2026-11-02)
 
