@@ -26,7 +26,9 @@ pub struct DdiAssets {
 
 impl DdiAssets {
     /// Resolve the conventional `Image.dmg`, `Image.dmg.trustcache` and
-    /// `BuildManifest.plist` names inside `dir`.
+    /// `BuildManifest.plist` names inside `dir`, requiring all three to be
+    /// non-empty files. A zero-byte placeholder is rejected before a tunnel is
+    /// opened (I-202).
     pub fn from_dir(dir: &Path) -> Result<Self> {
         let assets = Self {
             image: dir.join("Image.dmg"),
@@ -34,9 +36,25 @@ impl DdiAssets {
             build_manifest: dir.join("BuildManifest.plist"),
         };
         for path in [&assets.image, &assets.trust_cache, &assets.build_manifest] {
-            if !path.is_file() {
+            let metadata = match std::fs::metadata(path) {
+                Ok(metadata) if metadata.is_file() => metadata,
+                _ => {
+                    return Err(Error::Device(format!(
+                        "DDI file {} is missing; place a personalized tvOS DDI there \
+                         (`Image.dmg`, `Image.dmg.trustcache`, `BuildManifest.plist`)",
+                        path.display()
+                    )));
+                }
+            };
+            // A zero-byte placeholder (for example a download that created
+            // the names but no content) used to pass this check, so `ddi
+            // status` reported "complete" and the mount failed later with an
+            // opaque mounter error. Reject it where the user can fix it
+            // (I-202).
+            if metadata.len() == 0 {
                 return Err(Error::Device(format!(
-                    "DDI file {} is missing; place a personalized tvOS DDI there \
+                    "DDI file {} is empty; it is a placeholder, not a personalized \
+                     tvOS DDI. Re-download or re-personalize the three files \
                      (`Image.dmg`, `Image.dmg.trustcache`, `BuildManifest.plist`)",
                     path.display()
                 )));
@@ -164,11 +182,65 @@ pub fn mounted_from_values(path: Option<&str>, is_mounted: bool) -> bool {
 mod tests {
     use super::*;
 
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "impresario-ddi-{name}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn write_assets(dir: &Path, image_len: usize, trust_len: usize, manifest_len: usize) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("Image.dmg"), vec![0u8; image_len]).unwrap();
+        std::fs::write(dir.join("Image.dmg.trustcache"), vec![0u8; trust_len]).unwrap();
+        std::fs::write(dir.join("BuildManifest.plist"), vec![0u8; manifest_len]).unwrap();
+    }
+
     #[test]
     fn only_the_developer_mount_counts() {
         assert!(mounted_from_values(Some("/System/Developer"), true));
         assert!(!mounted_from_values(Some("/System/Developer"), false));
         assert!(!mounted_from_values(Some("/private/var/other"), true));
         assert!(!mounted_from_values(None, true));
+    }
+
+    #[test]
+    fn from_dir_accepts_non_empty_assets() {
+        let dir = temp_dir("complete");
+        write_assets(&dir, 64, 8, 128);
+        let assets = DdiAssets::from_dir(&dir).unwrap();
+        assert_eq!(assets.image, dir.join("Image.dmg"));
+        assert_eq!(assets.trust_cache, dir.join("Image.dmg.trustcache"));
+        assert_eq!(assets.build_manifest, dir.join("BuildManifest.plist"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn from_dir_rejects_zero_byte_placeholders() {
+        for (image, trust, manifest, empty) in [
+            (0, 8, 128, "Image.dmg"),
+            (64, 0, 128, "Image.dmg.trustcache"),
+            (64, 8, 0, "BuildManifest.plist"),
+        ] {
+            let dir = temp_dir("empty");
+            write_assets(&dir, image, trust, manifest);
+            let error = DdiAssets::from_dir(&dir).unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("is empty") && message.contains(empty),
+                "{message}"
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn from_dir_rejects_missing_files() {
+        let dir = temp_dir("missing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let error = DdiAssets::from_dir(&dir).unwrap_err();
+        assert!(error.to_string().contains("is missing"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

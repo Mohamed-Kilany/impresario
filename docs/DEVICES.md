@@ -1570,8 +1570,9 @@ and Media acts that the earlier `20261115-105133-e0d2` baseline (6/10) failed
 at the old 20 s click budget. The stored tvOS DDI under
 `~/.impresario/apple/ddi/23J582` is a set of zero-byte placeholders, so the run
 used the real personalized tvOS DDI (build 27A9269) through
-`IMPRESARIO_APPLE_DDI`; `ddi status` calling zero-byte placeholders complete is
-a known gap, not a successful mount. Both `tvos-523d45d` and `ios-523d45d`
+`IMPRESARIO_APPLE_DDI`; `DdiAssets::from_dir` now rejects empty files (I-202),
+so `ddi status` reports that directory as incomplete instead of complete.
+Both `tvos-523d45d` and `ios-523d45d`
 `runner.app` bundles contain `Assets.car` and `CFBundleIcons` with
 `CFBundlePrimaryIcon` "App Icon" copied from the host before signing (I-200);
 the device owner confirmed the top-hat icon on both Home screens on
