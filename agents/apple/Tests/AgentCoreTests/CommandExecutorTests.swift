@@ -219,7 +219,7 @@ final class CommandExecutorTests: XCTestCase {
         // skipped the row in between (Info, 2026-11-15).
         var stale = 1
         driver.focusedIdentityProvider = {
-            if stale > 0, !driver.remotes.isEmpty {
+            if stale > 0, !self.driver.remotes.isEmpty {
                 stale -= 1
                 return FocusIdentity(identifier: "keys", label: "Key log", frame: keys.frame)
             }
