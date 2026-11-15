@@ -87,17 +87,30 @@ pairing secrets, certificates or profiles.
 
 ### 2.1 Pair the device
 
+Apple TV (pair code shown on screen):
+
 ```powershell
 impresario apple pair --host <apple-tv-host>
 ```
 
-Or import an existing pymobiledevice3 pair plist and key it by the device UDID:
+iPhone/iPad over USB once (iOS 18-26; writes the Wi-Fi RemotePairing record):
 
 ```powershell
-impresario apple import-pair `
-  "$env:USERPROFILE\.pymobiledevice3\remote_....plist" `
-  --save <udid>
+impresario apple pair-usb --save <device-ip>
 ```
+
+iOS 27+ can instead pair from the device (Settings > Developer > Paired Macs)
+while Impresario advertises itself:
+
+```powershell
+impresario apple pair-host --save <device-ip>
+```
+
+`--save <device-ip>` keys the record by the address an IP-defined device
+looks it up by; without it the record is keyed by the device UDID and a store
+with several records refuses to guess. Importing an existing pair plist is
+still supported (`impresario apple import-pair <plist> --save <device-ip>`),
+but no Python, pymobiledevice3 or ideviceinstaller is needed.
 
 `impresario apple status` lists what the machine has without touching a device.
 

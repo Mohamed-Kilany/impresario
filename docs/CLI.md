@@ -492,9 +492,14 @@ TV and the app under test.
 ```powershell
 impresario apple status
 
-# once per device (or import a pymobiledevice3 pair plist)
+# once per device (or import an existing pair plist)
 impresario apple pair --host <apple-tv-host>
 impresario apple import-pair .\remote.plist --save <udid>
+
+# iPhone/iPad once over USB (iOS 18-26), keyed by its configured IP:
+impresario apple pair-usb --save <device-ip>
+# iOS 27+ device-initiated alternative (Settings > Developer > Paired Macs):
+impresario apple pair-host --save <device-ip>
 
 # scripted pairing: start the command, then send the code shown by the TV
 impresario apple pair --host <apple-tv-host> --code-stdin
