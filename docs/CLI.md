@@ -546,15 +546,19 @@ At runtime `AppleTransport` reads these machine-global stores:
 | `IMPRESARIO_APPLE_START_TIMEOUT_SECS` | `120` | wait for the agent port |
 | `IMPRESARIO_APPLE_HOST_ID` | host-derived UUID | RemotePairing host id override |
 
-A device needs only its `ip`. Pairing is looked up by host, the UDID is learned
-from the RSD tunnel, and the agent port is allocated dynamically. The same port
+A device needs only its `ip`. Pairing is looked up by UDID, then host, then this
+host's identifier (key an IP-defined device directly with `impresario apple
+pair-usb --save <device-ip>`), the UDID is learned from the RSD tunnel, and the
+agent port is allocated dynamically. The same port
 is passed to the UI test as `IMPRESARIO_AGENT_PORT`. The transport installs/signs
 over AFC and
 InstallationProxy and starts the XCUITest bundle over the direct outer-RSD
 `testmanagerd`/`dtservicehub` path; it does not spawn `xcodebuild`, `iproxy`,
-`simctl`, `devicectl` or `ideviceinstaller`. Simulator UDIDs are rejected and
-a USB-only iPhone is not supported yet. See `docs/DEVICES.md` §3.3 and
+`simctl`, `devicectl` or `ideviceinstaller`. Simulator UDIDs are rejected, and
+an iPhone/iPad is bootstrapped once over USB in pure Rust (`impresario apple
+pair-usb`) before it is driven over Wi-Fi. See `docs/DEVICES.md` §3.3 and
 `agents/apple/README.md`; the physical-tvOS path is proven (I-150/I-152), the
+iPhone Wi-Fi inspector and full 107-step suite are proven (I-194..I-199), the
 short-id host/no-stub path and the full short-id 105-step stub play are
 proven (I-156).
 

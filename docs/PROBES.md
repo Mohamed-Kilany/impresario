@@ -181,8 +181,10 @@ The Apple agent therefore does not invent player or DRM state:
   uniform empty slot correctly failed bare `Showing` and passed `not Showing`
   (`docs/DEVICES.md` §3.3).
 - Host-assisted DVT/syslog/pcapd collectors described in TASK.md are not implemented and
-  remain unverified. The Apple TV HD has run the agent and stub over the pure-Rust
-  direct-RSD path; iOS hardware and the one-time local-network prompt remain untested.
+  remain unverified. The Apple TV and the iPhone have both run the agent and stub over the
+  pure-Rust direct-RSD path, including the iPhone's `Player => Video Playing` check on
+  2026-11-15; the deeper Apple hook/decoder evidence is tvOS-only and the one-time
+  local-network prompt remains untested.
 
 ### Own apps: in-app hook
 
@@ -338,8 +340,9 @@ probe are hardware-verified on LG/Tizen (2026-10-29).
   `Showing` coverage ran on 2026-11-04; decoder/DRM stayed unverifiable.
 - Apple host-side DVT/syslog/pcapd evidence remains unimplemented. The in-app hook
   over loopback is now hardware-tested (2026-11-04), including honest `unverifiable`
-  decoder/DRM results. Paused playback, iOS hardware and the local-network prompt
-  remain unverified.
+  decoder/DRM results. The iPhone transport and its `Player => Video Playing` check
+  passed over Wi-Fi on 2026-11-15, but paused playback, the local-network prompt and
+  iOS hook/decoder evidence remain unverified.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are
   vendor/API-level dependent; only conservative parsers are shipped.
 - Public stream URLs can change; local fixtures are authoritative for CI.

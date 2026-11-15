@@ -1355,17 +1355,21 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                 }
             }
             Platform::Ios => {
-                let _ = self.ui.say(
+                let ip = self.answers.ip.clone();
+                let name = self.answers.name.clone();
+                let _ = self.ui.say(format!(
                     "iOS is not probed while writing the definition. Pair the iPhone/iPad once: \
-                     connect it over USB, unlock it, run `impresario apple pair-usb` here, and tap \
-                     Trust on the device (iOS 18-26); on iOS 27+ you can instead run `impresario \
-                     apple pair-host` and open Settings > Developer > Paired Macs on the phone. \
-                     The saved record is what the Wi-Fi transport uses, so unplug the cable and \
-                     keep both devices on the same network. After saving, run `impresario device \
-                     check <name>`; the first install needs Developer Mode (Settings > Privacy & \
-                     Security > Developer Mode) and the developer certificate trusted once in \
-                     Settings > General > VPN & Device Management.",
-                );
+                     connect it over USB, unlock it, run `impresario apple pair-usb --save {ip}` \
+                     here, and tap Trust on the device (iOS 18-26). `--save {ip}` stores the \
+                     record under the device address, which is how an IP-defined device finds \
+                     it. On iOS 27+ you can instead run `impresario apple pair-host --save {ip}` \
+                     and open Settings > Developer > Paired Macs on the phone. The saved record \
+                     is what the Wi-Fi transport uses, so unplug the cable and keep both devices \
+                     on the same network. After saving, run `impresario device check {name}`; \
+                     the first install needs Developer Mode (Settings > Privacy & Security > \
+                     Developer Mode) and the developer certificate trusted once in Settings > \
+                     General > VPN & Device Management."
+                ));
                 Ok(Step::Next(Stage::Review))
             }
             Platform::Tvos => {
@@ -1487,18 +1491,22 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                         path.display()
                     ));
                     let next = match device.platform {
-                        Platform::Ios => {
-                            "next: bind an app with `impresario app add ...`; pair the iPhone/iPad \
-                             (`impresario apple pair-usb` on iOS 18-26, `apple pair-host` on iOS \
-                             27+, or `apple import-pair` for an existing record) and run \
-                             `impresario device check <name>`"
-                        }
+                        Platform::Ios => format!(
+                            "next: bind an app with `impresario app add ...`; pair the \
+                             iPhone/iPad (`impresario apple pair-usb --save {}` on iOS 18-26, \
+                             `apple pair-host --save {}` on iOS 27+, or `apple import-pair \
+                             <plist> --save {}` for an existing record) and run `impresario \
+                             device check {}`",
+                            device.ip, device.ip, device.ip, device.name
+                        ),
                         Platform::Tvos => {
                             "next: bind an app with `impresario app add ...`; after the \
                              machine-global Apple setup, run `impresario device check <name>`"
+                                .to_string()
                         }
                         _ => {
                             "next: bind an app with `impresario app add ...` and run `impresario device check`"
+                                .to_string()
                         }
                     };
                     let _ = self.ui.say(next);

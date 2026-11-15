@@ -104,7 +104,8 @@ pub struct PairUsbArgs {
     /// Seconds to wait for the device's Trust prompt.
     #[arg(long, default_value_t = 60)]
     pub wait: u64,
-    /// Save the pairing under this key instead of the device UDID.
+    /// Save the pairing under this key instead of the device UDID. Use the
+    /// device IP: an IP-defined device looks the record up by address.
     #[arg(long)]
     pub save: Option<String>,
 }
@@ -117,8 +118,8 @@ pub struct PairHostArgs {
     /// Host model shown on the device; iOS expects a Mac identifier.
     #[arg(long, default_value = "Mac17,7")]
     pub model: String,
-    /// Save the pairing under this key instead of the device UDID (the device
-    /// address makes it selectable when several pairings exist).
+    /// Save the pairing under this key instead of the device UDID. Use the
+    /// device IP: an IP-defined device looks the record up by address.
     #[arg(long)]
     pub save: Option<String>,
 }
@@ -478,6 +479,14 @@ fn run_pair_usb(args: &PairUsbArgs, paths: &ApplePaths) -> i32 {
         }
     }
     print_pairing(&summary, paths);
+    if args.save.is_none() {
+        println!(
+            "If the device is defined by IP, save the record under that address with \
+             `impresario apple import-pair {} --save <device-ip>`; an IP-defined device looks \
+             the record up by address.",
+            paths.pairing_path(&summary.saved_as).display()
+        );
+    }
     println!(
         "Unplug the cable and make sure the iPhone/iPad and this computer are on the same Wi-Fi \
          network."

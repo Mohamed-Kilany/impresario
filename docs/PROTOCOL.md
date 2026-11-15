@@ -194,7 +194,7 @@ diagnostics (exit 2). Ctrl-C stops the run with exit 130.
 |---|---|---|
 | connector (`web`, `webos`, `tizen`) | fresh `127.0.0.1:<ephemeral>` | the master spawns `impresario-connector serve --listen <ephemeral>`; a local web device launches Chromium, a remote web device attaches to CDP on `ip:9222`, and TV devices receive the SSH/SDB-forwarded inspector endpoint |
 | adb (`android`, `androidtv`) | agent `ip:<ephemeral>` | the ADB target is `ip:5555`; the master installs the APKs, starts `am instrument` with a dynamically allocated agent port, and dials the agent over the network, falling back to a native `tcp:` forward (I-62) |
-| apple (`ios`, `tvos`) | agent `ip:<ephemeral>` | pairing is looked up by host, the UDID comes from the RSD tunnel, and the XCUITest runner port is allocated dynamically |
+| apple (`ios`, `tvos`) | agent `ip:<ephemeral>` | pairing is resolved by UDID, configured host, or this host's identifier (I-199 keyed by `ip` via `--save`), the UDID comes from the RSD tunnel, and the XCUITest runner port is allocated dynamically |
 
 Dialing retries with exponential backoff (200 ms → 2 s) until
 `agent_start_timeout_ms`. `device check` (alias `devices check`) runs prepare +

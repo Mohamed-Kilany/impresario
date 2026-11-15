@@ -1291,11 +1291,12 @@ impresario account status --online
 
 impresario apple status
 impresario apple pair --host <apple-tv-host>
-# iPhone/iPad over USB (iOS 18-26; writes the Wi-Fi RemotePairing record):
-impresario apple pair-usb
+# iPhone/iPad over USB (iOS 18-26; writes the Wi-Fi RemotePairing record).
+# --save <device-ip> keys it the way an IP-defined device looks it up:
+impresario apple pair-usb --save <device-ip>
 # iOS 27+ device-initiated alternative (Settings > Developer > Paired Macs):
-impresario apple pair-host
-# or: impresario apple import-pair <pair.plist> --save <udid>
+impresario apple pair-host --save <device-ip>
+# or: impresario apple import-pair <pair.plist> --save <device-ip>
 
 # Pure-Rust development provisioning (host + runner + nested; no stub):
 impresario apple signing provision --name default --platform tvos
@@ -1425,14 +1426,19 @@ host/runner/nested profiles. It never mounts a DDI or installs anything. Use
 `impresario apple doctor --host <host>` for the Apple-specific report.
 
 Endpoint resolution: the device `ip` is the LAN host. Pairing is looked up by
-that host, and a single UDID-keyed pairing is used as a fallback when only one
-record is stored; with several records, import the intended one under the host
-(`impresario apple import-pair <plist> --save <host>`) or remove stale records.
+UDID, then that host, then this host's own identifier; a single UDID-keyed
+pairing is used as a fallback only when one record is stored. `impresario apple
+pair-usb` and `pair-host` save under the device UDID by default, so for a device
+defined by `ip` pass `--save <device-ip>` and the record is found without a
+fallback; with several records, import or re-save the intended one under the
+host (`impresario apple import-pair <plist> --save <host>`) or remove stale
+records.
 The UDID is learned from the RSD tunnel, and the agent port is allocated
 dynamically and passed to the UI test as `IMPRESARIO_AGENT_PORT`, so both sides
 always agree. The pure-Rust path reaches devices over the network
 (RemotePairing on `_remotepairing._tcp:49152`). An iPhone/iPad is bootstrapped
-over USB once: `impresario apple pair-usb` uses Apple's usbmuxd (Apple Mobile
+over USB once: `impresario apple pair-usb --save <device-ip>` uses Apple's
+usbmuxd (Apple Mobile
 Device Support, installed with iTunes) and the lockdown service
 `com.apple.dt.remotepairingdeviced.lockdown` to trust this computer and write
 the RemotePairing record; no Python, `pymobiledevice3` or `ideviceinstaller` is
@@ -1548,9 +1554,11 @@ personalized DDI download.
 
 The Apple TV therefore has hardware evidence for the hook/position/resolution
 path, the `Showing` coverage path and the uniform empty-slot negative control,
-plus honest UNVERIFIABLE decoder/DRM results. iOS hardware, paused playback,
-the one-time local-network prompt and a real FairPlay/DRM sample remain
-unverified (HD-1).
+plus honest UNVERIFIABLE decoder/DRM results. The iPhone now has hardware
+evidence for the Wi-Fi transport, inspector and the full 107-step stub suite
+including `Player => Video Playing` (2026-11-15); paused playback, the one-time
+local-network prompt, a real FairPlay/DRM sample and iOS hook/decoder evidence
+remain unverified (HD-1).
 
 ---
 

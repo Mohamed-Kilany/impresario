@@ -640,8 +640,9 @@ async fn collect_apple(
     let mut report = PlatformReport::new(platform);
     report.rung = "rung 1: pure-Rust RemotePairing/RSD, DDI, signing and XCUITest".to_string();
     report.needed = vec![
-        "stored RemotePairing record for the device UDID (iPhone/iPad: `impresario apple \
-         pair-usb` or `pair-host`; Apple TV: `impresario apple pair`)"
+        "stored RemotePairing record for the device UDID or configured address (iPhone/iPad: \
+         `impresario apple pair-usb --save <device-ip>` or `pair-host --save <device-ip>`; Apple \
+         TV: `impresario apple pair`)"
             .to_string(),
         "usable Apple signing set (identity, profiles and entitlements)".to_string(),
         "imported host/runner Apple agent products".to_string(),
@@ -725,13 +726,20 @@ async fn collect_apple(
                 });
                 report.fail();
                 let pairing = if platform == Platform::Ios {
-                    "pair it once with `impresario apple pair-usb` (iOS 18-26: connect the \
-                     iPhone/iPad over USB, unlock it, and tap Trust; iOS 27+ can also use \
-                     `impresario apple pair-host` with Settings > Developer > Paired Macs) or \
-                     import an existing record with `impresario apple import-pair <pair.plist> \
-                     --save <udid>`"
+                    format!(
+                        "pair it once with `impresario apple pair-usb --save {}` (iOS 18-26: \
+                         connect the iPhone/iPad over USB, unlock it, and tap Trust; iOS 27+ can \
+                         also use `impresario apple pair-host --save {}` with Settings > Developer \
+                         > Paired Macs) or import an existing record with `impresario apple \
+                         import-pair <pair.plist> --save {}`; an IP-defined device looks the \
+                         record up by address",
+                        device.ip, device.ip, device.ip
+                    )
                 } else {
-                    "pair it once with `impresario apple pair --host <host>`"
+                    format!(
+                        "pair it once with `impresario apple pair --host {}`",
+                        device.ip
+                    )
                 };
                 let developer_mode = if platform == Platform::Ios {
                     "enable Developer Mode on the iPhone/iPad (Settings > Privacy & Security > \
@@ -742,8 +750,8 @@ async fn collect_apple(
                 report.fixes.push(format!(
                     "device '{}': check the configured IP and {pairing}; {developer_mode}trust \
                      the developer certificate once in Settings > General > VPN & Device \
-                     Management, and run `impresario device check <name>`",
-                    device.name
+                     Management, and run `impresario device check {}`",
+                    device.name, device.name
                 ));
             }
         }
