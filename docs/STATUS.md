@@ -270,7 +270,7 @@ The tvOS half then passed on `RAMA (4)` (`AppleTV5,3`, tvOS 26.1,
 `192.168.93.19`) with the same `523d45d` build and the real personalized tvOS
 DDI (build 27A9269) supplied through `IMPRESARIO_APPLE_DDI` because the stored
 `23J582` directory holds zero-byte placeholders (`DdiAssets::from_dir` now
-rejects them, I-202): `run 20261115-114623-205f`
+rejects them, I-202; CI `43716189535` at `d90344f`): `run 20261115-114623-205f`
 passed 10/10 acts and 111/111 steps in 218,469 ms (3m38s), including the Text
 back-from-keyboard check and the Keys/Info/Media acts that timed out or failed
 in the `20261115-105133-e0d2` baseline (6/10). Home-row click duration grew
