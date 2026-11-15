@@ -1291,6 +1291,10 @@ impresario account status --online
 
 impresario apple status
 impresario apple pair --host <apple-tv-host>
+# iPhone/iPad over USB (iOS 18-26; writes the Wi-Fi RemotePairing record):
+impresario apple pair-usb
+# iOS 27+ device-initiated alternative (Settings > Developer > Paired Macs):
+impresario apple pair-host
 # or: impresario apple import-pair <pair.plist> --save <udid>
 
 # Pure-Rust development provisioning (host + runner + nested; no stub):
@@ -1427,11 +1431,20 @@ record is stored; with several records, import the intended one under the host
 The UDID is learned from the RSD tunnel, and the agent port is allocated
 dynamically and passed to the UI test as `IMPRESARIO_AGENT_PORT`, so both sides
 always agree. The pure-Rust path reaches devices over the network
-(RemotePairing on `_remotepairing._tcp:49152`); a USB-only iPhone is not
-supported yet. iOS/tvOS
-**simulators are rejected** because the Rust path cannot drive them and D-19
-forbids the host tools that could. Physical iOS over WLAN would use the same
-path but is not hardware-verified.
+(RemotePairing on `_remotepairing._tcp:49152`). An iPhone/iPad is bootstrapped
+over USB once: `impresario apple pair-usb` uses Apple's usbmuxd (Apple Mobile
+Device Support, installed with iTunes) and the lockdown service
+`com.apple.dt.remotepairingdeviced.lockdown` to trust this computer and write
+the RemotePairing record; no Python, `pymobiledevice3` or `ideviceinstaller` is
+involved. Unplug the cable afterwards. iOS/tvOS **simulators are rejected**
+because the Rust path cannot drive them and D-19 forbids the host tools that
+could. Physical iOS over WLAN uses the same path as tvOS.
+
+On first attach also enable Developer Mode on the device (Settings > Privacy &
+Security > Developer Mode, then restart and confirm) and trust the development
+certificate once in Settings > General > VPN & Device Management. `impresario
+doctor` and the add-device wizard print these steps, including the available
+pairing methods, when an iPhone/iPad probe fails.
 
 Set a non-default signing/product/DDI with:
 

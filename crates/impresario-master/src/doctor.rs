@@ -640,14 +640,25 @@ async fn collect_apple(
     let mut report = PlatformReport::new(platform);
     report.rung = "rung 1: pure-Rust RemotePairing/RSD, DDI, signing and XCUITest".to_string();
     report.needed = vec![
-        "stored RemotePairing record for the device UDID".to_string(),
+        "stored RemotePairing record for the device UDID (iPhone/iPad: `impresario apple \
+         pair-usb` or `pair-host`; Apple TV: `impresario apple pair`)"
+            .to_string(),
         "usable Apple signing set (identity, profiles and entitlements)".to_string(),
         "imported host/runner Apple agent products".to_string(),
         "personalized Developer Disk Image matching the device build".to_string(),
+    ];
+    if platform == Platform::Ios {
+        report.needed.push(
+            "Developer Mode enabled once on the iPhone/iPad (Settings > Privacy & Security > \
+             Developer Mode)"
+                .to_string(),
+        );
+    }
+    report.needed.push(
         "the developer certificate trusted once on the device (Settings > General > VPN & Device \
          Management)"
             .to_string(),
-    ];
+    );
     report.found.push(
         "no xcrun, xcodebuild, devicectl or simulator is used; configured devices are probed \
          without installing anything"
@@ -714,18 +725,24 @@ async fn collect_apple(
                 });
                 report.fail();
                 let pairing = if platform == Platform::Ios {
-                    "pair it once with `impresario apple pair-host` (iOS 27+: Settings > \
-                     Developer > Paired Macs) or import an existing record with `impresario \
-                     apple import-pair <pair.plist> --save <udid>` (older iOS: trust the phone \
-                     over USB with Apple Mobile Device Support, then `pymobiledevice3 lockdown \
-                     remotepairing --pair`)"
+                    "pair it once with `impresario apple pair-usb` (iOS 18-26: connect the \
+                     iPhone/iPad over USB, unlock it, and tap Trust; iOS 27+ can also use \
+                     `impresario apple pair-host` with Settings > Developer > Paired Macs) or \
+                     import an existing record with `impresario apple import-pair <pair.plist> \
+                     --save <udid>`"
                 } else {
                     "pair it once with `impresario apple pair --host <host>`"
                 };
+                let developer_mode = if platform == Platform::Ios {
+                    "enable Developer Mode on the iPhone/iPad (Settings > Privacy & Security > \
+                     Developer Mode), then "
+                } else {
+                    ""
+                };
                 report.fixes.push(format!(
-                    "device '{}': check the configured IP and {pairing}; trust the developer \
-                     certificate once in Settings > General > VPN & Device Management, then run \
-                     `impresario device check <name>`",
+                    "device '{}': check the configured IP and {pairing}; {developer_mode}trust \
+                     the developer certificate once in Settings > General > VPN & Device \
+                     Management, and run `impresario device check <name>`",
                     device.name
                 ));
             }

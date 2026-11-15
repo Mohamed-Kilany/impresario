@@ -16,7 +16,7 @@ use impresario_apple_auth::dev::developer_session::DeveloperSession;
 use impresario_apple_auth::dev::teams::{DeveloperTeam, TeamsApi};
 use impresario_apple_device::ddi::{self, DdiAssets, DdiState};
 use impresario_apple_device::pairing::{
-    pair_device, pair_host, ApplePaths, PairingSummary, IMPRESARIO_DEVICE_NAME,
+    pair_device, pair_host, pair_usb, ApplePaths, PairingSummary, IMPRESARIO_DEVICE_NAME,
 };
 use impresario_apple_device::products::ProductSet;
 use impresario_apple_device::provision::{
@@ -44,6 +44,8 @@ pub struct AppleArgs {
 pub enum AppleCommand {
     /// Put the Apple TV in pairing mode and pair this machine.
     Pair(PairArgs),
+    /// Pair an iPhone/iPad over USB and save its Wi-Fi RemotePairing record.
+    PairUsb(PairUsbArgs),
     /// Advertise as a pairable host for iPhone/iPad (Settings > Developer >
     /// Paired Macs).
     PairHost(PairHostArgs),
@@ -92,6 +94,19 @@ pub struct PairArgs {
     /// it. Useful for scripted pairing; the code is never written to disk.
     #[arg(long)]
     pub code_stdin: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PairUsbArgs {
+    /// USB device UDID; omit when exactly one USB device is attached.
+    #[arg(long)]
+    pub udid: Option<String>,
+    /// Seconds to wait for the device's Trust prompt.
+    #[arg(long, default_value_t = 60)]
+    pub wait: u64,
+    /// Save the pairing under this key instead of the device UDID.
+    #[arg(long)]
+    pub save: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -363,6 +378,7 @@ pub fn run(args: &AppleArgs, home: &Home) -> i32 {
     let paths = ApplePaths::new(home.root());
     match &args.command {
         AppleCommand::Pair(args) => run_pair(args, &paths),
+        AppleCommand::PairUsb(args) => run_pair_usb(args, &paths),
         AppleCommand::PairHost(args) => run_pair_host(args, &paths),
         AppleCommand::ImportPair(args) => run_import_pair(args, &paths),
         AppleCommand::Status => run_status(&paths),
@@ -425,6 +441,47 @@ fn run_pair(args: &PairArgs, paths: &ApplePaths) -> i32 {
         }
     }
     print_pairing(&summary, paths);
+    EXIT_OK
+}
+
+fn run_pair_usb(args: &PairUsbArgs, paths: &ApplePaths) -> i32 {
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+    println!(
+        "Pairing with the USB-attached iPhone/iPad as host {}...",
+        paths.host_identifier()
+    );
+    println!("Unlock the device and tap Trust if it asks; keep it awake.");
+    let mut summary = match runtime.block_on(pair_usb(
+        paths,
+        args.udid.as_deref(),
+        IMPRESARIO_DEVICE_NAME,
+        Duration::from_secs(args.wait.max(1)),
+    )) {
+        Ok(summary) => summary,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    if let Some(save) = args.save.as_deref() {
+        if save != summary.saved_as {
+            match move_pairing(paths, &summary.saved_as, save) {
+                Ok(()) => summary.saved_as = save.to_string(),
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return EXIT_FAILURE;
+                }
+            }
+        }
+    }
+    print_pairing(&summary, paths);
+    println!(
+        "Unplug the cable and make sure the iPhone/iPad and this computer are on the same Wi-Fi \
+         network."
+    );
     EXIT_OK
 }
 

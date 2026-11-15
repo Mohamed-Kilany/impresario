@@ -12,8 +12,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use idevice::remote_pairing::{
-    PairableHost, PairableHostInfo, RpPairingSocket, PAIRABLE_HOST_SERVICE_TYPE,
+    PairableHost, PairableHostInfo, RemotePairingLockdownService, RpPairingSocket,
+    PAIRABLE_HOST_SERVICE_TYPE,
 };
+use idevice::services::lockdown::LockdownClient;
+use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdConnection, UsbmuxdDevice};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -406,6 +409,340 @@ where
     })
 }
 
+/// The lockdown service that fronts RemotePairing on iOS/iPadOS.
+///
+/// Opening it over an already-trusted USB lockdown session and running
+/// RPPairing pair-setup there is promptless: the device has accepted this
+/// computer for lockdown, so it does not show the Trust dialog again
+/// (pymobiledevice3 calls the same flow `lockdown remotepairing --pair`).
+pub const REMOTE_PAIRING_LOCKDOWN_SERVICE: &str = "com.apple.dt.remotepairingdeviced.lockdown";
+
+/// Pair an iPhone/iPad over USB through Apple's usbmuxd.
+///
+/// The lockdown step trusts this computer (the device shows its Trust dialog
+/// only when no record exists), then the
+/// [`REMOTE_PAIRING_LOCKDOWN_SERVICE`] control channel creates the
+/// RemotePairing record that the Wi-Fi transport on [`REMOTE_PAIRING_PORT`]
+/// uses. The record is saved under the device UDID, so the device works over
+/// Wi-Fi after the cable is removed.
+pub async fn pair_usb(
+    paths: &ApplePaths,
+    udid: Option<&str>,
+    host_name: &str,
+    wait: Duration,
+) -> Result<PairingSummary> {
+    let device = {
+        let mut mux = connect_usbmuxd().await?;
+        let devices = mux
+            .get_devices()
+            .await
+            .map_err(|error| Error::Device(format!("list USB devices: {error}")))?;
+        select_usb_device(&devices, udid)?.clone()
+    };
+
+    // A cached lockdown record can be stale (for example after an iOS restore or
+    // "Reset Location & Privacy"); the device then answers `InvalidHostID`. Drop
+    // the cached record and ask for Trust once more instead of failing.
+    let (mut lockdown, lockdown_pair, legacy) = {
+        let mut repaired = false;
+        loop {
+            let pair = lockdown_pair_record(&device, paths, host_name, wait).await?;
+            let stream = {
+                let mut mux = connect_usbmuxd().await?;
+                mux.connect_to_device(
+                    device.device_id,
+                    LockdownClient::LOCKDOWND_PORT,
+                    IMPRESARIO_DEVICE_NAME,
+                )
+                .await
+                .map_err(|error| {
+                    Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
+                })?
+            };
+            let mut lockdown = LockdownClient::new(stream);
+            match lockdown.start_session(&pair).await {
+                Ok(legacy) => break (lockdown, pair, legacy),
+                Err(idevice::IdeviceError::InvalidHostID) if !repaired => {
+                    repaired = true;
+                    let mut mux = connect_usbmuxd().await?;
+                    mux.delete_pair_record(&device.udid)
+                        .await
+                        .map_err(|error| {
+                            Error::Device(format!(
+                                "forget the stale lockdown record for {}: {error}",
+                                device.udid
+                            ))
+                        })?;
+                }
+                Err(error) => {
+                    return Err(Error::Device(format!(
+                        "start a lockdown session with {}: {error}",
+                        device.udid
+                    )))
+                }
+            }
+        }
+    };
+
+    // Start the RemotePairing control service on the trusted lockdown session.
+    // Keep `lockdown` alive until the handshake finishes: the device ties the
+    // started service to the session. Read the identifying values first so a
+    // record that verifies (no pair-setup) still reports a name and model.
+    let device_name = lockdown
+        .get_value(Some("DeviceName"), None)
+        .await
+        .ok()
+        .and_then(|value| value.as_string().map(str::to_string));
+    let device_model = lockdown
+        .get_value(Some("ProductType"), None)
+        .await
+        .ok()
+        .and_then(|value| value.as_string().map(str::to_string));
+    let (port, ssl) = lockdown
+        .start_service(REMOTE_PAIRING_LOCKDOWN_SERVICE)
+        .await
+        .map_err(|error| {
+            Error::Device(format!(
+                "start {REMOTE_PAIRING_LOCKDOWN_SERVICE} on {}: {error}; update iOS if the \
+                 service is unavailable",
+                device.udid
+            ))
+        })?;
+    let mut stream = {
+        let mut mux = connect_usbmuxd().await?;
+        mux.connect_to_device(device.device_id, port, IMPRESARIO_DEVICE_NAME)
+            .await
+            .map_err(|error| {
+                Error::Device(format!(
+                    "connect to the RemotePairing control channel on {}: {error}",
+                    device.udid
+                ))
+            })?
+    };
+    if ssl {
+        stream
+            .start_session(&lockdown_pair, legacy)
+            .await
+            .map_err(|error| {
+                Error::Device(format!(
+                    "secure the RemotePairing control channel on {}: {error}",
+                    device.udid
+                ))
+            })?;
+    }
+    let service = RemotePairingLockdownService::new(stream);
+    let mut client = service.into_client(host_name).map_err(|error| {
+        Error::Device(format!(
+            "prepare the RemotePairing handshake on {}: {error}",
+            device.udid
+        ))
+    })?;
+
+    // The lockdown transport is already trusted, so the device returns the SRP
+    // salt immediately and never asks for a code. Reuse a stored record when it
+    // still verifies; `connect` falls back to pair-setup otherwise. iOS uses the
+    // fixed "000000" PIN for this promptless flow.
+    let mut file = match paths.load_pairing(&device.udid) {
+        Ok(file) => file,
+        Err(_) => {
+            let mut file = RpPairingFile::generate(&paths.host_identifier());
+            file.identifier = paths.host_identifier();
+            file
+        }
+    };
+    timeout(
+        wait,
+        client.connect(&mut file, || async { "000000".to_string() }),
+    )
+    .await
+    .map_err(|_| {
+        Error::Device(
+            "timed out pairing the RemotePairing control channel; unlock the device and retry"
+                .to_string(),
+        )
+    })?
+    .map_err(|error| match error {
+        idevice::IdeviceError::UserDeniedPairing => Error::Device(
+            "the device denied the pairing request; unlock it, tap Trust, and retry".to_string(),
+        ),
+        idevice::IdeviceError::PasswordProtected => {
+            Error::Device("the device is locked; unlock it, keep it awake, and retry".to_string())
+        }
+        other => Error::Device(format!(
+            "RemotePairing pair-setup failed: {other}; update iOS and retry"
+        )),
+    })?;
+
+    let peer = client.paired_peer_device().ok();
+    let remote_udid = peer
+        .as_ref()
+        .map(|peer| peer.remotepairing_udid.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let key = remote_udid.clone().unwrap_or_else(|| device.udid.clone());
+    paths.save_pairing(&key, &file)?;
+    Ok(PairingSummary {
+        identifier: file.identifier.clone(),
+        saved_as: key,
+        name: peer.as_ref().map(|peer| peer.name.clone()).or(device_name),
+        model: peer
+            .as_ref()
+            .map(|peer| peer.model.clone())
+            .or(device_model),
+        udid: remote_udid.or(Some(device.udid.clone())),
+        port: REMOTE_PAIRING_PORT,
+    })
+}
+
+/// Connect to Apple's usbmuxd service (Apple Mobile Device Support on Windows).
+async fn connect_usbmuxd() -> Result<UsbmuxdConnection> {
+    let address = UsbmuxdAddr::from_env_var().map_err(|error| {
+        Error::Device(format!(
+            "USBMUXD_SOCKET_ADDRESS is not a valid address: {error}"
+        ))
+    })?;
+    address.connect(0).await.map_err(|error| {
+        Error::Device(format!(
+            "cannot reach Apple's usbmuxd service ({error}); install and start Apple Mobile \
+             Device Support (it ships with iTunes) or set USBMUXD_SOCKET_ADDRESS"
+        ))
+    })
+}
+
+fn select_usb_device<'a>(
+    devices: &'a [UsbmuxdDevice],
+    udid: Option<&str>,
+) -> Result<&'a UsbmuxdDevice> {
+    let wanted = udid.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(wanted) = wanted {
+        let matches = |device: &&UsbmuxdDevice| device.udid.eq_ignore_ascii_case(wanted);
+        return devices
+            .iter()
+            .filter(matches)
+            .find(|device| matches!(&device.connection_type, Connection::Usb))
+            .ok_or_else(|| {
+                Error::Device(format!(
+                    "no Apple device with UDID {wanted} is attached over USB through usbmuxd \
+                     (attached: {}); connect the cable and retry",
+                    describe_devices(devices)
+                ))
+            });
+    }
+    let usb: Vec<_> = devices
+        .iter()
+        .filter(|device| matches!(&device.connection_type, Connection::Usb))
+        .collect();
+    match usb.as_slice() {
+        [device] => Ok(*device),
+        [] if devices.is_empty() => Err(Error::Device(
+            "no Apple device is attached over USB; connect the iPhone/iPad, unlock it, and retry"
+                .to_string(),
+        )),
+        [] => Err(Error::Device(format!(
+            "no Apple device is attached over USB (usbmuxd sees {}); connect the iPhone/iPad, \
+             unlock it, and retry",
+            describe_devices(devices)
+        ))),
+        many => {
+            let choices = many
+                .iter()
+                .map(|device| device.udid.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(Error::Device(format!(
+                "several Apple devices are attached over USB ({choices}); pass --udid"
+            )))
+        }
+    }
+}
+
+fn describe_devices(devices: &[UsbmuxdDevice]) -> String {
+    if devices.is_empty() {
+        return "none".to_string();
+    }
+    devices
+        .iter()
+        .map(|device| {
+            let connection = match &device.connection_type {
+                Connection::Usb => "USB",
+                Connection::Network(_) => "Network",
+                Connection::Unknown(_) => "unknown",
+            };
+            format!("{} ({connection})", device.udid)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The lockdown pair record for `device`, creating and caching one when the
+/// device has never trusted this computer.
+async fn lockdown_pair_record(
+    device: &UsbmuxdDevice,
+    paths: &ApplePaths,
+    host_name: &str,
+    wait: Duration,
+) -> Result<idevice::pairing_file::PairingFile> {
+    let mut mux = connect_usbmuxd().await?;
+    if let Ok(record) = mux.get_pair_record(&device.udid).await {
+        return Ok(record);
+    }
+
+    let buid = connect_usbmuxd()
+        .await?
+        .get_buid()
+        .await
+        .map_err(|error| Error::Device(format!("read the usbmuxd BUID: {error}")))?;
+    let stream = {
+        let mut mux = connect_usbmuxd().await?;
+        mux.connect_to_device(
+            device.device_id,
+            LockdownClient::LOCKDOWND_PORT,
+            IMPRESARIO_DEVICE_NAME,
+        )
+        .await
+        .map_err(|error| {
+            Error::Device(format!("connect to lockdown on {}: {error}", device.udid))
+        })?
+    };
+    let mut lockdown = LockdownClient::new(stream);
+    let host_id = paths.host_identifier();
+    let paired = timeout(
+        wait,
+        lockdown.pair(host_id.as_str(), buid.as_str(), Some(host_name)),
+    )
+    .await
+    .map_err(|_| {
+        Error::Device(
+            "timed out waiting for the device to trust this computer; unlock the iPhone/iPad, \
+             tap Trust, keep it awake, and retry"
+                .to_string(),
+        )
+    })?
+    .map_err(|error| match error {
+        idevice::IdeviceError::UserDeniedPairing => Error::Device(
+            "the device denied the trust request; unlock it, tap Trust, and retry".to_string(),
+        ),
+        idevice::IdeviceError::PasswordProtected => {
+            Error::Device("the device is locked; unlock it, keep it awake, and retry".to_string())
+        }
+        other => Error::Device(format!("lockdown trust failed: {other}")),
+    })?;
+
+    let bytes = paired
+        .clone()
+        .serialize()
+        .map_err(|error| Error::Device(format!("serialize the lockdown pair record: {error}")))?;
+    let mut mux = connect_usbmuxd().await?;
+    mux.save_pair_record(&device.udid, bytes)
+        .await
+        .map_err(|error| {
+            Error::Device(format!(
+                "cache the lockdown pair record for {} in usbmuxd: {error}",
+                device.udid
+            ))
+        })?;
+    Ok(paired)
+}
+
 /// The LAN address used for mDNS adverts, picked by the default route.
 fn lan_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
@@ -656,5 +993,65 @@ mod tests {
         assert_eq!(loaded.public_key_bytes(), file.public_key_bytes());
         assert!(!format!("{loaded:?}").contains("private"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn usb_device(udid: &str) -> UsbmuxdDevice {
+        UsbmuxdDevice {
+            connection_type: Connection::Usb,
+            udid: udid.to_string(),
+            device_id: 1,
+        }
+    }
+
+    #[test]
+    fn usb_pairing_prefers_the_usb_entry_for_a_named_udid() {
+        let devices = [
+            UsbmuxdDevice {
+                connection_type: Connection::Network("10.0.0.9".parse().unwrap()),
+                udid: "DEVICE-1".to_string(),
+                device_id: 1,
+            },
+            usb_device("DEVICE-1"),
+        ];
+        let selected = select_usb_device(&devices, Some("device-1")).unwrap();
+        assert!(matches!(&selected.connection_type, Connection::Usb));
+    }
+
+    #[test]
+    fn usb_pairing_refuses_to_guess_between_two_devices() {
+        let devices = [usb_device("DEVICE-1"), usb_device("DEVICE-2")];
+        let error = select_usb_device(&devices, None).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("several Apple devices"), "{message}");
+        assert!(message.contains("DEVICE-1, DEVICE-2"), "{message}");
+    }
+
+    #[test]
+    fn usb_pairing_rejects_a_named_device_that_is_only_on_the_network() {
+        let devices = [UsbmuxdDevice {
+            connection_type: Connection::Network("10.0.0.9".parse().unwrap()),
+            udid: "DEVICE-1".to_string(),
+            device_id: 1,
+        }];
+        let error = select_usb_device(&devices, Some("DEVICE-1")).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("attached over USB"), "{message}");
+        assert!(message.contains("DEVICE-1 (Network)"), "{message}");
+    }
+
+    #[test]
+    fn usb_pairing_explains_that_a_network_only_device_needs_a_cable() {
+        let devices = [UsbmuxdDevice {
+            connection_type: Connection::Network("10.0.0.9".parse().unwrap()),
+            udid: "DEVICE-1".to_string(),
+            device_id: 1,
+        }];
+        let error = select_usb_device(&devices, None).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("no Apple device is attached over USB"),
+            "{message}"
+        );
+        assert!(message.contains("DEVICE-1 (Network)"), "{message}");
     }
 }

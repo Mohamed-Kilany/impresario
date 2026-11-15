@@ -16,6 +16,7 @@ idevice = { workspace = true, features = [
     "diagnostics_relay",
     "installation_proxy",
     "mobile_image_mounter",
+    "pair",
     "remote_pairing",
     "rsd",
     "rustcrypto",
@@ -23,6 +24,7 @@ idevice = { workspace = true, features = [
     "tcp",
     "tss",
     "tunnel_tcp_stack",
+    "usbmuxd",
     "xctest",
 ] }
 keyring.workspace = true

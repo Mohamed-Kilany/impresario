@@ -999,8 +999,9 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             "Pair the Apple TV once with `impresario apple pair --host <ip>` and enter the code \
              shown on the TV (or import an existing pair plist with `impresario apple \
              import-pair`). The UDID is the device's Apple UDID; `impresario apple status` lists \
-             saved pairings. iPhones/iPads pair from the device instead (Settings > Developer > \
-             Paired Macs, with `impresario apple pair-host`).",
+             saved pairings. iPhones/iPads pair from the device on iOS 27+ (Settings > Developer > \
+             Paired Macs, with `impresario apple pair-host`) or over USB on older iOS (`impresario \
+             apple pair-usb`).",
         );
         match self
             .ui
@@ -1355,14 +1356,15 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
             }
             Platform::Ios => {
                 let _ = self.ui.say(
-                    "iOS is not probed while writing the definition. Pair the iPhone once: on \
-                     iOS 27+ run `impresario apple pair-host` here and open Settings > Developer \
-                     > Paired Macs on the phone; on older iOS, trust it over USB (Apple Mobile \
-                     Device Support), create a RemotePairing record with `pymobiledevice3 \
-                     lockdown remotepairing --pair`, and import it with `impresario apple \
-                     import-pair <pair.plist> --save <udid>`. After saving, run `impresario \
-                     device check <name>`; the first install must be trusted in Settings > \
-                     General > VPN & Device Management.",
+                    "iOS is not probed while writing the definition. Pair the iPhone/iPad once: \
+                     connect it over USB, unlock it, run `impresario apple pair-usb` here, and tap \
+                     Trust on the device (iOS 18-26); on iOS 27+ you can instead run `impresario \
+                     apple pair-host` and open Settings > Developer > Paired Macs on the phone. \
+                     The saved record is what the Wi-Fi transport uses, so unplug the cable and \
+                     keep both devices on the same network. After saving, run `impresario device \
+                     check <name>`; the first install needs Developer Mode (Settings > Privacy & \
+                     Security > Developer Mode) and the developer certificate trusted once in \
+                     Settings > General > VPN & Device Management.",
                 );
                 Ok(Step::Next(Stage::Review))
             }
@@ -1486,9 +1488,10 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                     ));
                     let next = match device.platform {
                         Platform::Ios => {
-                            "next: bind an app with `impresario app add ...`; pair the iPhone \
-                             (`impresario apple pair-host`, or `apple import-pair` for older \
-                             iOS) and run `impresario device check <name>`"
+                            "next: bind an app with `impresario app add ...`; pair the iPhone/iPad \
+                             (`impresario apple pair-usb` on iOS 18-26, `apple pair-host` on iOS \
+                             27+, or `apple import-pair` for an existing record) and run \
+                             `impresario device check <name>`"
                         }
                         Platform::Tvos => {
                             "next: bind an app with `impresario app add ...`; after the \
