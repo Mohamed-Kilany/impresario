@@ -3249,8 +3249,10 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "uuid",
+ "web-time",
  "webpki-roots 1.0.10",
  "x25519-dalek",
+ "x509-cert 0.2.5",
 ]
 
 [[package]]
@@ -9321,6 +9323,8 @@ checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
 dependencies = [
  "const-oid 0.9.6",
  "der 0.7.10",
+ "sha1 0.10.6",
+ "signature 2.2.0",
  "spki 0.7.3",
  "tls_codec",
 ]
