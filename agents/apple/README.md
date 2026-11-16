@@ -290,7 +290,9 @@ Bonjour is available, and prints its addresses in the device log.
   the uniform empty slot; and `20261104-094934-4728` passed `not Showing =>
   Broken` while recording decoder/DRM as unverifiable (no Apple decoder
   observation and no stub DRM report). See `docs/DEVICES.md` §3.3.
-* Still unverified on hardware: iOS, paused playback, local-network prompt
+* Verified on hardware since: the iOS transport, inspector and stub suite
+  (2026-11-15); paused playback on tvOS and iPhone (2026-11-16); and a fresh
+  personalized DDI mount (2026-11-16). Still unverified: local-network prompt
   handling, real FairPlay/DRM, and clean-state reinstall via
   `reset_app_data`.
 * The P0 pair record came from an earlier pymobiledevice3 setup. On 2026-10-28

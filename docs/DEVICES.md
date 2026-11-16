@@ -1108,8 +1108,12 @@ matrix ran on both Android targets through the run path. The Galaxy A51 phone
 the same duration and muted flag, and poster coverage 99.40%; both runs passed
 8/8 steps. The probe needed a 2 s settle after `MediaStatus` because the hook
 reports an authoritative position below 1 s at playback start and an
-authoritative contradiction ends the check. `DRM-disabled`, paused playback and
-Android USB remain unverified (HD-1/HD-5/HD-8).
+authoritative contradiction ends the check. Paused playback then passed on
+both targets through the media keys: `run 20261116-110113-0a92` on the phone
+paused at 1.714 s and `run 20261116-110200-b506` on the TV at 3.709 s; each
+reported `rate=0`, `duration=4.021`, `muted=true`, an identical position 2 s
+later, and resumed at `rate=1` (14/14 steps). `DRM-disabled` and Android USB
+remain unverified (HD-1/HD-5).
 
 ---
 
@@ -1564,17 +1568,21 @@ on 2026-11-16 (see the closure note below).
   `drm.enabled=false=unverifiable` because the stub does not call
   `ImpresarioHook.drm`, so no DRM snapshot exists. `media-unverifiable.png`
   is a valid 1920x1080 capture of the same screen.
-- Paused playback was not exercised: the stub exposes no pause control and a
-  plain `AVPlayer` does not handle the remote Play/Pause button in this
-  fixture. No paused claim is made.
+- Paused playback `20261116-115221-d1a6` passed 14/14 steps on 2026-11-16.
+  The stub now has a `Pause` button (`stub_media_pause`) that toggles its
+  `AVPlayer`: the check observed `Paused`, `rate=0`, `duration=4.0`,
+  `muted=true` and position 1.663796917 s identical across two samples 2 s
+  apart, then `Pause` again resumed at `rate=1`. The iPhone run
+  `20261116-115340-3b80` repeated the probe at position 3.926657882 s with the
+  same rate/duration/muted facts and also resumed at `rate=1`.
 
 The Apple TV therefore has hardware evidence for the hook/position/resolution
-path, the `Showing` coverage path and the uniform empty-slot negative control,
-plus honest UNVERIFIABLE decoder/DRM results. The iPhone now has hardware
-evidence for the Wi-Fi transport, inspector and the full 107-step stub suite
-including `Player => Video Playing` (2026-11-15); paused playback, the one-time
-local-network prompt, a real FairPlay/DRM sample and iOS hook/decoder evidence
-remain unverified (HD-1).
+path, the `Showing` coverage path, the uniform empty-slot negative control,
+paused playback and honest UNVERIFIABLE decoder/DRM results. The iPhone now has
+hardware evidence for the Wi-Fi transport, inspector, the full 107-step stub
+suite including `Player => Video Playing` (2026-11-15), and paused playback
+(2026-11-16); the one-time local-network prompt, a real FairPlay/DRM sample and
+iOS hook/decoder evidence remain unverified (HD-1).
 
 On 2026-11-15 the embedded 10-act suite was re-run on both Apple targets with
 the `523d45d` Apple Xcode product set. The iPhone (`iPhone13,2`, iOS 18.7.8
@@ -1610,6 +1618,15 @@ identities are `14737F87C0645B68831D9AA806AAAADF` (tvOS) and
 `23F84E161C06E86D31F3FCD2935EE45` (iOS). The refreshed iPhone set passed a Home
 rerun `run 20261116-095617-51bb` (11/11 steps, 36.1 s) after one transient
 `phase=prepare` AFC error.
+
+**Sleep/lock prevention.** The agent host (`ImpresarioAgentAppDelegate`) and
+the UI-test runner (`ImpresarioAgentTests.testServe`) now set
+`UIApplication.shared.isIdleTimerDisabled = true` while serving, and clear it on
+termination/`Shutdown`, so a long play cannot let the device sleep or lock for
+lack of input. This is best-effort: the app under test owns the foreground
+window, and public iOS APIs do not let a background process keep another app's
+screen on. The embedded suites still complete well inside the default sleep
+window.
 
 ---
 

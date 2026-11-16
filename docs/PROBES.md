@@ -339,14 +339,17 @@ remain unverifiable (`HD-1`). Web probes on other managed Chromium archives are 
   install/update, launch, forwarded CDP and the `Player => Video Playing` probe
   passed on both (105/105 steps). On Android the 2026-11-16 phone/TV runs passed
   `Showing` coverage/decoded and `Player` state/position/duration/muted on the
-  stub Media screen; Android DRM remains fixture/vendor-dependent and USB is
-  deferred. On the Apple TV the hook/position/resolution path and `Showing`
-  coverage ran on 2026-11-04; decoder/DRM stayed unverifiable.
+  stub Media screen, and paused playback passed on both targets (stable
+  position, `rate=0`, then `rate=1`); Android DRM remains fixture/vendor-dependent
+  and USB is deferred. On the Apple TV the hook/position/resolution path and
+  `Showing` coverage ran on 2026-11-04; paused playback passed on both Apple
+  targets on 2026-11-16; decoder/DRM stayed unverifiable.
 - Apple host-side DVT/syslog/pcapd evidence remains unimplemented. The in-app hook
   over loopback is now hardware-tested (2026-11-04), including honest `unverifiable`
   decoder/DRM results. The iPhone transport and its `Player => Video Playing` check
-  passed over Wi-Fi on 2026-11-15, but paused playback, the local-network prompt and
-  iOS hook/decoder evidence remain unverified.
+  passed over Wi-Fi on 2026-11-15, and paused playback passed on tvOS and iPhone on
+  2026-11-16, but the local-network prompt and iOS hook/decoder evidence remain
+  unverified.
 - Android exact decoder/codec/framerate properties and `dumpsys media.drm` semantics are
   vendor/API-level dependent; only conservative parsers are shipped.
 - Public stream URLs can change; local fixtures are authoritative for CI.
