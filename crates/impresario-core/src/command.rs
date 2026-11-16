@@ -29,6 +29,7 @@ pub enum ActionType {
     ScrollTo,
     Swipe,
     Back,
+    HideKeyboard,
 }
 
 impl ActionType {
@@ -46,6 +47,7 @@ impl ActionType {
             ActionType::ScrollTo => "SCROLL_TO",
             ActionType::Swipe => "SWIPE",
             ActionType::Back => "BACK",
+            ActionType::HideKeyboard => "HIDE_KEYBOARD",
         }
     }
 }
@@ -54,7 +56,8 @@ impl ActionType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunAction {
     pub action: ActionType,
-    /// Absent only for `BACK` and screen-level `SCROLL`/`SWIPE`.
+    /// Absent only for `BACK`, `HIDE_KEYBOARD` and screen-level
+    /// `SCROLL`/`SWIPE`.
     pub selector: Option<Selector>,
     /// `TYPE`, `APPEND`, `SELECT` (option text).
     pub text: String,
@@ -165,6 +168,11 @@ impl RunAction {
     #[must_use]
     pub fn back() -> Self {
         Self::bare(ActionType::Back)
+    }
+
+    #[must_use]
+    pub fn hide_keyboard() -> Self {
+        Self::bare(ActionType::HideKeyboard)
     }
 }
 

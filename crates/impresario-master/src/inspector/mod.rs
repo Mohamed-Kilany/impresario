@@ -616,7 +616,11 @@ impl Actor {
             min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
             max_nodes: 0,
             max_depth: 0,
-            include_raw: false,
+            // The Web UI decides per request whether it wants `raw`
+            // (`?include_raw=1`); the polled snapshot must carry it or the
+            // flag can never be honoured. `snapshot_json` strips it again for
+            // ordinary requests.
+            include_raw: true,
             include_screenshot,
             screenshot_only: false,
             screenshot_scale: u32::from(self.shared.config.inspector.screenshot_scale),

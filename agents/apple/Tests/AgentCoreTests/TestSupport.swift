@@ -128,6 +128,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var screenshotData = FakePNG.valid
     var crashAfterLaunch = false
     var pressBackResult = false
+    var hideKeyboardResult = true
     var longPressSelectResult = false
     var keyboardShown = false
     var ignoreTypeText = false
@@ -157,6 +158,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     private var _remotes: [(button: RemoteButton, count: Int, interval: TimeInterval)] = []
     private var _homePresses = 0
     private var _backPresses = 0
+    private var _hideKeyboardCalls = 0
     private var _scrolls: [(id: String?, direction: Direction, steps: Int)] = []
     private var _swipes: [(id: String?, direction: Direction)] = []
     private var _launches: [String] = []
@@ -185,6 +187,7 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     var remotes: [(button: RemoteButton, count: Int, interval: TimeInterval)] { locked { _remotes } }
     var homePresses: Int { locked { _homePresses } }
     var backPresses: Int { locked { _backPresses } }
+    var hideKeyboardCalls: Int { locked { _hideKeyboardCalls } }
     var scrolls: [(id: String?, direction: Direction, steps: Int)] { locked { _scrolls } }
     var swipes: [(id: String?, direction: Direction)] { locked { _swipes } }
     var launches: [String] { locked { _launches } }
@@ -352,6 +355,14 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
     func pressBack() throws -> Bool {
         locked { _backPresses += 1 }
         return pressBackResult
+    }
+
+    func hideKeyboard() throws -> Bool {
+        locked { _hideKeyboardCalls += 1 }
+        if hideKeyboardResult {
+            keyboardShown = false
+        }
+        return hideKeyboardResult
     }
 
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool {

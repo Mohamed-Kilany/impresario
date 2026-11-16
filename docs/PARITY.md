@@ -27,6 +27,7 @@ rejects ✖ before any device is touched.
 | `scrollto` | ✅ | ✅ | ✅ | ✅ | ◐ | ✅ | ◐ |
 | `swipe` | ✖ | ✖ | ✖ | ✅ | ✖ | ✅ | ✖ |
 | `back` | ◐ | ◐ | ◐ | ✅ | ✅ | ◐ | ◐ |
+| `keyboard hide` | ✅ | ◐ | ◐ | ✅ | ✅ | ◐ | ✅ |
 | `key <k>` | 6.2 | 6.2 | 6.2 | 6.2 | 6.2 | 6.2 | 6.2 |
 | `screenshot` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `app launch` | ◐ | ◐ | ◐ | ✅ | ✅ | ✅ | ✅ |
@@ -111,9 +112,10 @@ key table (`KeyTable.kt`, `keys.rs`); the planner enforces exactly this ✅/✖ 
 - **D-pad** — `scroll` on `androidtv`, `tvos`
 - **same as focus** — `scrollto` on `androidtv`, `tvos`
 - **history** — `back` on `web`
-- **back key** — `back` on `webos`, `tizen`
+- **back key** — `back`, `keyboard hide` on `webos`, `tizen`
 - **nav-bar back button, else edge swipe** — `back` on `ios`
 - **menu** — `back` on `tvos`
+- **outside tap** — `keyboard hide` on `ios`
 - **navigate** — `app launch` on `web`, `webos`, `tizen`
 - **reload/navigate** — `app restart` on `web`, `webos`, `tizen`
 <!-- END GENERATED MATRIX -->

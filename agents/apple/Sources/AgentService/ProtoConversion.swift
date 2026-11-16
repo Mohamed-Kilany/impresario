@@ -245,6 +245,7 @@ public enum ProtoConversion {
         case .scrollTo: kind = .scrollTo
         case .swipe: kind = .swipe
         case .back: kind = .back
+        case .hideKeyboard: kind = .hideKeyboard
         case .unspecified, .UNRECOGNIZED:
             throw AgentError.protocolError("the action type is unspecified or unknown")
         }
@@ -558,6 +559,8 @@ public enum ProtoConversion {
                 y2: Double(raw.endY),
                 durationMs: Int(raw.durationMs)
             )
+        case .keyboard:
+            return .keyboard
         case .unspecified, .UNRECOGNIZED:
             throw AgentError.protocolError("the inspector input kind is unspecified or unknown")
         }

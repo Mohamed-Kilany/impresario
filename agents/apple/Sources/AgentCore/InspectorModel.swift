@@ -228,6 +228,7 @@ public enum InspectorInputAction: Sendable, Equatable {
     case key(RemoteKey)
     case type(nodeId: UInt64, text: String)
     case swipe(x1: Double, y1: Double, x2: Double, y2: Double, durationMs: Int)
+    case keyboard
 }
 
 /// The inspector side of a UI driver. The XCUITest driver implements it; the

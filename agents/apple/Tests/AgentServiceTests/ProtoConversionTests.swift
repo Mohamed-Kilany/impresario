@@ -73,6 +73,7 @@ final class ProtoConversionTests: XCTestCase {
             (.scrollTo, .scrollTo),
             (.swipe, .swipe),
             (.back, .back),
+            (.hideKeyboard, .hideKeyboard),
         ]
         for (proto, expected) in cases {
             var raw = Impresario_V1_RunAction()

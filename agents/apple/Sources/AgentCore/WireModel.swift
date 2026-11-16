@@ -126,6 +126,7 @@ public enum ActionKind: String, Sendable, Equatable, CaseIterable {
     case scrollTo
     case swipe
     case back
+    case hideKeyboard
 }
 
 public enum Direction: String, Sendable, Equatable, CaseIterable {

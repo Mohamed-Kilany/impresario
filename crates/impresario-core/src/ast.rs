@@ -395,6 +395,7 @@ pub enum ActionVerb {
         repeat: u32,
     },
     Back,
+    KeyboardHide,
     Wait {
         duration: DslDuration,
     },
@@ -423,6 +424,7 @@ impl ActionVerb {
             ActionVerb::Swipe { .. } => "swipe",
             ActionVerb::Key { .. } => "key",
             ActionVerb::Back => "back",
+            ActionVerb::KeyboardHide => "keyboard hide",
             ActionVerb::Wait { .. } => "wait",
             ActionVerb::Screenshot { .. } => "screenshot",
             ActionVerb::App { .. } => "app",
@@ -444,6 +446,7 @@ impl ActionVerb {
             ActionVerb::Scroll { piece, .. } | ActionVerb::Swipe { piece, .. } => piece.as_ref(),
             ActionVerb::Key { .. }
             | ActionVerb::Back
+            | ActionVerb::KeyboardHide
             | ActionVerb::Wait { .. }
             | ActionVerb::Screenshot { .. }
             | ActionVerb::App { .. } => None,

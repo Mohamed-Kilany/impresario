@@ -787,6 +787,7 @@ impl Executor {
                 "swipe is not supported on web platforms (spec 6.1)",
             )),
             pb::ActionType::Back => self.back(cancel).await,
+            pb::ActionType::HideKeyboard => self.hide_keyboard(cancel).await,
             pb::ActionType::Unspecified => Err(ConnectorError::protocol(
                 "action type is unspecified".to_string(),
             )),
@@ -1339,6 +1340,24 @@ return {ok:true, complete:(info.max - info.top) <= 1};
         if self.platform == Platform::Web {
             self.probe::<NavProbe>("history.back(); return {ok:true};", cancel)
                 .await?;
+        } else {
+            self.press_remote(RemoteKey::Back, 1, 0, cancel).await?;
+        }
+        Ok(CommandOutput::default())
+    }
+
+    /// `keyboard hide` (spec 6.1): blur the active element on web; the back
+    /// key closes the IME on web TVs.
+    async fn hide_keyboard(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<CommandOutput, ConnectorError> {
+        if self.platform == Platform::Web {
+            self.evaluate_value(
+                "(function(){var e=document.activeElement;if(e&&e.blur){e.blur();}return true;})()",
+                cancel,
+            )
+            .await?;
         } else {
             self.press_remote(RemoteKey::Back, 1, 0, cancel).await?;
         }

@@ -98,6 +98,14 @@ class CommandExecutor(
                 driver.pressBack()
                 Outcome.Ok()
             }
+            ActionType.HIDE_KEYBOARD -> {
+                if (!driver.hideKeyboard()) {
+                    throw AgentException.notInteractable(
+                        "the on-screen keyboard is still visible (or cannot be observed)"
+                    )
+                }
+                Outcome.Ok()
+            }
             else -> throw AgentException.protocol("unknown action type '${type.name}'")
         }
     }

@@ -27,6 +27,7 @@ const VERBS: &[Verb] = &[
     Verb::ScrollTo,
     Verb::Swipe,
     Verb::Back,
+    Verb::KeyboardHide,
     Verb::Key,
     Verb::Wait,
     Verb::Screenshot,

@@ -448,6 +448,27 @@ class CommandExecutorTest {
         assertEquals(listOf("back"), driver.calls.toList())
     }
 
+    @Test
+    fun hideKeyboardUsesTheDriver() = runBlocking {
+        val driver = FakeDriver()
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            actionCommand("c1", action(ActionType.HIDE_KEYBOARD)),
+        )
+        assertTrue(result.ok)
+        assertEquals(listOf("hideKeyboard"), driver.calls.toList())
+    }
+
+    @Test
+    fun hideKeyboardFailsWhenTheImeStaysUp() = runBlocking {
+        val driver = FakeDriver()
+        driver.hideKeyboardWorks = false
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            actionCommand("c1", action(ActionType.HIDE_KEYBOARD)),
+        )
+        assertFalse(result.ok)
+        assertEquals(ErrorCode.NOT_INTERACTABLE, result.error.code)
+    }
+
     // ------------------------------------------------------------------
     // checks
     // ------------------------------------------------------------------

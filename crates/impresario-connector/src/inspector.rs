@@ -33,13 +33,14 @@ pub const DEFAULT_MAX_NODES: u32 = 5_000;
 pub const DEFAULT_MAX_DEPTH: u32 = 100;
 
 /// The ES5-only inspector helper. Assigns `window.__impresarioInspector`
-/// exactly once and exposes `snapshot`, `tap`, `scroll` and `prepareType`.
+/// exactly once and exposes `snapshot`, `tap`, `scroll`, `prepareType` and
+/// `hideKeyboard`.
 ///
 /// The script must run on Chromium 38 (old TV browsers): no arrow functions,
 /// block scoping, template strings, `async`/`await`, optional chaining or
 /// spread. `inspector_script_is_es5` enforces this in CI.
 pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function () {
-  if (window.__impresarioInspector && window.__impresarioInspector.version >= 1) {
+  if (window.__impresarioInspector && window.__impresarioInspector.version >= 2) {
     return window.__impresarioInspector;
   }
   var state = { nextId: 1, byId: {}, includeRaw: false };
@@ -555,12 +556,20 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     } catch (error) { }
     return { ok: true };
   }
+  function hideKeyboard() {
+    var el = activeElementDeep();
+    if (el && el.blur) {
+      try { el.blur(); } catch (error) { }
+    }
+    return { ok: true };
+  }
   return {
-    version: 1,
+    version: 2,
     snapshot: snapshot,
     tap: tap,
     scroll: scroll,
-    prepareType: prepareType
+    prepareType: prepareType,
+    hideKeyboard: hideKeyboard
   };
 })();"##;
 
@@ -568,7 +577,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
 #[must_use]
 pub fn inject_expression() -> String {
     format!(
-        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 1) {{ {INSPECTOR_SCRIPT} }} true"
+        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 2) {{ {INSPECTOR_SCRIPT} }} true"
     )
 }
 
@@ -776,6 +785,12 @@ pub async fn input(
         }
         pb::InspectorInputKind::Swipe => {
             swipe(executor, request, &cancel).await?;
+        }
+        pb::InspectorInputKind::Keyboard => {
+            let result: serde_json::Value = executor
+                .evaluate_json("window.__impresarioInspector.hideKeyboard()", &cancel)
+                .await?;
+            ensure_js_ok(&result)?;
         }
     }
 
@@ -1454,7 +1469,7 @@ mod tests {
 
     #[test]
     fn inspector_script_exposes_the_surface() {
-        for name in ["snapshot", "tap", "scroll", "prepareType"] {
+        for name in ["snapshot", "tap", "scroll", "prepareType", "hideKeyboard"] {
             assert!(
                 INSPECTOR_SCRIPT.contains(&format!("{name}: {name}")),
                 "inspector script does not export {name}"

@@ -189,6 +189,28 @@ class UiAutomatorDriver(
         device.pressBack()
     }
 
+    override fun hideKeyboard(): Boolean {
+        fun imeVisible(): Boolean? = try {
+            instrumentation.uiAutomation.windows.any {
+                it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            }
+        } catch (_: Exception) {
+            null
+        }
+        // A BACK with no IME window would navigate the app instead of closing
+        // the keyboard, so only send it when the IME is actually present.
+        var visible = imeVisible() ?: return false
+        if (!visible) return true
+        device.pressBack()
+        val deadline = SystemClock.uptimeMillis() + INSPECTOR_IME_DISMISS_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            visible = imeVisible() ?: return false
+            if (!visible) return true
+            SystemClock.sleep(100)
+        }
+        return false
+    }
+
     override fun scroll(container: ElementHandle?, dir: Direction, steps: Int): Boolean {
         val target = container?.let { obj(it) } ?: primaryScrollable()
         val times = steps.coerceAtLeast(1)
@@ -643,6 +665,11 @@ class UiAutomatorDriver(
                 ""
             }
             val description = node.contentDescription?.toString().orEmpty()
+            val clickable = try {
+                node.isClickable
+            } catch (_: Exception) {
+                false
+            }
             val capped = capText(rawText, INSPECTOR_TEXT_LIMIT)
             val visibleText = if (editable) "" else capped.first
             val value = if (editable) capped.first else ""
@@ -671,7 +698,7 @@ class UiAutomatorDriver(
             val builder = InspectorNode.newBuilder()
                 .setId(id)
                 .setParentId(parentId)
-                .setRole(roleFor(class_name, editable))
+                .setRole(roleFor(class_name, editable, clickable, rawText.isNotEmpty() || description.isNotEmpty()))
                 .setName(capText(description.ifEmpty { if (editable) hint else rawText }, INSPECTOR_NAME_LIMIT).first)
                 .setText(visibleText)
                 .setValue(value)
@@ -1095,7 +1122,12 @@ class UiAutomatorDriver(
         }
     }
 
-    private fun roleFor(class_name: String, editable: Boolean): String {
+    private fun roleFor(
+        class_name: String,
+        editable: Boolean,
+        clickable: Boolean,
+        named: Boolean,
+    ): String {
         val lower = class_name.lowercase()
         return when {
             lower.contains("imagebutton") -> "button"
@@ -1109,6 +1141,10 @@ class UiAutomatorDriver(
             lower.contains("spinner") -> "combobox"
             lower.contains("recyclerview") || lower.contains("listview") ||
                 lower.contains("gridview") -> "list"
+            // Flutter (and many custom views) renders tappable controls as a
+            // generic `android.view.View` with a label or description. A
+            // clickable named node is a button for inspector purposes.
+            clickable && named -> "button"
             lower.contains("image") -> "image"
             lower.contains("textview") -> "text"
             lower.contains("progressbar") -> "progressbar"
@@ -1225,6 +1261,7 @@ class UiAutomatorDriver(
         const val INSPECTOR_MAX_ANCESTOR_WALK = 1_024
         const val INSPECTOR_SCROLL_FRACTION = 0.8f
         const val INSPECTOR_SWIPE_STEP_MS = 16L
+        const val INSPECTOR_IME_DISMISS_MS = 1_500L
         val PACKAGE_NAME = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")
         val REGEX_PLAYBACK_STATE = Regex("PlaybackState \\{[^}]*state=(-?\\d+)")
         val REGEX_SPEED = Regex("speed=(-?\\d+(?:\\.\\d+)?)")

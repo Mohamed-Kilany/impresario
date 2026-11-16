@@ -31,6 +31,7 @@ const ACTION_ROWS: &[&[Verb]] = &[
     &[Verb::ScrollTo],
     &[Verb::Swipe],
     &[Verb::Back],
+    &[Verb::KeyboardHide],
     &[Verb::Key],
     &[Verb::Screenshot],
     &[Verb::AppLaunch],

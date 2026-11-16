@@ -116,6 +116,7 @@ pub fn action_type_to_proto(action: ActionType) -> pb::ActionType {
         ActionType::ScrollTo => pb::ActionType::ScrollTo,
         ActionType::Swipe => pb::ActionType::Swipe,
         ActionType::Back => pb::ActionType::Back,
+        ActionType::HideKeyboard => pb::ActionType::HideKeyboard,
     }
 }
 
@@ -913,6 +914,17 @@ mod tests {
             panic!("expected a run_action body");
         };
         assert_eq!(action.r#type, pb::ActionType::Back as i32);
+        assert!(action.selector.is_none());
+        assert_eq!(action.direction, 0);
+    }
+
+    #[test]
+    fn hide_keyboard_command_is_bare() {
+        let proto = command_to_proto(&Command::RunAction(RunAction::hide_keyboard()), "k", 0);
+        let Some(pb::command::Body::RunAction(action)) = &proto.body else {
+            panic!("expected a run_action body");
+        };
+        assert_eq!(action.r#type, pb::ActionType::HideKeyboard as i32);
         assert!(action.selector.is_none());
         assert_eq!(action.direction, 0);
     }

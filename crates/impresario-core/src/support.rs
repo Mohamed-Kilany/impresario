@@ -20,6 +20,7 @@ pub enum Verb {
     ScrollTo,
     Swipe,
     Back,
+    KeyboardHide,
     Key,
     Wait,
     Screenshot,
@@ -44,6 +45,7 @@ impl Verb {
             Verb::ScrollTo => "scrollto",
             Verb::Swipe => "swipe",
             Verb::Back => "back",
+            Verb::KeyboardHide => "keyboard hide",
             Verb::Key => "key",
             Verb::Wait => "wait",
             Verb::Screenshot => "screenshot",
@@ -73,6 +75,7 @@ impl Verb {
         Verb::ScrollTo,
         Verb::Swipe,
         Verb::Back,
+        Verb::KeyboardHide,
         Verb::Key,
         Verb::Wait,
         Verb::Screenshot,
@@ -182,6 +185,7 @@ const WEB_HISTORY: &str = "history";
 const NAVBAR_BACK: &str = "nav-bar back button, else edge swipe";
 const MENU: &str = "menu";
 const OK_KEY: &str = "back key";
+const OUTSIDE_TAP: &str = "outside tap";
 const NAVIGATE: &str = "navigate";
 const RELOAD_NAV: &str = "reload/navigate";
 
@@ -237,6 +241,11 @@ pub fn action_support(platform: Platform, verb: Verb) -> Support {
             Ios => Limited(NAVBAR_BACK),
             Tvos => Limited(MENU),
         },
+        Verb::KeyboardHide => match platform {
+            Web | Android | AndroidTv | Tvos => Full,
+            WebOs | Tizen => Limited(OK_KEY),
+            Ios => Limited(OUTSIDE_TAP),
+        },
         // `key` support depends on the key itself (table 6.2).
         Verb::Key => Full,
         // `wait` never crosses the wire (D-10); support is platform-agnostic.
@@ -289,6 +298,7 @@ pub fn verb_of_action(verb: &crate::ast::ActionVerb) -> Verb {
         A::Swipe { .. } => Verb::Swipe,
         A::Key { .. } => Verb::Key,
         A::Back => Verb::Back,
+        A::KeyboardHide => Verb::KeyboardHide,
         A::Wait { .. } => Verb::Wait,
         A::Screenshot { .. } => Verb::Screenshot,
         A::App { op } => match op {
@@ -382,6 +392,26 @@ mod tests {
             Support::Unsupported
         );
         assert!(action_support(Platform::Web, Verb::Select).is_supported());
+
+        // keyboard hide is full everywhere except the documented gestures
+        for full in [
+            Platform::Web,
+            Platform::Android,
+            Platform::AndroidTv,
+            Platform::Tvos,
+        ] {
+            assert_eq!(action_support(full, Verb::KeyboardHide), Support::Full);
+        }
+        for key in [Platform::WebOs, Platform::Tizen] {
+            assert_eq!(
+                action_support(key, Verb::KeyboardHide),
+                Support::Limited(OK_KEY)
+            );
+        }
+        assert_eq!(
+            action_support(Platform::Ios, Verb::KeyboardHide),
+            Support::Limited(OUTSIDE_TAP)
+        );
 
         // focused check unsupported on ios only
         assert_eq!(

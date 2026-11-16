@@ -171,6 +171,11 @@ public protocol DriverExtras: AnyObject {
     /// Returns `false` when the driver cannot perform either.
     func pressBack() throws -> Bool
 
+    /// Dismisses the on-screen keyboard. Returns `true` when no keyboard is
+    /// visible afterwards (including "it was already hidden"), `false` when
+    /// the driver cannot observe or dismiss it.
+    func hideKeyboard() throws -> Bool
+
     /// Adjusts a picker/menu element to `value` (iOS `select`). Returns
     /// `false` when the element is not an adjustable picker.
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool
@@ -215,6 +220,7 @@ public extension DriverExtras {
     func keyboardVisible() -> Bool { false }
     func longPressSelect(duration: TimeInterval) throws -> Bool { false }
     func pressBack() throws -> Bool { false }
+    func hideKeyboard() throws -> Bool { false }
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool { false }
     func mediaSnapshot() -> MediaSnapshot? { nil }
     func drmSnapshot() -> DrmSnapshot? { nil }

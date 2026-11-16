@@ -121,6 +121,14 @@ interface UiDriver {
     fun pressBack()
 
     /**
+     * Dismisses the on-screen keyboard. Returns `true` when no IME window is
+     * visible after the attempt (including "it was already hidden"), `false`
+     * when the IME is still up. Drivers that cannot observe the IME return
+     * `false` rather than claiming success.
+     */
+    fun hideKeyboard(): Boolean = false
+
+    /**
      * Runs [steps] scroll steps inside `container` (the primary scrollable of
      * the screen when `null`). Returns `false` when no step moved the
      * content - the container already sits at that end - and `true` when it

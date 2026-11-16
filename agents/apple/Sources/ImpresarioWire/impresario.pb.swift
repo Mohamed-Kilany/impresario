@@ -271,6 +271,7 @@ public nonisolated enum Impresario_V1_ActionType: SwiftProtobuf.Enum, Swift.Case
   case scrollTo // = 9
   case swipe // = 10
   case back // = 11
+  case hideKeyboard // = 12
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -291,6 +292,7 @@ public nonisolated enum Impresario_V1_ActionType: SwiftProtobuf.Enum, Swift.Case
     case 9: self = .scrollTo
     case 10: self = .swipe
     case 11: self = .back
+    case 12: self = .hideKeyboard
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -309,6 +311,7 @@ public nonisolated enum Impresario_V1_ActionType: SwiftProtobuf.Enum, Swift.Case
     case .scrollTo: return 9
     case .swipe: return 10
     case .back: return 11
+    case .hideKeyboard: return 12
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -327,6 +330,7 @@ public nonisolated enum Impresario_V1_ActionType: SwiftProtobuf.Enum, Swift.Case
     .scrollTo,
     .swipe,
     .back,
+    .hideKeyboard,
   ]
 
 }
@@ -1007,6 +1011,7 @@ public nonisolated enum Impresario_V1_InspectorInputKind: SwiftProtobuf.Enum, Sw
   case key // = 3
   case type // = 4
   case swipe // = 5
+  case keyboard // = 6
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -1021,6 +1026,7 @@ public nonisolated enum Impresario_V1_InspectorInputKind: SwiftProtobuf.Enum, Sw
     case 3: self = .key
     case 4: self = .type
     case 5: self = .swipe
+    case 6: self = .keyboard
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -1033,6 +1039,7 @@ public nonisolated enum Impresario_V1_InspectorInputKind: SwiftProtobuf.Enum, Sw
     case .key: return 3
     case .type: return 4
     case .swipe: return 5
+    case .keyboard: return 6
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -1045,6 +1052,7 @@ public nonisolated enum Impresario_V1_InspectorInputKind: SwiftProtobuf.Enum, Sw
     .key,
     .type,
     .swipe,
+    .keyboard,
   ]
 
 }
@@ -2256,7 +2264,7 @@ nonisolated extension Impresario_V1_SelectorStrategy: SwiftProtobuf._ProtoNamePr
 }
 
 nonisolated extension Impresario_V1_ActionType: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACTION_TYPE_UNSPECIFIED\0\u{1}CLICK\0\u{1}TYPE\0\u{1}APPEND\0\u{1}CLEAR\0\u{1}LONG_PRESS\0\u{1}FOCUS\0\u{1}SELECT\0\u{1}SCROLL\0\u{1}SCROLL_TO\0\u{1}SWIPE\0\u{1}BACK\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACTION_TYPE_UNSPECIFIED\0\u{1}CLICK\0\u{1}TYPE\0\u{1}APPEND\0\u{1}CLEAR\0\u{1}LONG_PRESS\0\u{1}FOCUS\0\u{1}SELECT\0\u{1}SCROLL\0\u{1}SCROLL_TO\0\u{1}SWIPE\0\u{1}BACK\0\u{1}HIDE_KEYBOARD\0")
 }
 
 nonisolated extension Impresario_V1_Direction: SwiftProtobuf._ProtoNameProviding {
@@ -2300,7 +2308,7 @@ nonisolated extension Impresario_V1_LogLevel: SwiftProtobuf._ProtoNameProviding 
 }
 
 nonisolated extension Impresario_V1_InspectorInputKind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0INSPECTOR_INPUT_KIND_UNSPECIFIED\0\u{1}INSPECTOR_INPUT_KIND_TAP\0\u{1}INSPECTOR_INPUT_KIND_SCROLL\0\u{1}INSPECTOR_INPUT_KIND_KEY\0\u{1}INSPECTOR_INPUT_KIND_TYPE\0\u{1}INSPECTOR_INPUT_KIND_SWIPE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0INSPECTOR_INPUT_KIND_UNSPECIFIED\0\u{1}INSPECTOR_INPUT_KIND_TAP\0\u{1}INSPECTOR_INPUT_KIND_SCROLL\0\u{1}INSPECTOR_INPUT_KIND_KEY\0\u{1}INSPECTOR_INPUT_KIND_TYPE\0\u{1}INSPECTOR_INPUT_KIND_SWIPE\0\u{1}INSPECTOR_INPUT_KIND_KEYBOARD\0")
 }
 
 nonisolated extension Impresario_V1_HandshakeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

@@ -113,6 +113,8 @@ public final class CommandExecutor: @unchecked Sendable {
             return try await swipe(action, timeout)
         case .back:
             return try await back()
+        case .hideKeyboard:
+            return try await hideKeyboard()
         }
     }
 
@@ -358,6 +360,23 @@ public final class CommandExecutor: @unchecked Sendable {
             element = try await waitExisting(spec, timeout)
         }
         try driver.swipe(element, direction)
+        return .ok()
+    }
+
+    private func hideKeyboard() async throws -> Outcome {
+        guard let extras else {
+            throw AgentError.unsupportedAction(
+                "the driver cannot observe the on-screen keyboard"
+            )
+        }
+        if !extras.keyboardVisible() {
+            return .ok()
+        }
+        guard try extras.hideKeyboard() else {
+            throw AgentError.unsupportedAction(
+                "the on-screen keyboard is still visible after the dismissal attempt"
+            )
+        }
         return .ok()
     }
 

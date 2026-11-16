@@ -342,6 +342,7 @@ action       = string , "=>" , piece , [ tmo ]                        (* shortha
              | "swipe"     , direction , [ "=>" , piece ] , [ tmo ]
              | "key"       , keyname , [ integer ]                    (* repeat count, default 1 *)
              | "back"
+             | "keyboard" , "hide"
              | "wait"      , duration
              | "screenshot", string
              | "app"       , ( "launch" | "terminate" | "restart" | "background" ) ;
@@ -371,8 +372,8 @@ unknown `${example.X}` column is `IMP-DSL-051`. A duplicate theatre name is
 signature mismatches are `IMP-DSL-041`.
 
 An unknown verb is `IMP-DSL-010` (with a hint); an unknown key name is
-`IMP-DSL-018`. `tmo` is not allowed on `key`, `back`, `wait`, `screenshot`
-and `app` (`IMP-DSL-022`). `Check: P` with no condition means
+`IMP-DSL-018`. `tmo` is not allowed on `key`, `back`, `keyboard hide`, `wait`,
+`screenshot` and `app` (`IMP-DSL-022`). `Check: P` with no condition means
 `is visible`.
 
 ---
@@ -431,6 +432,16 @@ option (then dispatches `input`/`change`); Android clicks `P` then the
 element with that text; iOS/tvOS uses the picker wheel or taps the menu item
 with that label. Option not found: `ELEMENT_NOT_FOUND` with
 `details.option`.
+
+### Hide keyboard
+
+`keyboard hide` dismisses the on-screen keyboard. Android/TV send BACK only
+when an IME window is present; tvOS presses Menu; web blurs the focused
+element; web TVs send the back key. iOS taps outside the field (the documented
+◐ limitation) and fails with `NOT_INTERACTABLE` if the keyboard remains.
+Already-hidden keyboards succeed without sending anything, so the step is safe
+to place after conditional text entry. A platform that cannot observe or
+dismiss the keyboard fails loudly; it never reports a silent success.
 
 ### Checks
 

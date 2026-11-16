@@ -431,6 +431,7 @@ fn step_timeouts_are_captured() {
 fn timeout_is_rejected_on_master_and_key_actions() {
     for line in [
         "Action: back timeout 5s",
+        "Action: keyboard hide timeout 5s",
         "Action: wait 1s timeout 2s",
         "Action: key ok timeout 1s",
         "Action: screenshot 's' timeout 1s",
@@ -580,6 +581,17 @@ fn key_wait_screenshot_and_app_verbs() {
         ActionVerb::App { op } => assert_eq!(*op, AppOp::Background),
         other => panic!("expected App, got {other:?}"),
     }
+}
+
+#[test]
+fn keyboard_hide_parses_and_unknown_operations_fail() {
+    let theatre = theatre_ok(&theatre_with_steps(&["Action: keyboard hide"]));
+    assert!(matches!(
+        action(theatre_steps(&theatre)[0]),
+        ActionVerb::KeyboardHide
+    ));
+    let outcome = theatre_outcome(&theatre_with_steps(&["Action: keyboard dismiss"]));
+    assert_eq!(codes(&outcome.diagnostics), vec!["IMP-DSL-010"]);
 }
 
 #[test]

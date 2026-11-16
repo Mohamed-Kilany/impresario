@@ -2175,6 +2175,7 @@ impl ActionVerb {
             self,
             ActionVerb::Key { .. }
                 | ActionVerb::Back
+                | ActionVerb::KeyboardHide
                 | ActionVerb::Wait { .. }
                 | ActionVerb::Screenshot { .. }
                 | ActionVerb::App { .. }
@@ -2415,6 +2416,23 @@ fn parse_action_body(cursor: &mut Cursor<'_>) -> Result<ActionVerb, Diagnostic> 
             })
         }
         "back" => Ok(ActionVerb::Back),
+        "keyboard" => {
+            let (operation, operation_span) = cursor.word().map_err(|_| {
+                diag_at(
+                    Code::DslUnknownAction,
+                    "keyboard needs 'hide'",
+                    cursor.span(cursor.col(), 1),
+                )
+            })?;
+            if operation != "hide" {
+                return Err(diag_at(
+                    Code::DslUnknownAction,
+                    format!("unknown keyboard operation '{operation}' (expected 'hide')"),
+                    operation_span,
+                ));
+            }
+            Ok(ActionVerb::KeyboardHide)
+        }
         "wait" => {
             let duration = cursor.duration().map_err(|reason| {
                 diag_at(
@@ -2449,6 +2467,7 @@ fn parse_action_body(cursor: &mut Cursor<'_>) -> Result<ActionVerb, Diagnostic> 
                 "swipe",
                 "key",
                 "back",
+                "keyboard",
                 "wait",
                 "screenshot",
                 "app",

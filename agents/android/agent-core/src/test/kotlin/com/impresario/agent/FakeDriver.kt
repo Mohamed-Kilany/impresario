@@ -124,6 +124,14 @@ class FakeDriver(
         calls.add("back")
     }
 
+    /** Result of `hideKeyboard`; `false` models an IME that stays up. */
+    var hideKeyboardWorks: Boolean = true
+
+    override fun hideKeyboard(): Boolean {
+        calls.add("hideKeyboard")
+        return hideKeyboardWorks
+    }
+
     /** Result of `scroll` calls; `false` models a container at its end. */
     var scrollMoves: Boolean = true
 

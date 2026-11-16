@@ -1546,6 +1546,22 @@ fn compile_step(
                     work: PlannedWork::Wire,
                 })
             }
+            ActionVerb::KeyboardHide => {
+                check_action_support(
+                    ActionType::HideKeyboard,
+                    &action.span,
+                    ctx,
+                    &mut diagnostics,
+                );
+                Ok(PlannedStep {
+                    span: step.span.clone(),
+                    source_text: step.source_text.clone(),
+                    label: "keyboard hide".to_string(),
+                    timeout_ms,
+                    command: Some(Command::RunAction(RunAction::hide_keyboard())),
+                    work: PlannedWork::Wire,
+                })
+            }
             ActionVerb::Wait { duration } => Ok(PlannedStep {
                 span: step.span.clone(),
                 source_text: step.source_text.clone(),
@@ -1928,6 +1944,7 @@ fn check_action_support(
         ActionType::ScrollTo => support::Verb::ScrollTo,
         ActionType::Swipe => support::Verb::Swipe,
         ActionType::Back => support::Verb::Back,
+        ActionType::HideKeyboard => support::Verb::KeyboardHide,
     };
     check_verb_support(verb, span, ctx, diagnostics);
 }

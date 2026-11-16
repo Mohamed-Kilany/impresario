@@ -71,13 +71,14 @@ enum ActionType {
   ACTION_TYPE_UNSPECIFIED = 0;
   CLICK = 1; TYPE = 2; APPEND = 3; CLEAR = 4; LONG_PRESS = 5; FOCUS = 6;
   SELECT = 7; SCROLL = 8; SCROLL_TO = 9; SWIPE = 10; BACK = 11;
+  HIDE_KEYBOARD = 12;                    // dismiss the on-screen keyboard
 }
 // TYPE replaces content (clear, then enter). APPEND keeps content. CLEAR leaves "".
 enum Direction { DIRECTION_UNSPECIFIED = 0; UP = 1; DOWN = 2; LEFT = 3; RIGHT = 4; }
 
 message RunAction {
   ActionType type = 1;
-  Selector selector = 2;                 // absent only for SCROLL/SWIPE (screen-level) and BACK
+  Selector selector = 2;                 // absent only for SCROLL/SWIPE (screen-level), BACK and HIDE_KEYBOARD
   string text = 3;                       // TYPE, APPEND, SELECT (option text)
   Direction direction = 4;               // SCROLL, SWIPE
   uint32 count = 5;                      // SCROLL steps (default 1)
@@ -330,6 +331,7 @@ enum InspectorInputKind {
   INSPECTOR_INPUT_KIND_KEY = 3;
   INSPECTOR_INPUT_KIND_TYPE = 4;
   INSPECTOR_INPUT_KIND_SWIPE = 5;
+  INSPECTOR_INPUT_KIND_KEYBOARD = 6;
 }
 
 message InspectorInputRequest {

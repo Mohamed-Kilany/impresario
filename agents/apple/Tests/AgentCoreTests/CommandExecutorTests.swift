@@ -657,6 +657,28 @@ final class CommandExecutorTests: XCTestCase {
         XCTAssertEqual(driver.remotes.map(\.button), [.menu, .menu])
     }
 
+    func testHideKeyboardIsANoOpWhenTheKeyboardIsHidden() async {
+        driver.keyboardShown = false
+        let result = await execute(.runAction(RunActionSpec(kind: .hideKeyboard)))
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(driver.hideKeyboardCalls, 0)
+    }
+
+    func testHideKeyboardDismissesAnOpenKeyboard() async {
+        driver.keyboardShown = true
+        let result = await execute(.runAction(RunActionSpec(kind: .hideKeyboard)))
+        XCTAssertTrue(result.ok, result.error?.message ?? "")
+        XCTAssertEqual(driver.hideKeyboardCalls, 1)
+        XCTAssertFalse(driver.keyboardShown)
+    }
+
+    func testHideKeyboardFailsWhenTheDriverCannotDismissIt() async {
+        driver.keyboardShown = true
+        driver.hideKeyboardResult = false
+        let result = await execute(.runAction(RunActionSpec(kind: .hideKeyboard)))
+        assertError(result, .unsupportedAction)
+    }
+
     // MARK: - checks
 
     func testVisibleCheckPasses() async {

@@ -56,6 +56,11 @@ class InspectorServiceImplTest {
             calls += "key:$code"
         }
 
+        override fun hideKeyboard(): Boolean {
+            calls += "hideKeyboard"
+            return true
+        }
+
         override fun type(nodeId: Long, text: String) {
             calls += "type:$nodeId:$text"
         }
@@ -157,6 +162,13 @@ class InspectorServiceImplTest {
             assertTrue(
                 service.input(
                     InspectorInputRequest.newBuilder()
+                        .setKind(InspectorInputKind.INSPECTOR_INPUT_KIND_KEYBOARD)
+                        .build(),
+                ).ok,
+            )
+            assertTrue(
+                service.input(
+                    InspectorInputRequest.newBuilder()
                         .setKind(InspectorInputKind.INSPECTOR_INPUT_KIND_SWIPE)
                         .setX(1f)
                         .setY(2f)
@@ -173,6 +185,7 @@ class InspectorServiceImplTest {
                 "scroll:DOWN:2:7:0.0:0.0",
                 "key:66",
                 "type:7:hello",
+                "hideKeyboard",
                 "swipe:1.0:2.0:3.0:4.0:200",
             ),
             driver.calls,

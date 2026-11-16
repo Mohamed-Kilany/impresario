@@ -60,6 +60,9 @@ interface InspectorDriver {
 
     fun pressKey(code: Int)
 
+    /** Dismiss the on-screen keyboard; see [UiDriver.hideKeyboard]. */
+    fun hideKeyboard(): Boolean = false
+
     /** Focus [nodeId] when set, then replace the focused field's text. */
     fun type(nodeId: Long, text: String)
 
@@ -221,6 +224,13 @@ class InspectorServiceImpl(
                         driver.pressKey(KeyTable.resolve(request.key, session.options.isTv))
                     InspectorInputKind.INSPECTOR_INPUT_KIND_TYPE ->
                         driver.type(request.nodeId, request.text)
+                    InspectorInputKind.INSPECTOR_INPUT_KIND_KEYBOARD -> {
+                        if (!driver.hideKeyboard()) {
+                            throw AgentException.notInteractable(
+                                "the on-screen keyboard is still visible (or cannot be observed)",
+                            )
+                        }
+                    }
                     InspectorInputKind.INSPECTOR_INPUT_KIND_SWIPE ->
                         driver.swipe(request.x, request.y, request.endX, request.endY, request.durationMs.toLong())
                     else -> throw AgentException.protocol("the inspector input kind is unspecified")

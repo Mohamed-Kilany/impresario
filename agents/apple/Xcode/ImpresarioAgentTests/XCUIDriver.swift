@@ -574,18 +574,21 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     }
 
     func keyboardVisible() -> Bool {
-        onQueue {
-            // A completed type proves the keyboard session exists even when
-            // `app.keyboards` cannot see tvOS's full-screen keyboard.
-            if typedIntoField {
-                return true
-            }
-            guard let app = try? application() else {
-                return false
-            }
-            let keyboard = app.keyboards.firstMatch
-            return keyboard.exists && !keyboard.frame.isEmpty
+        onQueue { keyboardVisibleLocked() }
+    }
+
+    /// Caller holds the driver queue.
+    private func keyboardVisibleLocked() -> Bool {
+        // A completed type proves the keyboard session exists even when
+        // `app.keyboards` cannot see tvOS's full-screen keyboard.
+        if typedIntoField {
+            return true
         }
+        guard let app = try? application() else {
+            return false
+        }
+        let keyboard = app.keyboards.firstMatch
+        return keyboard.exists && !keyboard.frame.isEmpty
     }
 
     func longPressSelect(duration: TimeInterval) throws -> Bool {
@@ -638,6 +641,55 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             return dragged
         }
         #endif
+    }
+
+    func hideKeyboard() throws -> Bool {
+        try onQueue {
+            try hideKeyboardLocked()
+            return true
+        }
+    }
+
+    /// Caller holds the driver queue. Android's analogue observes the IME
+    /// window; iOS has no such public hook, so it taps outside the field
+    /// (documented limitation) and fails when the keyboard is still up.
+    private func hideKeyboardLocked() throws {
+        if !keyboardVisibleLocked() {
+            typedIntoField = false
+            return
+        }
+        #if os(tvOS)
+        // tvOS's full-screen keyboard consumes Menu; the same button is the
+        // documented dismissal gesture.
+        onMain { XCUIRemote.shared.press(.menu) }
+        typedIntoField = false
+        Thread.sleep(forTimeInterval: 0.4)
+        #else
+        let app = try application()
+        let frame = app.frame
+        guard frame.width > 1, frame.height > 1 else {
+            throw AgentError.notInteractable("the app has no visible extent")
+        }
+        // Top center: above the keyboard and clear of ordinary form fields.
+        let point = CGPoint(
+            x: frame.midX,
+            y: frame.minY + max(24, frame.height * 0.06)
+        )
+        try tapScreen(point)
+        typedIntoField = false
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline {
+            if !keyboardVisibleLocked() {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        #endif
+        if keyboardVisibleLocked() {
+            throw AgentError.notInteractable(
+                "the on-screen keyboard did not dismiss after the outside tap"
+            )
+        }
     }
 
     func selectValue(_ e: ElementRef, _ value: String) throws -> Bool {
@@ -754,6 +806,9 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     private static let inspectorTraversalBudget = 20_000
     private static let inspectorNameLimit = 200
     private static let inspectorTextLimit = 1_000
+    /// Bounded D-pad walk for inspector `type` on tvOS (no touch input).
+    private static let inspectorFocusSteps = 12
+    private static let inspectorFocusSettle: TimeInterval = 0.15
 
     func capture(_ options: InspectorCaptureOptions) throws -> InspectorCapture {
         try onQueue {
@@ -955,6 +1010,8 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                 try inspectorType(nodeId: nodeId, text: text)
             case .swipe(let x1, let y1, let x2, let y2, _):
                 try inspectorSwipe(x1: x1, y1: y1, x2: x2, y2: y2)
+            case .keyboard:
+                try hideKeyboardLocked()
             }
         }
     }
@@ -1075,6 +1132,25 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             }
             element = found
             try ensureEditable(element)
+            #if os(tvOS)
+            // tvOS has no touch input: mirror the run path (spec 12.3, I-198).
+            // D-pad focus the field, then Select opens the full-screen
+            // keyboard. Tapping it made every inspector `type` request fail
+            // with NOT_INTERACTABLE. Once the keyboard is up it owns D-pad
+            // focus, so keep the editing session instead of traversing again.
+            // The keyboard probe is inline: `keyboardVisible()` re-enters the
+            // driver queue that `inspectorInput` already holds.
+            if !typedIntoField {
+                let keyboard = app.keyboards.firstMatch
+                if !(keyboard.exists && !keyboard.frame.isEmpty) {
+                    guard let handle = inspectorHandles[nodeId] else {
+                        throw AgentError.elementNotFound("the inspector node no longer exists")
+                    }
+                    try inspectorFocus(element, handle.frame)
+                    try pressRemote(.select)
+                }
+            }
+            #else
             // Focus the field exactly like the run path does. XCUITest types
             // into the key window's focused responder; calling `typeText` on
             // an unfocused field waits for the keyboard session and made the
@@ -1089,6 +1165,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
                     "the inspector field did not take focus: \(message(error))"
                 )
             }
+            #endif
         } else {
             element = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "hasFocus == true"))
@@ -1096,6 +1173,14 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             guard element.exists else {
                 throw AgentError.notInteractable("no inspector node is focused")
             }
+            #if os(tvOS)
+            if !typedIntoField {
+                let keyboard = app.keyboards.firstMatch
+                if !(keyboard.exists && !keyboard.frame.isEmpty) {
+                    try pressRemote(.select)
+                }
+            }
+            #endif
         }
         guard !text.isEmpty else { return }
         try onMain {
@@ -1108,6 +1193,53 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         }
         typedIntoField = true
     }
+
+    #if os(tvOS)
+    /// Bounded D-pad walk toward a captured node. The executor owns the full
+    /// FocusNavigator, but the inspector only has to reach the field the
+    /// operator selected, so a geometric walk with a hard step budget is
+    /// enough and fails loudly instead of tapping a screen that has no touch.
+    /// The caller holds the driver queue, so focus is read inline rather than
+    /// through `focusedIdentity()` (which would re-enter the serial queue).
+    private func inspectorFocus(_ element: XCUIElement, _ target: CGRect) throws {
+        let app = try application()
+        for _ in 0..<Self.inspectorFocusSteps {
+            if (try? element.snapshot())?.hasFocus == true { return }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true"))
+                .allElementsBoundByIndex
+            var currentFrame: CGRect?
+            for candidate in focused {
+                guard let snapshot = try? candidate.snapshot(),
+                      !snapshot.frame.isEmpty
+                else { continue }
+                currentFrame = snapshot.frame
+                break
+            }
+            guard let currentFrame else {
+                throw AgentError.notInteractable(
+                    "nothing has D-pad focus; focus the field with the key action first"
+                )
+            }
+            let dx = target.midX - currentFrame.midX
+            let dy = target.midY - currentFrame.midY
+            let direction: RemoteButton
+            if abs(dx) > abs(dy) {
+                direction = dx > 0 ? .right : .left
+            } else {
+                direction = dy > 0 ? .down : .up
+            }
+            try pressRemote(direction)
+            Thread.sleep(forTimeInterval: Self.inspectorFocusSettle)
+        }
+        guard (try? element.snapshot())?.hasFocus == true else {
+            throw AgentError.notInteractable(
+                "the inspector field did not take D-pad focus after "
+                    + "\(Self.inspectorFocusSteps) steps"
+            )
+        }
+    }
+    #endif
 
     private func inspectorSwipe(x1: Double, y1: Double, x2: Double, y2: Double) throws {
         #if os(tvOS)
@@ -1175,6 +1307,9 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
         case .pageDown: mapped = .pageDown
         }
         onMain { XCUIRemote.shared.press(mapped) }
+        if button == .menu || button == .home {
+            typedIntoField = false
+        }
         #else
         _ = button
         throw AgentError.unsupportedAction("remote input is unavailable on ios")

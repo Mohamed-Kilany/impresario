@@ -412,6 +412,7 @@ fn input_json(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
         Some("key") => pb::InspectorInputKind::Key,
         Some("type") => pb::InspectorInputKind::Type,
         Some("swipe") => pb::InspectorInputKind::Swipe,
+        Some("keyboard") => pb::InspectorInputKind::Keyboard,
         Some(other) => {
             return Err(ApiError::bad_request(format!(
                 "unknown input kind '{other}'"
