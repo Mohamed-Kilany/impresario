@@ -5,7 +5,9 @@ Audit date: 2026-11-16. Sources: `TASK.md`, `TASK-1.md`, `TASK-2.md`,
 
 This file tracks work that is **not** complete. The current session's iPhone/tvOS
 inspector, Android phone/TV, iPhone and tvOS stub suites, pairing, runner icon
-and DDI validation are done and recorded in `docs/STATUS.md`.
+and DDI validation are done and recorded in `docs/STATUS.md`. The standalone
+local agent stack in `ai/` is complete offline; its device evidence is deferred
+(section 6).
 
 Status legend: `todo`, `in progress`, `blocked`, `deferred` (needs hardware,
 credentials or an owner decision), `done`.
@@ -119,7 +121,43 @@ initial check failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`; the acceptance t
 ran on `9ec8196` APKs. No success is claimed for Flutter detection/enrichment,
 which remains INS-R1 work.
 
-## 6. Session log
+## 6. Standalone local agent stack (`ai/`)
+
+A self-contained CPU-only agent operates the full 41-tool Impresario MCP from
+`D:\projects\impresario\ai`. The folder is ignored by git (`/ai/`); only the
+ignore rule is tracked. It bundles MiniCPM5-2B Q8_0, llama.cpp b12438, Python
+3.13 and `impresario.exe` 1.0.0, sets `IMPRESARIO_HOME=ai/home`, and never calls
+a system `adb`.
+
+| ID | Item | Status |
+|---|---|---|
+| AI-R1 | Bundle model, llama.cpp, Python, MCP host and inspector scripts; relative paths and contained home | done 2026-11-16 — `ai.cmd doctor` PASS |
+| AI-R2 | Five toolsets partition the live 41 tools exactly (authoring 12, automation 9, inspector-read 8, inspector-act 6, scenes 6) | done 2026-11-16 — doctor reports missing=[] extra=[] |
+| AI-R3 | Compact catalog plus one validated `call_tool` dispatcher instead of full schemas | done — 128-token dispatcher; real MCP schemas enforced locally |
+| AI-R4 | CPU profile: 131k context, q8_0 KV, 8 threads, `-fa on`, thinking off | done — rendered authoring prompt about 4,100 tokens; 5.08 GiB resident at full window |
+| AI-R5 | Cache-aware prompt: constant tool schema, changing catalog at the tail | done — a toolset switch processed 683–2,231 tokens, not the full prompt |
+| AI-R6 | Honest evidence gate | done — 18/18 cases; rejects overclaims, `not-run` with successful calls, wrong device/run/change/keyboard claims; normalizes tool-name misspellings |
+| AI-R7 | One-command scripts: doctor, start/stop, chat, inspector start/stop, refresh, validate, fmt, status | done — all exercised; validate reports 9 scenes, 3 theatres, 2 plays, 5 devices, 3 apps and one expected `IMP-DSL-054` |
+| AI-R8 | Offline toolset exercise | done — authoring list/validate; automation service/schedules/watchers; inspector-read, inspector-act and scenes report blocked honestly with no inspector |
+| AI-R9 | Local inspector lifecycle | done — start, status and stop; no device attached, so no device evidence was claimed |
+| AI-R10 | Apple CI after the acceptance merge | done — run `43871350553` green at `4b69a29` |
+
+Device evidence is deferred to the device network:
+
+| ID | Item | Status |
+|---|---|---|
+| AI-D1 | Android phone/TV `devices_check` and 10-act stub runs | deferred |
+| AI-D2 | iPhone/tvOS separate runs and Apple device regression | deferred |
+| AI-D3 | Wi-Fi acceptance on all four targets | deferred |
+| AI-D4 | `.112` Flutter inspector acceptance (never the 10-act suite) | deferred |
+| AI-D5 | Keyboard-hide scene run through `impresario_run` (MCP has no keyboard-hide input) | deferred |
+| AI-D6 | `impresario_devices_check` / `inspector_attach` evidence from this host | deferred — the current network has no devices |
+
+Local limits: a 2B model sometimes needs one or two ledger corrections; the
+inspector toolsets require an operator-started inspector; `keyboard hide` is
+only available as a `.scene` action, not an MCP call.
+
+## 7. Session log
 
 - 2026-11-15: `android-phone` ready (A51, Android 13); stale debug-signed agent/test/stub packages were uninstalled and the CI `d90344f` APKs installed.
 - 2026-11-15: `android-tv` authorized on the TV; `device check` passes (`G03_4K_GB`, Android 11, 1920x1080 @2x).
@@ -145,3 +183,6 @@ which remains INS-R1 work.
 - 2026-11-16: paused playback passed on all four targets with 14/14 steps each. Android phone `run 20261116-110113-0a92` paused at 1.714 s and TV `run 20261116-110200-b506` at 3.709 s via the media-key path; tvOS `run 20261116-115221-d1a6` paused at 1.664 s and iPhone `run 20261116-115340-3b80` at 3.927 s via the new Apple `Pause` button. Every run reported `rate=0`, identical positions 2 s apart, then `rate=1` after resume. Apple Xcode run `43859138304` built the pause control and idle-timer changes at `ee1aa83`. T3-R2 is complete.
 - 2026-11-16: the full Apple 10-act suite also passed against the `ee1aa83` products after the Pause control was added: tvOS `run 20261116-120735-0d83` (10/10 acts, 111/111 steps, 3m36s) and iPhone `run 20261116-121116-48f2` (10/10 acts, 107/107 steps, 3m23s). The shipped cross-platform suite does not reference the Apple-only `Pause` piece, so the embedded `IMP-DSL-054` lint stays clean; the paused probe uses its own workspace scene. Main CI `43862446601` at `c02cf0d` and the final docs CI `43864841289` at `68a9ba6` are both green across all eight jobs.
 - 2026-11-16: the Apple agent host (`ImpresarioAgentAppDelegate`) and the UI-test runner (`testServe`) now set `UIApplication.shared.isIdleTimerDisabled` while serving, so a long play does not let the device sleep or lock. This is best-effort because the foreground app owns the final idle-timer state; no device verification was requested for this point.
+- 2026-11-16: the standalone `ai/` stack verified its bundle and the exact 41-tool partition. The rendered authoring prompt fell from 6,205 to about 4,100 tokens after the compact catalog and constant `call_tool` dispatcher replaced the full schemas; the CPU profile is 131k context, q8_0 KV, 8 threads, `-fa on`, thinking off, 5.08 GiB at full window.
+- 2026-11-16: offline toolset exercise passed. Authoring listed devices and validated the workspace; automation read service status, schedules and watchers; inspector-read, inspector-act and scenes each reported `blocked` with the exact no-inspector error. The evidence gate passed 18/18 cases, including overclaim, `not-run`, keyboard-hide, device-name and misspelling cases. The repeated multi-step workspace task that previously claimed a device check ended with `DEVICES: none contacted` and only `impresario_validate` evidence.
+- 2026-11-16: inspector lifecycle start/status/stop passed locally with `device: (none)`; no device was attached and no device evidence was produced. Device acceptance remains deferred to the device network (AI-D1 to AI-D6).

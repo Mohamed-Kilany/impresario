@@ -41,3 +41,6 @@ Thumbs.db
 
 # TV stub build output
 /fixtures/tv-stub/build/
+
+# Standalone local AI stack (model, binaries, transcripts)
+/ai/
