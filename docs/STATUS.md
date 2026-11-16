@@ -321,7 +321,11 @@ four-device rerun, plus the local-network prompt. Paused playback is verified
 on all four targets: phone `run 20261116-110113-0a92`, TV
 `run 20261116-110200-b506`, tvOS `run 20261116-115221-d1a6` and iPhone
 `run 20261116-115340-3b80` each paused at a stable position with `rate=0`,
-`duration>1s` and `muted`, then resumed at `rate=1` (14/14 steps). The Apple
+`duration>1s` and `muted`, then resumed at `rate=1` (14/14 steps). A
+post-change regression then passed the full 10-act suite on both Apple targets
+with the same `ee1aa83` products: tvOS `run 20261116-120735-0d83` (10/10,
+111/111, 3m36s) and iPhone `run 20261116-121116-48f2` (10/10, 107/107, 3m23s),
+so the added Pause row did not disturb the Media layout. The Apple
 stub gained a `Pause` control, and the agent host plus UI-test runner now set
 `isIdleTimerDisabled` while serving so long plays do not sleep or lock the
 device (best-effort; the foreground app owns the final idle-timer state). The

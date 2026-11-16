@@ -1574,7 +1574,11 @@ on 2026-11-16 (see the closure note below).
   `muted=true` and position 1.663796917 s identical across two samples 2 s
   apart, then `Pause` again resumed at `rate=1`. The iPhone run
   `20261116-115340-3b80` repeated the probe at position 3.926657882 s with the
-  same rate/duration/muted facts and also resumed at `rate=1`.
+  same rate/duration/muted facts and also resumed at `rate=1`. The same
+  `ee1aa83` products then passed the full 10-act suite on tvOS
+  (`20261116-120735-0d83`, 111/111 steps, 3m36s) and iPhone
+  (`20261116-121116-48f2`, 107/107 steps, 3m23s), so the new control did not
+  displace any existing Media element.
 
 The Apple TV therefore has hardware evidence for the hook/position/resolution
 path, the `Showing` coverage path, the uniform empty-slot negative control,
