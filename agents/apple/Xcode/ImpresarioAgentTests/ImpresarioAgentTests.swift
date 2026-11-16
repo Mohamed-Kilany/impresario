@@ -1,6 +1,7 @@
 import AgentCore
 import AgentService
 import Foundation
+import UIKit
 import XCTest
 
 /// The agent UI test (spec 12.1): its `testServe` method starts Impresario
@@ -14,6 +15,11 @@ import XCTest
 final class ImpresarioAgentTests: XCTestCase {
     func testServe() async throws {
         continueAfterFailure = false
+
+        // A long play must not let the device sleep or lock. The runner can
+        // only control its own idle timer; the host app does the same and the
+        // app under test is responsible for its foreground window.
+        await MainActor.run { UIApplication.shared.isIdleTimerDisabled = true }
 
         let environment = ProcessInfo.processInfo.environment
         let platform = AgentEnvironment.platform()
@@ -51,6 +57,7 @@ final class ImpresarioAgentTests: XCTestCase {
         print("impresario agent: serving; waiting for a master (Shutdown ends the run)")
 
         await handle.serveUntilShutdown()
+        await MainActor.run { UIApplication.shared.isIdleTimerDisabled = false }
         print("impresario agent: Shutdown received, agent exiting")
     }
 }

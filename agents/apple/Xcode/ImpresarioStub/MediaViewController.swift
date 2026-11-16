@@ -13,6 +13,7 @@ final class MediaViewController: UIViewController {
     private let imageView = UIImageView()
     private let brokenView = UIImageView()
     private let statusLabel = StubTheme.label("loading", size: 16, lineHeight: 21.5)
+    private let pauseButton = StubTheme.button("Pause", id: "stub_media_pause")
 
     private var player: AVPlayer?
     private var statusObservation: NSKeyValueObservation?
@@ -50,7 +51,9 @@ final class MediaViewController: UIViewController {
 
         statusLabel.accessibilityIdentifier = "stub_media_status"
 
-        for subview in [titleLabel, videoContainer, imageView, brokenView, statusLabel] {
+        pauseButton.addTarget(self, action: #selector(togglePlayback), for: .primaryActionTriggered)
+
+        for subview in [titleLabel, pauseButton, videoContainer, imageView, brokenView, statusLabel] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
         }
@@ -76,13 +79,20 @@ final class MediaViewController: UIViewController {
                 constant: inset
             ),
             titleLabel.trailingAnchor.constraint(
-                equalTo: view.fixtureTrailingAnchor,
-                constant: -inset
+                equalTo: pauseButton.leadingAnchor,
+                constant: -StubTheme.dp(12)
             ),
             titleLabel.topAnchor.constraint(
                 equalTo: contentTop,
                 constant: StubTheme.mediaVerticalInset
             ),
+
+            pauseButton.trailingAnchor.constraint(
+                equalTo: view.fixtureTrailingAnchor,
+                constant: -inset
+            ),
+            pauseButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            pauseButton.widthAnchor.constraint(equalToConstant: StubTheme.dp(120)),
 
             videoContainer.leadingAnchor.constraint(
                 equalTo: view.fixtureLeadingAnchor,
@@ -240,6 +250,7 @@ final class MediaViewController: UIViewController {
     private func updateStatus(_ player: AVPlayer) {
         if player.currentItem?.status == .failed {
             statusLabel.text = "error"
+            pauseButton.setTitle("Play", for: .normal)
             return
         }
         switch player.timeControlStatus {
@@ -252,6 +263,17 @@ final class MediaViewController: UIViewController {
         @unknown default:
             statusLabel.text = "loading"
         }
+        pauseButton.setTitle(player.timeControlStatus == .playing ? "Pause" : "Play", for: .normal)
+    }
+
+    @objc private func togglePlayback() {
+        guard let player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            player.play()
+        }
+        updateStatus(player)
     }
 
     private func reportHook() {

@@ -18,11 +18,20 @@ final class ImpresarioAgentAppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Keep the device awake while the automation session is alive. This is
+        // best-effort: the app under test owns the foreground, so the XCUITest
+        // runner also disables the idle timer for its own process. Public iOS
+        // APIs do not let a background process keep another app's screen on.
+        application.isIdleTimerDisabled = true
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = ImpresarioAgentViewController()
         window.makeKeyAndVisible()
         self.window = window
         return true
+    }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        application.isIdleTimerDisabled = false
     }
 }
 
