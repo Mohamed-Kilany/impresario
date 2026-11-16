@@ -7,4 +7,3 @@ Scene: StubMedia
 | Poster      | #stub_media_image    | id:stub_media_image    | accessibilityId:stub_media_image   |
 | Missing     | #stub_media_broken   | id:stub_media_broken   | accessibilityId:stub_media_broken  |
 | MediaStatus | #stub_media_status   | id:stub_media_status   | accessibilityId:stub_media_status  |
-| Pause       | -                    | -                      | accessibilityId:stub_media_pause   |
