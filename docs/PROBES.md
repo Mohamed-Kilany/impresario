@@ -325,19 +325,23 @@ The web fixture is exercised by
 `crates/impresario-connector/tests/fixtures_suite.rs::media_probes_collect_showing_player_and_drm_evidence`;
 the optional hook contract is exercised by
 `web_app_hook_supplies_authoritative_player_evidence`. The Android and Apple fixture apps
-compile in their own toolchains; Android hardware playback acceptance is deferred (`HD-5`,
-`HD-8`). The Apple TV hook/position/resolution path and the uniform empty-slot control ran
-on hardware on 2026-11-04, while Apple decoder/DRM claims remain unverifiable (`HD-1`). Web
-probes on other managed Chromium archives are part of `HD-6`; real-TV CDP and the `Player`
-probe are hardware-verified on LG/Tizen (2026-10-29).
+compile in their own toolchains. Android playback probes ran on hardware on 2026-11-16:
+the Galaxy A51 phone (`run 20261116-102116-0599`) and TCL TV (`run 20261116-102211-2f1f`)
+passed `Showing` coverage/decoded and `Player` Playing with position/duration/muted, while
+USB remains deferred (`HD-5`/`HD-8`). The Apple TV hook/position/resolution path and the
+uniform empty-slot control ran on hardware on 2026-11-04, while Apple decoder/DRM claims
+remain unverifiable (`HD-1`). Web probes on other managed Chromium archives are part of
+`HD-6`; real-TV CDP and the `Player` probe are hardware-verified on LG/Tizen (2026-10-29).
 
 ## Unverified work
 
 - LG webOS and Samsung Tizen TVs were hardware-verified on 2026-10-29: native
   install/update, launch, forwarded CDP and the `Player => Video Playing` probe
-  passed on both (105/105 steps). Deeper `Showing`/decoder/DRM/position probes remain
-  fixture-only on Android. On the Apple TV the hook/position/resolution path and
-  `Showing` coverage ran on 2026-11-04; decoder/DRM stayed unverifiable.
+  passed on both (105/105 steps). On Android the 2026-11-16 phone/TV runs passed
+  `Showing` coverage/decoded and `Player` state/position/duration/muted on the
+  stub Media screen; Android DRM remains fixture/vendor-dependent and USB is
+  deferred. On the Apple TV the hook/position/resolution path and `Showing`
+  coverage ran on 2026-11-04; decoder/DRM stayed unverifiable.
 - Apple host-side DVT/syslog/pcapd evidence remains unimplemented. The in-app hook
   over loopback is now hardware-tested (2026-11-04), including honest `unverifiable`
   decoder/DRM results. The iPhone transport and its `Player => Video Playing` check

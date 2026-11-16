@@ -1060,7 +1060,7 @@ apps:
   Pair device with pairing code; it expires quickly. Do not store the phone
   PIN or the pairing code in configuration.
 
-### 2.10 Playback probe harness (fixture-verified)
+### 2.10 Playback probe harness (hardware-verified 2026-11-16)
 
 The media stub is `agent-target-stub`'s `MediaActivity`: a looping local
 H.264/AAC MP4, a decoded PNG, an empty image slot and a real `MediaSession`
@@ -1099,9 +1099,17 @@ assume):
 
 The Android TV reference run `20261027-040844-6a42` passed all 105 stub smoke
 steps, including the Media stage (`Video`, `Poster`, `Missing` and
-`Player => Video Playing`; `media-playing.png`). The deeper `Showing`/
-`DRM-disabled`/paused/position matrix and Android USB remain unverified
-(HD-5/HD-8).
+`Player => Video Playing`; `media-playing.png`). On 2026-11-16 the deeper probe
+matrix ran on both Android targets through the run path. The Galaxy A51 phone
+(`run 20261116-102116-0599`) measured video coverage 98.94% with hook
+`decoded=true` and `Player` `Playing` at position 3.38 s, duration 4.021 s and
+`muted=true`; poster coverage was 99.17%. The TCL TV
+(`run 20261116-102211-2f1f`) measured video coverage 99.74%, position 1.637 s,
+the same duration and muted flag, and poster coverage 99.40%; both runs passed
+8/8 steps. The probe needed a 2 s settle after `MediaStatus` because the hook
+reports an authoritative position below 1 s at playback start and an
+authoritative contradiction ends the check. `DRM-disabled`, paused playback and
+Android USB remain unverified (HD-1/HD-5/HD-8).
 
 ---
 
