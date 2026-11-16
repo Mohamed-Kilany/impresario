@@ -1528,10 +1528,11 @@ stays UNVERIFIABLE.
 `41784834960`; the unsigned Apple products came from `Apple Xcode` run
 `41794616426`, both at `640d645`.
 `impresario apple doctor --host 192.168.93.19 --signing default --products current --plain`
-reported `DDI: mounted` and `Apple doctor: ready.` The DDI was already mounted; the local
-`~/.impresario/apple/ddi/23J582` asset check was satisfied with zero-byte
-placeholder assets, so this run does **not** prove a fresh DDI mount or a
-personalized DDI download.
+reported `DDI: mounted` and `Apple doctor: ready.` At the time the DDI was
+already mounted, and the local `~/.impresario/apple/ddi/23J582` asset check was
+satisfied with zero-byte placeholder assets, so that run did **not** prove a
+fresh DDI mount or a personalized DDI download. The placeholder set was replaced
+on 2026-11-16 (see the closure note below).
 
 - Core run `20261104-093515-ffdc` passed 10/10 steps in 1m58s; the extended
   run `20261104-093812-6688` passed 11/11 steps in 1m19s. The hook was active:
@@ -1574,16 +1575,33 @@ build 22H352, Wi-Fi) passed `20261115-115058-403e`: 10/10 acts, 107/107 steps,
 tvOS 26.1) passed `20261115-114623-205f`: 10/10 acts, 111/111 steps,
 218,469 ms. That run included the Text keyboard-back check and the Keys, Info
 and Media acts that the earlier `20261115-105133-e0d2` baseline (6/10) failed
-at the old 20 s click budget. The stored tvOS DDI under
-`~/.impresario/apple/ddi/23J582` is a set of zero-byte placeholders, so the run
+at the old 20 s click budget. At the time, the stored tvOS DDI under
+`~/.impresario/apple/ddi/23J582` was a set of zero-byte placeholders, so that run
 used the real personalized tvOS DDI (build 27A9269) through
-`IMPRESARIO_APPLE_DDI`; `DdiAssets::from_dir` now rejects empty files (I-202),
-so `ddi status` reports that directory as incomplete instead of complete.
+`IMPRESARIO_APPLE_DDI`; `DdiAssets::from_dir` rejects empty files (I-202), so
+`ddi status` reports such a directory as incomplete instead of complete.
 Both `tvos-523d45d` and `ios-523d45d`
 `runner.app` bundles contain `Assets.car` and `CFBundleIcons` with
 `CFBundlePrimaryIcon` "App Icon" copied from the host before signing (I-200);
 the device owner confirmed the top-hat icon on both Home screens on
 2026-11-15.
+
+**2026-11-16 - personalized DDI and refreshed profiles.** The working
+personalized tvOS image from `target/device-setup/ddi-tvos-download`
+(BuildManifest build `27A9269`, stored under the device's `23J582`) was imported
+with `impresario apple ddi import --build 23J582`; `impresario apple ddi status`
+then reported `23J582: complete` beside `22H352` and `27B52`. `apple doctor`
+without `IMPRESARIO_APPLE_DDI` resolved `DDI assets:
+...\ddi\23J582` and printed `Apple doctor: ready.` `impresario apple restart`
+rebooted the TV, a post-reboot doctor reported `DDI: not mounted`, and the full
+suite then mounted the imported image and passed `run 20261116-095124-369b`
+(10/10 acts, 111/111 steps, 230,404 ms, 12 screenshots) with no DDI override.
+The tvOS `default` and iOS `ios-523d45d` signing sets were refreshed with
+`--with-stub`; all four profiles in each set expire 2026-11-23, and the reused
+identities are `14737F87C0645B68831D9AA806AAAADF` (tvOS) and
+`23F84E161C06E86D31F3FCD2935EE45` (iOS). The refreshed iPhone set passed a Home
+rerun `run 20261116-095617-51bb` (11/11 steps, 36.1 s) after one transient
+`phase=prepare` AFC error.
 
 ---
 

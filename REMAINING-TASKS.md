@@ -18,13 +18,13 @@ Device inventory available for this pass:
 | `android-tv` | Android TV (G03_4K_GB, Android 11) | `192.168.93.84` | ready; 10-act suite complete 2026-11-16 |
 | `iphone` | iPhone13,2, iOS 18.7.8 (22H352) | `192.168.93.14` | ready over Wi-Fi; 10-act suite complete 2026-11-16 |
 | `appletv` | AppleTV5,3, tvOS 26.1 (23J582) | `192.168.93.19` | ready over Wi-Fi; inspector and 10-act suite complete 2026-11-16 |
-| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.112` | blocked; screen off, agent installation times out |
+| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.112` | ready; `device check --refresh` passed; inspector keyboard-hide acceptance complete 2026-11-16 |
 
 ## 1. Element Inspector (TASK-INSPECTOR)
 
 | ID | Remaining item | Source | Device-feasible now | Status |
 |---|---|---|---|---|
-| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; no Flutter SDK for the Dart package | in progress — Layer A semantics validated; bridge/diagnosis/role work remains |
+| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; no Flutter SDK for the Dart package | in progress — Layer A semantics and keyboard-hide validated; detection/role/VM-service work remains |
 | INS-R2 | Shared inspector sessions, leases and scheduler preemption; currently `inspector.run_conflict` is advisory and a concurrent run is not coordinated | INS-7.1 / STATUS | Code; device regression possible | todo |
 | INS-R3 | In-page push binding (`Runtime.addBinding` / `MutationObserver`) instead of polling at `inspector.fps` | INS-2.2 / STATUS | Code; web fixtures only | todo |
 | INS-R4 | Runner execution of canonical `LOCATOR` cells; the connector run path still rejects them | INS-1.2 deviation 7 / STATUS | Code + device regression | todo |
@@ -54,7 +54,7 @@ Device inventory available for this pass:
 | T3-R1 | Android hardware probe path: `Showing` coverage/decoded and `Player` position/duration/muted on the stub Media screen | TASK-3 Android collector / HD-5 | Yes (Android phone; TV after authorization) | todo |
 | T3-R2 | Paused playback evidence on Android and Apple (stub currently exposes only `playing`; no pause control in the fixture UI) | HD-1 / STATUS | Code + devices | todo |
 | T3-R3 | One-time iOS local-network prompt | HD-1 | Yes, but needs a permission reset and an on-phone tap | deferred |
-| T3-R4 | Fresh personalized tvOS DDI mount (all previous runs found it already mounted) | HD-1 | Yes (Apple TV restart + real DDI) | todo |
+| T3-R4 | Fresh personalized tvOS DDI mount (all previous runs found it already mounted) | HD-1 | Yes (Apple TV restart + real DDI) | done 2026-11-16 — imported DDI into `23J582`, restarted the TV, and `run 20261116-095124-369b` mounted it without `IMPRESARIO_APPLE_DDI` |
 | T3-R5 | FairPlay/DRM test asset and certificate | HD-1 / TASK-3 DRM | No (credentials/content) | deferred |
 | T3-R6 | Netflix-class streaming journey with a user account | TASK-3 Definition of done 3 | No (account/content) | deferred |
 | T3-R7 | HD-8: one four-device matrix with native transports and media probes | HD-8 | All devices ready, but Apple product sets are one-platform-per-process; runs must split Apple platforms | blocked (split runs possible) |
@@ -66,8 +66,8 @@ Device inventory available for this pass:
 
 | ID | Remaining item | Source | Device-feasible now | Status |
 |---|---|---|---|---|
-| A-R1 | Re-provision the tvOS `default` and iOS `ios-523d45d` profiles before 2026-11-22 | docs/STATUS.md | Yes (account) | todo |
-| A-R2 | Import the working personalized tvOS DDI (build 27A9269) into the `23J582` store so future runs do not need `IMPRESARIO_APPLE_DDI` | docs/DEVICES.md / I-202 | Yes (local files) | todo |
+| A-R1 | Re-provision the tvOS `default` and iOS `ios-523d45d` profiles before 2026-11-22 | docs/STATUS.md | Yes (account) | done 2026-11-16 — both sets refreshed with `--with-stub`, expiry now 2026-11-23; iPhone Home rerun passed |
+| A-R2 | Import the working personalized tvOS DDI (build 27A9269) into the `23J582` store so future runs do not need `IMPRESARIO_APPLE_DDI` | docs/DEVICES.md / I-202 | Yes (local files) | done 2026-11-16 — `apple ddi import` completed `23J582`; tvOS doctor and suite ran without the env override |
 | A-R3 | tvOS inspector acceptance (also INS-R10) | TASK-INSPECTOR Phase 5 | Yes | done 2026-11-16 |
 
 ## 5. Flutter device findings (2026-11-16)
@@ -108,12 +108,16 @@ Observed gaps for INS-R1:
   own capture still succeeds.
 
 Requested acceptance performed: tapped `Login` from the welcome screen, typed
-`flutter-user` into the username field, and tapped the `Login` submit button
-(no navigation/error surfaced with an empty password and unchecked terms).
-On 2026-11-16 the device was asleep and `device check` timed out after 300 s
-installing the agent APK, so the keyboard-hide acceptance (login, type,
-`POST /api/input {"kind":"keyboard"}`, submit) remains blocked pending a
-physical wake/unlock and an OEM power-manager exemption. No success is claimed.
+`flutter-kb` into the username field, and invoked `keyboard hide` through the
+inspector. The IME screenshot fell from 173,401 to 120,161 bytes, the value stayed
+`flutter-kb`, and the next snapshot still exposed the Login submit button. A second
+round typed the password, checked the terms box, hid the keyboard again (121,363
+bytes), tapped Login (ref 27) and reached the validation state (`Invalid format`,
+144,390 bytes), proving submit was reachable after the hide. On 2026-11-16 the
+device was refreshed first with `device check --refresh android-flutter` after an
+initial check failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`; the acceptance then
+ran on `9ec8196` APKs. No success is claimed for Flutter detection/enrichment,
+which remains INS-R1 work.
 
 ## 6. Session log
 
@@ -132,4 +136,8 @@ physical wake/unlock and an OEM power-manager exemption. No success is claimed.
 - 2026-11-16: Android `keyboard hide` validated through the inspector with `98a978f`: phone typing `kb-check` left `echo:kb-check` and a 127,567-byte IME screenshot; `POST /api/input {"kind":"keyboard"}` returned `ok`, the screenshot dropped to 53,466 bytes with the echo intact, and `back` reached Home. TV `tv-kb-check` went 63,572 -> 28,258 bytes and `back` reached Home.
 - 2026-11-16: tvOS inspector typing and `keyboard hide` passed on `192.168.93.19` (`tvos-1e08df4`, `default`, real DDI): typing `tvos keyboard hide` opened the keyboard (72 nodes), `keyboard` returned 15 nodes with the textbox focused and `echo:tvos keyboard hide`, and the screenshot fell from 1,052,382 to 59,372 bytes. INS-R10 and A-R3 are complete.
 - 2026-11-16: tvOS 10-act suite passed `run 20261116-064843-e86f` (10/10 acts, 111/111 steps, 217,438 ms), including the Text back-from-keyboard check, Keys, Info and Media. The iPhone suite passed `run 20261116-073058-4eeb` with `ios-1e08df4`/`ios-523d45d` (10/10 acts, 107/107 steps, 203,993 ms); a first prepare attempt failed with an XCUITest `phase=prepare` transport error and the immediate retry passed without a reboot.
-- 2026-11-16: `android-flutter` re-check failed: `device check` timed out after 300 s installing the agent APK and the screen remained off. The Flutter keyboard-hide acceptance stays blocked until a physical wake/unlock and an OEM power-manager exemption.
+- 2026-11-16: `android-flutter` re-check initially failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`; `device check --refresh android-flutter` then uninstalled all three packages and passed (`ALI-NX1 · Android 15 · 1200x2652 @3.25x · UiAutomator2`).
+- 2026-11-16: Flutter keyboard-hide acceptance passed through the inspector on port 7321: typed `flutter-kb`, `keyboard` reduced the screenshot 173,401 -> 120,161 bytes with the value retained; typed the password, checked terms, hid the keyboard again (121,363 bytes), tapped Login and reached `Invalid format` (144,390 bytes), proving submit was reachable.
+- 2026-11-16: imported the personalized tvOS DDI (`BuildManifest` reports 27A9269) into the `23J582` store with `impresario apple ddi import`; `apple ddi status` now reports `23J582: complete` alongside `22H352` and `27B52`.
+- 2026-11-16: tvOS `doctor` without `IMPRESARIO_APPLE_DDI` reported `DDI assets: ...\ddi\23J582` and `Apple doctor: ready.` After `apple restart`, a post-reboot doctor showed `DDI: not mounted`; the suite then mounted it and passed `run 20261116-095124-369b` (10/10 acts, 111/111 steps, 230,404 ms, 12 screenshots). T3-R4, A-R2 and INS-R10 are complete.
+- 2026-11-16: refreshed the tvOS `default` and iOS `ios-523d45d` signing sets with `--with-stub`; all profiles expire 2026-11-23T09:49-09:50Z and both identities were reused. The iPhone Home act first failed at `phase=prepare` with an AFC socket error; the immediate retry passed `run 20261116-095617-51bb` (11/11 steps, 36.1 s), validating the refreshed profiles. A-R1 is complete.
