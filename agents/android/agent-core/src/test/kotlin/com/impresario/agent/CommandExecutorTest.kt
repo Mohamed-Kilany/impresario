@@ -439,13 +439,26 @@ class CommandExecutorTest {
     }
 
     @Test
-    fun backUsesTheDriver() = runBlocking {
+    fun backDismissesTheKeyboardBeforeNavigating() = runBlocking {
         val driver = FakeDriver()
         val result = CommandExecutor(driver, phoneOptions).execute(
             actionCommand("c1", action(ActionType.BACK)),
         )
         assertTrue(result.ok)
-        assertEquals(listOf("back"), driver.calls.toList())
+        // An open IME eats the first BACK, so the executor hides it first and
+        // then sends the navigation BACK (the tvOS Menu equivalent, I-201).
+        assertEquals(listOf("hideKeyboard", "back"), driver.calls.toList())
+    }
+
+    @Test
+    fun backStillNavigatesWhenTheKeyboardCannotBeDismissed() = runBlocking {
+        val driver = FakeDriver()
+        driver.hideKeyboardWorks = false
+        val result = CommandExecutor(driver, phoneOptions).execute(
+            actionCommand("c1", action(ActionType.BACK)),
+        )
+        assertTrue(result.ok)
+        assertEquals(listOf("hideKeyboard", "back"), driver.calls.toList())
     }
 
     @Test

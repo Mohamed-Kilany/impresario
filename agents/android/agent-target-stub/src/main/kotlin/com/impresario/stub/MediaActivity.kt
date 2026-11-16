@@ -39,6 +39,15 @@ class MediaActivity : Activity() {
         ImpresarioHook.start(this)
         val density = resources.displayMetrics.density
         fun dp(value: Int): Int = (value * density).toInt()
+        // A 1080p television at 2x is only 540 dp tall, and the platform adds
+        // an app bar above the fixture. The phone-sized video/poster/empty
+        // stack pushed the status line completely below the screen, so
+        // `stub_media_status` was absent from the accessibility tree and the
+        // Media act's status check failed. Keep the TV profile compact.
+        val television = isTelevision()
+        val videoHeight = dp(if (television) 160 else 220)
+        val posterSize = dp(if (television) 90 else 120)
+        val missingHeight = dp(if (television) 48 else 60)
 
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -55,7 +64,7 @@ class MediaActivity : Activity() {
             id = R.id.stub_media_video
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(220),
+                videoHeight,
             ).apply { topMargin = dp(12) }
         }
         column.addView(video)
@@ -64,7 +73,7 @@ class MediaActivity : Activity() {
                 id = R.id.stub_media_image
                 contentDescription = "poster image"
                 setImageResource(R.drawable.sample_image)
-                layoutParams = LinearLayout.LayoutParams(dp(120), dp(120)).apply {
+                layoutParams = LinearLayout.LayoutParams(posterSize, posterSize).apply {
                     topMargin = dp(12)
                 }
             },
@@ -75,7 +84,7 @@ class MediaActivity : Activity() {
                 id = R.id.stub_media_broken
                 contentDescription = "missing image"
                 setBackgroundColor(0xFF202020.toInt())
-                layoutParams = LinearLayout.LayoutParams(dp(120), dp(60)).apply {
+                layoutParams = LinearLayout.LayoutParams(posterSize, missingHeight).apply {
                     topMargin = dp(12)
                 }
             },

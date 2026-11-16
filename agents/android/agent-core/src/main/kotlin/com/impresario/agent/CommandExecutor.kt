@@ -95,6 +95,13 @@ class CommandExecutor(
             ActionType.SCROLL_TO -> scrollTo(action, timeout)
             ActionType.SWIPE -> swipe(action, timeout)
             ActionType.BACK -> {
+                // An open IME consumes BACK, so the app never sees the
+                // navigation request (tvOS's Menu has the same problem,
+                // I-201). Dismiss an open keyboard first; this is a no-op
+                // when none is visible, and a failed dismissal still falls
+                // through to the ordinary back press instead of turning a
+                // navigation into a keyboard-hide failure.
+                driver.hideKeyboard()
                 driver.pressBack()
                 Outcome.Ok()
             }

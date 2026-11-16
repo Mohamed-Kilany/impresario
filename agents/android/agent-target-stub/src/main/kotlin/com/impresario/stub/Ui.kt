@@ -26,10 +26,10 @@ internal const val STACK_GAP_DP = 10
 internal const val TV_STACK_GAP_DP = 6
 
 /** True on Android TV (leanback) devices, including TCL/Shield. */
-private fun LinearLayout.isTelevision(): Boolean {
+internal fun Context.isTelevision(): Boolean {
     val uiMode = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
     return uiMode == Configuration.UI_MODE_TYPE_TELEVISION ||
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+        packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 }
 
 /**
@@ -39,7 +39,7 @@ private fun LinearLayout.isTelevision(): Boolean {
  * (docs/DECISIONS.md I-58/I-64).
  */
 internal fun LinearLayout.addStacked(view: View): LinearLayout {
-    val gapDp = if (isTelevision()) TV_STACK_GAP_DP else STACK_GAP_DP
+    val gapDp = if (context.isTelevision()) TV_STACK_GAP_DP else STACK_GAP_DP
     val gap = (gapDp * resources.displayMetrics.density).toInt()
     view.layoutParams = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
