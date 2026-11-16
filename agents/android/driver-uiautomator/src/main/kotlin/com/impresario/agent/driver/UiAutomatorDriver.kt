@@ -147,9 +147,17 @@ class UiAutomatorDriver(
 
     override fun count(sel: SelectorSpec): Int = device.findObjects(byOf(sel)).size
 
-    override fun click(e: ElementHandle) = act { obj(e).click() }
+    override fun click(e: ElementHandle) = act {
+        if (!accessibilityAction(obj(e), AccessibilityNodeInfo.ACTION_CLICK)) {
+            obj(e).click()
+        }
+    }
 
-    override fun longClick(e: ElementHandle, ms: Long) = act { obj(e).click(ms) }
+    override fun longClick(e: ElementHandle, ms: Long) = act {
+        if (!accessibilityAction(obj(e), AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+            obj(e).click(ms)
+        }
+    }
 
     override fun setText(e: ElementHandle, text: String) = act { obj(e).setText(text) }
 
@@ -827,6 +835,24 @@ class UiAutomatorDriver(
             guard++
         }
         return null
+    }
+
+    /**
+     * Activate [node] the way a screen reader does. On Samsung phones the
+     * home list's ScrollView consumes the first synthetic tap while it moves
+     * focus to the row, so `UiObject2.click()` only focused the row and the
+     * act stayed on Home (I-205). ACTION_CLICK reaches the clickable view
+     * directly; the touch path stays as the fallback for trees that expose
+     * no clickable node.
+     */
+    private fun accessibilityAction(node: UiObject2, action: Int): Boolean {
+        return try {
+            val info = node.accessibilityNodeInfo ?: return false
+            val clickable = clickableAncestor(info) ?: return false
+            clickable.performAction(action)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun scroll(direction: Direction, count: Int, nodeId: Long, x: Float, y: Float) {
