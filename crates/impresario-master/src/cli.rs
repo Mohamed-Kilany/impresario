@@ -563,8 +563,8 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Account(_) => EXIT_INFRA,
         Command::Apple(_) => EXIT_INFRA,
         Command::Device { command } => match command {
-            DeviceCommand::Check { names } => {
-                cmd_devices_check(&base, &config_path, &devices_path, names)
+            DeviceCommand::Check { names, refresh } => {
+                cmd_devices_check(&home, &base, &config_path, &devices_path, names, *refresh)
             }
             DeviceCommand::Discover { json, timeout } => {
                 crate::wizard::run_discover(&home, *json, *timeout)
@@ -2087,10 +2087,12 @@ fn report_parse(
 // ---------------------------------------------------------------------------
 
 fn cmd_devices_check(
+    home: &Home,
     base: &Path,
     config_path: &Path,
     devices_path: &Path,
     names: &[String],
+    refresh: bool,
 ) -> i32 {
     let config_outcome = load_effective_config(base, config_path);
     render::eprint_all(&config_outcome.diagnostics);
@@ -2142,6 +2144,24 @@ fn cmd_devices_check(
     let results: Vec<Result<DeviceCheck, String>> = runtime.block_on(async {
         let mut results = Vec::new();
         for device in &selected {
+            if refresh {
+                match impresario_clients::transport::uninstall_android_agent(device, home).await {
+                    Ok(outcomes) => {
+                        for (package, removed) in outcomes {
+                            let state = if removed {
+                                "uninstalled"
+                            } else {
+                                "was not installed:"
+                            };
+                            println!("{}: {state} {package}", device.name);
+                        }
+                    }
+                    Err(error) => {
+                        results.push(Err(error.to_string()));
+                        continue;
+                    }
+                }
+            }
             results.push(
                 check_device(device, None, timeout_ms, token.as_deref(), &master_version).await,
             );

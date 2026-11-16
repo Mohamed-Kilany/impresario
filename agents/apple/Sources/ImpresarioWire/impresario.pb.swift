@@ -271,6 +271,8 @@ public nonisolated enum Impresario_V1_ActionType: SwiftProtobuf.Enum, Swift.Case
   case scrollTo // = 9
   case swipe // = 10
   case back // = 11
+
+  /// dismiss the on-screen keyboard
   case hideKeyboard // = 12
   case UNRECOGNIZED(Int)
 
@@ -1204,7 +1206,7 @@ public nonisolated struct Impresario_V1_RunAction: Sendable {
 
   public var type: Impresario_V1_ActionType = .unspecified
 
-  /// absent only for SCROLL/SWIPE (screen-level) and BACK
+  /// absent only for SCROLL/SWIPE (screen-level), BACK and HIDE_KEYBOARD
   public var selector: Impresario_V1_Selector {
     get {_selector ?? Impresario_V1_Selector()}
     set {_selector = newValue}

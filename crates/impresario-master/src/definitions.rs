@@ -58,6 +58,10 @@ pub enum DeviceCommand {
     Check {
         /// Device names (default: all).
         names: Vec<String>,
+        /// Uninstall the Android agent packages first, forcing a fresh
+        /// install of the local APKs (use after the agent signing key changed).
+        #[arg(long)]
+        refresh: bool,
     },
     /// Import devices from a YAML file into one layer.
     Import {
@@ -253,7 +257,7 @@ pub fn run_device(command: &DeviceCommand, home: &Home, workspace_path: &Path) -
         } => webos_passphrase(name, *clear, *status, *stdin, workspace_path),
         DeviceCommand::Wizard(args) => crate::wizard::run(args, home, workspace_path),
         DeviceCommand::Show { name } => show_device(name, home, workspace_path),
-        DeviceCommand::Check { names } => {
+        DeviceCommand::Check { names, .. } => {
             // The actual connectivity check lives in cli.rs (it needs the
             // runtime); this arm is replaced there.
             let _ = (names, home, workspace_path);

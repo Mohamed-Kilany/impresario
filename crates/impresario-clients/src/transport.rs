@@ -40,6 +40,11 @@ const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
 /// Agent packages (must match `agents/android`, spec section 11).
 const AGENT_PACKAGE: &str = "com.impresario.agent";
 const AGENT_INSTRUMENTATION_PACKAGE: &str = "com.impresario.agent.test";
+const STUB_PACKAGE: &str = "com.impresario.stub";
+/// Everything the master installs for Android runs. A refresh removes all
+/// three so `install -r` never has to match the old signing certificate.
+const ANDROID_AGENT_PACKAGES: [&str; 3] =
+    [AGENT_PACKAGE, AGENT_INSTRUMENTATION_PACKAGE, STUB_PACKAGE];
 const AGENT_RUNNER_CLASS: &str = "com.impresario.agent.AgentRunner";
 const ANDROID_JUNIT_RUNNER: &str = "androidx.test.runner.AndroidJUnitRunner";
 
@@ -966,6 +971,36 @@ fn resolve_android_apks() -> Vec<(String, PathBuf)> {
         }
     }
     apks
+}
+
+/// Remove the Impresario agent packages from an Android device over the native
+/// ADB transport. The next `prepare` then installs the local APKs even when
+/// their signing certificate differs from the installed build, which
+/// `install -r` refuses. Returns each package and whether it was installed.
+pub async fn uninstall_android_agent(
+    device: &DeviceConfig,
+    home: &Home,
+) -> Result<Vec<(String, bool)>, TransportError> {
+    if !matches!(device.platform, Platform::Android | Platform::AndroidTv) {
+        return Err(TransportError::Transport(format!(
+            "refresh only removes the Android agent packages; '{}' is {}",
+            device.name,
+            device.platform.as_str()
+        )));
+    }
+    home.ensure_dirs()
+        .map_err(|error| TransportError::Transport(format!("cannot create home: {error}")))?;
+    let target = AdbTarget::for_device(device).map_err(AdbTransport::adb_error)?;
+    let client = AdbClient::new(target, home);
+    let mut outcomes = Vec::with_capacity(ANDROID_AGENT_PACKAGES.len());
+    for package in ANDROID_AGENT_PACKAGES {
+        let removed = client
+            .uninstall_package(package)
+            .await
+            .map_err(AdbTransport::adb_error)?;
+        outcomes.push((package.to_string(), removed));
+    }
+    Ok(outcomes)
 }
 
 fn read_cache(path: &Path) -> BTreeMap<String, String> {

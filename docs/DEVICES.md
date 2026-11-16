@@ -560,6 +560,13 @@ for device checks, APK installs, `am instrument`, logcat and screenshots. No
 `adb` process is spawned (I-121). The JVM-library parts (`agent-core`) are
 plain Kotlin tests.
 
+The installed-APK cache is keyed by content hash, but `install -r` still
+refuses a package whose signing certificate differs from the installed build.
+`impresario device check --refresh <name>` removes the three agent packages
+through the same native ADB transport, so the next prepare installs the local
+APKs from scratch; packages that are already absent are reported, not treated
+as an error. The refresh applies only to `android`/`androidtv` devices.
+
 ### 2.1 Prerequisites
 
 - For **using** an Android device with the product: nothing beyond the device

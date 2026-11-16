@@ -496,6 +496,40 @@ impl AdbClient {
         Ok(())
     }
 
+    /// Uninstall one package for user 0. Returns `false` when the package was
+    /// not installed; a refresh treats that as success.
+    pub async fn uninstall_package(&self, package: &str) -> Result<bool, AdbError> {
+        let command = format!("pm uninstall --user 0 {package}");
+        let output = self
+            .exec_with_timeout(&command, Duration::from_secs(120))
+            .await?;
+        let text = format!("{}\n{}", output.stdout_text(), output.stderr_text());
+        if text.contains("Success") {
+            return Ok(true);
+        }
+        if text.contains("not installed") || text.contains("Unknown package") {
+            return Ok(false);
+        }
+        // Some Android releases answer through the package manager service
+        // only; retry there before reporting a hard failure.
+        let fallback = format!("cmd package uninstall --user 0 {package}");
+        let output = self
+            .exec_with_timeout(&fallback, Duration::from_secs(120))
+            .await?;
+        let text = format!("{}\n{}", output.stdout_text(), output.stderr_text());
+        if text.contains("Success") {
+            return Ok(true);
+        }
+        if text.contains("not installed") || text.contains("Unknown package") {
+            return Ok(false);
+        }
+        Err(AdbError::Command {
+            command: fallback,
+            exit: output.exit_code,
+            message: text.trim().to_string(),
+        })
+    }
+
     /// Best-effort `pm clear` for the app under test.
     pub async fn clear_package(&self, package: &str) -> Result<AdbOutput, AdbError> {
         self.exec(&format!("pm clear --user 0 {package}")).await
