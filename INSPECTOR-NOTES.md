@@ -20,7 +20,7 @@ claimable without hardware or owner input).
 | agent channel | `impresario-clients::agent_client::AgentClient` / `AgentSession` | Handshake, one command stream, out-of-band screenshots, logs, shutdown. |
 | gRPC/proto | `proto/impresario/v1/impresario.proto` → `impresario-proto` | One package, one generated module (`impresario_proto::v1`). |
 | DSL crate | `impresario-core` (`ast`, `parser`, `fmt`, `selectors`, `workspace`) | Parser keeps spans; formatter is whole-file. No lossless CST. |
-| locator resolution | web: `impresario-connector/src/exec.rs` + embedded ES5 script; Android/Apple: their agents | No shared Rust resolver. |
+| locator resolution | shared `impresario-locator` matcher; the connector resolves `LOCATOR` cells against inspector snapshots (INS-R4) | Inspector and connector run path share one Rust resolver; the ES5 script only acquires nodes and returns CSS handles. Android/Apple agents have no native resolver yet. |
 | device/app model | `impresario-core::config` (`DeviceConfig`, `DevicesConfig`), `apps.rs` (`AppConfig`) | Devices have platform/type; apps bind per platform. |
 | scheduler/resident | `impresario-core::resident`, `impresario-master::resident` | File-based schedules/watchers; no device session broker. |
 | config | `impresario-core::config` + `settings` schema | `ImpresarioConfig` is `deny_unknown_fields`; top-level keys are validated, then deserialized. |
@@ -97,9 +97,9 @@ Why this deviates from §3.1:
   device sessions or lease preemption. That is recorded as a deviation, not
   silently ignored.
 - The core is still single-sourced: the same `impresario-locator` matcher
-  resolves inspector locators and (for snapshot-backed paths) runner
-  verification. The connector implements the same canonical locator string
-  for live web execution.
+  resolves inspector locators and the connector run path. A `LOCATOR` cell is
+  resolved against an inspector snapshot and rewritten to a unique CSS handle
+  (INS-R4); no second matcher exists in the page script.
 
 **v1 deviations (explicit):**
 
@@ -115,18 +115,28 @@ Why this deviates from §3.1:
 5. No lease/scheduler preemption in v1. Input is disabled when a run owns the
    device only if the transport reports the device busy; otherwise the UI
    warns that a concurrent run may contend. This is an honest limitation.
-6. Android/Apple/Flutter inspector acquisition is not claimed in v1. The
-   connector implements web/webOS/Tizen snapshots. Other platforms return a
-   structured `NOT_SUPPORTED` degradation; their design notes are below.
-7. **Locator execution is not yet shared with the runner.** The inspector and
-   `impresario-inspector-core` use `impresario-locator` for matching and
-   synthesis, and the DSL/proto accept `Strategy::Locator`. The connector's
-   run path still evaluates only the legacy `prefix:value` strategies, so a
-   scene cell written as a canonical locator is rejected at run time with a
-   structured invalid-selector error instead of being executed. Closing this
-   needs an async resolve-then-act path in the connector (snapshot + Rust
-   matcher + node-id handle), not a second JS matcher. It is the main
-   unmet invariant (spec requirement 3) and is not claimed as done.
+6. **Flutter enrichment is not claimed in v1.** Android and Apple acquisition
+   are implemented by their own agents and hardware-verified; web/webOS/Tizen
+   use the connector snapshot. Flutter uses the Android agent's Layer A
+   semantics only: there is no Dart package, `ImpresarioTag`, detection/
+   `FLUTTER_SEMANTICS_OFF` diagnosis or VM-service enrichment.
+7. **Runner execution is shared for the web family only.** The inspector,
+   `impresario-inspector-core` and the connector run path all use
+   `impresario-locator` for matching and synthesis. `Session::execute`
+   intercepts `Strategy::Locator`, acquires a viewport snapshot through the
+   same inspector acquisition path, resolves it with the shared matcher, and
+   rewrites the command to a unique CSS handle from
+   `window.__impresarioInspector.selectorFor(id)`. Actions and ordinary checks
+   require exactly one match (a non-zero selector `index` selects one 0-based
+   match); `Count` polls the full match count; `Hidden` succeeds on zero
+   matches; probes are best-effort and use a never-matching selector so an
+   absent element reports absent. The transient `data-impresario-locator` tag
+   is released after the command. Fixture coverage lives in
+   `fixtures/web/locators.html` and `run_locator_suite` (raw and
+   chromiumoxide). The Android and Apple agents still reject `LOCATOR`: their
+   drivers expect native selectors and have no snapshot-backed resolver.
+   Closing those needs master-side snapshot + resolve + native rewrite (or a
+   node-ref strategy) plus proto/agent work; it is not claimed.
 
 ---
 
@@ -219,11 +229,11 @@ the implementation keeps the grammar in one module so a rename is local.
 | 4 | Run-vs-inspector conflict default | `readonly` is the default in config, but v1 does not yet preempt; it is a documented limitation until the scheduler integration lands. |
 | 5 | Start UI automatically? | Only on `impresario inspector`. `inspector.enabled` defaults to false and is currently reserved (the resident service does not auto-start the inspector). |
 | 6 | Dart package acceptable? | Deferred with Flutter (Phase 6); not claimed in v1. |
-| 7 | Minimum OS/engine versions | Web: Chromium/WebKit with ES5 + `MutationObserver` (webOS/Tizen dev builds). Android/Apple: deferred to their phases. |
+| 7 | Minimum OS/engine versions | Web: Chromium/WebKit with ES5 + `MutationObserver` (webOS/Tizen dev builds). Android/Apple inherit their existing agents' targets; inspector hardware acceptance used Android 11/15, iOS 18.7.8 and tvOS 26.1. |
 | 8 | OCR for visual fallback | Template-only is the default; OCR is not implemented/claimed. `region` locators are always marked fragile. |
 | 9 | Allow input actions? | Yes when the device session is interactive; the UI shows a read-only banner when input is refused. Scene writes are always explicit. |
 | 10 | watchdog integration | No watchdog integration points exist in this repo; the additive tools/RPCs do not rename or remove existing MCP tools or agent RPCs. |
-| 11 | When will runner execution use the shared locator? | **Open blocker.** Inspector-side matching is shared; the connector run path rejects canonical locator cells. Do not claim requirement 3 until resolve-then-act lands. |
+| 11 | When will runner execution use the shared locator? | **Web family done (INS-R4)**: the connector resolves canonical cells with the shared matcher and rewrites them to a unique CSS handle. Android/Apple native execution remains open because those agents reject `LOCATOR`. |
 
 ---
 
@@ -244,8 +254,8 @@ the implementation keeps the grammar in one module so a rename is local.
       selector strategy, `INSPECTOR` capability.
 - [x] INS-1.2 `impresario-locator`: model, parser/printer, role map, matcher,
       synthesis, stability scoring, tests; the canonical `LOCATOR` strategy is
-      accepted by the DSL/proto. **Not** yet executed by the connector run
-      path (see §2 deviation 7).
+      accepted by the DSL/proto. The connector run path executes it for the web
+      family (INS-R4, §2 deviation 7); Android/Apple native execution is open.
 - [x] INS-1.3 `impresario-inspector-core`: snapshot model, delta/diff/apply,
       pruning geometry, selection re-resolution, compact snapshot, scene
       column resolution, mock harness, tests.
@@ -285,22 +295,28 @@ the implementation keeps the grammar in one module so a rename is local.
 
 ### Phase 4 — Android / Android TV
 
-- [ ] **Deferred.** Requires the on-device helper APK, ADB transport
-      integration and real devices. The proto/capability surface is ready;
-      the inspector returns `NOT_SUPPORTED` until the helper advertises
-      `INSPECTOR`.
+- [x] INS-4.1 Android agent inspector: UiAutomator capture, viewport pruning,
+      screenshot, tap/type/scroll/focus/Select/keyboard hide and
+      detach/reattach. Hardware-verified on the Galaxy A51 and Android TV on
+      2026-11-15/16. Helper APK packaging, Compose `testTag`, the TV D-pad UI
+      and native `LOCATOR` execution remain INS-R8/INS-R4.
 
 ### Phase 5 — Apple (iOS, tvOS)
 
-- [ ] **Deferred.** Requires the XCTest runner and signing/install on real
-      devices. No speed claims are made.
+- [x] INS-5.1 Apple agent inspector behind `AgentService`: bulk XCUITest
+      snapshot, screenshot, focus/D-pad, scroll, Select and detach/reattach;
+      iPhone Wi-Fi and tvOS hardware acceptance on 2026-11-15/16. XCTest rejects
+      inspector typing on tvOS, so the run path uses focus + Select. WKWebView
+      bridging and native `LOCATOR` execution remain INS-R7/INS-R4.
 
 ### Phase 6 — Flutter
 
-- [ ] **Deferred.** The Dart package, semantics bridge and widget inspector
-      enrichment are not shipped in v1. The UI/MCP return
-      `FLUTTER_SEMANTICS_OFF` when a Flutter surface is detected without
-      semantics.
+- [ ] **Partial (Layer A).** The existing Android inspector sees Flutter
+      semantics on a real release app (29 nodes at home; Login/Signup arrive as
+      `button`), and keyboard hide passed on the staging app. The Dart package,
+      `ImpresarioTag`, VM-service enrichment, Flutter detection/
+      `FLUTTER_SEMANTICS_OFF` diagnosis and the visual fallback are not shipped
+      (INS-R1).
 
 ### Phase 7 — Hardening and release
 
@@ -314,9 +330,11 @@ the implementation keeps the grammar in one module so a rename is local.
 - [ ] INS-7.3 Full benchmark run — **deferred** with hardware; the mock
       pipeline benchmark is implemented.
 - [x] INS-7.4 Docs added (`CLI.md`, `WEB.md`, `MCP.md`, this file). The
-      anti-breakage gates are **not** all enforced: CI has no `buf breaking`
-      step, no run-path latency gate, no old/new handshake matrix, and the
-      LSP/TS grammar does not yet complete/hover locator cells.
+      anti-breakage gates are still **not** all enforced: CI has no `buf
+      breaking` step, no run-path latency gate, no old/new handshake matrix,
+      and the LSP/TS grammar does not yet complete/hover locator cells
+      (INS-R12). The existing fixture suite and the legacy selectors remain
+      untouched and run alongside the new locator suite.
 - [x] INS-7.5 Final checklist updated honestly (§6).
 
 ---
@@ -325,14 +343,14 @@ the implementation keeps the grammar in one module so a rename is local.
 
 | Item | Status |
 |---|---|
-| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen acquisition; other families degrade with `NOT_SUPPORTED`; Flutter diagnosis only. |
-| Viewport-only acquisition/transport/UI | **Yes** for web (injected script prunes before returning); other agents pending. |
+| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. |
+| Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Partial**: web polling at `inspector.fps` (default 4) plus post-input refresh; no push binding or change counter. |
-| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. The written locator is **not executable by the runner yet**, and there is no post-commit verification. |
-| Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; fuzzing of every agent payload is deferred with those agents. |
-| Flutter addressability + fallback | **Deferred** (diagnosis only). |
+| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them, and there is no post-commit verification. |
+| Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
+| Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; no shared sessions, leases or preemption (documented). |
-| Anti-breakage gates | Existing suites untouched; proto is append-only by inspection; legacy selectors preserved; the run-path refactor is limited to accepting `Strategy::Locator` (which the connector then rejects). `buf breaking`, run-path latency and handshake-matrix gates are **not** wired. |
+| Anti-breakage gates | Existing suites untouched; proto is append-only by inspection; legacy selectors preserved and still covered by `fixtures_suite.rs`. The connector run path now executes `LOCATOR` cells without changing the legacy path (`dispatch` still routes non-locator selectors exactly as before). `buf breaking`, run-path latency and handshake-matrix gates are **not** wired, and LSP/TS locator completion is absent (INS-R12). |
 | Docs + notes reviewed | Docs added; owner review pending. |
 
 ---
@@ -358,6 +376,23 @@ authority. New tests live next to their code:
 - master: inspector HTTP routing/security tests, MCP tool schema/structured
   errors, scene preview/commit/undo, bench invariants.
 
+INS-R4 follow-up (2026-11-23): CI run `45122513397` at `cabd15d` passed all
+eight jobs (rustfmt, clippy, `cargo test --workspace`, Windows release build,
+editor, Android, Apple and the aggregate gate). The workspace log shows
+`locator_suite_raw_backend` and all five `locator_exec` unit tests passing.
+New coverage:
+
+- `impresario-connector/src/locator_exec.rs`: five unit tests for the wire-node
+  adapter, state/visibility mapping, `within` scoping, missing parents and
+  invalid locator text.
+- `fixtures_suite.rs`: `locator_suite_raw_backend` and the feature-gated
+  `locator_suite_chromiumoxide_backend` drive `fixtures/web/locators.html`
+  through role/name, native id, `testid`, shadow DOM, ambiguity, selector
+  `index`, `Count`, `Hidden`, ordinary missing checks and present/missing
+  probes. The default CI job runs the raw entry.
+- Connector counts: 58 unit tests (63 with `chromiumoxide-backend`); seven
+  integration tests without the feature, eight with it.
+
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
 and emits JSON or a table with p50/p95/p99/mean for acquisition build, prune,
@@ -374,17 +409,22 @@ committed here only when observed.
 - **No shared device session with runs** (spec §3.2/§12.1.1): dedicated
   process; contention is possible. Mitigation: explicit read-only/busy
   errors, documented.
-- **Locator cells are not executable by the runner yet** (spec requirement 3):
-  the shared matcher is used by the inspector, but the connector run path
-  rejects `Strategy::Locator` with a structured invalid-selector error.
-  Mitigation: the grammar is isolated in one crate; closing it needs an async
-  resolve-then-act path, not a second matcher.
+- **Locator cells execute on the web family only** (spec requirement 3): the
+  connector run path resolves `LOCATOR` through the shared matcher and a unique
+  CSS handle (INS-R4), but the Android and Apple agents reject `LOCATOR`
+  because they have no snapshot-backed native resolver. Mitigation: the
+  grammar and matcher stay isolated in one crate; native execution needs
+  master-side snapshot + resolve + native rewrite (or a node-ref strategy) and
+  proto/agent changes.
 - **Polling instead of CDP binding push** (spec §6.2): the process re-acquires
   at 1-30 fps; a change counter/binding push is a follow-up.
 - **No bidi protobuf stream** (spec §4.2): unary RPCs + SSE; append-only
   proto leaves room.
-- **No Android/Apple/Flutter acquisition**: structured `NOT_SUPPORTED`, no
-  fabricated results.
+- **Flutter Layer A only**: Android/Apple acquisition is implemented and
+  hardware-verified, but Flutter has no Dart package, `ImpresarioTag`,
+  detection/`FLUTTER_SEMANTICS_OFF` diagnosis or VM-service enrichment; its
+  roles are limited to what the app's `Semantics` declares (INS-R1). No result
+  is fabricated when a platform lacks a capability.
 - **Scene grammar extension**: additive and isolated; owner may veto. The LSP
   and TypeScript grammar do not yet complete/hover locator cells.
 - **Same-platform actors**: not representable in the current table; explicit
