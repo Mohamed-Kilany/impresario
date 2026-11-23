@@ -281,14 +281,14 @@ pub(crate) fn decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let high = hex(bytes.get(index + 1).copied()?)?;
-            let low = hex(bytes.get(index + 2).copied()?)?;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'%' {
+            let high = hex(*bytes.get(index + 1)?)?;
+            let low = hex(*bytes.get(index + 2)?)?;
             out.push((high << 4) | low);
             index += 3;
         } else {
-            out.push(bytes[index]);
+            out.push(byte);
             index += 1;
         }
     }
