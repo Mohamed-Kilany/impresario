@@ -18,10 +18,10 @@ mod assets;
 mod convert;
 mod scene;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ use impresario_locator::{Rect, Role};
 use impresario_proto::v1 as pb;
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest as _, Sha256};
 use tokio::sync::{mpsc, oneshot};
 
 use scene::{AuditEntry, StoredEdit, UndoRecord};
@@ -57,6 +58,9 @@ pub const DEFAULT_LISTEN: &str = "127.0.0.1";
 const MAX_CONNECTIONS: usize = 64;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Scene files are small; a quarter-second poll is cheap and keeps the
+/// external-edit notice prompt without pulling in another file-watching crate.
+const SCENE_WATCH_POLL: Duration = Duration::from_millis(250);
 /// The SPA needs CSSOM positioning for its virtualized tree and overlay.
 const INSPECTOR_CSP: &str = "default-src 'none'; script-src 'self'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
@@ -218,6 +222,102 @@ fn next_publish_rev(
     Some(last_rev.saturating_add(1).max(1))
 }
 
+/// One external scene-file change detected by the watcher.
+struct SceneChange {
+    path: PathBuf,
+    previous_revision: Option<String>,
+    revision: Option<String>,
+}
+
+/// Watched scene files and their last known SHA-256 revision. The inspector
+/// updates the baseline after its own writes; any different digest observed by
+/// [`Self::scan`] is an external edit (TASK-INSPECTOR 9.3).
+#[derive(Default)]
+pub(crate) struct SceneWatch {
+    entries: Mutex<HashMap<PathBuf, Option<String>>>,
+}
+
+/// Held across an inspector scene write so the scanner cannot sample the file
+/// between the old and new revisions and report the inspector's own write as
+/// an external edit.
+pub(crate) struct SceneWriteGuard<'a> {
+    entries: std::sync::MutexGuard<'a, HashMap<PathBuf, Option<String>>>,
+}
+
+impl SceneWriteGuard<'_> {
+    /// Record the revision the write left on disk.
+    pub(crate) fn record(&mut self, path: &Path, revision: Option<&str>) {
+        self.entries
+            .insert(path.to_path_buf(), revision.map(str::to_string));
+    }
+}
+
+impl SceneWatch {
+    /// Register a scene (or refresh the baseline after an inspector write).
+    fn note(&self, path: &Path, revision: Option<&str>) {
+        self.begin_write().record(path, revision);
+    }
+
+    /// Lock the baseline table for the duration of an inspector write.
+    pub(crate) fn begin_write(&self) -> SceneWriteGuard<'_> {
+        SceneWriteGuard {
+            entries: self
+                .entries
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        }
+    }
+
+    /// Compare every watched file with its baseline and advance the baselines.
+    ///
+    /// A baseline changed while the file was being read (an inspector commit)
+    /// wins, so the inspector never reports its own write as an external edit.
+    fn scan(&self) -> Vec<SceneChange> {
+        let watched: Vec<(PathBuf, Option<String>)> = {
+            let entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            entries
+                .iter()
+                .map(|(path, revision)| (path.clone(), revision.clone()))
+                .collect()
+        };
+        let mut changes = Vec::new();
+        for (path, previous) in watched {
+            let current = file_revision(&path);
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let Some(baseline) = entries.get_mut(&path) else {
+                continue;
+            };
+            if *baseline != previous || previous == current {
+                continue;
+            }
+            *baseline = current.clone();
+            drop(entries);
+            changes.push(SceneChange {
+                path,
+                previous_revision: previous,
+                revision: current,
+            });
+        }
+        changes
+    }
+}
+
+/// SHA-256 of a scene file, or `None` when it is missing or unreadable.
+fn file_revision(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(revision_of_bytes(&bytes))
+}
+
+fn revision_of_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 /// Shared state for the HTTP threads and the device actor.
 pub(crate) struct Shared {
     pub home: Home,
@@ -243,6 +343,7 @@ pub(crate) struct Shared {
     pub edits: Mutex<std::collections::HashMap<String, StoredEdit>>,
     pub undo: Mutex<std::collections::HashMap<PathBuf, UndoRecord>>,
     pub audit: Mutex<Vec<AuditEntry>>,
+    pub scene_watch: SceneWatch,
     pub frozen: AtomicBool,
     /// Last master-owned revision. It survives detach/reattach and only
     /// advances when the published content actually changes.
@@ -291,6 +392,7 @@ impl Shared {
             edits: Mutex::new(std::collections::HashMap::new()),
             undo: Mutex::new(std::collections::HashMap::new()),
             audit: Mutex::new(Vec::new()),
+            scene_watch: SceneWatch::default(),
             frozen: AtomicBool::new(false),
             published_rev: AtomicU64::new(0),
             connections: AtomicUsize::new(0),
@@ -303,6 +405,42 @@ impl Shared {
             .read()
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
+    }
+
+    /// Register a scene file and its current revision with the watcher.
+    pub(crate) fn watch_scene(&self, path: &Path, revision: Option<&str>) {
+        self.scene_watch.note(path, revision);
+    }
+
+    /// Poll watched scene files and fan external edits out as SSE updates.
+    ///
+    /// Scene events ride the existing `update` event with `kind: "scene"` so
+    /// the SPA needs no second connection and the snapshot revision (and its
+    /// `/api/wait` semantics) is untouched.
+    fn poll_scene_watch(&self) {
+        for change in self.scene_watch.scan() {
+            let display = change
+                .path
+                .strip_prefix(&self.base)
+                .unwrap_or(&change.path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let event = json!({
+                "kind": "scene",
+                "event": "changed",
+                "path": display,
+                "revision": change.revision,
+                "previous_revision": change.previous_revision,
+                "origin": "disk",
+                "at": crate::time_fmt::rfc3339_utc(crate::time_fmt::now_millis()),
+            })
+            .to_string();
+            let mut subscribers = self
+                .subscribers
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            subscribers.retain(|sender| sender.send(event.clone()).is_ok());
+        }
     }
 
     /// Current attachment status with the frozen flag applied.
@@ -1053,6 +1191,7 @@ pub fn run(
         }
     }
     let shutdown = Arc::new(AtomicBool::new(false));
+    start_scene_watcher(Arc::clone(&shared), Arc::clone(&shutdown));
     let ctrl_c_shutdown = Arc::clone(&shutdown);
     runtime.spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -1060,10 +1199,26 @@ pub fn run(
         }
     });
     serve(&listener, Arc::clone(&shared), Arc::clone(&shutdown));
+    shutdown.store(true, Ordering::Relaxed);
     let _ = shared.commands.send(DeviceCommand::Stop);
     runtime.shutdown_timeout(Duration::from_secs(2));
     let _ = std::fs::remove_file(home.inspector_state_path());
     crate::cli::EXIT_OK
+}
+
+/// Run the scene-file watcher until the inspector shuts down.
+fn start_scene_watcher(shared: Arc<Shared>, shutdown: Arc<AtomicBool>) {
+    let spawned = std::thread::Builder::new()
+        .name("impresario-inspector-scenes".to_string())
+        .spawn(move || {
+            while !shutdown.load(Ordering::Relaxed) {
+                shared.poll_scene_watch();
+                std::thread::sleep(SCENE_WATCH_POLL);
+            }
+        });
+    if spawned.is_err() {
+        eprintln!("inspector: cannot start the scene file watcher");
+    }
 }
 
 fn bind_listener(bind_ip: IpAddr, port: u16) -> std::io::Result<TcpListener> {
@@ -1701,6 +1856,44 @@ mod tests {
         assert_eq!(config.inspector.poll_interval(), Duration::from_secs(1));
         config.inspector.fps = 100;
         assert_eq!(config.inspector.poll_interval(), Duration::from_millis(33));
+    }
+
+    #[test]
+    fn scene_watch_reports_external_changes_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("watched.scene");
+        std::fs::write(&path, "first").expect("write scene");
+        let watch = SceneWatch::default();
+        watch.note(&path, Some(&revision_of_bytes(b"first")));
+        assert!(watch.scan().is_empty(), "an unchanged file reports nothing");
+
+        std::fs::write(&path, "second").expect("write scene");
+        let changes = watch.scan();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, path);
+        assert_eq!(
+            changes[0].previous_revision.as_deref(),
+            Some(revision_of_bytes(b"first").as_str())
+        );
+        assert_eq!(
+            changes[0].revision.as_deref(),
+            Some(revision_of_bytes(b"second").as_str())
+        );
+        assert!(watch.scan().is_empty(), "a change is reported once");
+
+        // An inspector write records the new baseline under the write guard;
+        // the scanner then sees no external change.
+        let mut guard = watch.begin_write();
+        std::fs::write(&path, "third").expect("write scene");
+        guard.record(&path, Some(&revision_of_bytes(b"third")));
+        drop(guard);
+        assert!(watch.scan().is_empty());
+
+        std::fs::remove_file(&path).expect("remove scene");
+        let changes = watch.scan();
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].revision.is_none(), "deletion is a change");
+        assert!(watch.scan().is_empty(), "deletion is reported once");
     }
 
     #[test]

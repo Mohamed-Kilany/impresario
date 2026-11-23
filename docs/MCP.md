@@ -114,7 +114,13 @@ missing state file.
 | `inspector_scene_validate` | `path` | Parse and validate one scene without writing it. |
 
 Scene writes are byte-preserving, stay inside the workspace, use SHA-256
-revisions and refuse to overwrite a file that changed since the preview. The
+revisions and refuse to overwrite a file that changed since the preview.
+Committing a locator-cell edit re-resolves the written cell against the live
+snapshot and returns a `verification` object (`verified`, `warning`, `invalid`
+or `unavailable` plus per-cell counts); the commit itself still succeeds when
+verification cannot run. Open scenes are also watched on disk, and the
+inspector SPA receives external edits as SSE `update` events with
+`kind: "scene"` (there is no MCP resource for scene files). The
 compact view is viewport-only; off-screen subtrees are pruned, focus is kept,
 and truncation is reported explicitly. While an inspector is attached, the
 same view is exposed as the resource

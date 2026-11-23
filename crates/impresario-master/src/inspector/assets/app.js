@@ -58,6 +58,8 @@ const state = {
   pendingRevealId: 0,
   scene: null,
   sceneCell: null,
+  sceneStale: null,
+  verification: null,
   edit: null,
   pendingOp: null,
   hasFrame: false,
@@ -1456,6 +1458,44 @@ function sceneDocument() {
   return state.edit || state.scene;
 }
 
+function verificationSummary(verification) {
+  if (!verification || verification.status === 'not_applicable') return '';
+  if (verification.status === 'unavailable') {
+    return 'locator verification: unavailable (no live snapshot)';
+  }
+  const parts = (verification.checks || []).map((check) => {
+    const cell = check.row + '/' + check.column;
+    if (typeof check.count !== 'number') return cell + ': ' + (check.error || 'invalid locator');
+    return cell + ': ' + check.count + (check.count === 1 ? ' match' : ' matches');
+  });
+  const label = verification.status === 'verified'
+    ? 'verified'
+    : verification.status === 'warning' ? 'warning' : 'invalid';
+  return 'locator verification: ' + label + (parts.length ? ' · ' + parts.join('; ') : '');
+}
+
+function applySceneEvent(data) {
+  if (!data || data.kind !== 'scene' || data.event !== 'changed') return;
+  if (!state.scene || String(state.scene.path) !== String(data.path)) return;
+  const previous = state.scene.revision || null;
+  if (data.revision && previous === data.revision) return;
+  if (state.edit) {
+    state.sceneStale = { expected: previous, actual: data.revision || null, at: data.at };
+    renderScene();
+    toast('The scene changed on disk. Reload it before committing the preview.', true);
+    return;
+  }
+  if (!data.revision) {
+    state.sceneStale = { expected: previous, actual: null, at: data.at };
+    renderScene();
+    toast('The scene was deleted or is unreadable on disk.', true);
+    return;
+  }
+  openScene(data.path).then((opened) => {
+    if (opened) toast('The scene changed on disk and was reloaded.');
+  });
+}
+
 function selectorFor(piece, platform) {
   if (!piece || !platform) return '';
   const key = platformKey(platform);
@@ -1491,20 +1531,24 @@ async function openScene(path) {
   const wanted = path || byId('scene-select').value;
   if (!wanted) {
     toast('Choose a scene first.', true);
-    return;
+    return false;
   }
-  if (state.edit && !window.confirm('Discard the previewed edit?')) return;
+  if (state.edit && !window.confirm('Discard the previewed edit?')) return false;
   try {
     const scene = await api('/api/scenes/open?path=' + encodeURIComponent(wanted));
     state.scene = scene;
     state.edit = null;
     state.sceneCell = null;
+    state.sceneStale = null;
+    state.verification = null;
     state.pendingOp = null;
     clear(byId('scene-edit'));
     renderScene();
     byId('scene-select').value = scene.path;
+    return true;
   } catch (error) {
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -1529,6 +1573,15 @@ function renderScene() {
   ];
   if (state.edit) lines.push('preview pending (not committed)');
   if (state.sceneCell) lines.push('cell: ' + state.sceneCell.row + ' / ' + state.sceneCell.column);
+  if (state.sceneStale) {
+    const previous = String(state.sceneStale.expected || '').slice(0, 12);
+    const current = state.sceneStale.actual
+      ? String(state.sceneStale.actual).slice(0, 12)
+      : 'missing';
+    lines.push('changed on disk: ' + previous + ' → ' + current + '; reload before committing');
+  }
+  const verification = verificationSummary(state.verification);
+  if (verification) lines.push(verification);
   meta.textContent = lines.join('\n');
   renderSceneTable();
   renderSceneActions();
@@ -1770,6 +1823,7 @@ async function previewScene(op, options) {
   try {
     const edit = await api('/api/scenes/preview', { body });
     state.edit = edit;
+    state.sceneStale = null;
     renderEdit(edit);
     renderScene();
   } catch (error) {
@@ -1846,14 +1900,28 @@ function renderEdit(edit) {
 async function commitEdit(edit) {
   try {
     const result = await api('/api/scenes/commit', { body: { edit_id: edit.edit_id } });
-    toast('Committed ' + result.path + ' (' + String(result.revision || '').slice(0, 12) + ').');
     const pending = state.pendingOp;
     state.pendingOp = null;
     state.edit = null;
     clear(byId('scene-edit'));
     await refreshScenes();
     await openScene(result.path);
+    state.verification = result.verification || null;
+    renderScene();
     if (pending) await previewScene(pending.op, pending.options);
+    const message = 'Committed ' + result.path + ' (' + String(result.revision || '').slice(0, 12) + ').';
+    const verification = result.verification || {};
+    if (verification.status === 'verified') {
+      toast(message + ' Locator verified.');
+    } else if (verification.status === 'warning') {
+      toast(message + ' ' + verificationSummary(verification) + '.', true);
+    } else if (verification.status === 'invalid') {
+      toast(message + ' ' + verificationSummary(verification) + '.', true);
+    } else if (verification.status === 'unavailable') {
+      toast(message + ' Attach a device to verify the written locator.', true);
+    } else {
+      toast(message);
+    }
   } catch (error) {
     toast(error.message, true);
   }
@@ -1984,6 +2052,10 @@ function connectEvents() {
   source.addEventListener('update', (event) => {
     try {
       const data = JSON.parse(event.data);
+      if (data.kind === 'scene') {
+        applySceneEvent(data);
+        return;
+      }
       if (data.status) applyStatus(data.status);
       if (data.kind === 'status') return;
       if (state.frozen) return;

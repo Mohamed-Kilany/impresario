@@ -12,16 +12,28 @@ use std::sync::MutexGuard;
 use impresario_core::ast::SceneFile;
 use impresario_core::platforms::Platform;
 use impresario_core::scene_edit::{self, SceneDocument, SceneEdit, SceneEditError};
+use impresario_inspector_core::snapshot::Snapshot;
 use impresario_inspector_core::{resolve_column, ColumnResolution};
+use impresario_locator::parse as parse_locator;
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::{ApiError, Shared};
 
+/// One locator cell written by a previewed edit, remembered so the commit can
+/// re-resolve it against the live snapshot (TASK-INSPECTOR 9.4, verify after
+/// commit).
+pub(crate) struct VerifyTarget {
+    pub row: String,
+    pub column: String,
+    pub locator: String,
+}
+
 /// One previewed edit waiting for a commit.
 pub(crate) struct StoredEdit {
     pub edit: SceneEdit,
     pub created_ms: u64,
+    pub targets: Vec<VerifyTarget>,
 }
 
 /// The inverse information kept after a commit.
@@ -140,9 +152,12 @@ fn display_path(shared: &Shared, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// Open a scene inside the workspace.
+/// Open a scene inside the workspace and remember its revision for the file
+/// watcher (an external edit arrives as an SSE `scene` update).
 pub(crate) fn open(shared: &Shared, path: &str) -> Result<SceneDocument, ApiError> {
-    SceneDocument::open_in_workspace(&shared.base, path).map_err(scene_error)
+    let doc = SceneDocument::open_in_workspace(&shared.base, path).map_err(scene_error)?;
+    shared.watch_scene(doc.path(), Some(doc.revision()));
+    Ok(doc)
 }
 
 /// A scene document plus its metadata for the UI.
@@ -203,6 +218,7 @@ pub(crate) fn preview(shared: &Shared, body: &Value) -> Result<Value, ApiError> 
         .transpose()
         .map_err(|_| ApiError::bad_request("'op.platform' is not a known platform"))?;
     let mut used_column: Option<String> = None;
+    let mut target: Option<VerifyTarget> = None;
 
     let edit = match kind {
         "add_column" => {
@@ -224,6 +240,11 @@ pub(crate) fn preview(shared: &Shared, body: &Value) -> Result<Value, ApiError> 
                 .unwrap_or_else(|| doc.suggest_row_name(seed));
             let locator = string_in(op, "locator")?;
             used_column = Some(column.clone());
+            target = Some(VerifyTarget {
+                row: row.clone(),
+                column: column.clone(),
+                locator: locator.clone(),
+            });
             doc.add_element(&row, &column, &locator)
         }
         "fill_cell" => {
@@ -231,6 +252,11 @@ pub(crate) fn preview(shared: &Shared, body: &Value) -> Result<Value, ApiError> 
             let column = resolve_column_field(&doc, op, platform)?;
             let locator = string_in(op, "locator")?;
             used_column = Some(column.clone());
+            target = Some(VerifyTarget {
+                row: row.clone(),
+                column: column.clone(),
+                locator: locator.clone(),
+            });
             doc.fill_cell(&row, &column, &locator)
         }
         "replace_cell" => {
@@ -239,6 +265,11 @@ pub(crate) fn preview(shared: &Shared, body: &Value) -> Result<Value, ApiError> 
             let locator = string_in(op, "locator")?;
             let confirm = op.get("confirm").and_then(Value::as_bool).unwrap_or(false);
             used_column = Some(column.clone());
+            target = Some(VerifyTarget {
+                row: row.clone(),
+                column: column.clone(),
+                locator: locator.clone(),
+            });
             doc.replace_cell(&row, &column, &locator, confirm)
         }
         "rename_row" => {
@@ -281,6 +312,7 @@ pub(crate) fn preview(shared: &Shared, body: &Value) -> Result<Value, ApiError> 
             StoredEdit {
                 edit,
                 created_ms: created,
+                targets: target.into_iter().collect(),
             },
         );
     }
@@ -353,8 +385,24 @@ pub(crate) fn commit(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
     let mut doc = SceneDocument::open(stored.edit.path()).map_err(scene_error)?;
     let previous_source = doc.source().to_string();
     let previous_revision = doc.revision().to_string();
-    let commit = doc.commit(&stored.edit).map_err(scene_error)?;
+    // Hold the watch lock across the write: the scanner must never sample the
+    // file between the old and new revisions, or it would report the
+    // inspector's own atomic rename as an external edit.
+    let mut write = shared.scene_watch.begin_write();
+    let commit = match doc.commit(&stored.edit) {
+        Ok(commit) => {
+            write.record(&commit.path, Some(&commit.revision));
+            commit
+        }
+        Err(error) => {
+            let disk = doc.disk_revision().ok().flatten();
+            write.record(doc.path(), disk.as_deref());
+            return Err(scene_error(error));
+        }
+    };
+    drop(write);
     let path = commit.path.clone();
+    let verification = verify_targets(shared.latest_snapshot().as_deref(), &stored.targets);
     lock(&shared.undo).insert(
         path.clone(),
         UndoRecord {
@@ -369,6 +417,7 @@ pub(crate) fn commit(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
         json!({
             "path": display_path(shared, &path),
             "revision": &commit.revision,
+            "verification": verification.get("status"),
         }),
     );
     Ok(json!({
@@ -376,6 +425,7 @@ pub(crate) fn commit(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
         "path": display_path(shared, &path),
         "revision": commit.revision,
         "diff": stored.edit.diff(),
+        "verification": verification,
     }))
 }
 
@@ -390,9 +440,19 @@ pub(crate) fn undo(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
             "there is no inspector edit to undo for '{path}'"
         )));
     };
-    let commit = doc
-        .restore(&record.previous_source, Some(&record.committed_revision))
-        .map_err(scene_error)?;
+    let mut write = shared.scene_watch.begin_write();
+    let commit = match doc.restore(&record.previous_source, Some(&record.committed_revision)) {
+        Ok(commit) => {
+            write.record(&key, Some(&commit.revision));
+            commit
+        }
+        Err(error) => {
+            let disk = doc.disk_revision().ok().flatten();
+            write.record(&key, disk.as_deref());
+            return Err(scene_error(error));
+        }
+    };
+    drop(write);
     record_audit(
         shared,
         "scene.undo",
@@ -429,7 +489,19 @@ pub(crate) fn create(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
     let mut doc = SceneDocument::create_in_workspace(&shared.base, &path, &name, &platforms)
         .map_err(scene_error)?;
     let source = doc.source().to_string();
-    let commit = doc.restore(&source, None).map_err(scene_error)?;
+    let mut write = shared.scene_watch.begin_write();
+    let commit = match doc.restore(&source, None) {
+        Ok(commit) => {
+            write.record(&commit.path, Some(&commit.revision));
+            commit
+        }
+        Err(error) => {
+            let disk = doc.disk_revision().ok().flatten();
+            write.record(doc.path(), disk.as_deref());
+            return Err(scene_error(error));
+        }
+    };
+    drop(write);
     record_audit(
         shared,
         "scene.create",
@@ -444,6 +516,91 @@ pub(crate) fn create(shared: &Shared, body: &Value) -> Result<Value, ApiError> {
         "revision": commit.revision,
         "source": source,
     }))
+}
+
+/// Re-resolve the locator cells written by a committed edit against the live
+/// snapshot (TASK-INSPECTOR 9.4, "verify after commit").
+///
+/// Verification is advisory: the commit has already succeeded, so a missing
+/// device or a locator that no longer matches returns a warning-shaped result
+/// instead of failing the request. `not_applicable` is returned for edits that
+/// write no locator cell (rename, remove, add column).
+fn verify_targets(snapshot: Option<&Snapshot>, targets: &[VerifyTarget]) -> Value {
+    if targets.is_empty() {
+        return json!({
+            "status": "not_applicable",
+            "checks": [],
+        });
+    }
+    let Some(snapshot) = snapshot else {
+        return json!({
+            "status": "unavailable",
+            "reason": "no snapshot has been acquired; attach a device to verify the written locator",
+            "checks": targets
+                .iter()
+                .map(|target| json!({
+                    "row": &target.row,
+                    "column": &target.column,
+                    "locator": &target.locator,
+                }))
+                .collect::<Vec<_>>(),
+        });
+    };
+
+    let mut checks = Vec::with_capacity(targets.len());
+    let mut all_valid = true;
+    let mut all_unique = true;
+    for target in targets {
+        let check = match parse_locator(&target.locator) {
+            Ok(locator) => match snapshot.resolve(&locator) {
+                Ok(matches) => {
+                    let count = matches.len();
+                    let unique = count == 1;
+                    all_unique &= unique;
+                    json!({
+                        "row": &target.row,
+                        "column": &target.column,
+                        "locator": &target.locator,
+                        "count": count,
+                        "unique": unique,
+                        "visible": matches.first().is_some_and(|entry| entry.visible),
+                        "matches": matches,
+                    })
+                }
+                Err(error) => {
+                    all_valid = false;
+                    json!({
+                        "row": &target.row,
+                        "column": &target.column,
+                        "locator": &target.locator,
+                        "error": error.to_string(),
+                    })
+                }
+            },
+            Err(error) => {
+                all_valid = false;
+                json!({
+                    "row": &target.row,
+                    "column": &target.column,
+                    "locator": &target.locator,
+                    "error": error.to_string(),
+                })
+            }
+        };
+        checks.push(check);
+    }
+    let status = if !all_valid {
+        "invalid"
+    } else if !all_unique {
+        "warning"
+    } else {
+        "verified"
+    };
+    json!({
+        "status": status,
+        "rev": snapshot.rev,
+        "checks": checks,
+    })
 }
 
 fn string_field(value: &Value, name: &str) -> Result<String, ApiError> {
@@ -510,6 +667,86 @@ fn scene_error(error: SceneEditError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use impresario_inspector_core::snapshot::{ScreenInfo, SnapshotNode};
+    use impresario_locator::{Rect, Role};
+
+    fn snapshot_with_play() -> Snapshot {
+        let screen = ScreenInfo::logical((108.0, 240.0));
+        let nodes = vec![
+            SnapshotNode::new(
+                1,
+                0,
+                Role::Generic,
+                "Screen",
+                Rect::new(0.0, 0.0, 108.0, 240.0),
+            ),
+            SnapshotNode::new(2, 1, Role::Button, "Play", Rect::new(8.0, 8.0, 100.0, 30.0))
+                .with_test_id("play"),
+        ];
+        Snapshot::new("phone", "phone", Platform::Android, screen, nodes)
+    }
+
+    fn target(locator: &str) -> VerifyTarget {
+        VerifyTarget {
+            row: "Play".to_string(),
+            column: "android".to_string(),
+            locator: locator.to_string(),
+        }
+    }
+
+    #[test]
+    fn verification_reports_verified_warning_and_unavailable() {
+        let empty = verify_targets(None, &[]);
+        assert_eq!(empty["status"], "not_applicable");
+
+        let unavailable = verify_targets(None, &[target("testid=play")]);
+        assert_eq!(unavailable["status"], "unavailable");
+        assert_eq!(unavailable["checks"][0]["locator"], "testid=play");
+
+        let snapshot = snapshot_with_play();
+        let verified = verify_targets(Some(&snapshot), &[target("testid=play")]);
+        assert_eq!(verified["status"], "verified");
+        assert_eq!(verified["rev"], 1);
+        assert_eq!(verified["checks"][0]["count"], 1);
+        assert_eq!(verified["checks"][0]["unique"], true);
+
+        let missing = verify_targets(Some(&snapshot), &[target("testid=missing")]);
+        assert_eq!(missing["status"], "warning");
+        assert_eq!(missing["checks"][0]["count"], 0);
+
+        let invalid = verify_targets(Some(&snapshot), &[target("role=unicorn")]);
+        assert_eq!(invalid["status"], "invalid");
+        assert!(invalid["checks"][0]["error"].is_string());
+    }
+
+    #[test]
+    fn verification_warns_when_a_locator_is_ambiguous() {
+        let screen = ScreenInfo::logical((108.0, 240.0));
+        let nodes = vec![
+            SnapshotNode::new(
+                1,
+                0,
+                Role::Generic,
+                "Screen",
+                Rect::new(0.0, 0.0, 108.0, 240.0),
+            ),
+            SnapshotNode::new(2, 1, Role::Button, "Play", Rect::new(8.0, 8.0, 100.0, 30.0))
+                .with_test_id("play"),
+            SnapshotNode::new(
+                3,
+                1,
+                Role::Button,
+                "Play",
+                Rect::new(8.0, 44.0, 100.0, 30.0),
+            )
+            .with_test_id("play"),
+        ];
+        let snapshot = Snapshot::new("phone", "phone", Platform::Android, screen, nodes);
+        let result = verify_targets(Some(&snapshot), &[target("testid=play")]);
+        assert_eq!(result["status"], "warning");
+        assert_eq!(result["checks"][0]["count"], 2);
+        assert_eq!(result["checks"][0]["unique"], false);
+    }
 
     #[test]
     fn scene_errors_carry_stable_codes() {

@@ -285,10 +285,15 @@ the implementation keeps the grammar in one module so a rename is local.
 - [x] INS-3.2 Lossless scene edit API (`impresario_core::scene_edit`) with
       byte-preserving tests.
 - [x] INS-3.3 Scene operations, column resolution, conflict handling and
-      undo. There is no file watcher: the client re-opens after commit and
-      stale revisions are refused.
+      undo. Open scenes are watched on disk: a 250 ms SHA-256 poll emits an
+      SSE `update` with `kind: "scene"` when an editor, git or the user changes
+      the file, while inspector writes refresh the baseline first so they are
+      not reported as external edits. Stale revisions are still refused.
 - [x] INS-3.4 Web UI scene flow: diff preview, commit, re-open and undo.
-      There is no automatic post-commit locator verification.
+      Commit re-resolves the written locator cell against the live snapshot
+      and reports `verified`, `warning`, `invalid` or `unavailable`; the UI
+      shows the result, auto-reloads an idle scene after an external edit and
+      warns without discarding a pending preview.
 - [x] INS-3.5 MCP inspector tools: compact view, wait-for-change, find,
       describe, suggest, verify, input, scene tools, structured errors. The
       live view is also `impresario://inspector/{device}/view`: listed while
@@ -348,7 +353,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. The live view is a subscribable MCP resource (INS-R5). |
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Partial**: web polling at `inspector.fps` (default 4) plus post-input refresh; no push binding or change counter. |
-| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them, and there is no post-commit verification. |
+| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them. Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
 | Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; no shared sessions, leases or preemption (documented). |
@@ -418,6 +423,26 @@ coverage:
   `subscriptions_are_tracked_per_uri_and_static_docs_are_refused`,
   `watch_registration_is_idempotent` and
   `inspector_view_is_listed_read_and_subscribable` passing.
+
+INS-R6 (2026-11-23): post-commit verification and scene file watching. New
+coverage:
+
+- `crates/impresario-master/src/inspector/scene.rs`:
+  `verification_reports_verified_warning_and_unavailable` covers a unique
+  `testid` match, zero matches, an unparseable locator and no attached
+  snapshot; `verification_warns_when_a_locator_is_ambiguous` covers two
+  matches. A commit now returns `verification`
+  (`verified`/`warning`/`invalid`/`unavailable`/`not_applicable`) and records
+  its status in the audit trail.
+- `crates/impresario-master/src/inspector/mod.rs`:
+  `scene_watch_reports_external_changes_once` proves an unchanged file is
+  silent, a rewrite is reported once with both revisions, an inspector write
+  that refreshes the baseline is not misreported, and a deletion is reported
+  once.
+- The embedded SPA suite grew to 40 checks: commit shows the verification line
+  and toast, an external scene event auto-reloads an idle scene, an event
+  during a preview keeps the diff and warns, and reloading then adopts the new
+  revision. The suite runs against the mock API with the real assets.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
