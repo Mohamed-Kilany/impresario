@@ -28,7 +28,7 @@ mod tools;
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use impresario_core::home::Home;
@@ -42,19 +42,18 @@ pub(crate) use protocol::Server;
 /// process exit code.
 #[must_use]
 pub fn run_stdio(base: PathBuf, config_path: PathBuf, devices_path: PathBuf, home: Home) -> i32 {
-    let server = Server {
-        base,
-        config_path,
-        devices_path,
-        home,
-    };
+    let server = Server::new(base, config_path, devices_path, home);
     serve(server, std::io::stdin().lock(), std::io::stdout())
 }
 
 /// The read loop: parse one JSON-RPC message per line, answer cheap methods
 /// inline and give `tools/call` a worker thread of its own.
 fn serve<R: BufRead>(server: Server, reader: R, writer: impl Write + Send + 'static) -> i32 {
-    let writer = Arc::new(Mutex::new(writer));
+    let notifier = protocol::Notifier::new(writer);
+    let server = Server {
+        notifier: Some(Arc::new(notifier.clone())),
+        ..server
+    };
     let mut workers: Vec<JoinHandle<()>> = Vec::new();
     for line in reader.lines() {
         let line = match line {
@@ -71,15 +70,12 @@ fn serve<R: BufRead>(server: Server, reader: R, writer: impl Write + Send + 'sta
         let message: Value = match serde_json::from_str(line) {
             Ok(message) => message,
             Err(err) => {
-                write_message(
-                    &writer,
-                    &protocol::error_response(
-                        Value::Null,
-                        protocol::PARSE_ERROR,
-                        &format!("invalid JSON: {err}"),
-                        None,
-                    ),
-                );
+                notifier.send(&protocol::error_response(
+                    Value::Null,
+                    protocol::PARSE_ERROR,
+                    &format!("invalid JSON: {err}"),
+                    None,
+                ));
                 continue;
             }
         };
@@ -90,18 +86,18 @@ fn serve<R: BufRead>(server: Server, reader: R, writer: impl Write + Send + 'sta
             && message.get("id").is_some();
         if !needs_worker {
             if let Some(response) = protocol::dispatch(&server, &message) {
-                write_message(&writer, &response);
+                notifier.send(&response);
             }
             continue;
         }
         workers.retain(|worker| !worker.is_finished());
         let server = server.clone();
-        let writer = Arc::clone(&writer);
+        let notifier = notifier.clone();
         let spawned = std::thread::Builder::new()
             .name("impresario-mcp-tool".to_string())
             .spawn(move || {
                 if let Some(response) = protocol::dispatch(&server, &message) {
-                    write_message(&writer, &response);
+                    notifier.send(&response);
                 }
             });
         match spawned {
@@ -110,28 +106,4 @@ fn serve<R: BufRead>(server: Server, reader: R, writer: impl Write + Send + 'sta
         }
     }
     EXIT_OK
-}
-
-/// One serialized JSON-RPC message per line, flushed immediately; stdout is
-/// shared by the read loop and every worker thread.
-fn write_message<W: Write>(writer: &Mutex<W>, message: &Value) {
-    let text = match serde_json::to_string(message) {
-        Ok(text) => text,
-        Err(err) => {
-            // Cannot happen for values built here, but never panic on it.
-            eprintln!("mcp: cannot serialize a response: {err}");
-            return;
-        }
-    };
-    let mut guard = match writer.lock() {
-        Ok(guard) => guard,
-        Err(poison) => poison.into_inner(),
-    };
-    let written = guard
-        .write_all(text.as_bytes())
-        .and_then(|()| guard.write_all(b"\n"))
-        .and_then(|()| guard.flush());
-    if let Err(err) = written {
-        eprintln!("mcp: cannot write a response: {err}");
-    }
 }

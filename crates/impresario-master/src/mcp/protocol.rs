@@ -2,7 +2,10 @@
 //! requests plus the legacy `initialize` handshake), JSON-RPC shaping and
 //! method dispatch for everything except the tool/resource bodies.
 
+use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use impresario_core::home::Home;
 use serde_json::{json, Map, Value};
@@ -16,6 +19,120 @@ pub(crate) struct Server {
     pub config_path: PathBuf,
     pub devices_path: PathBuf,
     pub home: Home,
+    /// Resource URIs the client subscribed to (`resources/subscribe`).
+    pub subscriptions: Arc<Mutex<BTreeSet<String>>>,
+    /// View URIs with a running watcher thread, so resubscribing does not
+    /// start a second one.
+    pub watchers: Arc<Mutex<BTreeSet<String>>>,
+    /// Server-initiated message sink; absent in dispatch-only unit tests.
+    pub notifier: Option<Arc<Notifier>>,
+}
+
+impl Server {
+    /// A server with no notification sink (unit tests).
+    pub(crate) fn new(
+        base: PathBuf,
+        config_path: PathBuf,
+        devices_path: PathBuf,
+        home: Home,
+    ) -> Self {
+        Self {
+            base,
+            config_path,
+            devices_path,
+            home,
+            subscriptions: Arc::new(Mutex::new(BTreeSet::new())),
+            watchers: Arc::new(Mutex::new(BTreeSet::new())),
+            notifier: None,
+        }
+    }
+
+    pub(crate) fn subscribed(&self, uri: &str) -> bool {
+        self.subscriptions
+            .lock()
+            .map(|set| set.contains(uri))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn subscribe(&self, uri: &str) {
+        if let Ok(mut set) = self.subscriptions.lock() {
+            set.insert(uri.to_string());
+        }
+    }
+
+    pub(crate) fn unsubscribe(&self, uri: &str) {
+        if let Ok(mut set) = self.subscriptions.lock() {
+            set.remove(uri);
+        }
+    }
+
+    /// `true` when this call started the only watcher for `uri`.
+    pub(crate) fn begin_watch(&self, uri: &str) -> bool {
+        self.watchers
+            .lock()
+            .map(|mut set| set.insert(uri.to_string()))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn end_watch(&self, uri: &str) {
+        if let Ok(mut set) = self.watchers.lock() {
+            set.remove(uri);
+        }
+    }
+
+    /// Emit `notifications/resources/updated` for one subscribed URI.
+    pub(crate) fn notify_resource_updated(&self, uri: &str) {
+        if let Some(notifier) = &self.notifier {
+            notifier.send(&json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/resources/updated",
+                "params": { "uri": uri },
+            }));
+        }
+    }
+}
+
+/// Serialized writer for server-initiated notifications and responses.
+#[derive(Clone)]
+pub(crate) struct Notifier {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+}
+
+impl std::fmt::Debug for Notifier {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Notifier")
+    }
+}
+
+impl Notifier {
+    pub(crate) fn new(writer: impl Write + Send + 'static) -> Self {
+        Self {
+            writer: Arc::new(Mutex::new(Box::new(writer))),
+        }
+    }
+
+    /// One serialized JSON-RPC message per line, flushed immediately.
+    pub(crate) fn send(&self, message: &Value) {
+        let text = match serde_json::to_string(message) {
+            Ok(text) => text,
+            Err(err) => {
+                // Cannot happen for values built here, but never panic on it.
+                eprintln!("mcp: cannot serialize a response: {err}");
+                return;
+            }
+        };
+        let mut guard = match self.writer.lock() {
+            Ok(guard) => guard,
+            Err(poison) => poison.into_inner(),
+        };
+        let written = guard
+            .write_all(text.as_bytes())
+            .and_then(|()| guard.write_all(b"\n"))
+            .and_then(|()| guard.flush());
+        if let Err(err) = written {
+            eprintln!("mcp: cannot write a response: {err}");
+        }
+    }
 }
 
 /// JSON-RPC error codes this server emits; `UNSUPPORTED_VERSION` is the
@@ -105,7 +222,7 @@ fn server_info() -> Value {
 fn capabilities() -> Value {
     json!({
         "tools": { "listChanged": false },
-        "resources": { "subscribe": false, "listChanged": false },
+        "resources": { "subscribe": true, "listChanged": false },
     })
 }
 
@@ -177,6 +294,8 @@ pub(crate) fn dispatch(server: &Server, message: &Value) -> Option<Value> {
         "tools/call" => tools::call(server, &params),
         "resources/list" => Ok(resources::list(server)),
         "resources/read" => resources::read(server, &params),
+        "resources/subscribe" => resources::subscribe(server, &params),
+        "resources/unsubscribe" => resources::unsubscribe(server, &params),
         other => Err(RpcError::new(
             METHOD_NOT_FOUND,
             format!("unknown method '{other}'"),
@@ -297,12 +416,12 @@ mod tests {
 
     #[test]
     fn dispatch_shapes_notifications_and_discover() {
-        let server = Server {
-            base: PathBuf::from("."),
-            config_path: PathBuf::from("impresario.config"),
-            devices_path: PathBuf::from("impresario.devices.config"),
-            home: Home::at("."),
-        };
+        let server = Server::new(
+            PathBuf::from("."),
+            PathBuf::from("impresario.config"),
+            PathBuf::from("impresario.devices.config"),
+            Home::at("."),
+        );
         let discover = dispatch(
             &server,
             &json!({ "jsonrpc": "2.0", "id": 7, "method": "server/discover", "params": {} }),

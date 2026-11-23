@@ -10,11 +10,13 @@
 mod common;
 
 use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use impresario_clients::testing::MockAgentBuilder;
@@ -37,15 +39,22 @@ struct Mcp {
 
 impl Mcp {
     fn spawn(workspace: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_impresario"))
+        Self::spawn_with_home(workspace, None)
+    }
+
+    fn spawn_with_home(workspace: &Path, home: Option<&Path>) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_impresario"));
+        command
             .arg("--workspace")
             .arg(workspace)
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn impresario mcp");
+            .stderr(Stdio::null());
+        if let Some(home) = home {
+            command.env("IMPRESARIO_HOME", home);
+        }
+        let mut child = command.spawn().expect("spawn impresario mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let (tx, responses) = mpsc::channel();
@@ -905,6 +914,318 @@ fn failed_run_returns_failure_screenshot_as_image() {
         content[0]["data"],
         json!(base64::engine::general_purpose::STANDARD.encode(&png))
     );
+
+    mcp.assert_clean();
+}
+
+// ---------------------------------------------------------------------------
+// INS-R5: the inspector view is an MCP resource with subscription support.
+// The fake below serves only the loopback endpoints the bridge uses, so the
+// test needs no device, connector or inspector process.
+// ---------------------------------------------------------------------------
+
+const VIEW_URI: &str = "impresario://inspector/phone/view";
+
+/// A loopback stand-in for a running `impresario inspector`: `/api/status`,
+/// `/api/view` and `/api/wait`, backed by a revision the test can advance.
+struct FakeInspector {
+    address: String,
+    rev: Arc<(Mutex<u64>, Condvar)>,
+    waiting: Arc<AtomicUsize>,
+    stopping: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FakeInspector {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake inspector");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let address = format!(
+            "http://{}",
+            listener.local_addr().expect("fake inspector address")
+        );
+        let rev = Arc::new((Mutex::new(7_u64), Condvar::new()));
+        let waiting = Arc::new(AtomicUsize::new(0));
+        let stopping = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let rev = Arc::clone(&rev);
+            let waiting = Arc::clone(&waiting);
+            let stopping = Arc::clone(&stopping);
+            std::thread::spawn(move || {
+                while !stopping.load(Ordering::SeqCst) {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            // One thread per request: `/api/wait` blocks for
+                            // seconds and must not stall a concurrent read.
+                            let rev = Arc::clone(&rev);
+                            let waiting = Arc::clone(&waiting);
+                            let stopping = Arc::clone(&stopping);
+                            std::thread::spawn(move || {
+                                handle_fake_inspector(stream, &rev, &waiting, &stopping);
+                            });
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+        };
+        Self {
+            address,
+            rev,
+            waiting,
+            stopping,
+            thread: Some(thread),
+        }
+    }
+
+    /// Write the discovery file the MCP bridge reads from `IMPRESARIO_HOME`.
+    fn write_state(&self, home: &Path) {
+        let state = json!({ "url": &self.address, "token": null, "device": "phone" });
+        std::fs::write(home.join("inspector.json"), state.to_string())
+            .expect("write inspector state");
+    }
+
+    /// Wait until the subscription watcher is blocked in `/api/wait`, so the
+    /// next revision bump cannot slip between its status read and its poll.
+    fn wait_until_polling(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.waiting.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the watcher never long-polled");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn bump(&self) {
+        let (lock, changed) = &*self.rev;
+        *lock.lock().expect("rev lock") += 1;
+        changed.notify_all();
+    }
+}
+
+impl Drop for FakeInspector {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        let (_, changed) = &*self.rev;
+        changed.notify_all();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn handle_fake_inspector(
+    stream: TcpStream,
+    rev: &Arc<(Mutex<u64>, Condvar)>,
+    waiting: &AtomicUsize,
+    stopping: &AtomicBool,
+) {
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut reader = BufReader::new(stream.try_clone().expect("clone fake inspector stream"));
+    let mut request = String::new();
+    if reader.read_line(&mut request).is_err() {
+        return;
+    }
+    loop {
+        let mut header = String::new();
+        match reader.read_line(&mut header) {
+            Ok(0) => break,
+            Ok(_) if header == "\r\n" || header == "\n" => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    let target = request.split_whitespace().nth(1).unwrap_or("/");
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let body = match path {
+        "/api/status" => {
+            let rev = *rev.0.lock().expect("rev lock");
+            json!({
+                "ok": true,
+                "data": {
+                    "url": "http://127.0.0.1",
+                    "status": fake_attachment(rev),
+                },
+            })
+        }
+        "/api/view" => {
+            let rev = *rev.0.lock().expect("rev lock");
+            json!({
+                "ok": true,
+                "data": {
+                    "device": "phone",
+                    "rev": rev,
+                    "columns": ["Role", "Name"],
+                    "rows": [["button", "Play"]],
+                },
+            })
+        }
+        "/api/wait" => {
+            waiting.fetch_add(1, Ordering::SeqCst);
+            let since = query_value(query, "since").unwrap_or(0);
+            let timeout = query_value(query, "timeout_ms")
+                .unwrap_or(5_000)
+                .min(10_000);
+            let current = wait_for_rev(rev, stopping, since, Duration::from_millis(timeout));
+            json!({
+                "ok": true,
+                "data": {
+                    "changed": current > since,
+                    "since": since,
+                    "rev": current,
+                    "status": fake_attachment(current),
+                },
+            })
+        }
+        _ => json!({
+            "ok": false,
+            "error": { "code": "NOT_FOUND", "message": format!("no fake route {path}") },
+        }),
+    };
+    let body = body.to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = stream;
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
+
+fn fake_attachment(rev: u64) -> Value {
+    json!({ "attached": true, "device": "phone", "platform": "web", "rev": rev })
+}
+
+fn query_value(query: &str, name: &str) -> Option<u64> {
+    for pair in query.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            if key == name {
+                return value.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+fn wait_for_rev(
+    rev: &Arc<(Mutex<u64>, Condvar)>,
+    stopping: &AtomicBool,
+    since: u64,
+    timeout: Duration,
+) -> u64 {
+    let (lock, changed) = &**rev;
+    let mut current = lock.lock().expect("rev lock");
+    let deadline = Instant::now() + timeout;
+    while *current <= since && !stopping.load(Ordering::SeqCst) {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let (guard, _) = changed
+            .wait_timeout(current, deadline - now)
+            .expect("rev wait");
+        current = guard;
+    }
+    *current
+}
+
+#[test]
+fn inspector_view_is_listed_read_and_subscribable() {
+    let fake = FakeInspector::start();
+    let temp = tempfile::tempdir().expect("tempdir");
+    write_workspace(temp.path(), "", &[], &[]);
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).expect("create home");
+    fake.write_state(&home);
+
+    let mut mcp = Mcp::spawn_with_home(temp.path(), Some(&home));
+    let initialize = mcp.request(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "impresario-tests", "version": "0" },
+        }),
+    );
+    assert_eq!(
+        result_of(&initialize)["capabilities"]["resources"]["subscribe"],
+        json!(true)
+    );
+    mcp.notify("notifications/initialized");
+
+    // The attached device's view appears beside the static docs.
+    let resources = result_of(&mcp.request(2, "resources/list", json!({}))).clone();
+    let entry = resources["resources"]
+        .as_array()
+        .expect("resources array")
+        .iter()
+        .find(|resource| resource["uri"] == json!(VIEW_URI))
+        .expect("inspector view resource");
+    assert_eq!(entry["mimeType"], json!("application/json"));
+    assert_eq!(entry["_meta"]["impresario/device"], json!("phone"));
+    assert_eq!(entry["_meta"]["impresario/rev"], json!(7));
+
+    // Reading it returns the compact view as JSON text.
+    let read = result_of(&mcp.request(3, "resources/read", json!({ "uri": VIEW_URI }))).clone();
+    let text = read["contents"][0]["text"].as_str().expect("view text");
+    let view: Value = serde_json::from_str(text).expect("view JSON");
+    assert_eq!(view["device"], json!("phone"));
+    assert_eq!(view["rows"][0][1], json!("Play"));
+
+    // Another device's URI is not silently served.
+    let wrong = mcp.request(
+        4,
+        "resources/read",
+        json!({ "uri": "impresario://inspector/tablet/view" }),
+    );
+    assert_eq!(wrong["error"]["code"], json!(-32603));
+    let message = wrong["error"]["message"].as_str().expect("error message");
+    assert!(message.contains("phone"), "error message: {message}");
+
+    // Static docs and other devices are not subscribable.
+    let doc = mcp.request(
+        5,
+        "resources/subscribe",
+        json!({ "uri": "impresario://docs/dsl" }),
+    );
+    assert_eq!(doc["error"]["code"], json!(-32602));
+    let other = mcp.request(
+        6,
+        "resources/subscribe",
+        json!({ "uri": "impresario://inspector/tablet/view" }),
+    );
+    assert_eq!(other["error"]["code"], json!(-32602));
+
+    // Subscribing starts one watcher; a revision change becomes a
+    // notifications/resources/updated message on the same stdout channel.
+    let subscribed = mcp.request(7, "resources/subscribe", json!({ "uri": VIEW_URI }));
+    assert_eq!(result_of(&subscribed), &json!({}));
+    fake.wait_until_polling();
+    fake.bump();
+    let notification = mcp.recv_next();
+    assert_eq!(
+        notification["method"],
+        json!("notifications/resources/updated")
+    );
+    assert_eq!(notification["params"]["uri"], json!(VIEW_URI));
+    assert!(notification.get("id").is_none(), "{notification}");
+
+    // A re-read reflects the bumped revision.
+    let read = result_of(&mcp.request(8, "resources/read", json!({ "uri": VIEW_URI }))).clone();
+    let text = read["contents"][0]["text"].as_str().expect("view text");
+    assert!(text.contains("\"rev\": 8"), "view: {text}");
+
+    // Unsubscribe is acknowledged and idempotent.
+    let unsubscribed = mcp.request(9, "resources/unsubscribe", json!({ "uri": VIEW_URI }));
+    assert_eq!(result_of(&unsubscribed), &json!({}));
+    let again = mcp.request(10, "resources/unsubscribe", json!({ "uri": VIEW_URI }));
+    assert_eq!(result_of(&again), &json!({}));
 
     mcp.assert_clean();
 }

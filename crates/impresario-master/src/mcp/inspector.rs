@@ -16,13 +16,13 @@ use super::protocol::Server;
 use super::tools::ToolOutput;
 
 /// One resolved inspector endpoint.
-struct Session {
+pub(crate) struct Session {
     url: String,
     token: Option<String>,
 }
 
 impl Session {
-    fn discover(server: &Server) -> Result<Self, String> {
+    pub(crate) fn discover(server: &Server) -> Result<Self, String> {
         let path = server.home.inspector_state_path();
         let source = std::fs::read_to_string(&path).map_err(|error| {
             format!("no inspector is running ({error}); start one with `impresario inspector`")
@@ -49,10 +49,18 @@ impl Session {
         path: &str,
         body: Option<&Value>,
     ) -> Result<(u16, Vec<u8>, String), String> {
+        self.request_with_timeout(method, path, body, Duration::from_secs(150))
+    }
+
+    fn request_with_timeout(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<(u16, Vec<u8>, String), String> {
         let url = format!("{}{}", self.url.trim_end_matches('/'), path);
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(150))
-            .build();
+        let agent = ureq::AgentBuilder::new().timeout(timeout).build();
         let mut request = agent.request(method, &url);
         if let Some(token) = &self.token {
             request = request.set("Authorization", &format!("Bearer {token}"));
@@ -91,32 +99,138 @@ impl Session {
     }
 
     fn json(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
-        let (status, bytes, _) = self.request(method, path, body)?;
-        let value: Value = serde_json::from_slice(&bytes).map_err(|error| {
-            format!("the inspector returned invalid JSON (HTTP {status}): {error}")
-        })?;
-        if value.get("ok").and_then(Value::as_bool) == Some(true) {
-            return Ok(value.get("data").cloned().unwrap_or(Value::Null));
-        }
-        let error = value.get("error").unwrap_or(&Value::Null);
-        let code = error
-            .get("code")
-            .and_then(Value::as_str)
-            .unwrap_or("INSPECTOR_ERROR");
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("the inspector rejected the request");
-        Err(format!("{code}: {message}"))
+        self.json_with_timeout(method, path, body, Duration::from_secs(150))
+    }
+
+    fn json_with_timeout(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        let (status, bytes, _) = self.request_with_timeout(method, path, body, timeout)?;
+        decode_response(status, &bytes)
     }
 
     fn get(&self, path: &str) -> Result<Value, String> {
         self.json("GET", path, None)
     }
 
+    fn get_with_timeout(&self, path: &str, timeout: Duration) -> Result<Value, String> {
+        self.json_with_timeout("GET", path, None, timeout)
+    }
+
     fn post(&self, path: &str, body: &Value) -> Result<Value, String> {
         self.json("POST", path, Some(body))
     }
+}
+
+/// Unwrap the inspector's `{ ok, data | error }` envelope.
+fn decode_response(status: u16, bytes: &[u8]) -> Result<Value, String> {
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("the inspector returned invalid JSON (HTTP {status}): {error}"))?;
+    if value.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(value.get("data").cloned().unwrap_or(Value::Null));
+    }
+    let error = value.get("error").unwrap_or(&Value::Null);
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("INSPECTOR_ERROR");
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("the inspector rejected the request");
+    Err(format!("{code}: {message}"))
+}
+
+/// The inspector attachment as reported by `/api/status`.
+#[derive(Debug, Clone)]
+pub(crate) struct Attachment {
+    pub device: String,
+    pub rev: u64,
+}
+
+const DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1_200);
+
+/// The attached device, if an inspector is running and has one. Any failure
+/// (no inspector, stale state, old build) simply means "nothing to list".
+pub(crate) fn attached(server: &Server) -> Option<Attachment> {
+    let session = Session::discover(server).ok()?;
+    let data = session
+        .get_with_timeout("/api/status", DISCOVERY_TIMEOUT)
+        .ok()?;
+    let status = data.get("status")?;
+    if status.get("attached").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    Some(Attachment {
+        device: status.get("device").and_then(Value::as_str)?.to_string(),
+        rev: status.get("rev").and_then(Value::as_u64).unwrap_or(0),
+    })
+}
+
+/// Read the compact view for `device`, refusing to show another device's view.
+pub(crate) fn view(server: &Server, device: &str) -> Result<Value, String> {
+    let session = Session::discover(server)?;
+    let status = session.get("/api/status")?;
+    let attachment = status
+        .get("status")
+        .ok_or_else(|| "the inspector reported no attachment status".to_string())?;
+    ensure_device(attachment, device)?;
+    session.get("/api/view")
+}
+
+/// Block until the attached view's revision changes, or return the current
+/// revision without waiting when `since` is `None`. Fails when the inspector
+/// is not attached to `device`, so a subscription never reports another
+/// device's changes.
+pub(crate) fn wait_for_view_change(
+    server: &Server,
+    device: &str,
+    since: Option<u64>,
+    timeout_ms: u64,
+) -> Result<(u64, bool), String> {
+    let session = Session::discover(server)?;
+    let since = match since {
+        Some(rev) => rev,
+        None => {
+            let status = session.get_with_timeout("/api/status", DISCOVERY_TIMEOUT)?;
+            let attachment = status
+                .get("status")
+                .ok_or_else(|| "the inspector reported no attachment status".to_string())?;
+            ensure_device(attachment, device)?;
+            attachment.get("rev").and_then(Value::as_u64).unwrap_or(0)
+        }
+    };
+    let data = session.get(&format!("/api/wait?since={since}&timeout_ms={timeout_ms}"))?;
+    if let Some(status) = data.get("status") {
+        ensure_device(status, device)?;
+    }
+    let rev = data.get("rev").and_then(Value::as_u64).unwrap_or(since);
+    let changed = data
+        .get("changed")
+        .and_then(Value::as_bool)
+        .unwrap_or(rev > since);
+    Ok((rev, changed))
+}
+
+/// `status` is the inspector's attachment snapshot.
+fn ensure_device(status: &Value, device: &str) -> Result<(), String> {
+    if status.get("attached").and_then(Value::as_bool) != Some(true) {
+        return Err("no inspector device is attached".to_string());
+    }
+    let actual = status
+        .get("device")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    if actual != device {
+        return Err(format!(
+            "the inspector is attached to '{actual}', not '{device}'"
+        ));
+    }
+    Ok(())
 }
 
 fn output(result: Result<Value, String>) -> ToolOutput {
@@ -149,7 +263,7 @@ fn optional_bool(arguments: &Value, name: &str) -> Option<bool> {
     arguments.get(name).and_then(Value::as_bool)
 }
 
-fn encode(value: &str) -> String {
+pub(crate) fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {
@@ -160,6 +274,34 @@ fn encode(value: &str) -> String {
         }
     }
     out
+}
+
+/// Decode one percent-encoded path segment; `None` on malformed input.
+pub(crate) fn decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex(bytes.get(index + 1).copied()?)?;
+            let low = hex(bytes.get(index + 2).copied()?)?;
+            out.push((high << 4) | low);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn query(pairs: &[(&str, String)]) -> String {
