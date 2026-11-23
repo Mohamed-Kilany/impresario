@@ -80,6 +80,24 @@ impl Server {
         }
     }
 
+    /// Finish a watcher: remove its registration and report whether the URI
+    /// was resubscribed while it was stopping. The check is atomic with the
+    /// removal (watchers lock, then subscriptions), so a concurrent
+    /// `resources/subscribe` either keeps this watcher or starts a new one —
+    /// never both and never neither.
+    pub(crate) fn finish_watch(&self, uri: &str) -> bool {
+        let mut watchers = match self.watchers.lock() {
+            Ok(watchers) => watchers,
+            Err(poison) => poison.into_inner(),
+        };
+        watchers.remove(uri);
+        let subscribed = self.subscribed(uri);
+        if subscribed {
+            watchers.insert(uri.to_string());
+        }
+        subscribed
+    }
+
     /// Emit `notifications/resources/updated` for one subscribed URI.
     pub(crate) fn notify_resource_updated(&self, uri: &str) {
         if let Some(notifier) = &self.notifier {

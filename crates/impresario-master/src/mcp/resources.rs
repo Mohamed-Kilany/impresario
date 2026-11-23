@@ -253,25 +253,34 @@ fn start_view_watch(server: &Server, uri: &str) {
         .name("impresario-mcp-inspector-watch".to_string())
         .spawn(move || {
             let mut since = None;
-            while worker_server.subscribed(&watched) {
-                match inspector::wait_for_view_change(&worker_server, &device, since, VIEW_WAIT_MS)
-                {
-                    Ok((rev, changed)) => {
-                        since = Some(rev);
-                        if changed && worker_server.subscribed(&watched) {
-                            worker_server.notify_resource_updated(&watched);
+            loop {
+                while worker_server.subscribed(&watched) {
+                    match inspector::wait_for_view_change(
+                        &worker_server,
+                        &device,
+                        since,
+                        VIEW_WAIT_MS,
+                    ) {
+                        Ok((rev, changed)) => {
+                            since = Some(rev);
+                            if changed && worker_server.subscribed(&watched) {
+                                worker_server.notify_resource_updated(&watched);
+                            }
+                        }
+                        Err(_) => {
+                            // Detached, replaced by another device or a
+                            // transient HTTP failure: retry without spinning
+                            // and resync the revision so a restarted inspector
+                            // cannot hide changes.
+                            since = None;
+                            std::thread::sleep(Duration::from_millis(750));
                         }
                     }
-                    Err(_) => {
-                        // Detached, replaced by another device or a transient
-                        // HTTP failure: retry without spinning and resync the
-                        // revision so a restarted inspector cannot hide changes.
-                        since = None;
-                        std::thread::sleep(Duration::from_millis(750));
-                    }
+                }
+                if !worker_server.finish_watch(&watched) {
+                    break;
                 }
             }
-            worker_server.end_watch(&watched);
         });
     if spawned.is_err() {
         server.end_watch(uri);
@@ -339,5 +348,31 @@ mod tests {
         assert!(!server.begin_watch(&uri));
         server.end_watch(&uri);
         assert!(server.begin_watch(&uri));
+    }
+
+    #[test]
+    fn a_racing_resubscription_keeps_exactly_one_watcher() {
+        let server = server();
+        let uri = view_uri("phone");
+        assert!(server.begin_watch(&uri));
+        assert!(
+            !server.finish_watch(&uri),
+            "no subscription means the watcher ends"
+        );
+        assert!(server.begin_watch(&uri));
+
+        // The subscription arrives while the watcher is finishing: the same
+        // watcher must stay registered instead of exiting.
+        server.subscribe(&uri);
+        assert!(server.finish_watch(&uri));
+        assert!(!server.begin_watch(&uri), "still exactly one watcher");
+
+        // Once the client unsubscribes, the next finish ends it.
+        server.unsubscribe(&uri);
+        assert!(!server.finish_watch(&uri));
+        assert!(
+            server.begin_watch(&uri),
+            "a later subscribe can start again"
+        );
     }
 }
