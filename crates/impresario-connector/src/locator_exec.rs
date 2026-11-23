@@ -202,6 +202,7 @@ struct Resolved {
 
 /// Poll until the locator has exactly one match (or the DSL index picks one)
 /// and a unique CSS handle is available.
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_single(
     executor: &Executor,
     platform: Platform,
@@ -239,6 +240,7 @@ async fn wait_for_single(
 }
 
 /// Poll the snapshot until the full match count equals `expected`.
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_count(
     executor: &Executor,
     platform: Platform,
@@ -276,6 +278,7 @@ async fn wait_for_count(
 
 /// A locator `hidden` check succeeds when nothing matches; otherwise the
 /// single match is checked for visibility by the legacy executor.
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_hidden(
     executor: &Executor,
     platform: Platform,
