@@ -1143,7 +1143,7 @@ fn inspector_view_is_listed_read_and_subscribable() {
     std::fs::create_dir_all(&home).expect("create home");
     fake.write_state(&home);
 
-    let mut mcp = Mcp::spawn_with_home(temp.path(), Some(&home));
+    let mut mcp = Mcp::spawn_with_home(temp.path(), Some(home.as_path()));
     let initialize = mcp.request(
         1,
         "initialize",
