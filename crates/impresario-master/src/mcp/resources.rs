@@ -248,17 +248,17 @@ fn start_view_watch(server: &Server, uri: &str) {
         return;
     };
     let server = server.clone();
-    let uri = uri.to_string();
+    let watched = uri.to_string();
     let spawned = std::thread::Builder::new()
         .name("impresario-mcp-inspector-watch".to_string())
         .spawn(move || {
             let mut since = None;
-            while server.subscribed(&uri) {
+            while server.subscribed(&watched) {
                 match inspector::wait_for_view_change(&server, &device, since, VIEW_WAIT_MS) {
                     Ok((rev, changed)) => {
                         since = Some(rev);
-                        if changed && server.subscribed(&uri) {
-                            server.notify_resource_updated(&uri);
+                        if changed && server.subscribed(&watched) {
+                            server.notify_resource_updated(&watched);
                         }
                     }
                     Err(_) => {
@@ -270,7 +270,7 @@ fn start_view_watch(server: &Server, uri: &str) {
                     }
                 }
             }
-            server.end_watch(&uri);
+            server.end_watch(&watched);
         });
     if spawned.is_err() {
         server.end_watch(uri);
