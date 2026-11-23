@@ -690,6 +690,12 @@ impl Executor {
         &self.backend
     }
 
+    /// The command loop's poll interval (also used by locator resolution).
+    #[must_use]
+    pub fn poll_interval(&self) -> Duration {
+        self.options.poll_interval
+    }
+
     /// Inject the helper script idempotently (spec 10.3: before every command).
     pub async fn inject_helper(&self, cancel: &CancellationToken) -> Result<(), ConnectorError> {
         let expression = script::inject_expression();

@@ -80,6 +80,18 @@ fn text(value: &str) -> pb::Selector {
     selector(pb::SelectorStrategy::Text, value)
 }
 
+fn locator(value: &str) -> pb::Selector {
+    selector(pb::SelectorStrategy::Locator, value)
+}
+
+fn locator_index(value: &str, index: u32) -> pb::Selector {
+    pb::Selector {
+        strategy: pb::SelectorStrategy::Locator as i32,
+        value: value.to_string(),
+        index,
+    }
+}
+
 fn action(kind: pb::ActionType, selector: Option<pb::Selector>) -> pb::RunAction {
     pb::RunAction {
         r#type: kind as i32,
@@ -1016,6 +1028,209 @@ async fn run_fixture_suite(backend: &str) {
     chrome.kill().await;
 }
 
+async fn run_locator_suite(backend: &str) {
+    let Some(mut chrome) = start_chrome("locators.html").await else {
+        eprintln!("skipping locator suite ({backend}): no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let response = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Web as i32,
+            endpoint: endpoint.clone(),
+            app_url: String::new(),
+            options: suite_options(backend, "locators.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("locator handshake rpc");
+    assert!(
+        response.accepted,
+        "[{backend}] locator handshake rejected: {:?}",
+        response.error
+    );
+    let session_id = response.session_id.clone();
+    let mut web = Driver::open(&mut harness.client, &session_id).await;
+
+    // Warm up through the legacy path: locator resolution only starts once the
+    // fixture page is loaded and the inspector script is available.
+    web.check_visible(css("body"), 5_000).await;
+
+    // The canonical expression a scene cell carries.
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("role=button[name=\"Click me\"]")),
+        )),
+        5_000,
+    )
+    .await;
+    web.run_ok(
+        check_body(
+            pb::CheckKind::TextEquals,
+            locator("id=locator-result"),
+            "clicked",
+            0,
+        ),
+        2_000,
+    )
+    .await;
+
+    // Native id.
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("id=locator-second")),
+        )),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#locator-result"), "second-clicked").await;
+
+    // `data-testid`.
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("testid=locator-click")),
+        )),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#locator-result"), "clicked").await;
+
+    // An ambiguous locator cannot silently pick an element for an action.
+    let ambiguous = web
+        .run_expect(
+            body(action(pb::ActionType::Click, Some(locator("role=button")))),
+            2_000,
+            pb::ErrorCode::InvalidSelector,
+        )
+        .await;
+    let count: usize = error_of(&ambiguous)
+        .details
+        .get("match_count")
+        .and_then(|value| value.parse().ok())
+        .expect("ambiguous match_count");
+    assert!(count >= 2, "[{backend}] ambiguous match count {count}");
+
+    // A non-zero selector index opts into one of several matches (0-based,
+    // matching the legacy `findSafe` index).
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator_index("role=button", 1)),
+        )),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#locator-result"), "second-clicked").await;
+
+    // Shadow-DOM nodes are acquired by the same viewport snapshot.
+    let mut shadow = action(
+        pb::ActionType::Type,
+        Some(locator("id=locator-shadow-input")),
+    );
+    shadow.text = "fresh".to_string();
+    web.run_ok(body(shadow), 5_000).await;
+    web.text_contains(css("#locator-shadow-state"), "fresh")
+        .await;
+
+    // Count polls the full match set, not just the first element.
+    let counted = web
+        .run_ok(
+            check_body(
+                pb::CheckKind::Count,
+                locator("testid=locator-bullet"),
+                "",
+                3,
+            ),
+            2_000,
+        )
+        .await;
+    assert_eq!(counted.observed_count, 3);
+    let mismatch = web
+        .run_expect(
+            check_body(
+                pb::CheckKind::Count,
+                locator("testid=locator-bullet"),
+                "",
+                2,
+            ),
+            2_000,
+            pb::ErrorCode::CheckFailed,
+        )
+        .await;
+    let error = error_of(&mismatch);
+    assert_eq!(error.details.get("expected").map(String::as_str), Some("2"));
+    assert_eq!(error.details.get("observed").map(String::as_str), Some("3"));
+    assert_eq!(
+        error.details.get("matched_count").map(String::as_str),
+        Some("3")
+    );
+
+    // Hidden succeeds immediately on zero matches; a resolved visible element
+    // goes through the legacy hidden check and fails.
+    let hidden_missing = web
+        .run_ok(
+            check_body(pb::CheckKind::Hidden, locator("id=locator-never"), "", 0),
+            500,
+        )
+        .await;
+    assert_eq!(hidden_missing.observed_text, "missing");
+    assert_eq!(hidden_missing.observed_count, 0);
+    web.run_expect(
+        check_body(pb::CheckKind::Hidden, locator("id=locator-click"), "", 0),
+        1_000,
+        pb::ErrorCode::CheckFailed,
+    )
+    .await;
+
+    // Ordinary checks surface an absent locator as CHECK_FAILED, so the scene
+    // sees the assertion rather than a transport-level ELEMENT_NOT_FOUND.
+    web.run_expect(
+        check_body(pb::CheckKind::Visible, locator("id=locator-never"), "", 0),
+        500,
+        pb::ErrorCode::CheckFailed,
+    )
+    .await;
+
+    // Probes resolve best-effort: a present element passes and a missing one
+    // reports the claim as failed instead of erroring the command.
+    let mut present = probe_body(
+        pb::ProbeKind::Showing,
+        locator("role=button[name=\"Click me\"]"),
+    );
+    if let pb::command::Body::Probe(probe) = &mut present {
+        probe.claims = vec![claim("showing=present")];
+    }
+    let result = web.run_ok(present, 5_000).await;
+    assert_eq!(
+        verdict_state(&result, "showing=present"),
+        pb::VerdictState::Pass,
+        "[{backend}] present locator probe: {:?}",
+        result.probe
+    );
+
+    let mut missing = probe_body(pb::ProbeKind::Showing, locator("id=locator-never"));
+    if let pb::command::Body::Probe(probe) = &mut missing {
+        probe.claims = vec![claim("showing=present")];
+    }
+    let result = web.run_ok(missing, 5_000).await;
+    assert_eq!(
+        verdict_state(&result, "showing=present"),
+        pb::VerdictState::Fail,
+        "[{backend}] missing locator probe: {:?}",
+        result.probe
+    );
+
+    harness.shutdown(&session_id).await;
+    let closed = web.await_closed().await;
+    assert_eq!(closed.reason, "shutdown");
+    chrome.kill().await;
+}
+
 fn verdict_state(result: &pb::CommandResult, claim_id: &str) -> pb::VerdictState {
     let probe = result.probe.as_ref().expect("probe result");
     let verdict = probe
@@ -1393,6 +1608,17 @@ async fn fixture_suite_raw_backend() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fixture_suite_chromiumoxide_backend() {
     run_fixture_suite("chromiumoxide").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn locator_suite_raw_backend() {
+    run_locator_suite("raw").await;
+}
+
+#[cfg(feature = "chromiumoxide-backend")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn locator_suite_chromiumoxide_backend() {
+    run_locator_suite("chromiumoxide").await;
 }
 
 // ---------------------------------------------------------------------------

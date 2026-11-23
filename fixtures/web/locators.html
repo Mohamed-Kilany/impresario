@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Impresario locator fixture</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  section { margin-bottom: 12px; }
+  h2 { font-size: 14px; margin: 8px 0 4px; }
+  .mirror { color: #555; font-size: 12px; }
+  .bullet { margin: 2px 0; }
+</style>
+</head>
+<body>
+<h1 id="locator-title">Impresario locator fixture</h1>
+
+<section id="locator-buttons">
+  <h2>Buttons</h2>
+  <button id="locator-click" data-testid="locator-click">Click me</button>
+  <button id="locator-second">Second</button>
+  <div id="locator-result" class="mirror">-</div>
+</section>
+
+<section id="locator-count">
+  <h2>Count</h2>
+  <div class="bullet" data-testid="locator-bullet">one</div>
+  <div class="bullet" data-testid="locator-bullet">two</div>
+  <div class="bullet" data-testid="locator-bullet">three</div>
+</section>
+
+<section id="locator-hidden">
+  <h2>Hidden</h2>
+  <div id="locator-hidden-panel" style="display: none;">hidden</div>
+</section>
+
+<section id="locator-shadow">
+  <h2>Shadow contenteditable</h2>
+  <shadow-editable id="locator-shadow-host"></shadow-editable>
+  <div id="locator-shadow-state" class="mirror">-</div>
+</section>
+
+<script>
+(function () {
+  function mirror(id, text) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = text; }
+  }
+
+  document.getElementById('locator-click').addEventListener('click', function () {
+    mirror('locator-result', 'clicked');
+  });
+  document.getElementById('locator-second').addEventListener('click', function () {
+    mirror('locator-result', 'second-clicked');
+  });
+
+  class ShadowEditable extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<div id="locator-shadow-input" contenteditable="true" style="display:inline-block;min-width:120px;border:1px solid #999;padding:4px">seed</div>';
+      const input = root.querySelector('#locator-shadow-input');
+      input.addEventListener('input', function () {
+        mirror('locator-shadow-state', 'input=' + input.textContent);
+      });
+    }
+  }
+  customElements.define('shadow-editable', ShadowEditable);
+})();
+</script>
+</body>
+</html>

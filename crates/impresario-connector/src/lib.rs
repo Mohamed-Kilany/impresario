@@ -36,6 +36,7 @@ pub mod focus;
 pub mod inspector;
 pub mod keys;
 pub mod launch;
+pub mod locator_exec;
 pub mod pages;
 pub mod png;
 pub mod script;

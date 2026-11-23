@@ -40,10 +40,10 @@ pub const DEFAULT_MAX_DEPTH: u32 = 100;
 /// block scoping, template strings, `async`/`await`, optional chaining or
 /// spread. `inspector_script_is_es5` enforces this in CI.
 pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function () {
-  if (window.__impresarioInspector && window.__impresarioInspector.version >= 2) {
+  if (window.__impresarioInspector && window.__impresarioInspector.version >= 3) {
     return window.__impresarioInspector;
   }
-  var state = { nextId: 1, byId: {}, includeRaw: false };
+  var state = { nextId: 1, nextLocator: 1, byId: {}, includeRaw: false };
 
   function trim(value) { return String(value == null ? '' : value).replace(/^\s+|\s+$/g, ''); }
   function lower(value) { return String(value == null ? '' : value).toLowerCase(); }
@@ -563,13 +563,84 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     }
     return { ok: true };
   }
+  function allElements() {
+    var out = [];
+    function walk(root) {
+      if (!root) { return; }
+      if (root.nodeType === 1) { out.push(root); }
+      var nodes = root.querySelectorAll('*');
+      for (var i = 0; i < nodes.length; i++) {
+        out.push(nodes[i]);
+        if (nodes[i].shadowRoot) { walk(nodes[i].shadowRoot); }
+      }
+    }
+    walk(document.documentElement);
+    return out;
+  }
+  function matchesAll(selector) {
+    var all = allElements();
+    var out = [];
+    for (var i = 0; i < all.length; i++) {
+      try {
+        if (all[i].matches && all[i].matches(selector)) { out.push(all[i]); }
+      } catch (error) { }
+    }
+    return out;
+  }
+  function selectorFor(id) {
+    var el = elementById(id);
+    if (!el) { return { ok: false, error: 'the node is no longer present' }; }
+    var idValue = trim(el.id);
+    if (idValue) {
+      var byId = '#' + cssEscape(idValue);
+      var foundById = matchesAll(byId);
+      if (foundById.length === 1 && foundById[0] === el) {
+        return { ok: true, selector: byId, token: '' };
+      }
+    }
+    var css = cssOf(el);
+    if (css) {
+      var foundByCss = matchesAll(css);
+      if (foundByCss.length === 1 && foundByCss[0] === el) {
+        return { ok: true, selector: css, token: '' };
+      }
+    }
+    var token = 'loc' + String(Date.now()) + '_' + String(state.nextLocator);
+    state.nextLocator += 1;
+    try {
+      el.setAttribute('data-impresario-locator', token);
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+    var selector = '[data-impresario-locator="' + cssEscape(token) + '"]';
+    var tagged = matchesAll(selector);
+    if (tagged.length !== 1 || tagged[0] !== el) {
+      try { el.removeAttribute('data-impresario-locator'); } catch (error) { }
+      return { ok: false, error: 'could not build a unique selector for the node' };
+    }
+    return { ok: true, selector: selector, token: token };
+  }
+  function releaseSelector(token) {
+    if (!token) { return { ok: true }; }
+    var all = allElements();
+    for (var i = 0; i < all.length; i++) {
+      try {
+        if (all[i].getAttribute && all[i].getAttribute('data-impresario-locator') === token) {
+          all[i].removeAttribute('data-impresario-locator');
+        }
+      } catch (error) { }
+    }
+    return { ok: true };
+  }
   return {
-    version: 2,
+    version: 3,
     snapshot: snapshot,
     tap: tap,
     scroll: scroll,
     prepareType: prepareType,
-    hideKeyboard: hideKeyboard
+    hideKeyboard: hideKeyboard,
+    selectorFor: selectorFor,
+    releaseSelector: releaseSelector
   };
 })();"##;
 
@@ -577,7 +648,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
 #[must_use]
 pub fn inject_expression() -> String {
     format!(
-        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 2) {{ {INSPECTOR_SCRIPT} }} true"
+        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 3) {{ {INSPECTOR_SCRIPT} }} true"
     )
 }
 
@@ -648,8 +719,28 @@ pub async fn snapshot(
     rev: &AtomicU64,
     request: &pb::InspectorSnapshotRequest,
 ) -> Result<pb::InspectorSnapshotResponse, ConnectorError> {
+    snapshot_with_cancel(
+        executor,
+        platform,
+        device,
+        rev,
+        request,
+        &CancellationToken::new(),
+    )
+    .await
+}
+
+/// [`snapshot`] with the caller's cancellation token (runner locator
+/// resolution runs inside a command and must honour command cancellation).
+pub async fn snapshot_with_cancel(
+    executor: &Executor,
+    platform: Platform,
+    device: &pb::DeviceInfo,
+    rev: &AtomicU64,
+    request: &pb::InspectorSnapshotRequest,
+    cancel: &CancellationToken,
+) -> Result<pb::InspectorSnapshotResponse, ConnectorError> {
     let started = std::time::Instant::now();
-    let cancel = CancellationToken::new();
     if request.screenshot_only {
         let revision = rev.fetch_add(1, Ordering::SeqCst).saturating_add(1);
         let mut response = pb::InspectorSnapshotResponse {
@@ -660,7 +751,7 @@ pub async fn snapshot(
             timestamp_unix_ms: now_ms(),
             ..pb::InspectorSnapshotResponse::default()
         };
-        let output = executor.screenshot(&cancel).await?;
+        let output = executor.screenshot(cancel).await?;
         let (width, height) = crate::png::png_dimensions(&output.screenshot_png).unwrap_or((0, 0));
         response.screenshot_png = output.screenshot_png;
         response.screenshot_width = width;
@@ -668,9 +759,9 @@ pub async fn snapshot(
         response.acquisition_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         return Ok(response);
     }
-    executor.inject_helper(&cancel).await?;
+    executor.inject_helper(cancel).await?;
     executor
-        .evaluate_json::<serde_json::Value>(&inject_expression(), &cancel)
+        .evaluate_json::<serde_json::Value>(&inject_expression(), cancel)
         .await?;
 
     let options = serde_json::json!({
@@ -679,7 +770,7 @@ pub async fn snapshot(
         "includeRaw": request.include_raw,
     });
     let expression = format!("window.__impresarioInspector.snapshot({options})");
-    let raw: RawSnapshot = executor.evaluate_json(&expression, &cancel).await?;
+    let raw: RawSnapshot = executor.evaluate_json(&expression, cancel).await?;
     if !raw.ok {
         return Err(ConnectorError::internal(
             raw.error
@@ -691,7 +782,7 @@ pub async fn snapshot(
     let revision = rev.fetch_add(1, Ordering::SeqCst).saturating_add(1);
     let mut response = normalize(raw, platform, device, revision, request);
     if request.include_screenshot {
-        match executor.screenshot(&cancel).await {
+        match executor.screenshot(cancel).await {
             Ok(output) => {
                 let (width, height) =
                     crate::png::png_dimensions(&output.screenshot_png).unwrap_or((0, 0));
@@ -706,6 +797,73 @@ pub async fn snapshot(
     }
     response.acquisition_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
     Ok(response)
+}
+
+/// A unique CSS handle for one snapshot node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectorHandle {
+    pub selector: String,
+    pub token: String,
+}
+
+/// Build a unique CSS handle for `node_id` from the most recent snapshot.
+///
+/// The node is addressed through `selectorFor`, which verifies uniqueness
+/// across the composed DOM (shadow roots included) and falls back to a
+/// transient `data-impresario-locator` tag. `Ok(None)` means the element left
+/// the page between acquisition and resolution and the caller should retry.
+pub async fn selector_for(
+    executor: &Executor,
+    node_id: u64,
+    cancel: &CancellationToken,
+) -> Result<Option<SelectorHandle>, ConnectorError> {
+    let expression = format!("window.__impresarioInspector.selectorFor({node_id})");
+    let reply: serde_json::Value = match executor.evaluate_json(&expression, cancel).await {
+        Ok(reply) => reply,
+        Err(error) if !error.message.contains("page raised an exception") => return Err(error),
+        Err(_) => {
+            // A navigation can drop the inspector script between acquisition
+            // and resolution. Re-inject and try once.
+            executor
+                .evaluate_json::<serde_json::Value>(&inject_expression(), cancel)
+                .await?;
+            executor.evaluate_json(&expression, cancel).await?
+        }
+    };
+    let ok = reply
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !ok {
+        let message = reply
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if message.contains("no longer present") {
+            return Ok(None);
+        }
+        return Err(ConnectorError::internal(if message.is_empty() {
+            "the inspector could not build a locator selector".to_string()
+        } else {
+            message.to_string()
+        }));
+    }
+    let selector = reply
+        .get("selector")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let token = reply
+        .get("token")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if selector.is_empty() {
+        return Err(ConnectorError::internal(
+            "the inspector returned an empty locator selector",
+        ));
+    }
+    Ok(Some(SelectorHandle { selector, token }))
 }
 
 /// Execute one inspector input action, then re-acquire a snapshot so the UI
@@ -1469,7 +1627,15 @@ mod tests {
 
     #[test]
     fn inspector_script_exposes_the_surface() {
-        for name in ["snapshot", "tap", "scroll", "prepareType", "hideKeyboard"] {
+        for name in [
+            "snapshot",
+            "tap",
+            "scroll",
+            "prepareType",
+            "hideKeyboard",
+            "selectorFor",
+            "releaseSelector",
+        ] {
             assert!(
                 INSPECTOR_SCRIPT.contains(&format!("{name}: {name}")),
                 "inspector script does not export {name}"

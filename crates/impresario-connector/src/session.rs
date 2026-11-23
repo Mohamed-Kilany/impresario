@@ -426,6 +426,45 @@ impl Session {
         // Spec 10.3: the helper is injected idempotently before every command
         // (a reload or navigation in a previous command drops it).
         self.executor.inject_helper(cancel).await?;
+        // Runner-side canonical locator cells (INS-R4) are resolved against
+        // the shared snapshot matcher, then executed as unique CSS handles.
+        match crate::locator_exec::prepare(
+            &self.executor,
+            self.platform,
+            &self.device,
+            &self.inspector_rev,
+            body,
+            timeout_ms,
+            cancel,
+        )
+        .await?
+        {
+            crate::locator_exec::LocatorPlan::None => self.dispatch(body, timeout_ms, cancel).await,
+            crate::locator_exec::LocatorPlan::Done(output) => Ok(output),
+            crate::locator_exec::LocatorPlan::Run {
+                body,
+                token,
+                timeout_ms,
+            } => {
+                let result = self.dispatch(&body, timeout_ms, cancel).await;
+                if let Some(token) = token.as_deref() {
+                    // Best effort: a navigation may already have removed the
+                    // tag (and the script) together with the old document.
+                    if !cancel.is_cancelled() {
+                        let _ = crate::locator_exec::release(&self.executor, token, cancel).await;
+                    }
+                }
+                result
+            }
+        }
+    }
+
+    async fn dispatch(
+        &self,
+        body: &pb::command::Body,
+        timeout_ms: u32,
+        cancel: &CancellationToken,
+    ) -> Result<CommandOutput, ConnectorError> {
         match body {
             pb::command::Body::RunAction(action) => {
                 self.executor.run_action(action, timeout_ms, cancel).await
