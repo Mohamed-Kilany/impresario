@@ -116,10 +116,12 @@ missing state file.
 Scene writes are byte-preserving, stay inside the workspace, use SHA-256
 revisions and refuse to overwrite a file that changed since the preview. The
 compact view is viewport-only; off-screen subtrees are pruned, focus is kept,
-and truncation is reported explicitly. The optional MCP resource
-`impresario://inspector/{device}/view` and its
-`notifications/resources/updated` subscription are not implemented yet; use
-`inspector_wait_for_change` for the same effect.
+and truncation is reported explicitly. While an inspector is attached, the
+same view is exposed as the resource
+`impresario://inspector/{device}/view`; `resources/subscribe` on it makes the
+server emit `notifications/resources/updated` whenever the published revision
+changes (the JSON-RPC-notification equivalent of `inspector_wait_for_change`).
+Static docs and the workspace summary are not subscribable.
 
 Notes:
 
@@ -162,6 +164,7 @@ Notes:
 | `impresario://docs/probes` | Probe evidence model: kinds, evidence sources and confidence, per-platform reachability, fallback rungs and the in-app SDK contract (`docs/PROBES.md`). |
 | `impresario://docs/web` | Embedded browser console (`docs/WEB.md`): guided flow, screens, JSON API, curated actions, security model and AI-agent workflow. |
 | `impresario://workspace/info` | Live JSON of the workspace summary (same payload as `impresario_workspace_info`). |
+| `impresario://inspector/{device}/view` | Live compact view of the attached device (same as `inspector_get_view`); listed only while attached and subscribable. |
 
 Embedding the docs means the agent always reads the documentation that
 matches its server build.
@@ -185,6 +188,15 @@ matches its server build.
 
 - Transport: newline-delimited JSON-RPC 2.0 on stdio (the MCP stdio
   binding), one message per line, `tools/call` answered on a worker thread.
+  `initialize` and `server/discover` advertise `resources.subscribe: true`.
+- Resource subscriptions: `resources/subscribe` accepts only the live
+  inspector view for the attached device. The server starts one watcher per
+  URI (a 5 s `/api/wait` long-poll), emits
+  `notifications/resources/updated` on revision changes and treats
+  `resources/unsubscribe` as idempotent. A watcher that loses its device
+  resyncs and keeps the subscription, so it resumes on reattach; it never
+  reports another device's changes. Notifications share the serialized stdout
+  writer with responses, so protocol lines never interleave.
 - Stdout is protocol-only. Every log, diagnostic and progress note goes to
   stderr (`tracing`), including the CLI diagnostics the run pipeline
   renders.

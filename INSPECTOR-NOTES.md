@@ -291,7 +291,9 @@ the implementation keeps the grammar in one module so a rename is local.
       There is no automatic post-commit locator verification.
 - [x] INS-3.5 MCP inspector tools: compact view, wait-for-change, find,
       describe, suggest, verify, input, scene tools, structured errors. The
-      optional MCP view resource/subscription is not implemented.
+      live view is also `impresario://inspector/{device}/view`: listed while
+      attached, readable with `resources/read`, and subscribable through
+      `resources/subscribe`/`notifications/resources/updated` (INS-R5).
 
 ### Phase 4 — Android / Android TV
 
@@ -343,7 +345,7 @@ the implementation keeps the grammar in one module so a rename is local.
 
 | Item | Status |
 |---|---|
-| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. |
+| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. The live view is a subscribable MCP resource (INS-R5). |
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Partial**: web polling at `inspector.fps` (default 4) plus post-input refresh; no push binding or change counter. |
 | Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them, and there is no post-commit verification. |
@@ -393,6 +395,30 @@ New coverage:
 - Connector counts: 58 unit tests (63 with `chromiumoxide-backend`); seven
   integration tests without the feature, eight with it.
 
+INS-R5 (2026-11-23): the inspector view is a subscribable MCP resource. New
+coverage:
+
+- `crates/impresario-master/src/mcp/resources.rs`: view-URI encode/decode
+  round trip and malformed-shape rejection; per-URI subscription tracking;
+  static docs and missing URIs refused; watcher registration idempotent and a
+  racing resubscribe keeps exactly one watcher.
+- `crates/impresario-master/tests/mcp_stdio.rs`: a loopback fake inspector
+  (`/api/status`, `/api/view`, `/api/wait`) proves `resources/list` advertises
+  `impresario://inspector/phone/view` with `_meta` device/revision,
+  `resources/read` returns the compact view, another device's URI is refused,
+  a revision bump produces `notifications/resources/updated` on the protocol
+  channel, and `resources/unsubscribe` is idempotent. The handshake advertises
+  `resources.subscribe: true`.
+- The watcher long-polls `/api/wait` for 5 s, starts once per URI, verifies the
+  attached device on every wake, resyncs after a detach or inspector restart
+  and stops when the subscription is removed.
+- CI run `45229626731` at `d8d27e3` passed all eight jobs. The workspace log
+  shows `mcp::resources::tests::a_racing_resubscription_keeps_exactly_one_watcher`,
+  `view_uris_round_trip_and_reject_bad_shapes`,
+  `subscriptions_are_tracked_per_uri_and_static_docs_are_refused`,
+  `watch_registration_is_idempotent` and
+  `inspector_view_is_listed_read_and_subscribable` passing.
+
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
 and emits JSON or a table with p50/p95/p99/mean for acquisition build, prune,
@@ -429,8 +455,12 @@ committed here only when observed.
   and TypeScript grammar do not yet complete/hover locator cells.
 - **Same-platform actors**: not representable in the current table; explicit
   ambiguity error.
-- **MCP resource subscription**: `impresario://inspector/{device}/view` and
-  `notifications/resources/updated` are not implemented; use
-  `inspector_wait_for_change`.
+- **MCP resource subscription is view-only and attachment-scoped** (INS-R5):
+  `impresario://inspector/{device}/view` is the only subscribable resource;
+  the watcher emits only while that device is attached and resyncs after a
+  detach or inspector restart. There is no `resources/list_changed` (the
+  resource appears when an inspector is attached and disappears when it is
+  not), and the long-poll window is 5 s, so notification latency is bounded by
+  the published revision cadence plus that poll.
 - **Token in query**: the SPA's EventSource and first non-loopback page load
   use `?token=`; a short-lived cookie exchange would avoid URL logging.
