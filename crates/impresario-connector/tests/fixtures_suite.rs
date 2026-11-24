@@ -1231,6 +1231,120 @@ async fn run_locator_suite(backend: &str) {
     chrome.kill().await;
 }
 
+/// INS-R3: the connector installs a CDP page binding and answers
+/// `Inspector.Watch` from a connector-owned counter, without traversing the
+/// DOM. A DOM mutation wakes the long-poll; an idle page times out.
+async fn run_push_watch_suite(backend: &str) {
+    let Some(mut chrome) = start_chrome("locators.html").await else {
+        eprintln!("skipping push watch suite ({backend}): no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let response = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Web as i32,
+            endpoint,
+            app_url: String::new(),
+            options: suite_options(backend, "locators.html"),
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("push watch handshake rpc");
+    assert!(
+        response.accepted,
+        "[{backend}] push watch handshake rejected: {:?}",
+        response.error
+    );
+    let session_id = response.session_id.clone();
+    let mut web = Driver::open(&mut harness.client, &session_id).await;
+
+    // Warm up the legacy path, then take one snapshot: the snapshot injects
+    // the ES5 observer that calls the binding.
+    web.check_visible(css("body"), 5_000).await;
+    let mut inspector = harness.inspector.clone();
+    let snapshot = inspector
+        .snapshot(
+            harness.request_with_session(&session_id, pb::InspectorSnapshotRequest::default()),
+        )
+        .await
+        .expect("push watch snapshot")
+        .into_inner();
+    assert!(
+        snapshot.error.is_none(),
+        "[{backend}] push watch snapshot error: {:?}",
+        snapshot.error
+    );
+    assert!(snapshot.rev > 0, "[{backend}] snapshot revision");
+
+    // Drain load-time notifications so the click below is the only change.
+    let mut after = 0_u64;
+    let mut settled = false;
+    for _ in 0..8 {
+        let response = inspector
+            .watch(harness.request_with_session(
+                &session_id,
+                pb::InspectorWatchRequest {
+                    after_seq: after,
+                    timeout_ms: 200,
+                },
+            ))
+            .await
+            .expect("push watch")
+            .into_inner();
+        assert!(
+            response.push,
+            "[{backend}] the raw backend must support Runtime.addBinding"
+        );
+        after = response.seq;
+        if !response.changed {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "[{backend}] the page never stopped changing");
+
+    // A DOM mutation must wake the long-poll.
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("id=locator-click")),
+        )),
+        5_000,
+    )
+    .await;
+    let changed = inspector
+        .watch(harness.request_with_session(
+            &session_id,
+            pb::InspectorWatchRequest {
+                after_seq: after,
+                timeout_ms: 2_000,
+            },
+        ))
+        .await
+        .expect("push watch after mutation")
+        .into_inner();
+    assert!(
+        changed.push,
+        "[{backend}] the raw backend must support Runtime.addBinding"
+    );
+    assert!(
+        changed.changed,
+        "[{backend}] the DOM mutation was not pushed (seq {after} -> {})",
+        changed.seq
+    );
+    assert!(
+        changed.seq > after,
+        "[{backend}] the change sequence must grow"
+    );
+
+    harness.shutdown(&session_id).await;
+    let closed = web.await_closed().await;
+    assert_eq!(closed.reason, "shutdown");
+    chrome.kill().await;
+}
+
 fn verdict_state(result: &pb::CommandResult, claim_id: &str) -> pb::VerdictState {
     let probe = result.probe.as_ref().expect("probe result");
     let verdict = probe
@@ -1619,6 +1733,11 @@ async fn locator_suite_raw_backend() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn locator_suite_chromiumoxide_backend() {
     run_locator_suite("chromiumoxide").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn push_watch_reports_page_changes() {
+    run_push_watch_suite("raw").await;
 }
 
 // ---------------------------------------------------------------------------
