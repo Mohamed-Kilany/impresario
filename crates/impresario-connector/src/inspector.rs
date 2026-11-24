@@ -3,7 +3,9 @@
 //! The connector advertises `Capability::INSPECTOR` and serves the additive
 //! unary `Inspector` RPCs. Acquisition is viewport-only and happens inside the
 //! page: an ES5 script walks the composed DOM, computes clipped visibility and
-//! drops off-screen subtrees before the JSON ever crosses the wire.
+//! drops off-screen subtrees before the JSON ever crosses the wire. The same
+//! script installs a `MutationObserver` that calls a `Runtime.addBinding`
+//! callback, so `Watch` can push changes instead of polling (INS-R3).
 //!
 //! Input is deliberately small: tap/scroll/type/key/swipe map onto the same
 //! CDP surfaces the command executor already uses. Nothing here needs root,
@@ -11,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +33,14 @@ use crate::server::{authorize_token, session_from_metadata, SessionManager};
 pub const DEFAULT_MAX_NODES: u32 = 5_000;
 /// Default depth cap when `max_depth` is left at zero.
 pub const DEFAULT_MAX_DEPTH: u32 = 100;
+/// Page binding installed with `Runtime.addBinding`. The ES5 observer calls it
+/// after DOM, scroll and focus changes so the connector can push updates
+/// instead of polling (INS-R3).
+pub const INSPECTOR_BINDING: &str = "__impresarioInspectorChanged";
+/// Default `Watch` long-poll when the caller leaves `timeout_ms` at zero.
+pub const DEFAULT_WATCH_TIMEOUT_MS: u32 = 5_000;
+/// Upper bound for a single `Watch` call (a caller cannot pin a session).
+pub const MAX_WATCH_TIMEOUT_MS: u32 = 30_000;
 
 /// The ES5-only inspector helper. Assigns `window.__impresarioInspector`
 /// exactly once and exposes `snapshot`, `tap`, `scroll`, `prepareType` and
@@ -40,10 +50,19 @@ pub const DEFAULT_MAX_DEPTH: u32 = 100;
 /// block scoping, template strings, `async`/`await`, optional chaining or
 /// spread. `inspector_script_is_es5` enforces this in CI.
 pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function () {
-  if (window.__impresarioInspector && window.__impresarioInspector.version >= 3) {
+  if (window.__impresarioInspector && window.__impresarioInspector.version >= 4) {
     return window.__impresarioInspector;
   }
-  var state = { nextId: 1, nextLocator: 1, byId: {}, includeRaw: false };
+  var state = {
+    nextId: 1,
+    nextLocator: 1,
+    byId: {},
+    includeRaw: false,
+    changeSeq: 0,
+    changeScheduled: false,
+    changeObserver: null,
+    pushInstalled: false
+  };
 
   function trim(value) { return String(value == null ? '' : value).replace(/^\s+|\s+$/g, ''); }
   function lower(value) { return String(value == null ? '' : value).toLowerCase(); }
@@ -396,6 +415,80 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     return tag === 'head' || tag === 'script' || tag === 'style' || tag === 'meta' ||
       tag === 'link' || tag === 'title' || tag === 'noscript' || tag === 'template';
   }
+  function notifyChange() {
+    state.changeSeq = state.changeSeq + 1;
+    try {
+      if (typeof window.__impresarioInspectorChanged === 'function') {
+        window.__impresarioInspectorChanged(String(state.changeSeq));
+        state.pushInstalled = true;
+      }
+    } catch (error) { }
+  }
+  function scheduleChange() {
+    if (state.changeScheduled) { return; }
+    state.changeScheduled = true;
+    var run = function () { state.changeScheduled = false; notifyChange(); };
+    try {
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(run);
+        return;
+      }
+    } catch (error) { }
+    setTimeout(run, 30);
+  }
+  function observeRoot(root) {
+    if (!root || !state.changeObserver) { return; }
+    if (root.__impresarioInspectorObserved) { return; }
+    try {
+      state.changeObserver.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true
+      });
+      root.__impresarioInspectorObserved = true;
+    } catch (error) { }
+  }
+  function installChangeWatch() {
+    if (typeof MutationObserver === 'undefined') { return false; }
+    if (!state.changeObserver) {
+      state.changeObserver = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var mutation = mutations[i];
+          if (mutation.type === 'attributes' && mutation.attributeName === 'data-impresario-locator') {
+            continue;
+          }
+          scheduleChange();
+          return;
+        }
+      });
+      var events = ['scroll', 'resize', 'focusin', 'focusout', 'transitionend', 'animationend',
+        'popstate', 'hashchange', 'visibilitychange', 'fullscreenchange'];
+      for (var e = 0; e < events.length; e++) {
+        try { window.addEventListener(events[e], scheduleChange, true); } catch (error) { }
+      }
+      try {
+        var push = window.history && window.history.pushState;
+        if (push) {
+          window.history.pushState = function () {
+            var result = push.apply(window.history, arguments);
+            scheduleChange();
+            return result;
+          };
+        }
+        var replace = window.history && window.history.replaceState;
+        if (replace) {
+          window.history.replaceState = function () {
+            var result = replace.apply(window.history, arguments);
+            scheduleChange();
+            return result;
+          };
+        }
+      } catch (error) { }
+    }
+    observeRoot(document.documentElement);
+    return true;
+  }
   function collect(maxDepth) {
     var entries = [];
     var visited = 0;
@@ -414,6 +507,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
         entries.push(entry);
         state.byId[entry.id] = el;
         if (el.shadowRoot) {
+          observeRoot(el.shadowRoot);
           walk(el.shadowRoot, entry.id, depth + 1);
         } else {
           walk(el, entry.id, depth + 1);
@@ -633,22 +727,26 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     return { ok: true };
   }
   return {
-    version: 3,
+    version: 4,
     snapshot: snapshot,
     tap: tap,
     scroll: scroll,
     prepareType: prepareType,
     hideKeyboard: hideKeyboard,
     selectorFor: selectorFor,
-    releaseSelector: releaseSelector
+    releaseSelector: releaseSelector,
+    installChangeWatch: installChangeWatch
   };
 })();"##;
 
-/// The idempotent injection expression.
+/// The idempotent injection expression. It also (re)installs the change
+/// observer, so a reload restores push after the helper is injected again.
 #[must_use]
 pub fn inject_expression() -> String {
     format!(
-        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 3) {{ {INSPECTOR_SCRIPT} }} true"
+        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 4) {{ {INSPECTOR_SCRIPT} }} \
+         if (window.__impresarioInspector && window.__impresarioInspector.installChangeWatch) \
+         {{ window.__impresarioInspector.installChangeWatch(); }} true"
     )
 }
 
@@ -708,6 +806,37 @@ impl Inspector for InspectorService {
             },
         };
         Ok(Response::new(response))
+    }
+
+    async fn watch(
+        &self,
+        request: Request<pb::InspectorWatchRequest>,
+    ) -> Result<Response<pb::InspectorWatchResponse>, Status> {
+        let metadata = request.metadata().clone();
+        authorize_token(self.token.as_deref(), &metadata, "")?;
+        let handle = session_from_metadata(&self.manager, &metadata)?;
+        let request = request.get_ref();
+        if !handle.session.inspector_push_supported() {
+            return Ok(Response::new(pb::InspectorWatchResponse {
+                seq: handle.session.inspector_seq(),
+                changed: false,
+                push: false,
+            }));
+        }
+        let timeout = Duration::from_millis(u64::from(if request.timeout_ms == 0 {
+            DEFAULT_WATCH_TIMEOUT_MS
+        } else {
+            request.timeout_ms.clamp(1, MAX_WATCH_TIMEOUT_MS)
+        }));
+        let (seq, changed) = handle
+            .session
+            .inspector_watch(request.after_seq, timeout)
+            .await;
+        Ok(Response::new(pb::InspectorWatchResponse {
+            seq,
+            changed,
+            push: true,
+        }))
     }
 }
 
@@ -1635,14 +1764,32 @@ mod tests {
             "hideKeyboard",
             "selectorFor",
             "releaseSelector",
+            "installChangeWatch",
         ] {
             assert!(
                 INSPECTOR_SCRIPT.contains(&format!("{name}: {name}")),
                 "inspector script does not export {name}"
             );
         }
-        assert!(inject_expression().contains("window.__impresarioInspector"));
-        assert!(inject_expression().ends_with("true"));
+        let expression = inject_expression();
+        assert!(expression.contains("window.__impresarioInspector"));
+        assert!(expression.contains("installChangeWatch()"));
+        assert!(expression.ends_with("true"));
+    }
+
+    #[test]
+    fn inspector_script_pushes_dom_and_navigation_changes() {
+        assert!(INSPECTOR_SCRIPT.contains("MutationObserver"));
+        assert!(INSPECTOR_SCRIPT.contains("childList: true"));
+        assert!(INSPECTOR_SCRIPT.contains("data-impresario-locator"));
+        assert!(INSPECTOR_SCRIPT.contains("requestAnimationFrame"));
+        assert!(INSPECTOR_SCRIPT.contains("focusin"));
+        assert!(INSPECTOR_SCRIPT.contains("hashchange"));
+        assert!(INSPECTOR_SCRIPT.contains("pushState"));
+        assert!(
+            INSPECTOR_SCRIPT.contains(INSPECTOR_BINDING),
+            "the script must call the installed binding"
+        );
     }
 
     #[test]

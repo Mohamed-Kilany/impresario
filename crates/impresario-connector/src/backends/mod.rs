@@ -129,6 +129,13 @@ pub struct ConsoleEvent {
     pub message: String,
 }
 
+/// One `Runtime.bindingCalled` payload (INS-R3 page push).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingEvent {
+    pub name: String,
+    pub payload: String,
+}
+
 /// The CDP surface the executor drives (spec 10.2). One trait object per
 /// session; all calls are correlated by the implementation and safe to run
 /// concurrently (the out-of-band screenshot overlaps in-flight commands).
@@ -145,6 +152,20 @@ pub trait CdpBackend: Send + Sync {
     async fn reload(&self) -> Result<(), BackendError>;
     /// Console events from `Runtime.consoleAPICalled` and `Log.entryAdded`.
     fn console_events(&self) -> Pin<Box<dyn Stream<Item = ConsoleEvent> + Send>>;
+    /// Install a `Runtime.addBinding` callback.
+    ///
+    /// Backends without binding support return `UNSUPPORTED_ACTION`; the
+    /// caller then keeps the polling fallback instead of failing.
+    async fn add_binding(&self, name: &str) -> Result<(), BackendError> {
+        let _ = name;
+        Err(BackendError::unsupported(
+            "runtime bindings are not supported by this backend",
+        ))
+    }
+    /// Payloads delivered to installed bindings.
+    fn binding_events(&self) -> Pin<Box<dyn Stream<Item = BindingEvent> + Send>> {
+        Box::pin(futures::stream::empty())
+    }
     /// Best-effort shutdown of the connection (idempotent).
     async fn close(&self);
 }

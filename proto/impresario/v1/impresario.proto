@@ -243,6 +243,9 @@ message ShutdownResponse {}
 service Inspector {
   rpc Snapshot(InspectorSnapshotRequest) returns (InspectorSnapshotResponse);
   rpc Input(InspectorInputRequest) returns (InspectorInputResponse);
+  // Additive long-poll used by the standalone inspector instead of fixed-rate
+  // polling. Older executors answer UNIMPLEMENTED; callers fall back.
+  rpc Watch(InspectorWatchRequest) returns (InspectorWatchResponse);
 }
 
 message InspectorSnapshotRequest {
@@ -352,4 +355,15 @@ message InspectorInputResponse {
   bool ok = 1;
   ErrorInfo error = 2;
   uint64 rev = 3;                        // revision after the immediate re-acquire
+}
+
+message InspectorWatchRequest {
+  uint64 after_seq = 1;                  // last in-page change sequence the caller saw
+  uint32 timeout_ms = 2;                 // 0 = server default; capped server-side
+}
+
+message InspectorWatchResponse {
+  uint64 seq = 1;                        // latest change sequence
+  bool changed = 2;                      // true when seq > after_seq
+  bool push = 3;                         // false when the executor has no push source
 }

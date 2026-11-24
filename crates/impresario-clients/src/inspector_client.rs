@@ -3,9 +3,9 @@
 //!
 //! The client is deliberately tiny: the inspector process handshakes through
 //! [`crate::AgentClient`] to obtain a session id, then calls the unary
-//! `Snapshot`/`Input` RPCs with that session id in metadata. It never opens
-//! the bidirectional `Agent.Session` stream, so a run and the inspector can
-//! share the same connector session.
+//! `Snapshot`/`Input` RPCs (plus the additive `Watch` long-poll) with that
+//! session id in metadata. It never opens the bidirectional `Agent.Session`
+//! stream, so a run and the inspector can share the same connector session.
 
 use std::time::Duration;
 
@@ -101,6 +101,22 @@ impl InspectorClient {
         self.inner
             .clone()
             .input(request)
+            .await
+            .map_err(ClientError::from_status)
+            .map(|response| response.into_inner())
+    }
+
+    /// Long-poll for an in-page change (INS-R3). Executors without a push
+    /// source answer immediately with `push = false`.
+    pub async fn watch(
+        &self,
+        session_id: &str,
+        request: pb::InspectorWatchRequest,
+    ) -> Result<pb::InspectorWatchResponse, ClientError> {
+        let request = request_with_session(request, self.token.as_deref(), session_id)?;
+        self.inner
+            .clone()
+            .watch(request)
             .await
             .map_err(ClientError::from_status)
             .map(|response| response.into_inner())

@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -61,6 +61,13 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Scene files are small; a quarter-second poll is cheap and keeps the
 /// external-edit notice prompt without pulling in another file-watching crate.
 const SCENE_WATCH_POLL: Duration = Duration::from_millis(250);
+/// Push states for one attachment (INS-R3). Until `Watch` proves that the page
+/// pushes changes, the actor keeps polling at `inspector.fps`.
+const PUSH_PROBING: u8 = 0;
+const PUSH_ACTIVE: u8 = 1;
+const PUSH_FALLBACK: u8 = 2;
+/// Long-poll budget for one `Inspector.Watch` call.
+const WATCH_TIMEOUT_MS: u32 = 5_000;
 /// The SPA needs CSSOM positioning for its virtualized tree and overlay.
 const INSPECTOR_CSP: &str = "default-src 'none'; script-src 'self'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
@@ -344,6 +351,9 @@ pub(crate) struct Shared {
     pub undo: Mutex<std::collections::HashMap<PathBuf, UndoRecord>>,
     pub audit: Mutex<Vec<AuditEntry>>,
     pub scene_watch: SceneWatch,
+    /// Serializes actor polls with push-driven polls so revisions cannot be
+    /// published out of acquisition order.
+    pub snapshot_gate: tokio::sync::Mutex<()>,
     pub frozen: AtomicBool,
     /// Last master-owned revision. It survives detach/reattach and only
     /// advances when the published content actually changes.
@@ -393,6 +403,7 @@ impl Shared {
             undo: Mutex::new(std::collections::HashMap::new()),
             audit: Mutex::new(Vec::new()),
             scene_watch: SceneWatch::default(),
+            snapshot_gate: tokio::sync::Mutex::new(()),
             frozen: AtomicBool::new(false),
             published_rev: AtomicU64::new(0),
             connections: AtomicUsize::new(0),
@@ -646,6 +657,140 @@ pub(crate) enum DeviceCommand {
     Stop,
 }
 
+/// Acquisition shared by the actor and the push watcher: one request shape,
+/// one publish path, serialized by [`Shared::snapshot_gate`].
+#[derive(Clone)]
+struct Snapshotter {
+    shared: Arc<Shared>,
+    inspector: InspectorClient,
+    session_id: String,
+    device: DeviceConfig,
+    /// Cleared when the attachment detaches, so an acquisition already in
+    /// flight cannot publish another device's screen afterwards.
+    alive: Arc<AtomicBool>,
+}
+
+impl Snapshotter {
+    async fn poll(&self, include_screenshot: bool) -> Result<(), String> {
+        let _gate = self.shared.snapshot_gate.lock().await;
+        if !self.alive.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let request = pb::InspectorSnapshotRequest {
+            include_system_ui: self.shared.config.inspector.include_system_ui,
+            min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
+            max_nodes: 0,
+            max_depth: 0,
+            // The Web UI decides per request whether it wants `raw`
+            // (`?include_raw=1`); the polled snapshot must carry it or the
+            // flag can never be honoured. `snapshot_json` strips it again for
+            // ordinary requests.
+            include_raw: true,
+            include_screenshot,
+            screenshot_only: false,
+            screenshot_scale: u32::from(self.shared.config.inspector.screenshot_scale),
+        };
+        let response = tokio::time::timeout(
+            SNAPSHOT_TIMEOUT,
+            self.inspector.snapshot(&self.session_id, request),
+        )
+        .await
+        .map_err(|_| "snapshot acquisition timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+        if !self.alive.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let snapshot = convert::snapshot_from_proto(&response, &self.device);
+        self.shared.publish(snapshot);
+        Ok(())
+    }
+}
+
+/// Aborts the push watcher when the attachment detaches.
+struct WatchTask {
+    handle: tokio::task::JoinHandle<()>,
+    alive: Arc<AtomicBool>,
+}
+
+impl Drop for WatchTask {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
+        self.handle.abort();
+    }
+}
+
+/// Long-poll the executor for page changes and acquire a snapshot at most once
+/// per `inspector.fps` interval (INS-R3).
+///
+/// A `Watch` reply with `push = false`, an `UNIMPLEMENTED` error (old executor)
+/// or a transport failure permanently switches this attachment to the fps
+/// polling fallback; the actor ticker then resumes acquisition.
+fn spawn_watch(
+    shared: Arc<Shared>,
+    inspector: InspectorClient,
+    session_id: String,
+    device: DeviceConfig,
+    push: Arc<AtomicU8>,
+) -> WatchTask {
+    let interval = shared.config.inspector.poll_interval();
+    let alive = Arc::new(AtomicBool::new(true));
+    let snapshotter = Snapshotter {
+        shared,
+        inspector,
+        session_id,
+        device,
+        alive: Arc::clone(&alive),
+    };
+    let handle = tokio::spawn(async move {
+        let mut after = 0_u64;
+        let watch_budget =
+            Duration::from_millis(u64::from(WATCH_TIMEOUT_MS)) + Duration::from_secs(5);
+        let mut last = Instant::now();
+        loop {
+            let request = pb::InspectorWatchRequest {
+                after_seq: after,
+                timeout_ms: WATCH_TIMEOUT_MS,
+            };
+            let response = match tokio::time::timeout(
+                watch_budget,
+                snapshotter
+                    .inspector
+                    .watch(&snapshotter.session_id, request),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => {
+                    tracing::debug!(%error, "inspector push unavailable; polling instead");
+                    push.store(PUSH_FALLBACK, Ordering::Relaxed);
+                    return;
+                }
+                Err(_) => {
+                    tracing::debug!("inspector watch timed out; polling instead");
+                    push.store(PUSH_FALLBACK, Ordering::Relaxed);
+                    return;
+                }
+            };
+            if !response.push {
+                push.store(PUSH_FALLBACK, Ordering::Relaxed);
+                return;
+            }
+            push.store(PUSH_ACTIVE, Ordering::Relaxed);
+            after = response.seq;
+            // Changes arrive as fast as the DOM mutates; the snapshot rate is
+            // still capped at `inspector.fps`. A long-poll that timed out has
+            // usually already covered the interval, so this is a no-op and the
+            // acquisition below doubles as the idle heartbeat.
+            tokio::time::sleep(interval.saturating_sub(last.elapsed())).await;
+            if let Err(error) = snapshotter.poll(false).await {
+                tracing::debug!(%error, "push snapshot acquisition failed");
+            }
+            last = Instant::now();
+        }
+    });
+    WatchTask { handle, alive }
+}
+
 struct Attachment {
     device: DeviceConfig,
     transport: Box<dyn DeviceTransport>,
@@ -657,6 +802,17 @@ struct Attachment {
     /// invalidate the `Inspector` RPCs that share its session id.
     app_session: Option<AgentSession>,
     inspector: InspectorClient,
+    push: Arc<AtomicU8>,
+    _watch: WatchTask,
+}
+
+/// The actor ticker must acquire unless in-page push is proven active.
+///
+/// `PUSH_PROBING` still polls so a slow or old executor keeps refreshing while
+/// the first `Watch` call is in flight; `PUSH_FALLBACK` restores polling for
+/// the rest of the attachment.
+fn poll_on_tick(push: u8) -> bool {
+    push != PUSH_ACTIVE
 }
 
 struct Actor {
@@ -686,7 +842,7 @@ impl Actor {
             .app_name
             .as_ref()
             .and_then(|app_name| self.shared.apps.iter().find(|app| &app.name == app_name));
-        let attachment = connect(&self.shared, device, app).await?;
+        let attachment = connect(Arc::clone(&self.shared), device, app).await?;
         self.shared.set_status(AttachmentStatus {
             attached: true,
             device: Some(attachment.device.name.clone()),
@@ -712,8 +868,13 @@ impl Actor {
             agent,
             session_id,
             app_session,
+            _watch: watch,
             ..
         } = attachment;
+        // Stop the push watcher before the session is torn down; an
+        // acquisition already in flight will see the cleared `alive` flag and
+        // will not publish after `latest` is reset below.
+        drop(watch);
         if let Some(session) = app_session.as_ref() {
             let _ = session.shutdown(false).await;
         } else {
@@ -749,28 +910,28 @@ impl Actor {
 
     async fn poll(&mut self, include_screenshot: bool) -> Result<(), String> {
         let (inspector, session_id, device) = self.connection()?;
-        let request = pb::InspectorSnapshotRequest {
-            include_system_ui: self.shared.config.inspector.include_system_ui,
-            min_visible_fraction: self.shared.config.inspector.min_visible_fraction(),
-            max_nodes: 0,
-            max_depth: 0,
-            // The Web UI decides per request whether it wants `raw`
-            // (`?include_raw=1`); the polled snapshot must carry it or the
-            // flag can never be honoured. `snapshot_json` strips it again for
-            // ordinary requests.
-            include_raw: true,
-            include_screenshot,
-            screenshot_only: false,
-            screenshot_scale: u32::from(self.shared.config.inspector.screenshot_scale),
+        Snapshotter {
+            shared: Arc::clone(&self.shared),
+            inspector,
+            session_id,
+            device,
+            alive: Arc::new(AtomicBool::new(true)),
+        }
+        .poll(include_screenshot)
+        .await
+    }
+
+    /// Acquisition taken by the actor ticker. While in-page push is proven
+    /// active the watcher owns acquisition, so the ticker stays idle: push
+    /// supplies both change-driven and periodic refreshes (INS-R3).
+    async fn tick(&mut self) -> Result<(), String> {
+        let Some(attachment) = self.attachment.as_ref() else {
+            return Ok(());
         };
-        let response =
-            tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.snapshot(&session_id, request))
-                .await
-                .map_err(|_| "snapshot acquisition timed out".to_string())?
-                .map_err(|error| error.to_string())?;
-        let snapshot = convert::snapshot_from_proto(&response, &device);
-        self.shared.publish(snapshot);
-        Ok(())
+        if !poll_on_tick(attachment.push.load(Ordering::Relaxed)) {
+            return Ok(());
+        }
+        self.poll(false).await
     }
 
     async fn input(
@@ -812,7 +973,7 @@ impl Actor {
 }
 
 async fn connect(
-    shared: &Shared,
+    shared: Arc<Shared>,
     device: DeviceConfig,
     app: Option<&AppConfig>,
 ) -> Result<Attachment, String> {
@@ -934,6 +1095,14 @@ async fn connect(
             return Err(error.to_string());
         }
     };
+    let push = Arc::new(AtomicU8::new(PUSH_PROBING));
+    let watch = spawn_watch(
+        Arc::clone(&shared),
+        inspector.clone(),
+        handshake.session_id.clone(),
+        device.clone(),
+        Arc::clone(&push),
+    );
     Ok(Attachment {
         device,
         transport,
@@ -941,6 +1110,8 @@ async fn connect(
         session_id: handshake.session_id,
         app_session,
         inspector,
+        push,
+        _watch: watch,
     })
 }
 
@@ -1033,7 +1204,7 @@ async fn run_actor(
                 // Freeze is a client-side view state (TASK-INSPECTOR 10.4):
                 // the server keeps acquiring so unfreeze can catch up with a
                 // full snapshot immediately.
-                if let Err(error) = actor.poll(false).await {
+                if let Err(error) = actor.tick().await {
                     let mut status = actor.shared.status();
                     status.error = Some(error);
                     actor.shared.set_status(status);
@@ -1825,6 +1996,13 @@ fn mock_snapshot(scenario: &str, nodes: usize, step: u64) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tick_polls_until_push_is_active() {
+        assert!(poll_on_tick(PUSH_PROBING));
+        assert!(!poll_on_tick(PUSH_ACTIVE));
+        assert!(poll_on_tick(PUSH_FALLBACK));
+    }
 
     #[test]
     fn poll_interval_is_bounded() {

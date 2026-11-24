@@ -16,7 +16,8 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{
-    BackendError, CdpBackend, ConsoleEvent, ConsoleLevel, KeyEvent, KeyEventType, MouseEvent,
+    BackendError, BindingEvent, CdpBackend, ConsoleEvent, ConsoleLevel, KeyEvent, KeyEventType,
+    MouseEvent,
 };
 use crate::errors::ConnectorError;
 
@@ -30,12 +31,16 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Console/log broadcast depth.
 const CONSOLE_CAPACITY: usize = 512;
 
+/// Page binding broadcast depth (INS-R3 change notifications).
+const BINDING_CAPACITY: usize = 128;
+
 struct RawState {
     next_id: AtomicU64,
     write: mpsc::Sender<Message>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, BackendError>>>>,
     closed: Mutex<Option<String>>,
     console: broadcast::Sender<ConsoleEvent>,
+    binding: broadcast::Sender<BindingEvent>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -92,12 +97,14 @@ impl RawCdpBackend {
 
         let (write_tx, mut write_rx) = mpsc::channel::<Message>(64);
         let (console_tx, _) = broadcast::channel(CONSOLE_CAPACITY);
+        let (binding_tx, _) = broadcast::channel(BINDING_CAPACITY);
         let state = Arc::new(RawState {
             next_id: AtomicU64::new(0),
             write: write_tx,
             pending: Mutex::new(HashMap::new()),
             closed: Mutex::new(None),
             console: console_tx,
+            binding: binding_tx,
         });
 
         let writer_state = state.clone();
@@ -250,6 +257,21 @@ fn handle_text(state: &Arc<RawState>, text: &str) {
                 source,
                 message,
             });
+        }
+        "Runtime.bindingCalled" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if !name.is_empty() {
+                let payload = params
+                    .get("payload")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let _ = state.binding.send(BindingEvent { name, payload });
+            }
         }
         "Inspector.detached" => {
             let reason = params
@@ -419,6 +441,21 @@ impl CdpBackend for RawCdpBackend {
         )
     }
 
+    async fn add_binding(&self, name: &str) -> Result<(), BackendError> {
+        self.call("Runtime.addBinding", json!({ "name": name }))
+            .await?;
+        Ok(())
+    }
+
+    fn binding_events(
+        &self,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = BindingEvent> + Send>> {
+        Box::pin(
+            tokio_stream::wrappers::BroadcastStream::new(self.state.binding.subscribe())
+                .filter_map(|event| async move { event.ok() }),
+        )
+    }
+
     async fn close(&self) {
         self.reader.abort();
         self.writer.abort();
@@ -478,5 +515,39 @@ mod tests {
         let converted: ConnectorError = error.into();
         assert_eq!(converted.code, WireErrorCode::UnsupportedAction);
         assert_eq!(converted.message, "no such method");
+    }
+
+    fn test_state() -> (Arc<RawState>, broadcast::Receiver<BindingEvent>) {
+        let (write, _write_rx) = mpsc::channel(1);
+        let (console, _console_rx) = broadcast::channel(1);
+        let (binding, binding_rx) = broadcast::channel(4);
+        (
+            Arc::new(RawState {
+                next_id: AtomicU64::new(0),
+                write,
+                pending: Mutex::new(HashMap::new()),
+                closed: Mutex::new(None),
+                console,
+                binding,
+            }),
+            binding_rx,
+        )
+    }
+
+    #[test]
+    fn binding_calls_are_forwarded() {
+        let (state, mut events) = test_state();
+        handle_text(
+            &state,
+            r#"{"method":"Runtime.bindingCalled","params":{"name":"notify","payload":"7"}}"#,
+        );
+        let event = events.try_recv().expect("binding event");
+        assert_eq!(event.name, "notify");
+        assert_eq!(event.payload, "7");
+        handle_text(
+            &state,
+            r#"{"method":"Runtime.bindingCalled","params":{"name":"","payload":"8"}}"#,
+        );
+        assert!(events.try_recv().is_err(), "an unnamed binding is ignored");
     }
 }

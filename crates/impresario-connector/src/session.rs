@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures::StreamExt;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, watch, Notify};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -42,6 +42,37 @@ fn unix_ms_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+/// Connector-owned monotonic change counter for in-page push (INS-R3).
+///
+/// The page binding payload is deliberately ignored: the counter lives in the
+/// connector so it stays monotonic when a reload resets the page script.
+#[derive(Clone, Default)]
+struct ChangeSignal {
+    seq: watch::Sender<u64>,
+}
+
+impl ChangeSignal {
+    fn notify(&self) {
+        self.seq.send_modify(|value| *value = value.wrapping_add(1));
+    }
+
+    fn current(&self) -> u64 {
+        *self.seq.borrow()
+    }
+
+    /// Wait for a sequence newer than `after`, or return `None` on timeout.
+    async fn wait(&self, after: u64, timeout: Duration) -> Option<u64> {
+        let mut receiver = self.seq.subscribe();
+        if *receiver.borrow_and_update() > after {
+            return Some(*receiver.borrow());
+        }
+        match tokio::time::timeout(timeout, receiver.wait_for(|seq| *seq > after)).await {
+            Ok(Ok(seq)) => Some(*seq),
+            _ => None,
+        }
+    }
 }
 
 /// Session configuration parsed from the handshake (spec 4.3 options plus
@@ -338,6 +369,10 @@ pub struct Session {
     console: broadcast::Sender<ConsoleEvent>,
     browser: Mutex<Option<LaunchedBrowser>>,
     console_pump: Mutex<Option<JoinHandle<()>>>,
+    /// In-page push (INS-R3): binding installed, change counter and pump.
+    inspector_push: bool,
+    inspector_changes: ChangeSignal,
+    inspector_pump: Mutex<Option<JoinHandle<()>>>,
     pub shutdown: CancellationToken,
     torn_down: AtomicBool,
     inspector_rev: AtomicU64,
@@ -357,6 +392,15 @@ impl Session {
                 return Err(error);
             }
         };
+
+        // Install the in-page push binding before the inspector helper is
+        // injected (INS-R3). Old engines that lack Runtime.addBinding simply
+        // keep the polling fallback.
+        let inspector_changes = ChangeSignal::default();
+        let inspector_push = backend
+            .add_binding(crate::inspector::INSPECTOR_BINDING)
+            .await
+            .is_ok();
 
         let options = ExecOptions {
             poll_interval: config.poll_interval,
@@ -395,6 +439,14 @@ impl Session {
 
         let (console, _) = broadcast::channel(512);
         let console_pump = spawn_console_pump(backend.clone(), console.clone());
+        let inspector_pump = if inspector_push {
+            Some(spawn_inspector_pump(
+                backend.clone(),
+                inspector_changes.clone(),
+            ))
+        } else {
+            None
+        };
         Ok(Self {
             id,
             platform: config.platform,
@@ -403,6 +455,9 @@ impl Session {
             console,
             browser: Mutex::new(browser),
             console_pump: Mutex::new(Some(console_pump)),
+            inspector_push,
+            inspector_changes,
+            inspector_pump: Mutex::new(inspector_pump),
             shutdown: CancellationToken::new(),
             torn_down: AtomicBool::new(false),
             inspector_rev: AtomicU64::new(0),
@@ -413,6 +468,31 @@ impl Session {
     #[must_use]
     pub fn console_subscribe(&self) -> broadcast::Receiver<ConsoleEvent> {
         self.console.subscribe()
+    }
+
+    /// Whether this session receives in-page change notifications (INS-R3).
+    #[must_use]
+    pub fn inspector_push_supported(&self) -> bool {
+        self.inspector_push
+    }
+
+    /// Latest connector-side change sequence.
+    #[must_use]
+    pub fn inspector_seq(&self) -> u64 {
+        self.inspector_changes.current()
+    }
+
+    /// Wait for a page change newer than `after` (INS-R3 `Inspector.Watch`).
+    ///
+    /// Returns the new sequence and `true`, or the current sequence and
+    /// `false` on timeout. The inspector polls `Snapshot` on a change and uses
+    /// the timeout as an idle heartbeat; an idle page costs one cheap
+    /// long-poll instead of a DOM traversal.
+    pub async fn inspector_watch(&self, after: u64, timeout: Duration) -> (u64, bool) {
+        match self.inspector_changes.wait(after, timeout).await {
+            Some(seq) => (seq, true),
+            None => (self.inspector_seq(), false),
+        }
     }
 
     /// Execute one command body (the session loop has already handled
@@ -583,6 +663,13 @@ impl Session {
         if let Some(pump) = pump {
             pump.abort();
         }
+        let pump = {
+            let mut guard = lock(&self.inspector_pump);
+            guard.take()
+        };
+        if let Some(pump) = pump {
+            pump.abort();
+        }
         let browser = {
             let mut guard = lock(&self.browser);
             guard.take()
@@ -601,6 +688,17 @@ fn spawn_console_pump(
     tokio::spawn(async move {
         while let Some(event) = stream.next().await {
             let _ = tx.send(event);
+        }
+    })
+}
+
+fn spawn_inspector_pump(backend: Arc<dyn CdpBackend>, changes: ChangeSignal) -> JoinHandle<()> {
+    let mut stream = backend.binding_events();
+    tokio::spawn(async move {
+        while let Some(event) = stream.next().await {
+            if event.name == crate::inspector::INSPECTOR_BINDING {
+                changes.notify();
+            }
         }
     })
 }
@@ -874,5 +972,36 @@ pub fn console_to_log_entry(event: &ConsoleEvent) -> pb::LogEntry {
         level: level as i32,
         source: event.source.clone(),
         message: event.message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod change_signal_tests {
+    use super::*;
+
+    #[test]
+    fn change_signal_is_monotonic() {
+        let signal = ChangeSignal::default();
+        assert_eq!(signal.current(), 0);
+        signal.notify();
+        signal.notify();
+        assert_eq!(signal.current(), 2);
+    }
+
+    #[tokio::test]
+    async fn wait_returns_immediately_for_an_observed_change() {
+        let signal = ChangeSignal::default();
+        signal.notify();
+        assert_eq!(signal.wait(0, Duration::from_millis(50)).await, Some(1));
+        assert_eq!(signal.wait(1, Duration::from_millis(10)).await, None);
+    }
+
+    #[tokio::test]
+    async fn wait_wakes_on_a_later_change() {
+        let signal = ChangeSignal::default();
+        let waiting = signal.clone();
+        let task = tokio::spawn(async move { waiting.wait(0, Duration::from_millis(500)).await });
+        signal.notify();
+        assert_eq!(task.await.expect("join"), Some(1));
     }
 }
