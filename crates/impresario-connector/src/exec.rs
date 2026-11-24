@@ -157,6 +157,10 @@ fn strategy_from_proto(value: i32) -> Option<Strategy> {
         Ok(pb::SelectorStrategy::Predicate) => Some(Strategy::Predicate),
         Ok(pb::SelectorStrategy::IosType) => Some(Strategy::IosType),
         Ok(pb::SelectorStrategy::Locator) => Some(Strategy::Locator),
+        // Executor-internal: only a master that resolved a locator against an
+        // Inspector snapshot sends it, and the connector has no snapshot
+        // resolver. Reject it like any other strategy the web cannot execute.
+        Ok(pb::SelectorStrategy::NodeRef) => None,
         Ok(pb::SelectorStrategy::Unspecified) | Err(_) => None,
     }
 }
