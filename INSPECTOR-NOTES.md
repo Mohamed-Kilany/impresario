@@ -443,6 +443,11 @@ coverage:
   and toast, an external scene event auto-reloads an idle scene, an event
   during a preview keeps the diff and warns, and reloading then adopts the new
   revision. The suite runs against the mock API with the real assets.
+- CI run `45235215047` at `8cbea3c` passed all eight jobs, including the
+  Windows release build. The cargo-test log shows
+  `inspector::scene::tests::verification_reports_verified_warning_and_unavailable`,
+  `inspector::scene::tests::verification_warns_when_a_locator_is_ambiguous` and
+  `inspector::tests::scene_watch_reports_external_changes_once` passing.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)

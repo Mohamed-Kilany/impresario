@@ -240,10 +240,17 @@ UiAutomator agent; Apple acquisition runs in `AgentCore` behind the same
 `AgentService`. The connector run path now executes canonical locator cells:
 it resolves them against the same viewport snapshot and shared
 `impresario-locator` matcher as the inspector, then rewrites to a unique CSS
-handle (INS-R4; the raw suite is CI-verified and the chromiumoxide entry is feature-gated). Flutter enrichment,
-shared leases/preemption, push binding and native Android/Apple locator
-execution remain documented gaps. CI run `45122513397` at `cabd15d` passed
-all eight jobs, including the raw locator suite and the Windows release build.
+handle (INS-R4; the raw suite is CI-verified and the chromiumoxide entry is feature-gated). Scene commits
+re-resolve the written locator cell against the live snapshot and open scenes
+are watched by SHA-256, with external edits delivered as SSE scene events
+(INS-R6). Flutter enrichment, shared leases/preemption, push binding and native
+Android/Apple locator execution remain documented gaps. CI run `45235215047`
+at `8cbea3c` passed all eight jobs, including the Windows release build and
+`verification_reports_verified_warning_and_unavailable`,
+`verification_warns_when_a_locator_is_ambiguous` and
+`scene_watch_reports_external_changes_once`. CI run `45122513397` at `cabd15d`
+passed all eight jobs, including the raw locator suite and the Windows release
+build.
 On 2026-11-15 the Android inspector passed on the Galaxy A51 and the Android TV:
 the phone returned a 1080x2400 screenshot and accepted tap/type/back
 (`echo:android-wifi-check`), scroll only moved when the scrollable node ref was
