@@ -106,10 +106,11 @@ Why this deviates from §3.1:
 1. Dedicated inspector process, not a resident master service.
 2. JSON + SSE, not protobuf-over-WebSocket. The HTTP gateway is still a thin
    translator; the SPA contains no acquisition logic.
-3. Unary inspector RPCs (`GetSnapshot`, `Resolve`, `SuggestLocators`, `Input`,
-   `Screenshot`) rather than the full bidi `Session` stream. The Web UI gets
-   push-like updates via SSE polling while attached; the proto is append-only
-   so the bidi stream can be added later without breaking clients.
+3. Unary inspector RPCs (`Snapshot`, `Input`, `Watch`) rather than the full
+   bidi `Session` stream. The Web UI gets SSE updates driven by an in-page
+   change binding while attached (INS-R3; `Watch` is a long-poll, not a
+   stream); the proto is append-only so the bidi stream can be added later
+   without breaking clients.
 4. Hand-written embedded SPA (same pattern as `impresario web`), not
    Preact/Vite. No external assets, CSP-safe, one binary.
 5. No lease/scheduler preemption in v1. Input is disabled when a run owns the
@@ -269,10 +270,14 @@ the implementation keeps the grammar in one module so a rename is local.
 - [x] INS-2.1 Injected viewport script (ES5): pruning, roles, names, stable
       ids, composed/shadow DOM, ancestor clip geometry, scroll hints.
       Same-origin iframe subtrees are **not** traversed.
-- [x] INS-2.2 Polling refresh: the inspector process re-acquires at
-      `inspector.fps` (1-30, default 4) and pushes full snapshots/deltas over
-      SSE. An in-page `MutationObserver`/`Runtime.addBinding` push channel is
-      a follow-up; screenshots use the existing out-of-band capture.
+- [x] INS-2.2 Pushed refresh (INS-R3): the ES5 observer calls a
+      `Runtime.addBinding` callback on DOM mutations, scroll, resize, focus,
+      transitions, history and visibility changes; the connector exposes a
+      monotonic change counter through the unary `Inspector.Watch` long-poll
+      and the inspector re-acquires only on a change (5 s timeout as an idle
+      heartbeat), still capped at `inspector.fps` (1-30, default 4). Engines
+      without the binding keep polling. Screenshots use the existing
+      out-of-band capture.
 - [ ] INS-2.3 webOS/Tizen real-device attach — transport reuse implemented;
       **real-device smoke deferred** (no devices). `NOT_INSPECTABLE` is a
       structured degradation.
@@ -352,7 +357,7 @@ the implementation keeps the grammar in one module so a rename is local.
 |---|---|
 | Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. The live view is a subscribable MCP resource (INS-R5). |
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
-| Auto-update on scroll/navigation/modal/focus | **Partial**: web polling at `inspector.fps` (default 4) plus post-input refresh; no push binding or change counter. |
+| Auto-update on scroll/navigation/modal/focus | **Web family: yes** (INS-R3): `MutationObserver` plus scroll/resize/focus/transition/history/visibility listeners call a `Runtime.addBinding`, and the inspector re-acquires on the connector's change counter (still capped at `inspector.fps`, default 4), with post-input refresh. Android/Apple refresh at `inspector.fps`; old engines without the binding fall back to polling. |
 | Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them. Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
 | Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
@@ -449,6 +454,39 @@ coverage:
   `inspector::scene::tests::verification_warns_when_a_locator_is_ambiguous` and
   `inspector::tests::scene_watch_reports_external_changes_once` passing.
 
+INS-R3 (2026-11-24): in-page push instead of DOM polling. New coverage:
+
+- `crates/impresario-connector/src/inspector.rs`: the injected ES5 script
+  (v4) installs a `MutationObserver` plus scroll/resize/focus/transition/
+  popstate/hashchange/visibility/fullscreen listeners and patched
+  `history.pushState`/`replaceState`; all call the `Runtime.addBinding`
+  callback. `inspector_script_is_es5` also bans post-ES5 syntax and
+  `inspector_script_pushes_dom_and_navigation_changes` checks the observer,
+  binding name, focus/hash/pushState hooks and the locator-tag filter.
+- `crates/impresario-connector/src/backends/raw.rs`:
+  `binding_calls_are_forwarded` proves a `Runtime.bindingCalled` event becomes
+  a shared `BindingEvent`.
+- `crates/impresario-connector/src/session.rs`:
+  `change_signal_is_monotonic`, `wait_wakes_on_a_later_change` and
+  `wait_returns_immediately_for_an_observed_change` cover the connector-owned
+  counter; `inspector_push_is_opt_in` proves only `inspector_push=true`/`1`
+  installs the binding.
+- `crates/impresario-connector/tests/fixtures_suite.rs`:
+  `push_watch_reports_page_changes` drives a real headless Chromium page,
+  settles the load-time churn, clicks a fixture button and proves the `Watch`
+  long-poll wakes with a larger sequence while `push` stays true.
+- `crates/impresario-master/src/inspector/mod.rs`:
+  `tick_polls_until_push_is_active` covers the `PUSH_ACTIVE`/`PUSH_FALLBACK`
+  decision. The watcher serializes acquisition with `snapshot_gate`, caps
+  change-driven snapshots at `inspector.fps`, uses the 5 s Watch timeout as an
+  idle heartbeat, and clears its `alive` flag before abort so an in-flight
+  snapshot cannot publish after detach.
+- CI run `45336056795` at `ce00739` passed all eight jobs, including the
+  Windows release build. The cargo-test log shows
+  `push_watch_reports_page_changes`, `inspector_push_is_opt_in` and the three
+  `session::change_signal_tests` passing against a real Chromium (the fixture
+  suite ran 7/7, not skipped).
+
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
 and emits JSON or a table with p50/p95/p99/mean for acquisition build, prune,
@@ -472,8 +510,12 @@ committed here only when observed.
   grammar and matcher stay isolated in one crate; native execution needs
   master-side snapshot + resolve + native rewrite (or a node-ref strategy) and
   proto/agent changes.
-- **Polling instead of CDP binding push** (spec §6.2): the process re-acquires
-  at 1-30 fps; a change counter/binding push is a follow-up.
+- **Push binding is web-only and opt-in** (spec §6.2): the connector installs
+  `Runtime.addBinding` only when the inspector session sends
+  `inspector_push=true`, because CDP bindings are page-global and a runner
+  session sharing the page could clobber the callback. Android and Apple stay
+  on `inspector.fps` polling, and old Chromium without the binding falls back
+  to polling.
 - **No bidi protobuf stream** (spec §4.2): unary RPCs + SSE; append-only
   proto leaves room.
 - **Flutter Layer A only**: Android/Apple acquisition is implemented and
