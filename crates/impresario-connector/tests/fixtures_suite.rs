@@ -1240,13 +1240,15 @@ async fn run_push_watch_suite(backend: &str) {
         return;
     };
     let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut options = suite_options(backend, "locators.html");
+    options.push(("inspector_push".to_string(), "true".to_string()));
     let mut harness = Harness::start(None).await;
     let response = harness
         .handshake(Handshake {
             platform: pb::Platform::Web as i32,
             endpoint,
             app_url: String::new(),
-            options: suite_options(backend, "locators.html"),
+            options,
             token: None,
             protocol: "1.0.0".to_string(),
         })

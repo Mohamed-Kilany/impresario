@@ -1152,6 +1152,8 @@ fn handshake_options(
         "focus_max_steps".to_string(),
         config.focus_max_steps.to_string(),
     );
+    // INS-R3: only the inspector session needs the page change binding.
+    options.insert("inspector_push".to_string(), "true".to_string());
     options
 }
 

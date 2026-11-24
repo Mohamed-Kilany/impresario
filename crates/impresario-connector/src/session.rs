@@ -68,7 +68,10 @@ impl ChangeSignal {
         if *receiver.borrow_and_update() > after {
             return Some(*receiver.borrow());
         }
-        match tokio::time::timeout(timeout, receiver.wait_for(|seq| *seq > after)).await {
+        // Keep the result in a local so its `Ref` is dropped before the
+        // receiver (a tail-expression temporary outlives the receiver).
+        let waited = tokio::time::timeout(timeout, receiver.wait_for(|seq| *seq > after)).await;
+        match waited {
             Ok(Ok(seq)) => Some(*seq),
             _ => None,
         }
@@ -88,6 +91,10 @@ pub struct SessionConfig {
     pub poll_interval: Duration,
     pub scroll_max_attempts: u32,
     pub focus_max_steps: u32,
+    /// INS-R3: install the inspector change binding. Only the standalone
+    /// inspector requests it, so a runner sharing the page never clobbers the
+    /// page-global binding callback.
+    pub inspector_push: bool,
 }
 
 impl SessionConfig {
@@ -132,6 +139,10 @@ impl SessionConfig {
             .get("page_match")
             .filter(|value| !value.is_empty())
             .cloned();
+        let inspector_push = matches!(
+            options.get("inspector_push").map(String::as_str),
+            Some("1" | "true")
+        );
         Ok(Self {
             platform,
             target_endpoint: target_endpoint.to_string(),
@@ -142,6 +153,7 @@ impl SessionConfig {
             poll_interval: Duration::from_millis(poll_interval),
             scroll_max_attempts: scroll_max_attempts as u32,
             focus_max_steps: focus_max_steps as u32,
+            inspector_push,
         })
     }
 }
@@ -394,13 +406,19 @@ impl Session {
         };
 
         // Install the in-page push binding before the inspector helper is
-        // injected (INS-R3). Old engines that lack Runtime.addBinding simply
-        // keep the polling fallback.
+        // injected (INS-R3). Only the standalone inspector opts in: runner
+        // sessions never use `Watch`, and a second session installing the same
+        // page-global binding could replace the inspector's callback. Old
+        // engines that lack Runtime.addBinding simply keep polling.
         let inspector_changes = ChangeSignal::default();
-        let inspector_push = backend
-            .add_binding(crate::inspector::INSPECTOR_BINDING)
-            .await
-            .is_ok();
+        let inspector_push = if config.inspector_push {
+            backend
+                .add_binding(crate::inspector::INSPECTOR_BINDING)
+                .await
+                .is_ok()
+        } else {
+            false
+        };
 
         let options = ExecOptions {
             poll_interval: config.poll_interval,
@@ -972,6 +990,28 @@ pub fn console_to_log_entry(event: &ConsoleEvent) -> pb::LogEntry {
         level: level as i32,
         source: event.source.clone(),
         message: event.message.clone(),
+    }
+}
+
+#[cfg(test)]
+mod session_config_tests {
+    use super::*;
+
+    #[test]
+    fn inspector_push_is_opt_in() {
+        let parse = |value: Option<&str>| {
+            let mut options = HashMap::new();
+            if let Some(value) = value {
+                options.insert("inspector_push".to_string(), value.to_string());
+            }
+            SessionConfig::from_handshake(Platform::Web, "launch", None, &options)
+                .expect("session config")
+                .inspector_push
+        };
+        assert!(!parse(None), "runner sessions must not install the binding");
+        assert!(!parse(Some("false")));
+        assert!(parse(Some("true")));
+        assert!(parse(Some("1")));
     }
 }
 
