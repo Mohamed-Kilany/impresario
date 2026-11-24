@@ -1007,13 +1007,18 @@ impl Actor {
         );
         match action {
             RunConflictAction::Keep => {
-                let readonly = self
+                let file_readonly = self
+                    .attachment
+                    .as_ref()
+                    .and_then(|attachment| attachment.lease.mode())
+                    == Some(lease::LeaseMode::Readonly);
+                let status_readonly = self
                     .shared
                     .status()
                     .lease
                     .as_ref()
                     .is_some_and(|lease| lease.mode == "readonly");
-                if readonly {
+                if file_readonly || status_readonly {
                     if let Some(attachment) = self.attachment.as_ref() {
                         attachment.lease.set_mode(lease::LeaseMode::Interactive)?;
                     }
@@ -1023,13 +1028,18 @@ impl Actor {
             }
             RunConflictAction::Readonly => {
                 let owner = run.map(|run| run.job);
-                let already = self
+                let file_readonly = self
+                    .attachment
+                    .as_ref()
+                    .and_then(|attachment| attachment.lease.mode())
+                    == Some(lease::LeaseMode::Readonly);
+                let status_matches = self
                     .shared
                     .status()
                     .lease
                     .as_ref()
                     .is_some_and(|lease| lease.mode == "readonly" && lease.owner == owner);
-                if !already {
+                if !file_readonly || !status_matches {
                     if let Some(attachment) = self.attachment.as_ref() {
                         attachment.lease.set_mode(lease::LeaseMode::Readonly)?;
                     }

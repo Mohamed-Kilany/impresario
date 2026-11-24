@@ -935,8 +935,6 @@ pub(crate) mod lease {
     /// A live lease as seen by another process.
     #[derive(Debug, Clone)]
     pub(crate) struct LeaseInfo {
-        pub kind: LeaseKind,
-        pub mode: LeaseMode,
         pub conflict: InspectorRunConflict,
         pub job: String,
         pub pid: u32,
@@ -984,6 +982,13 @@ pub(crate) mod lease {
     }
 
     impl InspectorGuard {
+        /// The mode persisted in this lease, or `None` when another process
+        /// replaced or removed the file.
+        pub(crate) fn mode(&self) -> Option<LeaseMode> {
+            let owner = read_owner(&self.path)?;
+            (owner.kind == LeaseKind::Inspector && owner.pid == self.pid).then_some(owner.mode)
+        }
+
         pub(crate) fn set_mode(&self, mode: LeaseMode) -> Result<(), String> {
             let Some(mut owner) = read_owner(&self.path) else {
                 return Err(format!(
@@ -1049,8 +1054,6 @@ pub(crate) mod lease {
 
     fn info(owner: &Owner) -> LeaseInfo {
         LeaseInfo {
-            kind: owner.kind,
-            mode: owner.mode,
             conflict: owner.conflict,
             job: owner.job.clone(),
             pid: owner.pid,
@@ -2077,18 +2080,16 @@ mod tests {
         let guard = lease::acquire_inspector(&store, "tv", InspectorRunConflict::Readonly)
             .expect("inspector lease");
         let info = lease::inspector_owner(&store, "tv").expect("live inspector lease");
-        assert_eq!(info.kind, lease::LeaseKind::Inspector);
-        assert_eq!(info.mode, lease::LeaseMode::Interactive);
+        assert_eq!(info.conflict, InspectorRunConflict::Readonly);
+        assert!(
+            lease::run_owner(&store, "tv").is_none(),
+            "an inspector lease is not a run lease"
+        );
         assert!(lease::available(&store, &devices), "readonly allows a run");
         guard
             .set_mode(lease::LeaseMode::Readonly)
             .expect("readonly mode");
-        assert_eq!(
-            lease::inspector_owner(&store, "tv")
-                .expect("inspector lease")
-                .mode,
-            lease::LeaseMode::Readonly
-        );
+        assert_eq!(guard.mode(), Some(lease::LeaseMode::Readonly));
         drop(guard);
         assert!(
             lease::inspector_owner(&store, "tv").is_none(),
@@ -2126,7 +2127,10 @@ mod tests {
             .expect("a run preempts an exclusive inspector");
         let owner = lease::run_owner(&store, "tv").expect("live run lease");
         assert_eq!(owner.job, "run-1");
-        assert_eq!(owner.kind, lease::LeaseKind::Run);
+        assert!(
+            lease::inspector_owner(&store, "tv").is_some(),
+            "the inspector lease survives the run"
+        );
         drop(run);
         assert!(lease::run_owner(&store, "tv").is_none());
     }
