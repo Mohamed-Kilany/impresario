@@ -627,7 +627,7 @@ fn hover_explains_canonical_locator_cells() {
 fn hover_marks_invalid_locator_cells() {
     let language = locator_language(LOCATOR_SCENE, &locator_scene());
     let hover = language
-        .hover(&locator_scene(), position_after(LOCATOR_SCENE, "role=np"))
+        .hover(&locator_scene(), position_after(LOCATOR_SCENE, "role=no"))
         .expect("invalid locator hover");
     assert!(
         hover.markdown.contains("**Invalid locator**"),
