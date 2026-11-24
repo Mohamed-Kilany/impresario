@@ -1291,7 +1291,11 @@ impl DeviceRun<'_> {
     /// (a newer capture replaced the revision the master resolved against) is
     /// re-resolved and retried, because the whole point of the locator is to
     /// describe the element rather than a particular accessibility object.
-    async fn run_native_locator_step(&self, step: &PlannedStep, started: Instant) -> StepOutcome {
+    async fn run_native_locator_step(
+        &mut self,
+        step: &PlannedStep,
+        started: Instant,
+    ) -> StepOutcome {
         let Some(command) = step.command.as_ref() else {
             return failed_step(
                 WireError::new(
@@ -1309,14 +1313,14 @@ impl DeviceRun<'_> {
                 false,
             );
         };
-        let Some(connection) = self.connection.as_ref() else {
-            return failed_step(
-                WireError::new(WireErrorCode::Transport, "no open session"),
-                started,
-                false,
-            );
-        };
         if let Command::Probe(probe) = command {
+            let Some(connection) = self.connection.as_ref() else {
+                return failed_step(
+                    WireError::new(WireErrorCode::Transport, "no open session"),
+                    started,
+                    false,
+                );
+            };
             let capability = match probe.kind {
                 ProbeKind::Showing => Capability::ProbeShowing,
                 ProbeKind::Player => Capability::ProbePlayer,
@@ -1337,10 +1341,39 @@ impl DeviceRun<'_> {
         let mut attempt = 0u32;
         loop {
             attempt = attempt.saturating_add(1);
-            match self
-                .resolve_native_locator(command, selector, deadline)
+            // `DeviceRun` is not `Sync` (it holds the transport), so resolve
+            // through a free function over the Send parts rather than holding
+            // `&self` across the snapshot await.
+            let plan = {
+                let Some(connection) = self.connection.as_ref() else {
+                    return failed_step(
+                        WireError::new(WireErrorCode::Transport, "no open session"),
+                        started,
+                        false,
+                    );
+                };
+                let Some(inspector) = connection.inspector.as_ref() else {
+                    return failed_step(
+                        WireError::new(
+                            WireErrorCode::UnsupportedAction,
+                            "the executor does not expose the inspector service",
+                        ),
+                        started,
+                        false,
+                    );
+                };
+                resolve_native_locator(
+                    self.shared,
+                    self.device,
+                    inspector,
+                    connection.session.session_id(),
+                    command,
+                    selector,
+                    deadline,
+                )
                 .await
-            {
+            };
+            match plan {
                 NativePlan::Aborted => return aborted_step(started, false),
                 NativePlan::Error(error) => return failed_step(error, started, false),
                 NativePlan::Done(outcome) => {
@@ -1360,6 +1393,13 @@ impl DeviceRun<'_> {
                     }
                 }
                 NativePlan::Send(node_ref) => {
+                    let Some(connection) = self.connection.as_ref() else {
+                        return failed_step(
+                            WireError::new(WireErrorCode::Transport, "no open session"),
+                            started,
+                            false,
+                        );
+                    };
                     let remaining = remaining_ms(deadline);
                     let result = send_wire(
                         self.shared,
@@ -1385,69 +1425,6 @@ impl DeviceRun<'_> {
                 }
             }
         }
-    }
-
-    /// Acquire one viewport snapshot through the executor's `Inspector`
-    /// service and turn it into the next [`NativePlan`].
-    async fn resolve_native_locator(
-        &self,
-        command: &Command,
-        selector: &Selector,
-        deadline: Instant,
-    ) -> NativePlan {
-        let Some(connection) = self.connection.as_ref() else {
-            return NativePlan::Error(WireError::new(WireErrorCode::Transport, "no open session"));
-        };
-        let Some(inspector) = connection.inspector.as_ref() else {
-            return NativePlan::Error(WireError::new(
-                WireErrorCode::UnsupportedAction,
-                "the executor does not expose the inspector service",
-            ));
-        };
-        let request = pb::InspectorSnapshotRequest {
-            min_visible_fraction: 0.0,
-            ..pb::InspectorSnapshotRequest::default()
-        };
-        // The step deadline also bounds snapshot acquisition: a hung
-        // inspector must not outlive the command it is resolving for.
-        let remaining = deadline
-            .saturating_duration_since(Instant::now())
-            .max(Duration::from_millis(1));
-        let response = tokio::select! {
-            result = tokio::time::timeout(
-                remaining,
-                inspector.snapshot(connection.session.session_id(), request),
-            ) => {
-                match result {
-                    Ok(Ok(response)) => response,
-                    Ok(Err(error)) => return NativePlan::Error(error.to_wire()),
-                    Err(_) => {
-                        return NativePlan::Error(WireError::new(
-                            WireErrorCode::Timeout,
-                            "the inspector did not answer before the step deadline",
-                        ))
-                    }
-                }
-            }
-            () = self.shared.options.shutdown.cancelled() => return NativePlan::Aborted,
-        };
-        if let Some(error) = &response.error {
-            return NativePlan::Error(
-                error_info_from_proto(error).unwrap_or_else(std::convert::identity),
-            );
-        }
-        let snapshot = snapshot_from_proto(&response, self.device);
-        let locator = match parse_locator(&selector.value) {
-            Ok(locator) => locator,
-            Err(error) => return NativePlan::Error(locator_invalid(selector, &error)),
-        };
-        native_plan_for_snapshot(
-            command,
-            selector,
-            &locator,
-            &snapshot,
-            Instant::now() >= deadline,
-        )
     }
 
     fn finish_wire_step(
@@ -1694,6 +1671,63 @@ impl DeviceRun<'_> {
             drop(connection);
         }
     }
+}
+
+/// Acquire one viewport snapshot through the executor's `Inspector`
+/// service and turn it into the next [`NativePlan`].
+///
+/// Free function (not a `DeviceRun` method) because the future must stay
+/// `Send`: `DeviceRun` carries the non-`Sync` device transport.
+async fn resolve_native_locator(
+    shared: &Shared,
+    device: &DeviceConfig,
+    inspector: &InspectorClient,
+    session_id: &str,
+    command: &Command,
+    selector: &Selector,
+    deadline: Instant,
+) -> NativePlan {
+    let request = pb::InspectorSnapshotRequest {
+        min_visible_fraction: 0.0,
+        ..pb::InspectorSnapshotRequest::default()
+    };
+    // The step deadline also bounds snapshot acquisition: a hung
+    // inspector must not outlive the command it is resolving for.
+    let remaining = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(1));
+    let response = tokio::select! {
+        result = tokio::time::timeout(remaining, inspector.snapshot(session_id, request)) => {
+            match result {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return NativePlan::Error(error.to_wire()),
+                Err(_) => {
+                    return NativePlan::Error(WireError::new(
+                        WireErrorCode::Timeout,
+                        "the inspector did not answer before the step deadline",
+                    ))
+                }
+            }
+        }
+        () = shared.options.shutdown.cancelled() => return NativePlan::Aborted,
+    };
+    if let Some(error) = &response.error {
+        return NativePlan::Error(
+            error_info_from_proto(error).unwrap_or_else(std::convert::identity),
+        );
+    }
+    let snapshot = snapshot_from_proto(&response, device);
+    let locator = match parse_locator(&selector.value) {
+        Ok(locator) => locator,
+        Err(error) => return NativePlan::Error(locator_invalid(selector, &error)),
+    };
+    native_plan_for_snapshot(
+        command,
+        selector,
+        &locator,
+        &snapshot,
+        Instant::now() >= deadline,
+    )
 }
 
 /// The locator selector of `command`, when it asks for the shared matcher.
