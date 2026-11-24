@@ -156,6 +156,27 @@ public final class InspectorProvider: Impresario_V1_InspectorAsyncProvider, @unc
     }
 
     // ------------------------------------------------------------------
+    // Inspector.Watch
+    // ------------------------------------------------------------------
+
+    /// Apple has no in-page change source, so the long-poll answers
+    /// immediately with `push = false` and the master keeps its
+    /// `inspector.fps` polling loop for native devices (INS-R3).
+    public func watch(
+        request: Impresario_V1_InspectorWatchRequest,
+        context: GRPCAsyncServerCallContext
+    ) async throws -> Impresario_V1_InspectorWatchResponse {
+        _ = request
+        try authorize(context)
+        _ = try requireSession(context)
+        var response = Impresario_V1_InspectorWatchResponse()
+        response.seq = currentRevision
+        response.changed = false
+        response.push = false
+        return response
+    }
+
+    // ------------------------------------------------------------------
     // internals
     // ------------------------------------------------------------------
 

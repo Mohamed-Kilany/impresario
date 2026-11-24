@@ -2264,6 +2264,41 @@ public nonisolated struct Impresario_V1_InspectorInputResponse: Sendable {
   fileprivate var _error: Impresario_V1_ErrorInfo? = nil
 }
 
+public nonisolated struct Impresario_V1_InspectorWatchRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// last in-page change sequence the caller saw
+  public var afterSeq: UInt64 = 0
+
+  /// 0 = server default; capped server-side
+  public var timeoutMs: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Impresario_V1_InspectorWatchResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// latest change sequence
+  public var seq: UInt64 = 0
+
+  /// true when seq > after_seq
+  public var changed: Bool = false
+
+  /// false when the executor has no push source
+  public var push: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "impresario.v1"
@@ -4588,6 +4623,81 @@ nonisolated extension Impresario_V1_InspectorInputResponse: SwiftProtobuf.Messag
     if lhs.ok != rhs.ok {return false}
     if lhs._error != rhs._error {return false}
     if lhs.rev != rhs.rev {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorWatchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorWatchRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}after_seq\0\u{3}timeout_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.afterSeq) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.afterSeq != 0 {
+      try visitor.visitSingularUInt64Field(value: self.afterSeq, fieldNumber: 1)
+    }
+    if self.timeoutMs != 0 {
+      try visitor.visitSingularUInt32Field(value: self.timeoutMs, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorWatchRequest, rhs: Impresario_V1_InspectorWatchRequest) -> Bool {
+    if lhs.afterSeq != rhs.afterSeq {return false}
+    if lhs.timeoutMs != rhs.timeoutMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Impresario_V1_InspectorWatchResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".InspectorWatchResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{1}changed\0\u{1}push\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.seq) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.changed) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.push) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.seq != 0 {
+      try visitor.visitSingularUInt64Field(value: self.seq, fieldNumber: 1)
+    }
+    if self.changed != false {
+      try visitor.visitSingularBoolField(value: self.changed, fieldNumber: 2)
+    }
+    if self.push != false {
+      try visitor.visitSingularBoolField(value: self.push, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Impresario_V1_InspectorWatchResponse, rhs: Impresario_V1_InspectorWatchResponse) -> Bool {
+    if lhs.seq != rhs.seq {return false}
+    if lhs.changed != rhs.changed {return false}
+    if lhs.push != rhs.push {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

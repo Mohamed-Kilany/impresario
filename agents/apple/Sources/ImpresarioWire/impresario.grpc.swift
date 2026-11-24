@@ -476,6 +476,11 @@ public protocol Impresario_V1_InspectorClientProtocol: GRPCClient {
     _ request: Impresario_V1_InspectorInputRequest,
     callOptions: CallOptions?
   ) -> UnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>
+
+  func watch(
+    _ request: Impresario_V1_InspectorWatchRequest,
+    callOptions: CallOptions?
+  ) -> UnaryCall<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse>
 }
 
 extension Impresario_V1_InspectorClientProtocol {
@@ -516,6 +521,25 @@ extension Impresario_V1_InspectorClientProtocol {
       request: request,
       callOptions: callOptions ?? self.defaultCallOptions,
       interceptors: self.interceptors?.makeInputInterceptors() ?? []
+    )
+  }
+
+  /// Additive long-poll used by the standalone inspector instead of fixed-rate
+  /// polling. Older executors answer UNIMPLEMENTED; callers fall back.
+  ///
+  /// - Parameters:
+  ///   - request: Request to send to Watch.
+  ///   - callOptions: Call options.
+  /// - Returns: A `UnaryCall` with futures for the metadata, status and response.
+  public func watch(
+    _ request: Impresario_V1_InspectorWatchRequest,
+    callOptions: CallOptions? = nil
+  ) -> UnaryCall<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse> {
+    return self.makeUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.watch.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeWatchInterceptors() ?? []
     )
   }
 }
@@ -595,6 +619,11 @@ public protocol Impresario_V1_InspectorAsyncClientProtocol: GRPCClient {
     _ request: Impresario_V1_InspectorInputRequest,
     callOptions: CallOptions?
   ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>
+
+  func makeWatchCall(
+    _ request: Impresario_V1_InspectorWatchRequest,
+    callOptions: CallOptions?
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse>
 }
 
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
@@ -630,6 +659,18 @@ extension Impresario_V1_InspectorAsyncClientProtocol {
       interceptors: self.interceptors?.makeInputInterceptors() ?? []
     )
   }
+
+  public func makeWatchCall(
+    _ request: Impresario_V1_InspectorWatchRequest,
+    callOptions: CallOptions? = nil
+  ) -> GRPCAsyncUnaryCall<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse> {
+    return self.makeAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.watch.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeWatchInterceptors() ?? []
+    )
+  }
 }
 
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
@@ -655,6 +696,18 @@ extension Impresario_V1_InspectorAsyncClientProtocol {
       request: request,
       callOptions: callOptions ?? self.defaultCallOptions,
       interceptors: self.interceptors?.makeInputInterceptors() ?? []
+    )
+  }
+
+  public func watch(
+    _ request: Impresario_V1_InspectorWatchRequest,
+    callOptions: CallOptions? = nil
+  ) async throws -> Impresario_V1_InspectorWatchResponse {
+    return try await self.performAsyncUnaryCall(
+      path: Impresario_V1_InspectorClientMetadata.Methods.watch.path,
+      request: request,
+      callOptions: callOptions ?? self.defaultCallOptions,
+      interceptors: self.interceptors?.makeWatchInterceptors() ?? []
     )
   }
 }
@@ -683,6 +736,9 @@ public protocol Impresario_V1_InspectorClientInterceptorFactoryProtocol: Sendabl
 
   /// - Returns: Interceptors to use when invoking 'input'.
   func makeInputInterceptors() -> [ClientInterceptor<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>]
+
+  /// - Returns: Interceptors to use when invoking 'watch'.
+  func makeWatchInterceptors() -> [ClientInterceptor<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse>]
 }
 
 public enum Impresario_V1_InspectorClientMetadata {
@@ -692,6 +748,7 @@ public enum Impresario_V1_InspectorClientMetadata {
     methods: [
       Impresario_V1_InspectorClientMetadata.Methods.snapshot,
       Impresario_V1_InspectorClientMetadata.Methods.input,
+      Impresario_V1_InspectorClientMetadata.Methods.watch,
     ]
   )
 
@@ -705,6 +762,12 @@ public enum Impresario_V1_InspectorClientMetadata {
     public static let input = GRPCMethodDescriptor(
       name: "Input",
       path: "/impresario.v1.Inspector/Input",
+      type: GRPCCallType.unary
+    )
+
+    public static let watch = GRPCMethodDescriptor(
+      name: "Watch",
+      path: "/impresario.v1.Inspector/Watch",
       type: GRPCCallType.unary
     )
   }
@@ -974,6 +1037,10 @@ public protocol Impresario_V1_InspectorProvider: CallHandlerProvider {
   func snapshot(request: Impresario_V1_InspectorSnapshotRequest, context: StatusOnlyCallContext) -> EventLoopFuture<Impresario_V1_InspectorSnapshotResponse>
 
   func input(request: Impresario_V1_InspectorInputRequest, context: StatusOnlyCallContext) -> EventLoopFuture<Impresario_V1_InspectorInputResponse>
+
+  /// Additive long-poll used by the standalone inspector instead of fixed-rate
+  /// polling. Older executors answer UNIMPLEMENTED; callers fall back.
+  func watch(request: Impresario_V1_InspectorWatchRequest, context: StatusOnlyCallContext) -> EventLoopFuture<Impresario_V1_InspectorWatchResponse>
 }
 
 extension Impresario_V1_InspectorProvider {
@@ -1006,6 +1073,15 @@ extension Impresario_V1_InspectorProvider {
         userFunction: self.input(request:context:)
       )
 
+    case "Watch":
+      return UnaryServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorWatchRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorWatchResponse>(),
+        interceptors: self.interceptors?.makeWatchInterceptors() ?? [],
+        userFunction: self.watch(request:context:)
+      )
+
     default:
       return nil
     }
@@ -1032,6 +1108,13 @@ public protocol Impresario_V1_InspectorAsyncProvider: CallHandlerProvider, Senda
     request: Impresario_V1_InspectorInputRequest,
     context: GRPCAsyncServerCallContext
   ) async throws -> Impresario_V1_InspectorInputResponse
+
+  /// Additive long-poll used by the standalone inspector instead of fixed-rate
+  /// polling. Older executors answer UNIMPLEMENTED; callers fall back.
+  func watch(
+    request: Impresario_V1_InspectorWatchRequest,
+    context: GRPCAsyncServerCallContext
+  ) async throws -> Impresario_V1_InspectorWatchResponse
 }
 
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
@@ -1071,6 +1154,15 @@ extension Impresario_V1_InspectorAsyncProvider {
         wrapping: { try await self.input(request: $0, context: $1) }
       )
 
+    case "Watch":
+      return GRPCAsyncServerHandler(
+        context: context,
+        requestDeserializer: ProtobufDeserializer<Impresario_V1_InspectorWatchRequest>(),
+        responseSerializer: ProtobufSerializer<Impresario_V1_InspectorWatchResponse>(),
+        interceptors: self.interceptors?.makeWatchInterceptors() ?? [],
+        wrapping: { try await self.watch(request: $0, context: $1) }
+      )
+
     default:
       return nil
     }
@@ -1086,6 +1178,10 @@ public protocol Impresario_V1_InspectorServerInterceptorFactoryProtocol: Sendabl
   /// - Returns: Interceptors to use when handling 'input'.
   ///   Defaults to calling `self.makeInterceptors()`.
   func makeInputInterceptors() -> [ServerInterceptor<Impresario_V1_InspectorInputRequest, Impresario_V1_InspectorInputResponse>]
+
+  /// - Returns: Interceptors to use when handling 'watch'.
+  ///   Defaults to calling `self.makeInterceptors()`.
+  func makeWatchInterceptors() -> [ServerInterceptor<Impresario_V1_InspectorWatchRequest, Impresario_V1_InspectorWatchResponse>]
 }
 
 public enum Impresario_V1_InspectorServerMetadata {
@@ -1095,6 +1191,7 @@ public enum Impresario_V1_InspectorServerMetadata {
     methods: [
       Impresario_V1_InspectorServerMetadata.Methods.snapshot,
       Impresario_V1_InspectorServerMetadata.Methods.input,
+      Impresario_V1_InspectorServerMetadata.Methods.watch,
     ]
   )
 
@@ -1108,6 +1205,12 @@ public enum Impresario_V1_InspectorServerMetadata {
     public static let input = GRPCMethodDescriptor(
       name: "Input",
       path: "/impresario.v1.Inspector/Input",
+      type: GRPCCallType.unary
+    )
+
+    public static let watch = GRPCMethodDescriptor(
+      name: "Watch",
+      path: "/impresario.v1.Inspector/Watch",
       type: GRPCCallType.unary
     )
   }
