@@ -502,6 +502,8 @@ fn css_selector(value: String) -> pb::Selector {
         strategy: pb::SelectorStrategy::Css as i32,
         value,
         index: 0,
+        snapshot_rev: 0,
+        node_id: 0,
     }
 }
 

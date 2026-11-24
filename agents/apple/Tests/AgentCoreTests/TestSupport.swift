@@ -402,6 +402,10 @@ final class FakeUIDriver: UIDriver, DriverExtras, @unchecked Sendable {
             return true
         case .iosType:
             return element.elementType.rawValue == spec.value
+        case .nodeRef:
+            // The fake registry does not implement revision addressing; the
+            // real driver's NODE_REF path is exercised on device.
+            return false
         }
     }
 }

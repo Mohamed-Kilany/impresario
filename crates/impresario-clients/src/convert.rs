@@ -96,6 +96,10 @@ pub fn strategy_from_proto(value: i32) -> Result<Strategy, WireError> {
         Ok(pb::SelectorStrategy::Predicate) => Ok(Strategy::Predicate),
         Ok(pb::SelectorStrategy::IosType) => Ok(Strategy::IosType),
         Ok(pb::SelectorStrategy::Locator) => Ok(Strategy::Locator),
+        Ok(pb::SelectorStrategy::NodeRef) => Err(protocol_error(
+            "NODE_REF selectors are executor-internal and cannot be parsed into the DSL model"
+                .to_string(),
+        )),
         Ok(pb::SelectorStrategy::Unspecified) | Err(_) => Err(protocol_error(format!(
             "unknown selector strategy enum value {value}"
         ))),
@@ -284,7 +288,48 @@ pub fn selector_to_proto(selector: &Selector) -> pb::Selector {
         strategy: strategy_to_proto(selector.strategy) as i32,
         value: selector.value.clone(),
         index: selector.index,
+        snapshot_rev: 0,
+        node_id: 0,
     }
+}
+
+/// A wire selector rewritten to one node of an `Inspector` snapshot.
+///
+/// The master resolves a `LOCATOR` against the shared matcher, then sends this
+/// executor-internal reference. `snapshot_rev` is the revision the node id was
+/// captured in; `node_id == 0` means an explicit miss (a probe that matched
+/// nothing).
+#[must_use]
+pub fn node_ref_selector(snapshot_rev: u64, node_id: u64) -> pb::Selector {
+    pb::Selector {
+        strategy: pb::SelectorStrategy::NodeRef as i32,
+        value: String::new(),
+        index: 0,
+        snapshot_rev,
+        node_id,
+    }
+}
+
+/// Rewrite the selector of a built wire command to `NODE_REF`.
+///
+/// Returns `false` when the command carries no selector (for example a
+/// screen-level scroll or a key press).
+pub fn rewrite_selector_to_node_ref(
+    command: &mut pb::Command,
+    snapshot_rev: u64,
+    node_id: u64,
+) -> bool {
+    let selector = match command.body.as_mut() {
+        Some(pb::command::Body::RunAction(action)) => action.selector.as_mut(),
+        Some(pb::command::Body::ValidateCheck(check)) => check.selector.as_mut(),
+        Some(pb::command::Body::Probe(probe)) => probe.selector.as_mut(),
+        _ => None,
+    };
+    let Some(selector) = selector else {
+        return false;
+    };
+    *selector = node_ref_selector(snapshot_rev, node_id);
+    true
 }
 
 /// The proto `Selector` has no platform key, so callers supply the device

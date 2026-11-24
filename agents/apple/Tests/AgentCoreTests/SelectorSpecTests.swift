@@ -31,6 +31,45 @@ final class SelectorSpecTests: XCTestCase {
         XCTAssertNoThrow(try SelectorSpec.make(strategy: .predicate, value: "label BEGINSWITH 'x'", index: 0))
     }
 
+    func testNodeRefDescribeAndLookupPreserveRevision() throws {
+        let spec = try SelectorSpec.make(
+            strategy: .nodeRef,
+            value: "",
+            index: 0,
+            snapshotRev: 7,
+            nodeID: 3
+        )
+        XCTAssertEqual(spec.describe(), "nodeRef:7:3")
+        let lookup = spec.lookup()
+        XCTAssertEqual(lookup.strategy, .nodeRef)
+        XCTAssertEqual(lookup.snapshotRev, 7)
+        XCTAssertEqual(lookup.nodeID, 3)
+        XCTAssertEqual(lookup.index, 0)
+        XCTAssertEqual(lookup.value, "")
+    }
+
+    func testNodeRefAllowsAnExplicitMiss() throws {
+        let spec = try SelectorSpec.make(
+            strategy: .nodeRef,
+            value: "",
+            index: 0,
+            snapshotRev: 4,
+            nodeID: 0
+        )
+        XCTAssertEqual(spec.describe(), "nodeRef:4:0")
+    }
+
+    func testNodeRefWithoutRevisionIsAProtocolError() {
+        XCTAssertThrowsError(
+            try SelectorSpec.make(strategy: .nodeRef, value: "", index: 0)
+        ) { error in
+            guard let agentError = error as? AgentError else {
+                return XCTFail("expected an AgentError, got \(error)")
+            }
+            XCTAssertEqual(agentError.code, .protocolViolation)
+        }
+    }
+
     func testElementTypeCoversSpecNames() {
         // Names from spec 5.3 that the parser must accept.
         let required = [

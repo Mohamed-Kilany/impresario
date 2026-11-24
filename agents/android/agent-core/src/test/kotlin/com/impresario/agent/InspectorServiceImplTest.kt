@@ -23,6 +23,7 @@ import org.junit.Test
 class InspectorServiceImplTest {
     private class FakeInspectorDriver : InspectorDriver {
         val calls = mutableListOf<String>()
+        var captureRevision: Long = 0
         var capture = InspectorCapture(
             nodes = listOf(
                 InspectorNode.newBuilder()
@@ -40,6 +41,7 @@ class InspectorServiceImplTest {
         )
 
         override fun capture(options: InspectorCaptureOptions): InspectorCapture {
+            captureRevision = options.revision
             calls += "capture:${options.appId}:${options.maxNodes}:${options.maxDepth}"
             return capture
         }
@@ -114,6 +116,23 @@ class InspectorServiceImplTest {
         assertEquals(872.727f, response.logicalHeight, 0.01f)
         assertEquals(2.75f, response.pixelRatio, 0.001f)
         assertTrue(response.settled)
+    }
+
+    @Test
+    fun snapshotRevisionIsAllocatedBeforeCapture() {
+        val driver = FakeInspectorDriver()
+        val state = state(driver)
+        val service = InspectorServiceImpl(state, Dispatchers.Unconfined)
+        val context = Context.current()
+            .withValue(AuthInterceptor.CONTEXT_SESSION_ID, state.currentSession!!.id)
+        lateinit var response: impresario.v1.Impresario.InspectorSnapshotResponse
+        context.callBlocking {
+            response = service.snapshot(InspectorSnapshotRequest.getDefaultInstance())
+        }
+        assertTrue(driver.captureRevision > 0)
+        // The cache key the driver recorded must be the revision the response
+        // carries; NODE_REF commands resolve through exactly this number.
+        assertEquals(response.rev, driver.captureRevision)
     }
 
     @Test

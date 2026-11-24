@@ -3289,6 +3289,8 @@ mod tests {
             strategy: pb::SelectorStrategy::AndroidId as i32,
             value: "button".to_string(),
             index: 0,
+            snapshot_rev: 0,
+            node_id: 0,
         };
         let error = Sel::parse(&pb_selector).expect_err("android strategy on web");
         assert_eq!(error.code, WireErrorCode::InvalidSelector);
@@ -3297,6 +3299,8 @@ mod tests {
             strategy: pb::SelectorStrategy::Css as i32,
             value: "#go".to_string(),
             index: 2,
+            snapshot_rev: 0,
+            node_id: 0,
         };
         let sel = Sel::parse(&ok).expect("css");
         assert_eq!(sel.index, 2);

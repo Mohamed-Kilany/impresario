@@ -32,6 +32,12 @@ public struct AgentError: Error, Sendable, Equatable {
         AgentError(code: .notInteractable, message: message, details: details)
     }
 
+    /// A cached inspector node is no longer addressable (revision evicted or
+    /// node pruned); the master re-resolves the original locator (INS-R4).
+    public static func staleElement(_ message: String) -> AgentError {
+        AgentError(code: .staleElement, message: message)
+    }
+
     public static func focusUnreachable(_ message: String, _ details: [String: String]) -> AgentError {
         AgentError(code: .focusUnreachable, message: message, details: details)
     }

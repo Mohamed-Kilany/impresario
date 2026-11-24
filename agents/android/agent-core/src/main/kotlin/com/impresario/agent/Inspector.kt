@@ -31,6 +31,8 @@ data class InspectorCaptureOptions(
     val pixelRatio: Float,
     val displayWidthPx: Int,
     val displayHeightPx: Int,
+    /** Revision the response will carry; `NODE_REF` commands resolve through it. */
+    val revision: Long = 0,
 )
 
 /** A viewport-pruned accessibility tree plus its focused node. */
@@ -139,6 +141,10 @@ class InspectorServiceImpl(
             return builder.build()
         }
         val started = System.nanoTime()
+        // The revision is allocated before capture so the driver can key the
+        // node registry by the same number the response carries; a NODE_REF
+        // command resolved against this snapshot then finds its nodes.
+        val rev = revision.incrementAndGet()
         val capture = try {
             withContext(commandDispatcher) {
                 driver.capture(
@@ -153,6 +159,7 @@ class InspectorServiceImpl(
                         pixelRatio = info.pixelRatio,
                         displayWidthPx = info.screenWidthPx,
                         displayHeightPx = info.screenHeightPx,
+                        revision = rev,
                     ),
                 )
             }
@@ -160,7 +167,7 @@ class InspectorServiceImpl(
             throw cancelled
         } catch (error: Exception) {
             return InspectorSnapshotResponse.newBuilder()
-                .setRev(revision.incrementAndGet())
+                .setRev(rev)
                 .setDeviceName(info.model)
                 .setPlatform(session.options.platform)
                 .setLogicalWidth(logicalWidth)
@@ -174,7 +181,7 @@ class InspectorServiceImpl(
         }
         val elapsedMs = ((System.nanoTime() - started) / 1_000_000L).toInt()
         val builder = InspectorSnapshotResponse.newBuilder()
-            .setRev(revision.incrementAndGet())
+            .setRev(rev)
             .setDeviceName(info.model)
             .setPlatform(session.options.platform)
             .setLogicalWidth(logicalWidth)

@@ -541,11 +541,30 @@ impl AgentSession {
         timeout_ms: u32,
         grace_ms: u64,
     ) -> Result<CommandOutcome, ClientError> {
+        self.send_rewritten(command, timeout_ms, grace_ms, |_| {})
+            .await
+    }
+
+    /// Send one command after applying `rewrite` to the built wire message.
+    ///
+    /// The master uses this to replace a resolved `LOCATOR` with an
+    /// executor-internal `NODE_REF` without changing the DSL command model.
+    pub async fn send_rewritten<F>(
+        &self,
+        command: &Command,
+        timeout_ms: u32,
+        grace_ms: u64,
+        rewrite: F,
+    ) -> Result<CommandOutcome, ClientError>
+    where
+        F: FnOnce(&mut pb::Command),
+    {
         if let Some(error) = self.state.closed_error() {
             return Err(error);
         }
         let id = self.next_id();
-        let proto = convert::command_to_proto(command, &id, timeout_ms);
+        let mut proto = convert::command_to_proto(command, &id, timeout_ms);
+        rewrite(&mut proto);
         let (waiter, rx) = oneshot::channel();
         self.state.register(id.clone(), waiter);
         if self.cmd_tx.send(proto).await.is_err() {

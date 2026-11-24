@@ -15,7 +15,7 @@
 
 mod api;
 mod assets;
-mod convert;
+pub(crate) mod convert;
 mod scene;
 
 use std::collections::{BTreeMap, HashMap};

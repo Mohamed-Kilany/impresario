@@ -220,6 +220,16 @@ public enum ProtoConversion {
         case .labelContains: strategy = .labelContains
         case .predicate: strategy = .predicate
         case .iosType: strategy = .iosType
+        case .nodeRef:
+            // Executor-internal rewrite the master sends after resolving a
+            // canonical LOCATOR against an Inspector snapshot (INS-R4).
+            return try SelectorSpec.make(
+                strategy: .nodeRef,
+                value: "",
+                index: 0,
+                snapshotRev: raw.snapshotRev,
+                nodeID: raw.nodeID
+            )
         case .css, .xpath, .text, .textContains, .androidID, .androidDesc, .androidClass, .locator:
             throw AgentError.invalidSelector(
                 "selector strategy \(raw.strategy) is not supported on Apple platforms; "

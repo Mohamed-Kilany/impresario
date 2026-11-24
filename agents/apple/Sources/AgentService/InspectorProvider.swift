@@ -81,7 +81,8 @@ public final class InspectorProvider: Impresario_V1_InspectorAsyncProvider, @unc
             appId: appId,
             pixelRatio: info.pixelRatio,
             screenWidthPx: info.screenWidthPx,
-            screenHeightPx: info.screenHeightPx
+            screenHeightPx: info.screenHeightPx,
+            revision: rev
         )
 
         do {

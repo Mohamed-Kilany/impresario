@@ -71,6 +71,12 @@ public final class ProbeCollector: @unchecked Sendable {
     // ------------------------------------------------------------------
 
     private func find(_ selector: SelectorSpec, budgetMs: Int) async -> ElementRef? {
+        // A NODE_REF names a fixed inspector revision (node 0 is the master's
+        // explicit miss); polling cannot make a different node appear.
+        if selector.strategy == .nodeRef {
+            let matches = (try? driver.find(selector.lookup(), timeout: 0)) ?? []
+            return matches.indices.contains(selector.index) ? matches[selector.index] : nil
+        }
         let deadline = now() + budgetMs
         while true {
             let matches = (try? driver.find(selector.lookup(), timeout: 0)) ?? []

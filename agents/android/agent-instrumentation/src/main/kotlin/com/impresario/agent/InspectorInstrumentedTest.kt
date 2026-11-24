@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.impresario.agent.driver.UiAutomatorDriver
 import impresario.v1.AgentGrpc
 import impresario.v1.Impresario.Direction
+import impresario.v1.Impresario.ErrorCode
 import impresario.v1.Impresario.HandshakeRequest
 import impresario.v1.Impresario.InspectorInputKind
 import impresario.v1.Impresario.InspectorInputRequest
@@ -12,6 +13,7 @@ import impresario.v1.Impresario.InspectorSnapshotRequest
 import impresario.v1.Impresario.InspectorSnapshotResponse
 import impresario.v1.Impresario.Platform
 import impresario.v1.Impresario.RemoteKey
+import impresario.v1.Impresario.SelectorStrategy
 import impresario.v1.InspectorGrpc
 import io.grpc.ManagedChannel
 import io.grpc.Metadata
@@ -20,6 +22,7 @@ import io.grpc.stub.MetadataUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import kotlin.math.roundToInt
 
@@ -171,6 +174,88 @@ class InspectorInstrumentedTest {
                 next > (firstRow ?: 0)
             }
             assertTrue("the scroller did not move", (firstVisibleRow(afterScroll) ?: 0) > (firstRow ?: 0))
+        } finally {
+            channel.shutdownNow()
+            server.shutdown()
+        }
+    }
+
+    /**
+     * `NODE_REF` is how the master executes a canonical `LOCATOR` on native
+     * platforms: it resolves against an Inspector snapshot and sends the
+     * revision + node id. The driver must resolve that registry, drive the
+     * node, and answer `STALE_ELEMENT` once the revision is gone.
+     */
+    @Test
+    fun nodeRefDrivesACapturedNodeAndRejectsStaleRevisions() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        ProcessGuard.ensure(instrumentation.targetContext)
+        val driver = UiAutomatorDriver(instrumentation)
+        val isTv = deviceIsTv()
+        driver.terminate(STUB_PACKAGE)
+        val state = AgentState(driver)
+        val server = AgentServer(
+            AgentServiceImpl(state),
+            requestedPort = 0,
+            inspectorService = InspectorServiceImpl(state),
+        )
+        server.start()
+        val channel: ManagedChannel = NettyChannelBuilder
+            .forAddress("127.0.0.1", server.port)
+            .usePlaintext()
+            .build()
+        try {
+            val handshake = AgentGrpc.newBlockingStub(channel).handshake(
+                HandshakeRequest.newBuilder()
+                    .setProtocolVersion(PROTOCOL_VERSION)
+                    .setMasterVersion("instrumented-test")
+                    .setDeviceName(if (isTv) "android-tv" else "phone")
+                    .setPlatform(if (isTv) Platform.ANDROID_TV else Platform.ANDROID)
+                    .setAppId(STUB_PACKAGE)
+                    .build(),
+            )
+            assertTrue("handshake rejected: ${handshake.error.message}", handshake.accepted)
+            val headers = Metadata().apply {
+                put(SESSION_ID_KEY, handshake.sessionId)
+            }
+            val inspector = InspectorGrpc.newBlockingStub(channel)
+                .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(headers))
+
+            driver.launch(STUB_PACKAGE, isTv)
+            val home = awaitSnapshot(inspector) { snapshot ->
+                snapshot.nodesList.any { it.testId == "stub_scenario_text" }
+            }
+            val row = home.nodesList.first { it.testId == "stub_scenario_text" }
+            val ref = SelectorSpec(
+                strategy = SelectorStrategy.NODE_REF,
+                value = "",
+                index = 0,
+                snapshotRev = home.rev,
+                nodeId = row.id,
+            )
+            val handles = driver.find(ref, 0)
+            assertEquals("a NODE_REF must resolve exactly one handle", 1, handles.size)
+            assertTrue(driver.isVisible(handles[0]))
+            assertTrue(driver.isEnabled(handles[0]))
+            assertTrue(driver.bounds(handles[0]).width > 0)
+            driver.click(handles[0])
+            awaitSnapshot(inspector) { snapshot ->
+                snapshot.nodesList.any { it.testId == "stub_input" }
+            }
+
+            val stale = SelectorSpec(
+                strategy = SelectorStrategy.NODE_REF,
+                value = "",
+                index = 0,
+                snapshotRev = home.rev + 10_000,
+                nodeId = row.id,
+            )
+            try {
+                driver.find(stale, 0)
+                fail("a vanished revision must answer STALE_ELEMENT")
+            } catch (error: AgentException) {
+                assertEquals(ErrorCode.STALE_ELEMENT, error.code)
+            }
         } finally {
             channel.shutdownNow()
             server.shutdown()

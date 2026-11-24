@@ -8,6 +8,7 @@ import impresario.v1.Impresario.ProbeConfidence
 import impresario.v1.Impresario.ProbeEvidence
 import impresario.v1.Impresario.ProbeKind
 import impresario.v1.Impresario.ProbeResult
+import impresario.v1.Impresario.SelectorStrategy
 import impresario.v1.Impresario.VerdictState
 import kotlinx.coroutines.delay
 import kotlin.math.max
@@ -59,6 +60,12 @@ class ProbeCollector(
     }
 
     private suspend fun find(spec: SelectorSpec, budgetMs: Long): ElementHandle? {
+        // A NODE_REF names a fixed inspector revision (node 0 is the master's
+        // explicit miss); polling cannot make a different node appear.
+        if (spec.strategy == SelectorStrategy.NODE_REF) {
+            val matches = runCatching { driver.find(spec, 0) }.getOrDefault(emptyList())
+            return matches.getOrNull(spec.index)
+        }
         val deadline = now() + budgetMs
         while (true) {
             val matches = runCatching { driver.find(spec, 0) }.getOrDefault(emptyList())

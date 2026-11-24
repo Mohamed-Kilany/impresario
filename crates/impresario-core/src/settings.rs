@@ -285,7 +285,7 @@ pub const SETTINGS: &[SettingDef] = &[
         kind: Kind::Enum(&["readonly", "exclusive", "block_run"]),
         default: "readonly",
         scope: Scope::Both,
-        doc: "Policy when a run needs a device the inspector is attached to.",
+        doc: "Enforced when a run needs a device the inspector is attached to: `readonly` keeps the inspector attached without input, `exclusive` detaches it, `block_run` refuses the run (exit 3).",
     },
     SettingDef {
         key: "workspace",

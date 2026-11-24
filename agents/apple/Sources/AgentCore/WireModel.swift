@@ -64,6 +64,11 @@ public enum SelectorStrategy: String, Sendable, Equatable, CaseIterable {
     case labelContains
     case predicate
     case iosType
+    /// Executor-internal: the master resolved a canonical `LOCATOR` against an
+    /// Inspector snapshot and names the cached revision + node id (INS-R4).
+    /// Never appears in DSL text; `ProtoConversion.selector` accepts it from
+    /// the wire exactly like the Android agent does.
+    case nodeRef
 }
 
 /// A selector as understood by the Apple side (spec 5.3): strategy, value and
@@ -74,24 +79,70 @@ public struct SelectorSpec: Sendable, Equatable {
     public let strategy: SelectorStrategy
     public let value: String
     public let index: Int
+    /// `NODE_REF`: the inspector snapshot revision the node id belongs to.
+    public let snapshotRev: UInt64
+    /// `NODE_REF`: node id within that revision; `0` is an explicit miss.
+    public let nodeID: UInt64
 
-    public init(strategy: SelectorStrategy, value: String, index: Int) {
+    public init(
+        strategy: SelectorStrategy,
+        value: String,
+        index: Int,
+        snapshotRev: UInt64 = 0,
+        nodeID: UInt64 = 0
+    ) {
         self.strategy = strategy
         self.value = value
         self.index = index
+        self.snapshotRev = snapshotRev
+        self.nodeID = nodeID
     }
 
-    public func describe() -> String { "\(strategy.rawValue):\(value)#\(index)" }
+    public func describe() -> String {
+        if strategy == .nodeRef {
+            return "nodeRef:\(snapshotRev):\(nodeID)"
+        }
+        return "\(strategy.rawValue):\(value)#\(index)"
+    }
 
     /// The raw selector drivers see: `index` selection happens in the
     /// executor (spec 11.3), so drivers always return *all* matches.
     public func lookup() -> SelectorSpec {
-        SelectorSpec(strategy: strategy, value: value, index: 0)
+        if strategy == .nodeRef {
+            return SelectorSpec(
+                strategy: .nodeRef,
+                value: "",
+                index: 0,
+                snapshotRev: snapshotRev,
+                nodeID: nodeID
+            )
+        }
+        return SelectorSpec(strategy: strategy, value: value, index: 0)
     }
 
     /// Validates a selector built from the wire; throws `INVALID_SELECTOR`
     /// (spec 12.3 maps only predicate syntax errors separately at the driver).
-    public static func make(strategy: SelectorStrategy, value: String, index: Int) throws -> SelectorSpec {
+    /// A `NODE_REF` without a revision is a protocol violation: the id is
+    /// meaningless without the snapshot it came from.
+    public static func make(
+        strategy: SelectorStrategy,
+        value: String,
+        index: Int,
+        snapshotRev: UInt64 = 0,
+        nodeID: UInt64 = 0
+    ) throws -> SelectorSpec {
+        if strategy == .nodeRef {
+            guard snapshotRev > 0 else {
+                throw AgentError.protocolError("a NODE_REF selector requires a snapshot revision")
+            }
+            return SelectorSpec(
+                strategy: .nodeRef,
+                value: "",
+                index: 0,
+                snapshotRev: snapshotRev,
+                nodeID: nodeID
+            )
+        }
         if strategy == .iosType, AgentElementType(rawValue: value) == nil {
             throw AgentError.invalidSelector("unknown iOS element type '\(value)'")
         }

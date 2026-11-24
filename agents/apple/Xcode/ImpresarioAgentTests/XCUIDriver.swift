@@ -50,6 +50,13 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     /// every attribute of every live element, which takes minutes on a real
     /// device. Guarded by the driver queue.
     private var inspectorHandles: [UInt64: InspectorHandle] = [:]
+    /// The current and previous capture registries, addressed by `NODE_REF`.
+    /// A run resolves a `LOCATOR` against one revision and then sends
+    /// `NODE_REF`; the standalone inspector may capture once in between, and
+    /// the previous revision must still resolve. Anything older answers
+    /// `STALE_ELEMENT`, which the master re-resolves (INS-R4). Guarded by the
+    /// driver queue.
+    private var inspectorHistory = InspectorRevisionCache<InspectorHandle>()
     /// `deviceInfo()` takes a screenshot; the screen does not change during a
     /// run, so cache it (every inspector snapshot asks for it).
     private var cachedDeviceInfo: AgentDeviceInfo?
@@ -155,8 +162,28 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             query = app.descendants(matching: .any).matching(try predicate(from: spec.value))
         case .iosType:
             query = app.descendants(matching: try elementType(spec.value))
+        case .nodeRef:
+            return try nodeRefMatches(spec)
         }
         return query.allElementsBoundByIndex
+    }
+
+    /// Resolve an executor-internal `NODE_REF` against the capture registry.
+    /// Node id `0` is the master's explicit miss (a probe that matched
+    /// nothing). An evicted revision or a pruned id answers `STALE_ELEMENT`;
+    /// a node whose live element is gone yields no matches, which the
+    /// dispatcher reports as `ELEMENT_NOT_FOUND` / `CHECK_FAILED`.
+    private func nodeRefMatches(_ spec: SelectorSpec) throws -> [XCUIElement] {
+        guard let handle = try inspectorHistory.resolve(
+            revision: spec.snapshotRev,
+            nodeID: spec.nodeID
+        ) else {
+            return []
+        }
+        guard let element = inspectorElement(handle) else {
+            return []
+        }
+        return [element]
     }
 
     /// Builds a play-provided predicate without letting invalid syntax crash
@@ -181,7 +208,13 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
     // ------------------------------------------------------------------
 
     func find(_ s: SelectorSpec, timeout: TimeInterval) throws -> [ElementRef] {
-        try onQueue {
+        if s.strategy == .nodeRef {
+            // A revision names a fixed capture; polling cannot make an
+            // evicted revision reappear. Resolve once and answer immediately
+            // (mirrors the Android driver).
+            return try onQueue { try matches(s).map { ElementRef($0) } }
+        }
+        return try onQueue {
             let deadline = Date().addingTimeInterval(max(0, timeout))
             while true {
                 let found = try matches(s)
@@ -952,6 +985,7 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
             )
             let keptIds = Set(pruned.nodes.map(\.id))
             inspectorHandles = handles.filter { keptIds.contains($0.key) }
+            inspectorHistory.store(revision: options.revision, handles: inspectorHandles)
 
             var degraded: [String] = []
             if pruned.nodes.isEmpty {
@@ -1020,9 +1054,14 @@ final class XCUIDriver: NSObject, UIDriver, DriverExtras, InspectorDriver {
 
     /// Resolve a captured node id back to a live element. Capture keeps only
     /// attributes (the bulk snapshot yields no element handles), so this is one
-    /// query, run only for an input action.
+    /// query, run only for an input action or a `NODE_REF`.
     private func inspectorElement(_ nodeId: UInt64) -> XCUIElement? {
-        guard let handle = inspectorHandles[nodeId], let app = try? application() else {
+        guard let handle = inspectorHandles[nodeId] else { return nil }
+        return inspectorElement(handle)
+    }
+
+    private func inspectorElement(_ handle: InspectorHandle) -> XCUIElement? {
+        guard let app = try? application() else {
             return nil
         }
         let query: XCUIElementQuery

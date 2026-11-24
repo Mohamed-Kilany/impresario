@@ -58,6 +58,29 @@ final class ProtoConversionTests: XCTestCase {
         }
     }
 
+    func testNodeRefSelectorCarriesRevisionAndNodeID() throws {
+        var raw = Impresario_V1_Selector()
+        raw.strategy = .nodeRef
+        raw.snapshotRev = 42
+        raw.nodeID = 9
+        let spec = try ProtoConversion.selector(raw)
+        XCTAssertEqual(spec.strategy, .nodeRef)
+        XCTAssertEqual(spec.snapshotRev, 42)
+        XCTAssertEqual(spec.nodeID, 9)
+        XCTAssertEqual(spec.value, "")
+        XCTAssertEqual(spec.index, 0)
+        XCTAssertEqual(spec.describe(), "nodeRef:42:9")
+    }
+
+    func testNodeRefSelectorRequiresARevision() {
+        var raw = Impresario_V1_Selector()
+        raw.strategy = .nodeRef
+        raw.nodeID = 9
+        XCTAssertThrowsError(try ProtoConversion.selector(raw)) { error in
+            XCTAssertEqual((error as? AgentError)?.code, .protocolViolation)
+        }
+    }
+
     // MARK: commands
 
     func testEveryActionTypeMaps() throws {

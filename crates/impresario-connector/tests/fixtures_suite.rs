@@ -65,6 +65,8 @@ fn selector(strategy: pb::SelectorStrategy, value: &str) -> pb::Selector {
         strategy: strategy as i32,
         value: value.to_string(),
         index: 0,
+        snapshot_rev: 0,
+        node_id: 0,
     }
 }
 
@@ -89,6 +91,8 @@ fn locator_index(value: &str, index: u32) -> pb::Selector {
         strategy: pb::SelectorStrategy::Locator as i32,
         value: value.to_string(),
         index,
+        snapshot_rev: 0,
+        node_id: 0,
     }
 }
 

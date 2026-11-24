@@ -93,6 +93,17 @@ private fun Direction.opposite(): Direction = when (this) {
 class UiHandle(internal val object2: UiObject2) : ElementHandle
 
 /**
+ * An [ElementHandle] backed by one node of a cached inspector revision
+ * (`NODE_REF`). The master resolved a canonical locator against a snapshot the
+ * executor produced, so the node is addressed by revision and id instead of a
+ * live query.
+ */
+class UiNodeRefHandle(
+    internal val node: AccessibilityNodeInfo,
+    internal val cachedRect: Rect?,
+) : ElementHandle
+
+/**
  * The real driver (spec 11.4). All UiAutomator interaction is here; the
  * dispatcher only sees [UiDriver].
  *
@@ -130,11 +141,32 @@ class UiAutomatorDriver(
     private var inspectorRects: Map<Long, Rect> = emptyMap()
     private var inspectorPixelRatio: Float = 1f
 
+    /** One capture's node registry, addressed by `NODE_REF`. */
+    private class InspectorRevision(
+        val nodes: Map<Long, AccessibilityNodeInfo>,
+        val rects: Map<Long, Rect>,
+        val pixelRatio: Float,
+    )
+
+    private val inspectorLock = Any()
+
+    /**
+     * The current and previous captured revisions. A run resolves a `LOCATOR`
+     * against one revision and then sends `NODE_REF`; the standalone inspector
+     * may capture once in between, and the previous revision must still
+     * resolve. Anything older answers `STALE_ELEMENT`, which the master
+     * re-resolves.
+     */
+    private var inspectorHistory: LinkedHashMap<Long, InspectorRevision> = LinkedHashMap()
+
     @Volatile
     var lastLaunchedPackage: String = ""
         private set
 
     override fun find(sel: SelectorSpec, timeoutMs: Long): List<ElementHandle> {
+        if (sel.strategy == SelectorStrategy.NODE_REF) {
+            return listOfNotNull(nodeRefHandle(sel))
+        }
         val by = byOf(sel)
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var matches = device.findObjects(by)
@@ -145,25 +177,149 @@ class UiAutomatorDriver(
         return matches.map { UiHandle(it) }
     }
 
-    override fun count(sel: SelectorSpec): Int = device.findObjects(byOf(sel)).size
+    override fun count(sel: SelectorSpec): Int =
+        if (sel.strategy == SelectorStrategy.NODE_REF) {
+            if (sel.nodeId == 0L) {
+                0
+            } else {
+                nodeRefHandle(sel)
+                1
+            }
+        } else {
+            device.findObjects(byOf(sel)).size
+        }
+
+    /**
+     * Resolve a `NODE_REF` against the revision cache. Node id `0` is the
+     * master's explicit miss (a probe that matched nothing) and yields no
+     * handle; a revision that is gone or a pruned id is `STALE_ELEMENT`.
+     */
+    private fun nodeRefHandle(sel: SelectorSpec): ElementHandle? {
+        if (sel.nodeId == 0L) {
+            return null
+        }
+        val revision = synchronized(inspectorLock) { inspectorHistory[sel.snapshotRev] }
+            ?: throw AgentException.staleElement(
+                "snapshot revision ${sel.snapshotRev} is no longer cached; " +
+                    "re-resolve the locator",
+            )
+        val node = revision.nodes[sel.nodeId]
+            ?: throw AgentException.staleElement(
+                "node ${sel.nodeId} is not part of snapshot revision ${sel.snapshotRev}",
+            )
+        return UiNodeRefHandle(node, revision.rects[sel.nodeId])
+    }
+
+    private fun nodeRef(e: ElementHandle): UiNodeRefHandle? = e as? UiNodeRefHandle
+
+    /**
+     * Perform an accessibility action on a cached node, then its clickable
+     * ancestors (rows are often non-clickable containers around a clickable
+     * child). Returns `false` when no node accepted the action.
+     */
+    private fun nodeAction(node: AccessibilityNodeInfo, action: Int): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var guard = 0
+        while (current != null && guard < INSPECTOR_MAX_ANCESTOR_WALK) {
+            val performed = try {
+                current.performAction(action)
+            } catch (_: Exception) {
+                false
+            }
+            if (performed) return true
+            current = try {
+                current.parent
+            } catch (_: Exception) {
+                null
+            }
+            guard++
+        }
+        return false
+    }
+
+    private fun nodeBounds(node: AccessibilityNodeInfo): Rect {
+        val bounds = AndroidRect()
+        node.getBoundsInScreen(bounds)
+        return rect(bounds)
+    }
+
+    private fun setNodeText(node: AccessibilityNodeInfo, text: String) {
+        val arguments = Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                text,
+            )
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+            throw AgentException.notInteractable(
+                "the element does not support text entry",
+            )
+        }
+    }
 
     override fun click(e: ElementHandle) = act {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            if (nodeAction(ref.node, AccessibilityNodeInfo.ACTION_CLICK)) return@act
+            val rect = ref.cachedRect
+                ?: throw AgentException.staleElement("the node has no cached bounds")
+            if (!device.click(rect.centerX, rect.centerY)) {
+                throw AgentException.notInteractable("the tap did not reach the screen")
+            }
+            return@act
+        }
         if (!accessibilityAction(obj(e), AccessibilityNodeInfo.ACTION_CLICK)) {
             obj(e).click()
         }
     }
 
     override fun longClick(e: ElementHandle, ms: Long) = act {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            if (nodeAction(ref.node, AccessibilityNodeInfo.ACTION_LONG_CLICK)) return@act
+            val rect = ref.cachedRect
+                ?: throw AgentException.staleElement("the node has no cached bounds")
+            val steps = (ms.coerceAtLeast(100L) / INSPECTOR_SWIPE_STEP_MS)
+                .coerceIn(2L, 240L)
+                .toInt()
+            device.swipe(rect.centerX, rect.centerY, rect.centerX, rect.centerY, steps)
+            return@act
+        }
         if (!accessibilityAction(obj(e), AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
             obj(e).click(ms)
         }
     }
 
-    override fun setText(e: ElementHandle, text: String) = act { obj(e).setText(text) }
+    override fun setText(e: ElementHandle, text: String) = act {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            setNodeText(ref.node, text)
+            return@act
+        }
+        obj(e).setText(text)
+    }
 
-    override fun clear(e: ElementHandle) = act { obj(e).clear() }
+    override fun clear(e: ElementHandle) = act {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            setNodeText(ref.node, "")
+            return@act
+        }
+        obj(e).clear()
+    }
 
     override fun text(e: ElementHandle): String = tolerant("") {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            // An empty EditText reports its hint as the a11y text (I-72).
+            val text = ref.node.text?.toString().orEmpty()
+            val hint = try {
+                ref.node.hintText?.toString().orEmpty()
+            } catch (_: Exception) {
+                ""
+            }
+            return@tolerant if (text.isNotEmpty() && text == hint) "" else text
+        }
         val node = obj(e)
         val text = node.text ?: ""
         // An empty EditText reports its *hint* as the a11y text (framework
@@ -172,13 +328,28 @@ class UiAutomatorDriver(
         if (text.isNotEmpty() && text == node.hint) "" else text
     }
 
-    override fun isVisible(e: ElementHandle): Boolean = tolerant(false) { !obj(e).visibleBounds.isEmpty }
+    override fun isVisible(e: ElementHandle): Boolean = tolerant(false) {
+        val ref = nodeRef(e)
+        if (ref != null) ref.node.isVisibleToUser else !obj(e).visibleBounds.isEmpty
+    }
 
-    override fun isEnabled(e: ElementHandle): Boolean = tolerant(false) { obj(e).isEnabled }
+    override fun isEnabled(e: ElementHandle): Boolean = tolerant(false) {
+        val ref = nodeRef(e)
+        if (ref != null) ref.node.isEnabled else obj(e).isEnabled
+    }
 
-    override fun isFocused(e: ElementHandle): Boolean = tolerant(false) { obj(e).isFocused }
+    override fun isFocused(e: ElementHandle): Boolean = tolerant(false) {
+        val ref = nodeRef(e)
+        if (ref != null) ref.node.isFocused else obj(e).isFocused
+    }
 
-    override fun bounds(e: ElementHandle): Rect = tolerant(Rect(0, 0, 0, 0)) { rect(obj(e).visibleBounds) }
+    override fun bounds(e: ElementHandle): Rect = tolerant(Rect(0, 0, 0, 0)) {
+        val ref = nodeRef(e)
+        if (ref != null) {
+            return@tolerant ref.cachedRect ?: nodeBounds(ref.node)
+        }
+        rect(obj(e).visibleBounds)
+    }
 
     override fun focusedBounds(): Rect? =
         device.findObject(By.focused(true))?.visibleBounds?.let { rect(it) }
@@ -220,6 +391,20 @@ class UiAutomatorDriver(
     }
 
     override fun scroll(container: ElementHandle?, dir: Direction, steps: Int): Boolean {
+        val ref = container?.let { nodeRef(it) }
+        if (ref != null) {
+            val times = steps.coerceAtLeast(1)
+            repeat(times) {
+                if (!scrollNode(ref.node, dir)) {
+                    val area = ref.cachedRect?.let {
+                        AndroidRect(it.left, it.top, it.right, it.bottom)
+                    } ?: AndroidRect(0, 0, device.displayWidth, device.displayHeight)
+                    val path = scrollPathIn(dir, area)
+                    device.swipe(path.startX, path.startY, path.endX, path.endY, SWIPE_STEPS)
+                }
+            }
+            return true
+        }
         val target = container?.let { obj(it) } ?: primaryScrollable()
         val times = steps.coerceAtLeast(1)
         var moved = false
@@ -252,6 +437,21 @@ class UiAutomatorDriver(
     }
 
     override fun swipe(e: ElementHandle?, dir: Direction) {
+        val ref = e?.let { nodeRef(it) }
+        if (ref != null) {
+            val area = ref.cachedRect?.let {
+                AndroidRect(it.left, it.top, it.right, it.bottom)
+            } ?: AndroidRect(0, 0, device.displayWidth, device.displayHeight)
+            val path = fingerSwipePath(dir, area.width(), area.height(), SWIPE_PERCENT)
+            device.swipe(
+                path.startX + area.left,
+                path.startY + area.top,
+                path.endX + area.left,
+                path.endY + area.top,
+                SWIPE_STEPS,
+            )
+            return
+        }
         val node = e?.let { obj(it) }
         if (node != null && !node.visibleBounds.isEmpty) {
             node.swipe(direction(dir), SWIPE_PERCENT)
@@ -784,9 +984,21 @@ class UiAutomatorDriver(
 
         val pruned = pruneInspectorNodes(nodes, options, viewportWidth, viewportHeight)
         val keptIds = pruned.nodes.mapTo(HashSet()) { it.id }
-        inspectorNodes = nativeNodes.filterKeys { it in keptIds }
-        inspectorRects = nativeRects.filterKeys { it in keptIds }
-        inspectorPixelRatio = pixelRatio
+        val keptNodes = nativeNodes.filterKeys { it in keptIds }
+        val keptRects = nativeRects.filterKeys { it in keptIds }
+        synchronized(inspectorLock) {
+            inspectorNodes = keptNodes
+            inspectorRects = keptRects
+            inspectorPixelRatio = pixelRatio
+            if (options.revision > 0) {
+                inspectorHistory[options.revision] =
+                    InspectorRevision(keptNodes, keptRects, pixelRatio)
+                while (inspectorHistory.size > 2) {
+                    val oldest = inspectorHistory.keys.first()
+                    inspectorHistory.remove(oldest)
+                }
+            }
+        }
         val degraded = ArrayList<String>()
         if (nodes.isEmpty()) {
             degraded += "UNAVAILABLE: the active window has no accessibility root"

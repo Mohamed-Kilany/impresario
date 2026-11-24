@@ -16,20 +16,30 @@ use impresario_clients::agent_client::{
     AgentClient, AgentSession, Capability, ClientError, DeviceInfo, HandshakeOutcome,
     HandshakeParams, SessionOptions,
 };
+use impresario_clients::convert::error_info_from_proto;
+use impresario_clients::inspector_client::InspectorClient;
 use impresario_clients::log::{LogBuffer, LogLevel, LogRecord};
 use impresario_clients::transport::{transport_for, DeviceTransport, ResetOutcome};
 use impresario_core::apps::AppConfig;
 use impresario_core::ast::AppOp;
-use impresario_core::command::{Command, CommandOutcome, WireError, WireErrorCode};
+use impresario_core::command::{
+    CheckKind, Command, CommandOutcome, ValidateCheck, WireError, WireErrorCode,
+};
 use impresario_core::config::{AppReset, DeviceConfig, ImpresarioConfig};
+use impresario_core::platforms::Platform;
 use impresario_core::probe::{
     EvidenceSource, Observation, ProbeKind, ProbeResult, UnverifiablePolicy, Verdict,
 };
+use impresario_core::selectors::{Selector, Strategy};
+use impresario_inspector_core::snapshot::Snapshot;
+use impresario_locator::{parse as parse_locator, Locator, LocatorError, NodeMatch};
+use impresario_proto::v1 as pb;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::{Id, JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
+use crate::inspector::convert::snapshot_from_proto;
 use crate::plan::{DevicePlan, ExecutionPlan, PlannedAct, PlannedStep, PlannedWork};
 use crate::redact::Redactor;
 use crate::report::{
@@ -40,6 +50,11 @@ use crate::time_fmt::{now_millis, rfc3339_utc};
 
 /// Failure-capture screenshot budget (master deadline cap, decision I-24).
 const FAILURE_CAPTURE_TIMEOUT_MS: u32 = 10_000;
+
+/// Maximum `NODE_REF` sends before a stale reference fails the step. A stale
+/// reference means the executor captured a newer revision between the master's
+/// snapshot and the command; re-resolving is the point of a locator.
+const NATIVE_LOCATOR_MAX_ATTEMPTS: u32 = 3;
 
 /// Time given to a cancelled in-flight command during shutdown.
 const SHUTDOWN_SETTLE: Duration = Duration::from_secs(3);
@@ -353,6 +368,9 @@ struct Connection {
     session: AgentSession,
     handshake: HandshakeOutcome,
     log_task: Option<JoinHandle<()>>,
+    /// Connected `Inspector` service, when the executor advertises it. The
+    /// native locator path acquires snapshots through this channel.
+    inspector: Option<InspectorClient>,
 }
 
 impl Drop for Connection {
@@ -612,10 +630,26 @@ async fn establish(
     } else {
         None
     };
+    let inspector = if handshake.has_capability(Capability::Inspector) {
+        match InspectorClient::connect(endpoint.address()).await {
+            Ok(client) => Some(client.with_token(shared.options.token.clone())),
+            Err(error) => {
+                tracing::debug!(
+                    %error,
+                    "the executor advertises INSPECTOR but the service is unreachable; \
+                     locator selectors keep the legacy path"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(Connection {
         session,
         handshake,
         log_task,
+        inspector,
     })
 }
 
@@ -814,6 +848,27 @@ impl StepOutcome {
     }
 }
 
+/// One node of an executor snapshot, addressed on the wire as `NODE_REF`.
+struct NodeRef {
+    snapshot_rev: u64,
+    node_id: u64,
+}
+
+/// What one locator snapshot says the step should do next.
+enum NativePlan {
+    /// The element or count is not there yet; poll again.
+    Retry,
+    /// Dispatch the step's command rewritten to this node.
+    Send(NodeRef),
+    /// The master can decide the step without the executor (`Count`,
+    /// zero-match `Hidden`).
+    Done(CommandOutcome),
+    /// Terminal failure.
+    Error(WireError),
+    /// The run was interrupted while acquiring the snapshot.
+    Aborted,
+}
+
 impl DeviceRun<'_> {
     /// Make sure a live session exists; reconnects with a fresh
     /// prepare/handshake/session when the old one died (spec 8.3 retries).
@@ -889,7 +944,14 @@ impl DeviceRun<'_> {
                     "app_reset",
                 ));
             }
-            send_wire(self.shared, &connection.session, &command, timeout_ms).await
+            send_wire(
+                self.shared,
+                &connection.session,
+                &command,
+                timeout_ms,
+                |_| {},
+            )
+            .await
         };
         match result {
             SendOutcome::Aborted => Err(phase(
@@ -1158,6 +1220,9 @@ impl DeviceRun<'_> {
                 false,
             );
         };
+        if self.native_locator_eligible(command) {
+            return self.run_native_locator_step(step, started).await;
+        }
         let result = {
             let Some(connection) = self.connection.as_ref() else {
                 return failed_step(
@@ -1195,8 +1260,202 @@ impl DeviceRun<'_> {
                     );
                 }
             }
-            send_wire(self.shared, &connection.session, command, step.timeout_ms).await
+            send_wire(
+                self.shared,
+                &connection.session,
+                command,
+                step.timeout_ms,
+                |_| {},
+            )
+            .await
         };
+        self.finish_wire_step(step, started, result)
+    }
+
+    /// Whether the native locator path owns this step: a `LOCATOR` selector on
+    /// a native platform whose executor advertises `INSPECTOR`.
+    fn native_locator_eligible(&self, command: &Command) -> bool {
+        let Some(connection) = self.connection.as_ref() else {
+            return false;
+        };
+        matches!(
+            self.device.platform,
+            Platform::Android | Platform::AndroidTv | Platform::Ios | Platform::Tvos
+        ) && connection.handshake.has_capability(Capability::Inspector)
+            && connection.inspector.is_some()
+            && locator_selector(command).is_some()
+    }
+
+    /// Resolve `LOCATOR` against the executor's viewport snapshot with the
+    /// shared matcher, then send one `NODE_REF` command. A stale reference
+    /// (a newer capture replaced the revision the master resolved against) is
+    /// re-resolved and retried, because the whole point of the locator is to
+    /// describe the element rather than a particular accessibility object.
+    async fn run_native_locator_step(&self, step: &PlannedStep, started: Instant) -> StepOutcome {
+        let Some(command) = step.command.as_ref() else {
+            return failed_step(
+                WireError::new(
+                    WireErrorCode::Internal,
+                    "planned wire step without a command",
+                ),
+                started,
+                false,
+            );
+        };
+        let Some(selector) = locator_selector(command) else {
+            return failed_step(
+                WireError::new(WireErrorCode::Internal, "no locator selector to resolve"),
+                started,
+                false,
+            );
+        };
+        let Some(connection) = self.connection.as_ref() else {
+            return failed_step(
+                WireError::new(WireErrorCode::Transport, "no open session"),
+                started,
+                false,
+            );
+        };
+        if let Command::Probe(probe) = command {
+            let capability = match probe.kind {
+                ProbeKind::Showing => Capability::ProbeShowing,
+                ProbeKind::Player => Capability::ProbePlayer,
+                ProbeKind::Drm => Capability::ProbeDrm,
+            };
+            if !connection.handshake.has_capability(capability) {
+                return failed_step(
+                    WireError::new(
+                        WireErrorCode::UnsupportedAction,
+                        format!("the executor does not advertise {}", capability.as_str()),
+                    ),
+                    started,
+                    false,
+                );
+            }
+        }
+        let deadline = started + Duration::from_millis(u64::from(step.timeout_ms.max(1)));
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            match self
+                .resolve_native_locator(command, selector, deadline)
+                .await
+            {
+                NativePlan::Aborted => return aborted_step(started, false),
+                NativePlan::Error(error) => return failed_step(error, started, false),
+                NativePlan::Done(outcome) => {
+                    return self.finish_wire_step(step, started, SendOutcome::Done(Ok(outcome)));
+                }
+                NativePlan::Retry => {
+                    let interval =
+                        Duration::from_millis(self.shared.options.config.poll_interval_ms.max(1));
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if !remaining.is_zero() {
+                        tokio::select! {
+                            () = tokio::time::sleep(interval.min(remaining)) => {}
+                            () = self.shared.options.shutdown.cancelled() => {
+                                return aborted_step(started, false);
+                            }
+                        }
+                    }
+                }
+                NativePlan::Send(node_ref) => {
+                    let remaining = remaining_ms(deadline);
+                    let result = send_wire(
+                        self.shared,
+                        &connection.session,
+                        command,
+                        remaining,
+                        |proto| {
+                            impresario_clients::convert::rewrite_selector_to_node_ref(
+                                proto,
+                                node_ref.snapshot_rev,
+                                node_ref.node_id,
+                            );
+                        },
+                    )
+                    .await;
+                    if is_stale_element(&result)
+                        && attempt < NATIVE_LOCATOR_MAX_ATTEMPTS
+                        && Instant::now() < deadline
+                    {
+                        continue;
+                    }
+                    return self.finish_wire_step(step, started, result);
+                }
+            }
+        }
+    }
+
+    /// Acquire one viewport snapshot through the executor's `Inspector`
+    /// service and turn it into the next [`NativePlan`].
+    async fn resolve_native_locator(
+        &self,
+        command: &Command,
+        selector: &Selector,
+        deadline: Instant,
+    ) -> NativePlan {
+        let Some(connection) = self.connection.as_ref() else {
+            return NativePlan::Error(WireError::new(WireErrorCode::Transport, "no open session"));
+        };
+        let Some(inspector) = connection.inspector.as_ref() else {
+            return NativePlan::Error(WireError::new(
+                WireErrorCode::UnsupportedAction,
+                "the executor does not expose the inspector service",
+            ));
+        };
+        let request = pb::InspectorSnapshotRequest {
+            min_visible_fraction: 0.0,
+            ..pb::InspectorSnapshotRequest::default()
+        };
+        // The step deadline also bounds snapshot acquisition: a hung
+        // inspector must not outlive the command it is resolving for.
+        let remaining = deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_millis(1));
+        let response = tokio::select! {
+            result = tokio::time::timeout(
+                remaining,
+                inspector.snapshot(connection.session.session_id(), request),
+            ) => {
+                match result {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(error)) => return NativePlan::Error(error.to_wire()),
+                    Err(_) => {
+                        return NativePlan::Error(WireError::new(
+                            WireErrorCode::Timeout,
+                            "the inspector did not answer before the step deadline",
+                        ))
+                    }
+                }
+            }
+            () = self.shared.options.shutdown.cancelled() => return NativePlan::Aborted,
+        };
+        if let Some(error) = &response.error {
+            return NativePlan::Error(
+                error_info_from_proto(error).unwrap_or_else(std::convert::identity),
+            );
+        }
+        let snapshot = snapshot_from_proto(&response, self.device);
+        let locator = match parse_locator(&selector.value) {
+            Ok(locator) => locator,
+            Err(error) => return NativePlan::Error(locator_invalid(selector, &error)),
+        };
+        native_plan_for_snapshot(
+            command,
+            selector,
+            &locator,
+            &snapshot,
+            Instant::now() >= deadline,
+        )
+    }
+
+    fn finish_wire_step(
+        &self,
+        step: &PlannedStep,
+        started: Instant,
+        result: SendOutcome,
+    ) -> StepOutcome {
         match result {
             SendOutcome::Aborted => aborted_step(started, false),
             SendOutcome::Done(Ok(outcome)) if outcome.ok => {
@@ -1297,7 +1556,14 @@ impl DeviceRun<'_> {
                     false,
                 );
             }
-            send_wire(self.shared, &connection.session, command, step.timeout_ms).await
+            send_wire(
+                self.shared,
+                &connection.session,
+                command,
+                step.timeout_ms,
+                |_| {},
+            )
+            .await
         };
         match result {
             SendOutcome::Aborted => aborted_step(started, false),
@@ -1399,6 +1665,7 @@ impl DeviceRun<'_> {
                 &connection.session,
                 &command,
                 FAILURE_CAPTURE_TIMEOUT_MS,
+                |_| {},
             )
             .await
             {
@@ -1429,20 +1696,272 @@ impl DeviceRun<'_> {
     }
 }
 
+/// The locator selector of `command`, when it asks for the shared matcher.
+///
+/// Probes always carry a selector; actions and checks may not (screen-level
+/// scrolls, key presses) and then keep the legacy path.
+fn locator_selector(command: &Command) -> Option<&Selector> {
+    let selector = match command {
+        Command::RunAction(action) => action.selector.as_ref()?,
+        Command::ValidateCheck(check) => &check.selector,
+        Command::Probe(probe) => &probe.selector,
+        _ => return None,
+    };
+    (selector.strategy == Strategy::Locator).then_some(selector)
+}
+
+/// Decide the next step from one snapshot, mirroring
+/// `impresario_connector::locator_exec` (spec 7.4):
+///
+/// - actions and ordinary checks need exactly one in-view match, or the DSL
+///   `index` picks one; ambiguity is `INVALID_SELECTOR`, a timeout
+///   `ELEMENT_NOT_FOUND` (checks report `CHECK_FAILED`);
+/// - `Count` compares the full match count and is answered by the master;
+/// - zero-match `Hidden` passes immediately;
+/// - probes are best-effort: the first match, or node id 0 (explicit miss).
+fn native_plan_for_snapshot(
+    command: &Command,
+    selector: &Selector,
+    locator: &Locator,
+    snapshot: &Snapshot,
+    expired: bool,
+) -> NativePlan {
+    let matches = match snapshot.resolve(locator) {
+        Ok(matches) => matches,
+        Err(error) => return NativePlan::Error(locator_invalid(selector, &error)),
+    };
+    match command {
+        Command::RunAction(_) => match native_match_node(selector, snapshot, &matches) {
+            Ok(Some(node_id)) => NativePlan::Send(node_ref(snapshot, node_id)),
+            Ok(None) if expired => {
+                NativePlan::Error(locator_missing(selector, selector.index, matches.len()))
+            }
+            Ok(None) => NativePlan::Retry,
+            Err(error) => NativePlan::Error(error),
+        },
+        Command::ValidateCheck(check) => match check.kind {
+            CheckKind::Count => {
+                let count = u32::try_from(matches.len()).unwrap_or(u32::MAX);
+                if count == check.expected_count {
+                    NativePlan::Done(native_count_outcome(count))
+                } else if expired {
+                    NativePlan::Error(locator_check_failed(
+                        selector,
+                        &check.expected_count.to_string(),
+                        &count.to_string(),
+                        count,
+                    ))
+                } else {
+                    NativePlan::Retry
+                }
+            }
+            CheckKind::Hidden if matches.is_empty() => NativePlan::Done(native_hidden_outcome()),
+            _ => match native_match_node(selector, snapshot, &matches) {
+                Ok(Some(node_id)) => NativePlan::Send(node_ref(snapshot, node_id)),
+                Ok(None) if expired => {
+                    let count = u32::try_from(matches.len()).unwrap_or(u32::MAX);
+                    if check.kind == CheckKind::Hidden {
+                        NativePlan::Error(locator_check_failed(selector, "hidden", "missing", 0))
+                    } else {
+                        NativePlan::Error(locator_check_failed(
+                            selector,
+                            &native_check_name(check),
+                            "missing",
+                            count,
+                        ))
+                    }
+                }
+                Ok(None) => NativePlan::Retry,
+                Err(error) => NativePlan::Error(error),
+            },
+        },
+        Command::Probe(_) => {
+            let node_id = matches
+                .first()
+                .and_then(|matched| snapshot.nodes.get(matched.index))
+                .map_or(0, |node| node.id);
+            NativePlan::Send(node_ref(snapshot, node_id))
+        }
+        _ => NativePlan::Error(WireError::new(
+            WireErrorCode::Internal,
+            "the native locator path received a command without a locator selector",
+        )),
+    }
+}
+
+fn node_ref(snapshot: &Snapshot, node_id: u64) -> NodeRef {
+    NodeRef {
+        snapshot_rev: snapshot.rev,
+        node_id,
+    }
+}
+
+/// Pick the match the DSL's `index` addresses, or `None` while waiting.
+///
+/// `index == 0` with several matches is ambiguous, exactly like the connector
+/// locator path: scene execution never guesses between elements.
+fn native_match_node(
+    selector: &Selector,
+    snapshot: &Snapshot,
+    matches: &[NodeMatch],
+) -> Result<Option<u64>, WireError> {
+    if selector.index == 0 && matches.len() > 1 {
+        return Err(locator_ambiguous(selector, matches.len()));
+    }
+    let index = usize::try_from(selector.index).unwrap_or(usize::MAX);
+    let Some(matched) = matches.get(index) else {
+        return Ok(None);
+    };
+    Ok(snapshot.nodes.get(matched.index).map(|node| node.id))
+}
+
+fn native_count_outcome(count: u32) -> CommandOutcome {
+    CommandOutcome {
+        command_id: String::new(),
+        ok: true,
+        duration_ms: 0,
+        error: None,
+        screenshot_png: Vec::new(),
+        observed_text: count.to_string(),
+        observed_count: count,
+        probe: None,
+    }
+}
+
+fn native_hidden_outcome() -> CommandOutcome {
+    CommandOutcome {
+        command_id: String::new(),
+        ok: true,
+        duration_ms: 0,
+        error: None,
+        screenshot_png: Vec::new(),
+        observed_text: "missing".to_string(),
+        observed_count: 0,
+        probe: None,
+    }
+}
+
+fn native_check_name(check: &ValidateCheck) -> String {
+    match check.kind {
+        CheckKind::TextEquals | CheckKind::TextContains => check.expected_text.clone(),
+        other => other.as_str().to_ascii_lowercase(),
+    }
+}
+
+fn locator_invalid(selector: &Selector, error: &LocatorError) -> WireError {
+    let mut wire = WireError::new(
+        WireErrorCode::InvalidSelector,
+        format!("locator {:?} is invalid: {error}", selector.value),
+    );
+    wire.details.insert(
+        "selector".to_string(),
+        format!("locator:{}", selector.value),
+    );
+    wire
+}
+
+fn locator_ambiguous(selector: &Selector, count: usize) -> WireError {
+    let mut wire = WireError::new(
+        WireErrorCode::InvalidSelector,
+        format!(
+            "locator {:?} matched {count} in-view elements; scene execution requires exactly one",
+            selector.value
+        ),
+    );
+    wire.details.insert(
+        "selector".to_string(),
+        format!("locator:{}", selector.value),
+    );
+    wire.details
+        .insert("match_count".to_string(), count.to_string());
+    wire
+}
+
+fn locator_missing(selector: &Selector, index: u32, count: usize) -> WireError {
+    let message = if index == 0 {
+        format!(
+            "locator {:?} matched no in-view element within the timeout",
+            selector.value
+        )
+    } else {
+        format!(
+            "locator {:?} matched {count} in-view element(s); index {index} is out of range",
+            selector.value
+        )
+    };
+    let mut wire = WireError::new(WireErrorCode::ElementNotFound, message);
+    wire.details.insert(
+        "selector".to_string(),
+        format!("locator:{}", selector.value),
+    );
+    wire.details
+        .insert("match_count".to_string(), count.to_string());
+    wire
+}
+
+fn locator_check_failed(
+    selector: &Selector,
+    expected: &str,
+    observed: &str,
+    count: u32,
+) -> WireError {
+    let mut wire = WireError::new(
+        WireErrorCode::CheckFailed,
+        format!(
+            "check failed for locator:{} (expected {expected}, observed {observed})",
+            selector.value
+        ),
+    );
+    wire.details.insert(
+        "selector".to_string(),
+        format!("locator:{}", selector.value),
+    );
+    wire.details
+        .insert("expected".to_string(), expected.to_string());
+    wire.details
+        .insert("observed".to_string(), observed.to_string());
+    wire.details
+        .insert("matched_count".to_string(), count.to_string());
+    wire
+}
+
+/// Milliseconds left before `deadline`, clamped to at least one so a command
+/// is never sent with a zero timeout.
+fn remaining_ms(deadline: Instant) -> u32 {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    u32::try_from(remaining.as_millis().max(1)).unwrap_or(u32::MAX)
+}
+
+/// Whether the executor rejected a `NODE_REF` because its snapshot cache no
+/// longer holds the referenced revision.
+fn is_stale_element(result: &SendOutcome) -> bool {
+    match result {
+        SendOutcome::Done(Ok(outcome)) => outcome
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == WireErrorCode::StaleElement),
+        _ => false,
+    }
+}
+
 /// Send one command while watching `--shutdown`: on Ctrl-C the in-flight
 /// command is cancelled and given `SHUTDOWN_SETTLE` to settle, then the step
 /// is reported aborted (spec 8.3 Shutdown).
 ///
 /// A free function (rather than a `DeviceRun` method) so callers keep their
 /// borrow of [`DeviceRun::connection`] alive while sending.
-async fn send_wire(
+async fn send_wire<F>(
     shared: &Shared,
     session: &AgentSession,
     command: &Command,
     timeout_ms: u32,
-) -> SendOutcome {
+    rewrite: F,
+) -> SendOutcome
+where
+    F: FnOnce(&mut pb::Command),
+{
     let grace_ms = shared.options.config.command_grace_ms;
-    let send = session.send(command, timeout_ms, grace_ms);
+    let send = session.send_rewritten(command, timeout_ms, grace_ms, rewrite);
     tokio::pin!(send);
     tokio::select! {
         result = &mut send => SendOutcome::Done(result),
@@ -1766,5 +2285,230 @@ mod tests {
             error.details.get("phase").map(String::as_str),
             Some("prepare")
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Native LOCATOR execution (master-side snapshot resolution)
+    // ------------------------------------------------------------------
+
+    use impresario_core::command::{ProbeCommand, RunAction};
+    use impresario_inspector_core::snapshot::{ScreenInfo, SnapshotNode};
+    use impresario_locator::{Rect, Role};
+
+    fn locator_cell(index: u32) -> Selector {
+        Selector {
+            key: Platform::Android,
+            strategy: Strategy::Locator,
+            value: "role=button[name=\"Save\"]".to_string(),
+            index,
+        }
+    }
+
+    fn inspector_node(id: u64, parent_id: u64, role: Role, name: &str) -> SnapshotNode {
+        SnapshotNode::new(id, parent_id, role, name, Rect::new(0.0, 0.0, 20.0, 10.0))
+    }
+
+    fn button_snapshot(buttons: &[(&str, u64)]) -> Snapshot {
+        let mut nodes = vec![inspector_node(1, 0, Role::Generic, "")];
+        for (name, id) in buttons {
+            nodes.push(inspector_node(*id, 1, Role::Button, name));
+        }
+        Snapshot::new(
+            "android-1",
+            "Pixel",
+            Platform::Android,
+            ScreenInfo::logical((100.0, 100.0)),
+            nodes,
+        )
+        .with_rev(7)
+    }
+
+    fn plan(
+        command: &Command,
+        selector: &Selector,
+        snapshot: &Snapshot,
+        expired: bool,
+    ) -> NativePlan {
+        let locator = parse_locator(&selector.value).expect("locator parses");
+        native_plan_for_snapshot(command, selector, &locator, snapshot, expired)
+    }
+
+    fn click(selector: Selector) -> Command {
+        Command::RunAction(RunAction::click(selector))
+    }
+
+    fn check(selector: Selector, kind: CheckKind, expected_count: u32) -> Command {
+        Command::ValidateCheck(ValidateCheck {
+            selector,
+            kind,
+            expected_text: String::new(),
+            expected_count,
+        })
+    }
+
+    #[test]
+    fn native_locator_rewrites_actions_to_the_snapshot_node() {
+        let selector = locator_cell(0);
+        let snapshot = button_snapshot(&[("Save", 2)]);
+        match plan(&click(selector.clone()), &selector, &snapshot, false) {
+            NativePlan::Send(node) => {
+                assert_eq!(node.snapshot_rev, 7);
+                assert_eq!(node.node_id, 2);
+            }
+            _ => panic!("expected a node reference"),
+        }
+    }
+
+    #[test]
+    fn native_locator_index_picks_among_matches() {
+        let selector = locator_cell(1);
+        let many = button_snapshot(&[("Save", 2), ("Save", 3)]);
+        match plan(&click(selector.clone()), &selector, &many, false) {
+            NativePlan::Send(node) => assert_eq!(node.node_id, 3),
+            _ => panic!("expected the second match"),
+        }
+    }
+
+    #[test]
+    fn native_locator_answers_count_checks_from_snapshots() {
+        let selector = locator_cell(0);
+        let snapshot = button_snapshot(&[("Save", 2), ("Save", 3)]);
+
+        match plan(
+            &check(selector.clone(), CheckKind::Count, 2),
+            &selector,
+            &snapshot,
+            false,
+        ) {
+            NativePlan::Done(outcome) => {
+                assert!(outcome.ok);
+                assert_eq!(outcome.observed_count, 2);
+                assert_eq!(outcome.observed_text, "2");
+            }
+            _ => panic!("expected a count result"),
+        }
+        assert!(matches!(
+            plan(
+                &check(selector.clone(), CheckKind::Count, 3),
+                &selector,
+                &snapshot,
+                false
+            ),
+            NativePlan::Retry
+        ));
+        match plan(
+            &check(selector.clone(), CheckKind::Count, 3),
+            &selector,
+            &snapshot,
+            true,
+        ) {
+            NativePlan::Error(error) => assert_eq!(error.code, WireErrorCode::CheckFailed),
+            _ => panic!("expected CHECK_FAILED"),
+        }
+    }
+
+    #[test]
+    fn native_locator_hidden_passes_when_nothing_matches() {
+        let selector = locator_cell(0);
+        let empty = button_snapshot(&[]);
+        match plan(
+            &check(selector.clone(), CheckKind::Hidden, 0),
+            &selector,
+            &empty,
+            false,
+        ) {
+            NativePlan::Done(outcome) => {
+                assert!(outcome.ok);
+                assert_eq!(outcome.observed_count, 0);
+            }
+            _ => panic!("expected hidden to pass"),
+        }
+
+        let present = button_snapshot(&[("Save", 2)]);
+        match plan(
+            &check(selector.clone(), CheckKind::Hidden, 0),
+            &selector,
+            &present,
+            false,
+        ) {
+            NativePlan::Send(node) => assert_eq!(node.node_id, 2),
+            _ => panic!("expected the hidden check to target the node"),
+        }
+
+        let out_of_range = locator_cell(5);
+        match plan(
+            &check(out_of_range.clone(), CheckKind::Hidden, 0),
+            &out_of_range,
+            &present,
+            true,
+        ) {
+            NativePlan::Error(error) => assert_eq!(error.code, WireErrorCode::CheckFailed),
+            _ => panic!("expected CHECK_FAILED"),
+        }
+    }
+
+    #[test]
+    fn native_locator_rejects_ambiguous_and_reports_missing() {
+        let selector = locator_cell(0);
+        let many = button_snapshot(&[("Save", 2), ("Save", 3)]);
+        match plan(&click(selector.clone()), &selector, &many, false) {
+            NativePlan::Error(error) => {
+                assert_eq!(error.code, WireErrorCode::InvalidSelector);
+                assert_eq!(
+                    error.details.get("match_count").map(String::as_str),
+                    Some("2")
+                );
+            }
+            _ => panic!("expected ambiguity"),
+        }
+
+        let empty = button_snapshot(&[]);
+        match plan(&click(selector.clone()), &selector, &empty, true) {
+            NativePlan::Error(error) => assert_eq!(error.code, WireErrorCode::ElementNotFound),
+            _ => panic!("expected a missing element"),
+        }
+        match plan(
+            &check(selector.clone(), CheckKind::Visible, 0),
+            &selector,
+            &empty,
+            true,
+        ) {
+            NativePlan::Error(error) => assert_eq!(error.code, WireErrorCode::CheckFailed),
+            _ => panic!("expected a failed check"),
+        }
+    }
+
+    #[test]
+    fn native_locator_probe_misses_with_node_zero() {
+        let selector = locator_cell(0);
+        let probe = Command::Probe(ProbeCommand::new(
+            ProbeKind::Showing,
+            selector.clone(),
+            Vec::new(),
+        ));
+        let empty = button_snapshot(&[]);
+        match plan(&probe, &selector, &empty, false) {
+            NativePlan::Send(node) => {
+                assert_eq!(node.node_id, 0);
+                assert_eq!(node.snapshot_rev, 7);
+            }
+            _ => panic!("expected an explicit miss"),
+        }
+
+        let present = button_snapshot(&[("Save", 2)]);
+        match plan(&probe, &selector, &present, false) {
+            NativePlan::Send(node) => assert_eq!(node.node_id, 2),
+            _ => panic!("expected the probe node"),
+        }
+    }
+
+    #[test]
+    fn stale_node_refs_are_detected() {
+        let stale = SendOutcome::Done(Ok(CommandOutcome {
+            error: Some(WireError::new(WireErrorCode::StaleElement, "gone")),
+            ..native_count_outcome(0)
+        }));
+        assert!(is_stale_element(&stale));
+        assert!(!is_stale_element(&SendOutcome::Aborted));
     }
 }

@@ -64,8 +64,19 @@ enum SelectorStrategy {
   ANDROID_ID = 5; ANDROID_DESC = 6; ANDROID_CLASS = 7;
   ACCESSIBILITY_ID = 8; LABEL = 9; LABEL_CONTAINS = 10; PREDICATE = 11; IOS_TYPE = 12;
   LOCATOR = 13;  // additive canonical locator expression (impresario-locator)
+  // Additive executor-internal reference to one node of a prior Inspector
+  // snapshot. The master resolves LOCATOR against the shared matcher and
+  // rewrites the command to this strategy; executors validate the revision
+  // and answer STALE_ELEMENT when it is no longer cached.
+  NODE_REF = 14;
 }
-message Selector { SelectorStrategy strategy = 1; string value = 2; uint32 index = 3; }
+message Selector {
+  SelectorStrategy strategy = 1;
+  string value = 2;
+  uint32 index = 3;
+  uint64 snapshot_rev = 4;               // NODE_REF: Inspector snapshot revision
+  uint64 node_id = 5;                    // NODE_REF: node id within that revision; 0 = explicit miss
+}
 
 enum ActionType {
   ACTION_TYPE_UNSPECIFIED = 0;

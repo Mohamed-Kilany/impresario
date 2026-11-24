@@ -33,10 +33,17 @@ data class SelectorSpec(
     val strategy: SelectorStrategy,
     val value: String,
     val index: Int,
+    /** `NODE_REF`: the inspector snapshot revision the node id belongs to. */
+    val snapshotRev: Long = 0,
+    /** `NODE_REF`: node id within that revision; `0` is an explicit miss. */
+    val nodeId: Long = 0,
 ) {
     /** Human-readable form for error details, e.g. `androidId:com.example:id/ok`. */
-    fun describe(): String = "${strategyName(strategy)}:$value" +
-        if (index > 0) "#$index" else ""
+    fun describe(): String = if (strategy == SelectorStrategy.NODE_REF) {
+        "nodeRef:$snapshotRev:$nodeId"
+    } else {
+        "${strategyName(strategy)}:$value" + if (index > 0) "#$index" else ""
+    }
 
     companion object {
         private val supported = setOf(
@@ -60,6 +67,8 @@ data class SelectorSpec(
             SelectorStrategy.LABEL_CONTAINS -> "labelContains"
             SelectorStrategy.PREDICATE -> "predicate"
             SelectorStrategy.IOS_TYPE -> "iosType"
+            SelectorStrategy.LOCATOR -> "locator"
+            SelectorStrategy.NODE_REF -> "nodeRef"
             else -> "unspecified"
         }
 
@@ -75,6 +84,23 @@ data class SelectorSpec(
             val strategy = selector.strategy
             if (strategy == SelectorStrategy.SELECTOR_STRATEGY_UNSPECIFIED) {
                 throw AgentException.protocol("the selector strategy is unspecified")
+            }
+            // NODE_REF is the master's rewrite of a canonical LOCATOR resolved
+            // against an Inspector snapshot (INS-R4 native path). It names a
+            // cached revision, never DSL text.
+            if (strategy == SelectorStrategy.NODE_REF) {
+                if (selector.snapshotRev == 0L) {
+                    throw AgentException.protocol(
+                        "a NODE_REF selector requires a snapshot revision",
+                    )
+                }
+                return SelectorSpec(
+                    strategy = strategy,
+                    value = "",
+                    index = 0,
+                    snapshotRev = selector.snapshotRev,
+                    nodeId = selector.nodeId,
+                )
             }
             if (strategy !in supported) {
                 throw AgentException.invalidSelector(

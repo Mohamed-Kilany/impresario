@@ -188,6 +188,7 @@ final class FakeDriver: UIDriver, DriverExtras, @unchecked Sendable {
             case .labelContains: return element.label.contains(s.value)
             case .predicate: return true
             case .iosType: return s.value == "button"
+            case .nodeRef: return false
             }
         }.map(\.ref)
     }

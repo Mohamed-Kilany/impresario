@@ -162,6 +162,8 @@ public struct InspectorCaptureOptions: Sendable, Equatable {
     public var pixelRatio: Double
     public var screenWidthPx: Int
     public var screenHeightPx: Int
+    /// The revision stamped on this capture; `NODE_REF` addresses it.
+    public var revision: UInt64
 
     public init(
         includeSystemUi: Bool = false,
@@ -174,7 +176,8 @@ public struct InspectorCaptureOptions: Sendable, Equatable {
         appId: String = "",
         pixelRatio: Double = 1,
         screenWidthPx: Int = 0,
-        screenHeightPx: Int = 0
+        screenHeightPx: Int = 0,
+        revision: UInt64 = 0
     ) {
         self.includeSystemUi = includeSystemUi
         self.minVisibleFraction = minVisibleFraction
@@ -187,6 +190,7 @@ public struct InspectorCaptureOptions: Sendable, Equatable {
         self.pixelRatio = pixelRatio > 0 ? pixelRatio : 1
         self.screenWidthPx = screenWidthPx
         self.screenHeightPx = screenHeightPx
+        self.revision = revision
     }
 
     /// The logical viewport; falls back to the driver's device info.
@@ -195,6 +199,50 @@ public struct InspectorCaptureOptions: Sendable, Equatable {
         let widthPx = screenWidthPx > 0 ? screenWidthPx : fallback.screenWidthPx
         let heightPx = screenHeightPx > 0 ? screenHeightPx : fallback.screenHeightPx
         return (Double(widthPx) / ratio, Double(heightPx) / ratio)
+    }
+}
+
+/// The current and previous inspector captures, addressed by `NODE_REF`.
+///
+/// A run resolves a canonical `LOCATOR` against one snapshot revision and then
+/// sends `NODE_REF`; the standalone inspector may capture once in between, so
+/// the previous revision must still resolve. Anything older answers
+/// `STALE_ELEMENT`, which the master re-resolves (INS-R4). Node id `0` is the
+/// master's explicit miss (a probe that matched nothing).
+public struct InspectorRevisionCache<Handle> {
+    private var revisions: [(revision: UInt64, handles: [UInt64: Handle])] = []
+
+    public init() {}
+
+    /// Remembers one capture, keeping only the current and previous revisions.
+    public mutating func store(revision: UInt64, handles: [UInt64: Handle]) {
+        guard revision > 0 else { return }
+        revisions.append((revision: revision, handles: handles))
+        while revisions.count > 2 {
+            revisions.removeFirst()
+        }
+    }
+
+    public func handles(revision: UInt64) -> [UInt64: Handle]? {
+        revisions.first(where: { $0.revision == revision })?.handles
+    }
+
+    /// Resolve a node id against a revision. Returns `nil` for the explicit
+    /// miss and throws `STALE_ELEMENT` when the revision is evicted or the id
+    /// was pruned from it.
+    public func resolve(revision: UInt64, nodeID: UInt64) throws -> Handle? {
+        guard nodeID != 0 else { return nil }
+        guard let handles = handles(revision: revision) else {
+            throw AgentError.staleElement(
+                "snapshot revision \(revision) is no longer cached; re-resolve the locator"
+            )
+        }
+        guard let handle = handles[nodeID] else {
+            throw AgentError.staleElement(
+                "node \(nodeID) is not part of snapshot revision \(revision)"
+            )
+        }
+        return handle
     }
 }
 

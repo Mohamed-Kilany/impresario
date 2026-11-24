@@ -191,6 +191,12 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
 
   /// additive canonical locator expression (impresario-locator)
   case locator // = 13
+
+  /// Additive executor-internal reference to one node of a prior Inspector
+  /// snapshot. The master resolves LOCATOR against the shared matcher and
+  /// rewrites the command to this strategy; executors validate the revision
+  /// and answer STALE_ELEMENT when it is no longer cached.
+  case nodeRef // = 14
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -213,6 +219,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     case 11: self = .predicate
     case 12: self = .iosType
     case 13: self = .locator
+    case 14: self = .nodeRef
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -233,6 +240,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     case .predicate: return 11
     case .iosType: return 12
     case .locator: return 13
+    case .nodeRef: return 14
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -253,6 +261,7 @@ public nonisolated enum Impresario_V1_SelectorStrategy: SwiftProtobuf.Enum, Swif
     .predicate,
     .iosType,
     .locator,
+    .nodeRef,
   ]
 
 }
@@ -1193,6 +1202,12 @@ public nonisolated struct Impresario_V1_Selector: Sendable {
   public var value: String = String()
 
   public var index: UInt32 = 0
+
+  /// NODE_REF: Inspector snapshot revision
+  public var snapshotRev: UInt64 = 0
+
+  /// NODE_REF: node id within that revision; 0 = explicit miss
+  public var nodeID: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2262,7 +2277,7 @@ nonisolated extension Impresario_V1_Capability: SwiftProtobuf._ProtoNameProvidin
 }
 
 nonisolated extension Impresario_V1_SelectorStrategy: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SELECTOR_STRATEGY_UNSPECIFIED\0\u{1}CSS\0\u{1}XPATH\0\u{1}TEXT\0\u{1}TEXT_CONTAINS\0\u{1}ANDROID_ID\0\u{1}ANDROID_DESC\0\u{1}ANDROID_CLASS\0\u{1}ACCESSIBILITY_ID\0\u{1}LABEL\0\u{1}LABEL_CONTAINS\0\u{1}PREDICATE\0\u{1}IOS_TYPE\0\u{1}LOCATOR\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SELECTOR_STRATEGY_UNSPECIFIED\0\u{1}CSS\0\u{1}XPATH\0\u{1}TEXT\0\u{1}TEXT_CONTAINS\0\u{1}ANDROID_ID\0\u{1}ANDROID_DESC\0\u{1}ANDROID_CLASS\0\u{1}ACCESSIBILITY_ID\0\u{1}LABEL\0\u{1}LABEL_CONTAINS\0\u{1}PREDICATE\0\u{1}IOS_TYPE\0\u{1}LOCATOR\0\u{1}NODE_REF\0")
 }
 
 nonisolated extension Impresario_V1_ActionType: SwiftProtobuf._ProtoNameProviding {
@@ -2564,7 +2579,7 @@ nonisolated extension Impresario_V1_DeviceInfo: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Impresario_V1_Selector: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Selector"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}strategy\0\u{1}value\0\u{1}index\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}strategy\0\u{1}value\0\u{1}index\0\u{3}snapshot_rev\0\u{3}node_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2575,6 +2590,8 @@ nonisolated extension Impresario_V1_Selector: SwiftProtobuf.Message, SwiftProtob
       case 1: try { try decoder.decodeSingularEnumField(value: &self.strategy) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.value) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.index) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.snapshotRev) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.nodeID) }()
       default: break
       }
     }
@@ -2590,6 +2607,12 @@ nonisolated extension Impresario_V1_Selector: SwiftProtobuf.Message, SwiftProtob
     if self.index != 0 {
       try visitor.visitSingularUInt32Field(value: self.index, fieldNumber: 3)
     }
+    if self.snapshotRev != 0 {
+      try visitor.visitSingularUInt64Field(value: self.snapshotRev, fieldNumber: 4)
+    }
+    if self.nodeID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.nodeID, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2597,6 +2620,8 @@ nonisolated extension Impresario_V1_Selector: SwiftProtobuf.Message, SwiftProtob
     if lhs.strategy != rhs.strategy {return false}
     if lhs.value != rhs.value {return false}
     if lhs.index != rhs.index {return false}
+    if lhs.snapshotRev != rhs.snapshotRev {return false}
+    if lhs.nodeID != rhs.nodeID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
