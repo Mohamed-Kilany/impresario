@@ -1044,17 +1044,27 @@ fn table_header(doc: &Doc<'_>, line: u32) -> Option<Vec<String>> {
     if is_separator_line(doc.line(line + 1)) {
         return None;
     }
+    // Find the separator above this row; the header is the row above it.
+    // Stopping at the nearest table row instead would treat the previous
+    // data row as the header (the locator completion test completes on the
+    // second row of a table).
     let mut index = line;
     while index > 1 {
         index -= 1;
         let content = doc.line(index).trim();
-        if !content.starts_with('|') {
-            continue;
-        }
         if is_separator_line(content) {
-            continue;
+            if index == 1 {
+                return None;
+            }
+            let header = doc.line(index - 1).trim();
+            if header.starts_with('|') && !is_separator_line(header) {
+                return Some(split_cells(header).into_iter().collect());
+            }
+            return None;
         }
-        return Some(split_cells(content).into_iter().collect());
+        if !content.is_empty() && !content.starts_with('|') {
+            return None;
+        }
     }
     None
 }
