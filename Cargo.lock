@@ -3542,6 +3542,7 @@ dependencies = [
  "notify-rust",
  "portable-pty",
  "predicates",
+ "proptest",
  "quick-junit",
  "ratatui",
  "rpassword",
