@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use impresario_core::config::{DeviceOptions, ImpresarioConfig, Reporter};
+use impresario_core::config::{DeviceOptions, ImpresarioConfig, InspectorRunConflict, Reporter};
 use impresario_core::home::Home;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -896,15 +896,50 @@ pub fn read_events(path: &Path) -> Vec<ExecEvent> {
 // leases and stop markers
 // ---------------------------------------------------------------------------
 
-mod lease {
+pub(crate) mod lease {
     use super::*;
 
-    #[derive(Debug, Serialize, Deserialize)]
+    /// Leases are shared by runs and the interactive inspector. Old files
+    /// without a `kind` are run leases.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LeaseKind {
+        #[default]
+        Run,
+        Inspector,
+    }
+
+    /// The inspector's current access level on its device.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LeaseMode {
+        #[default]
+        Interactive,
+        Readonly,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Owner {
         job: String,
         pid: u32,
         devices: Vec<String>,
         started_ms: u64,
+        #[serde(default)]
+        kind: LeaseKind,
+        #[serde(default)]
+        mode: LeaseMode,
+        #[serde(default)]
+        conflict: InspectorRunConflict,
+    }
+
+    /// A live lease as seen by another process.
+    #[derive(Debug, Clone)]
+    pub(crate) struct LeaseInfo {
+        pub kind: LeaseKind,
+        pub mode: LeaseMode,
+        pub conflict: InspectorRunConflict,
+        pub job: String,
+        pub pid: u32,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -939,20 +974,173 @@ mod lease {
         }
     }
 
+    /// The inspector's own lease. Dropping it releases only the file this
+    /// process still owns, so a preempting run's lease can never be deleted by
+    /// the inspector's teardown.
+    #[derive(Debug)]
+    pub(crate) struct InspectorGuard {
+        path: PathBuf,
+        pid: u32,
+    }
+
+    impl InspectorGuard {
+        pub(crate) fn set_mode(&self, mode: LeaseMode) -> Result<(), String> {
+            let Some(mut owner) = read_owner(&self.path) else {
+                return Err(format!(
+                    "the inspector lease {} disappeared",
+                    self.path.display()
+                ));
+            };
+            if owner.kind != LeaseKind::Inspector || owner.pid != self.pid {
+                return Err("the inspector lease is no longer owned by this process".to_string());
+            }
+            owner.mode = mode;
+            write_owner(&self.path, &owner)
+        }
+    }
+
+    impl Drop for InspectorGuard {
+        fn drop(&mut self) {
+            let Some(owner) = read_owner(&self.path) else {
+                return;
+            };
+            if owner.kind == LeaseKind::Inspector && owner.pid == self.pid {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+
+    fn device_slug(device: &str) -> String {
+        device
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    }
+
     fn lease_path(store: &JobStore, device: &str) -> PathBuf {
-        store.lease_dir().join(format!(
-            "{}.json",
-            device
-                .chars()
-                .map(|ch| {
-                    if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                        ch
-                    } else {
-                        '_'
-                    }
-                })
-                .collect::<String>()
-        ))
+        store
+            .lease_dir()
+            .join(format!("{}.json", device_slug(device)))
+    }
+
+    fn inspector_lease_path(store: &JobStore, device: &str) -> PathBuf {
+        store
+            .lease_dir()
+            .join(format!("inspector.{}.json", device_slug(device)))
+    }
+
+    fn read_owner(path: &Path) -> Option<Owner> {
+        let text = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    fn write_owner(path: &Path, owner: &Owner) -> Result<(), String> {
+        let text = serde_json::to_string(owner)
+            .map_err(|error| format!("cannot encode lease: {error}"))?;
+        std::fs::write(path, format!("{text}\n"))
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))
+    }
+
+    fn info(owner: &Owner) -> LeaseInfo {
+        LeaseInfo {
+            kind: owner.kind,
+            mode: owner.mode,
+            conflict: owner.conflict,
+            job: owner.job.clone(),
+            pid: owner.pid,
+        }
+    }
+
+    /// Read a live lease, removing a file whose owner pid is gone.
+    fn live(path: &Path) -> Option<Owner> {
+        let owner = read_owner(path)?;
+        if owner.job.is_empty() || !pid_alive(owner.pid) {
+            let _ = std::fs::remove_file(path);
+            return None;
+        }
+        Some(owner)
+    }
+
+    /// The live run lease for `device`, if any.
+    pub(crate) fn run_owner(store: &JobStore, device: &str) -> Option<LeaseInfo> {
+        let owner = live(&lease_path(store, device))?;
+        (owner.kind == LeaseKind::Run).then(|| info(&owner))
+    }
+
+    /// The live inspector lease for `device`, if any.
+    pub(crate) fn inspector_owner(store: &JobStore, device: &str) -> Option<LeaseInfo> {
+        let owner = live(&inspector_lease_path(store, device))?;
+        (owner.kind == LeaseKind::Inspector).then(|| info(&owner))
+    }
+
+    /// Reserve `device` for this inspector process.
+    pub(crate) fn acquire_inspector(
+        store: &JobStore,
+        device: &str,
+        conflict: InspectorRunConflict,
+    ) -> Result<InspectorGuard, String> {
+        std::fs::create_dir_all(store.lease_dir()).map_err(|error| {
+            format!(
+                "cannot create lease directory {}: {error}",
+                store.lease_dir().display()
+            )
+        })?;
+        clean_stale(store);
+        let path = inspector_lease_path(store, device);
+        if let Some(owner) = live(&path) {
+            return Err(format!(
+                "device '{device}' already has a live inspector lease (pid {})",
+                owner.pid
+            ));
+        }
+        let owner = Owner {
+            job: "inspector".to_string(),
+            pid: std::process::id(),
+            devices: vec![device.to_string()],
+            started_ms: now_ms(),
+            kind: LeaseKind::Inspector,
+            mode: LeaseMode::Interactive,
+            conflict,
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                let text = serde_json::to_string(&owner)
+                    .map_err(|error| format!("cannot encode lease: {error}"))?;
+                file.write_all(format!("{text}\n").as_bytes())
+                    .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(format!("device '{device}' is already leased"));
+            }
+            Err(error) => {
+                return Err(format!("cannot create lease {}: {error}", path.display()));
+            }
+        }
+        Ok(InspectorGuard {
+            path,
+            pid: std::process::id(),
+        })
+    }
+
+    fn reserved_by_inspector(store: &JobStore, devices: &[String]) -> Option<(String, LeaseInfo)> {
+        for device in devices {
+            if let Some(owner) = inspector_owner(store, device) {
+                if owner.conflict == InspectorRunConflict::BlockRun {
+                    return Some((device.clone(), owner));
+                }
+            }
+        }
+        None
     }
 
     fn wait_path(store: &JobStore, job: &str) -> PathBuf {
@@ -1016,7 +1204,7 @@ mod lease {
                 }
             }
         }
-        true
+        reserved_by_inspector(store, devices).is_none()
     }
 
     pub fn acquire(
@@ -1034,6 +1222,13 @@ mod lease {
             )
         })?;
         clean_stale(store);
+        if let Some((device, owner)) = reserved_by_inspector(store, devices) {
+            return Err(format!(
+                "device '{device}' is reserved by the inspector (inspector.run_conflict=block_run, \
+                 pid {}); detach the inspector or change inspector.run_conflict",
+                owner.pid
+            ));
+        }
         let wait = wait_path(store, job);
         if devices.is_empty() {
             return Ok(Guard {
@@ -1071,6 +1266,9 @@ mod lease {
                             pid: std::process::id(),
                             devices: devices.clone(),
                             started_ms: now_ms(),
+                            kind: LeaseKind::Run,
+                            mode: LeaseMode::Interactive,
+                            conflict: InspectorRunConflict::default(),
                         };
                         if let Ok(text) = serde_json::to_string(&owner) {
                             let _ = file.write_all(text.as_bytes());
@@ -1867,6 +2065,96 @@ mod tests {
         wait("dead", 0, &["tv"]);
         assert!(!waiting_for(&home, &["tv".to_string()]));
         assert!(!waiting_for(&home, &[]));
+    }
+
+    #[test]
+    fn inspector_lease_reserves_a_device_only_for_block_run() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        let devices = vec!["tv".to_string()];
+
+        let guard = lease::acquire_inspector(&store, "tv", InspectorRunConflict::Readonly)
+            .expect("inspector lease");
+        let info = lease::inspector_owner(&store, "tv").expect("live inspector lease");
+        assert_eq!(info.kind, lease::LeaseKind::Inspector);
+        assert_eq!(info.mode, lease::LeaseMode::Interactive);
+        assert!(lease::available(&store, &devices), "readonly allows a run");
+        guard
+            .set_mode(lease::LeaseMode::Readonly)
+            .expect("readonly mode");
+        assert_eq!(
+            lease::inspector_owner(&store, "tv")
+                .expect("inspector lease")
+                .mode,
+            lease::LeaseMode::Readonly
+        );
+        drop(guard);
+        assert!(
+            lease::inspector_owner(&store, "tv").is_none(),
+            "dropping the inspector lease releases it"
+        );
+
+        let guard = lease::acquire_inspector(&store, "tv", InspectorRunConflict::BlockRun)
+            .expect("blocking inspector lease");
+        assert!(!lease::available(&store, &devices));
+        let shutdown = CancellationToken::new();
+        let error = lease::acquire(&store, "run", &devices, OnBusy::Wait, |_| {}, &shutdown)
+            .expect_err("block_run refuses a run even with --on-busy wait");
+        assert!(
+            error.contains("block_run"),
+            "the refusal names the policy: {error}"
+        );
+        assert!(
+            !store.lease_dir().join("tv.json").exists(),
+            "a refused run leaves no lease"
+        );
+        drop(guard);
+        assert!(lease::available(&store, &devices));
+    }
+
+    #[test]
+    fn exclusive_inspector_lease_lets_a_run_preempt_it() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        let devices = vec!["tv".to_string()];
+        let _inspector = lease::acquire_inspector(&store, "tv", InspectorRunConflict::Exclusive)
+            .expect("inspector lease");
+        let shutdown = CancellationToken::new();
+        let run = lease::acquire(&store, "run-1", &devices, OnBusy::Fail, |_| {}, &shutdown)
+            .expect("a run preempts an exclusive inspector");
+        let owner = lease::run_owner(&store, "tv").expect("live run lease");
+        assert_eq!(owner.job, "run-1");
+        assert_eq!(owner.kind, lease::LeaseKind::Run);
+        drop(run);
+        assert!(lease::run_owner(&store, "tv").is_none());
+    }
+
+    #[test]
+    fn stale_inspector_lease_is_not_a_blocker() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let home = Home::at(directory.path());
+        let store = JobStore::new(&home);
+        std::fs::create_dir_all(store.lease_dir()).expect("lease dir");
+        let path = store.lease_dir().join("inspector.tv.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "job": "inspector",
+                "pid": 0,
+                "devices": ["tv"],
+                "started_ms": 0,
+                "kind": "inspector",
+                "mode": "interactive",
+                "conflict": "block_run",
+            })
+            .to_string(),
+        )
+        .expect("stale lease");
+        assert!(lease::inspector_owner(&store, "tv").is_none());
+        assert!(!path.exists(), "the stale file is removed");
+        assert!(lease::available(&store, &["tv".to_string()]));
     }
 
     #[test]

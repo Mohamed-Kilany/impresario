@@ -199,8 +199,10 @@ function renderStatus() {
   const status = state.status;
   const meta = state.meta;
   const attached = Boolean(status && status.attached);
+  const lease = status && status.lease ? status.lease : null;
+  const readonly = Boolean(lease && lease.mode === 'readonly');
   const pill = byId('attach-status');
-  pill.textContent = attached ? 'attached' : 'disconnected';
+  pill.textContent = attached ? (readonly ? 'attached · read-only' : 'attached') : 'disconnected';
   pill.classList.toggle('on', attached);
   pill.classList.toggle('error', Boolean(status && status.error));
   byId('rev').textContent = status && status.rev ? 'rev ' + status.rev : '';
@@ -217,6 +219,7 @@ function renderStatus() {
   if (attached) {
     lines.push('device: ' + (status.device || '?') + ' (' + (status.platform || '?') + ')');
     if (status.session_id) lines.push('session: ' + status.session_id);
+    if (lease) lines.push('lease: ' + lease.mode + (lease.owner ? ' (run ' + lease.owner + ')' : ''));
     lines.push('nodes: ' + (status.nodes || 0) + '  settled: ' + Boolean(status.settled));
     lines.push('acquisition: ' + (status.acquisition_ms || 0) + ' ms');
     if (status.truncated) lines.push('snapshot is partial (node or depth budget)');
@@ -226,12 +229,23 @@ function renderStatus() {
   if (status && status.error) lines.push('error: ' + status.error);
   byId('device-meta').textContent = lines.join('\n');
 
+  const banner = byId('lease-banner');
+  if (readonly) {
+    banner.hidden = false;
+    banner.textContent = 'Read-only: run ' + (lease.owner || '(unknown)') +
+      ' owns this device. Inspection continues; input is disabled until it finishes.';
+  } else {
+    banner.hidden = true;
+    banner.textContent = '';
+  }
+
   const summary = [];
   if (attached) {
     summary.push((status.device || 'device') + ' (' + (status.platform || '?') + ')');
     summary.push('rev ' + (status.rev || 0));
     summary.push((status.nodes || 0) + ' nodes');
     summary.push(status.settled ? 'settled' : 'updating');
+    if (readonly) summary.push('read-only');
     if (state.selectionStale) summary.push('selection stale');
     else if (state.selectionOffscreen) summary.push('selection offscreen');
     if (status.error) summary.push('error: ' + status.error);
@@ -248,7 +262,7 @@ function renderStatus() {
   byId('detach').disabled = !attached;
   byId('freeze').disabled = !attached;
 
-  const enabled = attached && !state.frozen;
+  const enabled = attached && !state.frozen && !readonly;
   for (const id of [
     'tap-selected', 'scroll-up', 'scroll-down', 'scroll-left', 'scroll-right',
     'send-key', 'send-type',
@@ -1172,6 +1186,7 @@ async function stagePointerUp(event) {
 
 function stageWheel(event) {
   if (!state.status || !state.status.attached || state.frozen) return;
+  if (state.status.lease && state.status.lease.mode === 'readonly') return;
   event.preventDefault();
   const now = Date.now();
   if (now - state.wheelAt < 120) return;
@@ -1207,6 +1222,10 @@ async function sendInput(body, label) {
   }
   if (state.frozen) {
     toast('Unfreeze to interact with the device.', true);
+    return null;
+  }
+  if (state.status.lease && state.status.lease.mode === 'readonly') {
+    toast('Read-only while a run owns the device; input will resume when it finishes.', true);
     return null;
   }
   try {

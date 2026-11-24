@@ -35,7 +35,7 @@ use impresario_clients::transport::{transport_for, DeviceTransport};
 use impresario_core::apps::{self, AppConfig};
 use impresario_core::ast::AppOp;
 use impresario_core::command::Command;
-use impresario_core::config::{self, DeviceConfig, ImpresarioConfig};
+use impresario_core::config::{self, DeviceConfig, ImpresarioConfig, InspectorRunConflict};
 use impresario_core::home::Home;
 use impresario_core::platforms::Platform;
 use impresario_inspector_core::compact::{compact, CompactOptions};
@@ -49,6 +49,7 @@ use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::jobs::{lease, JobStore};
 use scene::{AuditEntry, StoredEdit, UndoRecord};
 
 /// Default inspector port (TASK-INSPECTOR section 10.1).
@@ -189,6 +190,16 @@ impl ApiError {
     }
 }
 
+/// Lease state surfaced to the Web UI and `/healthz` (INS-R2).
+#[derive(Debug, Clone, Serialize)]
+pub struct LeaseStatus {
+    /// `interactive` while the inspector may send input, `readonly` while a
+    /// run owns the device.
+    pub mode: String,
+    /// The preempting run's job id, when known.
+    pub owner: Option<String>,
+}
+
 /// Live attachment metadata returned by `/api/status`.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AttachmentStatus {
@@ -203,6 +214,7 @@ pub struct AttachmentStatus {
     pub truncated: bool,
     pub error: Option<String>,
     pub frozen: bool,
+    pub lease: Option<LeaseStatus>,
 }
 
 /// Decide the master-owned revision for a new capture.
@@ -791,6 +803,29 @@ fn spawn_watch(
     WatchTask { handle, alive }
 }
 
+/// What a live run lease means for the inspector (INS-R2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunConflictAction {
+    /// No run: the inspector keeps (or restores) interactive input.
+    Keep,
+    /// A run owns the device; inspection continues without input.
+    Readonly,
+    /// `exclusive`: give the device to the run and detach the inspector.
+    Detach,
+}
+
+fn run_conflict_action(conflict: InspectorRunConflict, run_job: Option<&str>) -> RunConflictAction {
+    match (run_job, conflict) {
+        (None, _) => RunConflictAction::Keep,
+        (Some(_), InspectorRunConflict::Exclusive) => RunConflictAction::Detach,
+        // Runs are refused under block_run, so this only covers a lease that
+        // appeared from an older process; keep inspection safe without input.
+        (Some(_), InspectorRunConflict::Readonly | InspectorRunConflict::BlockRun) => {
+            RunConflictAction::Readonly
+        }
+    }
+}
+
 struct Attachment {
     device: DeviceConfig,
     transport: Box<dyn DeviceTransport>,
@@ -804,6 +839,9 @@ struct Attachment {
     inspector: InspectorClient,
     push: Arc<AtomicU8>,
     _watch: WatchTask,
+    /// INS-R2 interactive lease. Dropping it (detach/shutdown) releases the
+    /// device without touching a preempting run's lease.
+    lease: lease::InspectorGuard,
 }
 
 /// The actor ticker must acquire unless in-page push is proven active.
@@ -842,15 +880,67 @@ impl Actor {
             .app_name
             .as_ref()
             .and_then(|app_name| self.shared.apps.iter().find(|app| &app.name == app_name));
-        let attachment = connect(Arc::clone(&self.shared), device, app).await?;
+        // INS-R2: a run already on the device wins according to the configured
+        // policy before the inspector opens a transport of its own.
+        let store = JobStore::new(&self.shared.home);
+        if let Some(run) = lease::run_owner(&store, name) {
+            match self.shared.config.inspector.run_conflict {
+                InspectorRunConflict::Readonly => {}
+                InspectorRunConflict::Exclusive => {
+                    return Err(format!(
+                        "run '{}' currently owns device '{name}' \
+                         (inspector.run_conflict=exclusive)",
+                        run.job
+                    ));
+                }
+                InspectorRunConflict::BlockRun => {
+                    return Err(format!(
+                        "run '{}' currently owns device '{name}' \
+                         (inspector.run_conflict=block_run)",
+                        run.job
+                    ));
+                }
+            }
+        }
+        let guard =
+            lease::acquire_inspector(&store, name, self.shared.config.inspector.run_conflict)?;
+        let attachment = connect(Arc::clone(&self.shared), device, app, guard).await?;
+        let current_run = lease::run_owner(&store, name).map(|run| run.job);
+        if current_run.is_some() {
+            // A run started while the transport connected: the inspector lease
+            // file must agree with the read-only status below.
+            attachment.lease.set_mode(lease::LeaseMode::Readonly)?;
+        }
+        let lease = current_run.as_ref().map_or(
+            LeaseStatus {
+                mode: "interactive".to_string(),
+                owner: None,
+            },
+            |job| LeaseStatus {
+                mode: "readonly".to_string(),
+                owner: Some(job.clone()),
+            },
+        );
         self.shared.set_status(AttachmentStatus {
             attached: true,
             device: Some(attachment.device.name.clone()),
             platform: Some(attachment.device.platform.as_str().to_string()),
             session_id: Some(attachment.session_id.clone()),
+            lease: Some(lease),
             ..AttachmentStatus::default()
         });
         self.attachment = Some(attachment);
+        // A run may have started while the transport connected.
+        if let Err(error) = self.sync_lease().await {
+            tracing::debug!(%error, "inspector lease sync failed after attach");
+        }
+        if self.attachment.is_none() {
+            return Err(self
+                .shared
+                .status()
+                .error
+                .unwrap_or_else(|| "the device was taken by a run during attach".to_string()));
+        }
         if let Err(error) = self.poll(false).await {
             let mut status = self.shared.status();
             status.error = Some(error);
@@ -897,6 +987,85 @@ impl Actor {
         });
     }
 
+    /// Reconcile the inspector's interactive lease with the run lease on the
+    /// attached device (INS-R2). Called on every actor tick and before input,
+    /// so a scheduled/background run preempts an interactive inspector without
+    /// a second device connection.
+    async fn sync_lease(&mut self) -> Result<(), String> {
+        let Some(device) = self
+            .attachment
+            .as_ref()
+            .map(|attachment| attachment.device.name.clone())
+        else {
+            return Ok(());
+        };
+        let store = JobStore::new(&self.shared.home);
+        let run = lease::run_owner(&store, &device);
+        let action = run_conflict_action(
+            self.shared.config.inspector.run_conflict,
+            run.as_ref().map(|run| run.job.as_str()),
+        );
+        match action {
+            RunConflictAction::Keep => {
+                let readonly = self
+                    .shared
+                    .status()
+                    .lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.mode == "readonly");
+                if readonly {
+                    if let Some(attachment) = self.attachment.as_ref() {
+                        attachment.lease.set_mode(lease::LeaseMode::Interactive)?;
+                    }
+                    self.set_lease_status("interactive", None);
+                }
+                Ok(())
+            }
+            RunConflictAction::Readonly => {
+                let owner = run.map(|run| run.job);
+                let already = self
+                    .shared
+                    .status()
+                    .lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.mode == "readonly" && lease.owner == owner);
+                if !already {
+                    if let Some(attachment) = self.attachment.as_ref() {
+                        attachment.lease.set_mode(lease::LeaseMode::Readonly)?;
+                    }
+                    self.set_lease_status("readonly", owner);
+                }
+                Ok(())
+            }
+            RunConflictAction::Detach => {
+                let owner = run.map(|run| run.job).unwrap_or_default();
+                self.detach().await;
+                let mut status = self.shared.status();
+                status.error = Some(format!(
+                    "detached: run '{owner}' took the device (inspector.run_conflict=exclusive)"
+                ));
+                self.shared.set_status(status);
+                Ok(())
+            }
+        }
+    }
+
+    fn set_lease_status(&self, mode: &str, owner: Option<String>) {
+        let mut status = self.shared.status();
+        if status
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.mode == mode && lease.owner == owner)
+        {
+            return;
+        }
+        status.lease = Some(LeaseStatus {
+            mode: mode.to_string(),
+            owner,
+        });
+        self.shared.set_status(status);
+    }
+
     fn connection(&self) -> Result<(InspectorClient, String, DeviceConfig), String> {
         let Some(attachment) = self.attachment.as_ref() else {
             return Err("no device is attached".to_string());
@@ -923,8 +1092,10 @@ impl Actor {
 
     /// Acquisition taken by the actor ticker. While in-page push is proven
     /// active the watcher owns acquisition, so the ticker stays idle: push
-    /// supplies both change-driven and periodic refreshes (INS-R3).
+    /// supplies both change-driven and periodic refreshes (INS-R3). Lease
+    /// reconciliation still runs on every tick (INS-R2).
     async fn tick(&mut self) -> Result<(), String> {
+        self.sync_lease().await?;
         let Some(attachment) = self.attachment.as_ref() else {
             return Ok(());
         };
@@ -938,6 +1109,15 @@ impl Actor {
         &mut self,
         request: pb::InspectorInputRequest,
     ) -> Result<pb::InspectorInputResponse, String> {
+        self.sync_lease().await?;
+        if let Some(lease) = self.shared.status().lease {
+            if lease.mode == "readonly" {
+                let owner = lease.owner.unwrap_or_else(|| "a run".to_string());
+                return Err(format!(
+                    "LEASE_READONLY: run '{owner}' owns the device; inspector input is disabled"
+                ));
+            }
+        }
         let (inspector, session_id, _) = self.connection()?;
         let response =
             tokio::time::timeout(SNAPSHOT_TIMEOUT, inspector.input(&session_id, request))
@@ -976,6 +1156,7 @@ async fn connect(
     shared: Arc<Shared>,
     device: DeviceConfig,
     app: Option<&AppConfig>,
+    lease: lease::InspectorGuard,
 ) -> Result<Attachment, String> {
     let mut transport = transport_for(device.platform);
     let endpoint = transport
@@ -1112,6 +1293,7 @@ async fn connect(
         inspector,
         push,
         _watch: watch,
+        lease,
     })
 }
 
@@ -1614,6 +1796,13 @@ fn status_command(home: &Home, json_output: bool) -> i32 {
     let nodes = body.get("nodes").and_then(Value::as_u64).unwrap_or(0);
     println!("inspector: {url}");
     println!("device: {device} ({platform})  rev: {rev}  nodes: {nodes}");
+    if let Some(mode) = body.pointer("/lease/mode").and_then(Value::as_str) {
+        let owner = body
+            .pointer("/lease/owner")
+            .and_then(Value::as_str)
+            .map_or(String::new(), |owner| format!(" (run {owner})"));
+        println!("lease: {mode}{owner}");
+    }
     if let Some(error) = body.get("error").and_then(Value::as_str) {
         println!("last error: {error}");
     }
@@ -2004,6 +2193,30 @@ mod tests {
         assert!(poll_on_tick(PUSH_PROBING));
         assert!(!poll_on_tick(PUSH_ACTIVE));
         assert!(poll_on_tick(PUSH_FALLBACK));
+    }
+
+    #[test]
+    fn run_conflict_policy_selects_the_inspector_action() {
+        assert_eq!(
+            run_conflict_action(InspectorRunConflict::Readonly, None),
+            RunConflictAction::Keep
+        );
+        assert_eq!(
+            run_conflict_action(InspectorRunConflict::Readonly, Some("run-1")),
+            RunConflictAction::Readonly
+        );
+        assert_eq!(
+            run_conflict_action(InspectorRunConflict::Exclusive, None),
+            RunConflictAction::Keep
+        );
+        assert_eq!(
+            run_conflict_action(InspectorRunConflict::Exclusive, Some("run-1")),
+            RunConflictAction::Detach
+        );
+        assert_eq!(
+            run_conflict_action(InspectorRunConflict::BlockRun, Some("run-1")),
+            RunConflictAction::Readonly
+        );
     }
 
     #[test]

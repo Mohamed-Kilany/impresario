@@ -206,6 +206,7 @@ fn health_json(shared: &Shared) -> Value {
         "nodes": status.nodes,
         "frozen": status.frozen,
         "error": status.error,
+        "lease": status.lease,
     })
 }
 
@@ -247,7 +248,14 @@ fn devices_json(shared: &Shared) -> Value {
                 "type": device.device_type.as_str(),
                 "ip": &device.ip,
                 "attached": attached,
-                "lease": if attached { "interactive" } else { "none" },
+                "lease": if attached {
+                    status
+                        .lease
+                        .as_ref()
+                        .map_or("interactive", |lease| lease.mode.as_str())
+                } else {
+                    "none"
+                },
             })
         })
         .collect();
@@ -661,17 +669,14 @@ fn locator_error(error: impresario_locator::LocatorError) -> ApiError {
 }
 
 fn device_error(message: String) -> ApiError {
-    let status = if message.starts_with("NOT_SUPPORTED") {
-        422
+    let (status, code) = if message.starts_with("NOT_SUPPORTED") {
+        (422, "NOT_SUPPORTED")
     } else if message.starts_with("unknown device") {
-        404
+        (404, "DEVICE_ERROR")
+    } else if message.starts_with("LEASE_READONLY") {
+        (409, "LEASE_READONLY")
     } else {
-        503
-    };
-    let code = if message.starts_with("NOT_SUPPORTED") {
-        "NOT_SUPPORTED"
-    } else {
-        "DEVICE_ERROR"
+        (503, "DEVICE_ERROR")
     };
     ApiError::new(status, code, message, None)
 }
@@ -889,6 +894,20 @@ mod tests {
         assert!(constant_time_eq("secret", "secret"));
         assert!(!constant_time_eq("secret", "secreT"));
         assert!(!constant_time_eq("secret", "secret "));
+    }
+
+    #[test]
+    fn read_only_lease_maps_to_a_conflict_response() {
+        let error = device_error("LEASE_READONLY: run 'nightly' owns the device".to_string());
+        assert_eq!(error.status, 409);
+        assert_eq!(error.code, "LEASE_READONLY");
+        assert!(error.message.contains("nightly"));
+        assert_eq!(
+            device_error("NOT_SUPPORTED: no inspector".to_string()).status,
+            422
+        );
+        assert_eq!(device_error("unknown device 'tv'".to_string()).status, 404);
+        assert_eq!(device_error("transport closed".to_string()).status, 503);
     }
 
     #[test]
