@@ -94,7 +94,9 @@ Why this deviates from §3.1:
 - A dedicated process can reuse the existing `ConnectorTransport` +
   `AgentClient` flow unchanged and hold one session per attached device.
   Runs still spawn their own connector, so v1 does **not** claim shared
-  device sessions or lease preemption. That is recorded as a deviation, not
+  device sessions. Conflict handling is a file-lease protocol (INS-R2): the
+  inspector and runs coordinate through separate lease files, but each side
+  still opens its own device session. That is recorded as a deviation, not
   silently ignored.
 - The core is still single-sourced: the same `impresario-locator` matcher
   resolves inspector locators and the connector run path. A `LOCATOR` cell is
@@ -113,9 +115,13 @@ Why this deviates from §3.1:
    without breaking clients.
 4. Hand-written embedded SPA (same pattern as `impresario web`), not
    Preact/Vite. No external assets, CSP-safe, one binary.
-5. No lease/scheduler preemption in v1. Input is disabled when a run owns the
-   device only if the transport reports the device busy; otherwise the UI
-   warns that a concurrent run may contend. This is an honest limitation.
+5. **File leases, not shared sessions or a resident scheduler.** The
+   inspector writes `jobs/leases/inspector.<device>.json`; runs keep
+   `<device>.json`, so both sides detect contention without a broker.
+   `inspector.run_conflict` is enforced: `readonly` (default) keeps the
+   inspector attached read-only while a run owns the device, `exclusive`
+   detaches the inspector, and `block_run` refuses the run. Runs and the
+   inspector still connect independently, which some agents may refuse.
 6. **Flutter enrichment is not claimed in v1.** Android and Apple acquisition
    are implemented by their own agents and hardware-verified; web/webOS/Tizen
    use the connector snapshot. Flutter uses the Android agent's Layer A
@@ -227,7 +233,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | 1 | Meaning of master/agents | Answered in §1.2. |
 | 2 | Approve locator extension? | Additive proposal in §3.2; implemented under the "implement" directive; owner may veto. |
 | 3 | Column keys / same-platform devices | Platform keys; duplicates rejected by the parser. Same-platform devices return `AMBIGUOUS_COLUMN`. Actor-qualified columns deferred to the owner. |
-| 4 | Run-vs-inspector conflict default | `readonly` is the default in config, but v1 does not yet preempt; it is a documented limitation until the scheduler integration lands. |
+| 4 | Run-vs-inspector conflict default | `readonly` (default) is enforced: a run proceeds, inspection continues and input is refused with `LEASE_READONLY`; `exclusive` detaches the inspector and `block_run` refuses the run. |
 | 5 | Start UI automatically? | Only on `impresario inspector`. `inspector.enabled` defaults to false and is currently reserved (the resident service does not auto-start the inspector). |
 | 6 | Dart package acceptable? | Deferred with Flutter (Phase 6); not claimed in v1. |
 | 7 | Minimum OS/engine versions | Web: Chromium/WebKit with ES5 + `MutationObserver` (webOS/Tizen dev builds). Android/Apple inherit their existing agents' targets; inspector hardware acceptance used Android 11/15, iOS 18.7.8 and tvOS 26.1. |
@@ -332,9 +338,13 @@ the implementation keeps the grammar in one module so a rename is local.
 
 ### Phase 7 — Hardening and release
 
-- [x] INS-7.1 Lease/scheduler integration — **partial**: the
-      `inspector.run_conflict` config exists, but v1 has no shared session or
-      preemption; a concurrent run is not coordinated. Documented limitation.
+- [x] INS-7.1 Lease/scheduler integration — **done for the file-lease
+      layer** (INS-R2): `inspector.run_conflict` is enforced through separate
+      inspector/run lease files (`readonly` downgrades inspector input,
+      `exclusive` detaches it, `block_run` refuses the run), stale leases are
+      removed by dead pid and the mode/owner is surfaced in status and the SPA.
+      A resident scheduler and shared device session remain out of scope; both
+      sides still connect independently.
 - [x] INS-7.2 Security items: loopback default, Host/Origin checks, token,
       CSP, path sandboxing, atomic writes, secure-field masking. Deviation:
       the SPA authenticates non-loopback EventSource/initial loads with
@@ -361,7 +371,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them. Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
 | Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
-| Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; no shared sessions, leases or preemption (documented). |
+| Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; file-lease coordination is enforced (`readonly`/`exclusive`/`block_run`) with mode/owner surfaced in status and the SPA; shared device sessions remain out of scope. |
 | Anti-breakage gates | Existing suites untouched; proto is append-only by inspection; legacy selectors preserved and still covered by `fixtures_suite.rs`. The connector run path now executes `LOCATOR` cells without changing the legacy path (`dispatch` still routes non-locator selectors exactly as before). `buf breaking`, run-path latency and handshake-matrix gates are **not** wired, and LSP/TS locator completion is absent (INS-R12). |
 | Docs + notes reviewed | Docs added; owner review pending. |
 
@@ -486,6 +496,28 @@ INS-R3 (2026-11-24): in-page push instead of DOM polling. New coverage:
   `push_watch_reports_page_changes`, `inspector_push_is_opt_in` and the three
   `session::change_signal_tests` passing against a real Chromium (the fixture
   suite ran 7/7, not skipped).
+
+INS-R2 (2026-11-24): file-lease coordination between runs and the inspector.
+New coverage:
+
+- `crates/impresario-master/src/jobs.rs`:
+  `inspector_lease_reserves_a_device_only_for_block_run`,
+  `exclusive_inspector_lease_lets_a_run_preempt_it` and
+  `stale_inspector_lease_is_not_a_blocker` cover the separate
+  `inspector.<device>.json` lease, `readonly`/`exclusive`/`block_run`
+  admission, ownership-checked release, persisted mode and dead-pid cleanup.
+- `crates/impresario-master/src/inspector/mod.rs`:
+  `run_conflict_policy_selects_the_inspector_action` pins the policy mapping.
+- `crates/impresario-master/src/inspector/api.rs`:
+  `read_only_lease_maps_to_a_conflict_response` proves `LEASE_READONLY`
+  becomes HTTP 409 and existing `NOT_SUPPORTED`/unknown-device/transport
+  statuses are unchanged.
+- The SPA lease banner and disabled-input path are exercised manually through
+  the JSON API; the local Playwright harness file is missing, so they are not
+  claimed as re-run by that suite.
+- CI run `45338868848` at `c6ae5b0` passed all eight jobs (rustfmt, clippy,
+  workspace tests, Windows release build, editor, Android, Apple and the
+  aggregate gate) with the INS-R2 lease code and its tests.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)

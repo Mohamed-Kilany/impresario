@@ -73,7 +73,7 @@ Unknown keys are errors (`IMP-CFG-001`) and invalid values use the same
 | `inspector.min_visible_percent` | global + workspace | integer 0..=100 | `0` | Minimum visible area for inspector nodes, in percent (0 = any overlap). |
 | `inspector.fps` | global + workspace | integer 1..=30 | `4` | Snapshot polling rate for the live inspector UI. |
 | `inspector.screenshot_scale` | global + workspace | integer 10..=100 | `100` | Screenshot scale percentage used by the inspector UI. |
-| `inspector.run_conflict` | global + workspace | one of: readonly, exclusive, block_run | `readonly` | Policy when a run needs a device the inspector is attached to. |
+| `inspector.run_conflict` | global + workspace | one of: readonly, exclusive, block_run | `readonly` | Enforced when a run needs a device the inspector is attached to: `readonly` keeps the inspector attached without input, `exclusive` detaches it, `block_run` refuses the run (exit 3). |
 | `workspace` | global | path | (unset) | Workspace the CLI uses when no flag, environment variable or marker applies. |
 | `workspaces` | global | list of paths | (unset) | Workspaces remembered by `impresario workspace add`. |
 | `ui.theme` | global + workspace | string | `auto` | TUI color theme (`auto`, `dark`, `light` or a theme name). |
