@@ -20,7 +20,7 @@ claimable without hardware or owner input).
 | agent channel | `impresario-clients::agent_client::AgentClient` / `AgentSession` | Handshake, one command stream, out-of-band screenshots, logs, shutdown. |
 | gRPC/proto | `proto/impresario/v1/impresario.proto` → `impresario-proto` | One package, one generated module (`impresario_proto::v1`). |
 | DSL crate | `impresario-core` (`ast`, `parser`, `fmt`, `selectors`, `workspace`) | Parser keeps spans; formatter is whole-file. No lossless CST. |
-| locator resolution | shared `impresario-locator` matcher; the connector resolves `LOCATOR` cells against inspector snapshots (INS-R4) | Inspector and connector run path share one Rust resolver; the ES5 script only acquires nodes and returns CSS handles. Android/Apple agents have no native resolver yet. |
+| locator resolution | shared `impresario-locator` matcher; the connector resolves `LOCATOR` cells against inspector snapshots (INS-R4), and Android/Apple runners execute them through a master-side snapshot + `NODE_REF` rewrite | Inspector, connector and the native runner path share one Rust resolver; the ES5 script only acquires nodes and returns CSS handles, while native drivers resolve a cached revision + node id. |
 | device/app model | `impresario-core::config` (`DeviceConfig`, `DevicesConfig`), `apps.rs` (`AppConfig`) | Devices have platform/type; apps bind per platform. |
 | scheduler/resident | `impresario-core::resident`, `impresario-master::resident` | File-based schedules/watchers; no device session broker. |
 | config | `impresario-core::config` + `settings` schema | `ImpresarioConfig` is `deny_unknown_fields`; top-level keys are validated, then deserialized. |
@@ -140,10 +140,15 @@ Why this deviates from §3.1:
    absent element reports absent. The transient `data-impresario-locator` tag
    is released after the command. Fixture coverage lives in
    `fixtures/web/locators.html` and `run_locator_suite` (raw and
-   chromiumoxide). The Android and Apple agents still reject `LOCATOR`: their
-   drivers expect native selectors and have no snapshot-backed resolver.
-   Closing those needs master-side snapshot + resolve + native rewrite (or a
-   node-ref strategy) plus proto/agent work; it is not claimed.
+   chromiumoxide). Android and Apple use the same matcher in the master
+   (INS-R4 native): the master acquires a viewport snapshot through the
+   executor's `Inspector` service, resolves it, and rewrites the outgoing
+   command to the additive `NODE_REF` strategy (snapshot revision + node id).
+   The native driver validates the revision against its current/previous
+   capture cache and answers `STALE_ELEMENT` when it is gone, so the master
+   re-resolves (bounded to three attempts inside the step deadline) instead of
+   acting on a stale object. `Count` and zero-match `Hidden` are answered from
+   the snapshot; probes send node id `0` for an explicit miss.
 
 ---
 
@@ -240,7 +245,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | 8 | OCR for visual fallback | Template-only is the default; OCR is not implemented/claimed. `region` locators are always marked fragile. |
 | 9 | Allow input actions? | Yes when the device session is interactive; the UI shows a read-only banner when input is refused. Scene writes are always explicit. |
 | 10 | watchdog integration | No watchdog integration points exist in this repo; the additive tools/RPCs do not rename or remove existing MCP tools or agent RPCs. |
-| 11 | When will runner execution use the shared locator? | **Web family done (INS-R4)**: the connector resolves canonical cells with the shared matcher and rewrites them to a unique CSS handle. Android/Apple native execution remains open because those agents reject `LOCATOR`. |
+| 11 | When will runner execution use the shared locator? | **All native and web families done (INS-R4)**: the connector rewrites canonical cells to a unique CSS handle; the master resolves Android/Apple cells against an executor `Inspector` snapshot and rewrites them to `NODE_REF` (revision + node id), which the native agents validate and execute. |
 
 ---
 
@@ -262,7 +267,8 @@ the implementation keeps the grammar in one module so a rename is local.
 - [x] INS-1.2 `impresario-locator`: model, parser/printer, role map, matcher,
       synthesis, stability scoring, tests; the canonical `LOCATOR` strategy is
       accepted by the DSL/proto. The connector run path executes it for the web
-      family (INS-R4, §2 deviation 7); Android/Apple native execution is open.
+      family, and Android/Apple execute it through the master-side snapshot +
+      `NODE_REF` rewrite (INS-R4, §2 deviation 7).
 - [x] INS-1.3 `impresario-inspector-core`: snapshot model, delta/diff/apply,
       pruning geometry, selection re-resolution, compact snapshot, scene
       column resolution, mock harness, tests.
@@ -316,8 +322,9 @@ the implementation keeps the grammar in one module so a rename is local.
 - [x] INS-4.1 Android agent inspector: UiAutomator capture, viewport pruning,
       screenshot, tap/type/scroll/focus/Select/keyboard hide and
       detach/reattach. Hardware-verified on the Galaxy A51 and Android TV on
-      2026-11-15/16. Helper APK packaging, Compose `testTag`, the TV D-pad UI
-      and native `LOCATOR` execution remain INS-R8/INS-R4.
+      2026-11-15/16. Helper APK packaging and the TV D-pad UI remain INS-R8;
+      native `LOCATOR` execution is implemented through master-side snapshots
+      + `NODE_REF` (INS-R4, §7).
 
 ### Phase 5 — Apple (iOS, tvOS)
 
@@ -325,7 +332,8 @@ the implementation keeps the grammar in one module so a rename is local.
       snapshot, screenshot, focus/D-pad, scroll, Select and detach/reattach;
       iPhone Wi-Fi and tvOS hardware acceptance on 2026-11-15/16. XCTest rejects
       inspector typing on tvOS, so the run path uses focus + Select. WKWebView
-      bridging and native `LOCATOR` execution remain INS-R7/INS-R4.
+      bridging remains INS-R7; native `LOCATOR` execution is implemented
+      through master-side snapshots + `NODE_REF` (INS-R4, §7).
 
 ### Phase 6 — Flutter
 
@@ -371,7 +379,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. The live view is a subscribable MCP resource (INS-R5). |
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Web family: yes** (INS-R3): `MutationObserver` plus scroll/resize/focus/transition/history/visibility listeners call a `Runtime.addBinding`, and the inspector re-acquires on the connector's change counter (still capped at `inspector.fps`, default 4), with post-input refresh. Android/Apple refresh at `inspector.fps`; old engines without the binding fall back to polling. |
-| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector (INS-R4, resolution + CSS-handle rewrite); Android/Apple agents still reject them. Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
+| Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector and through Android/Apple (`NODE_REF`, INS-R4). Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
 | Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; file-lease coordination is enforced (`readonly`/`exclusive`/`block_run`) with mode/owner surfaced in status and the SPA; shared device sessions remain out of scope. |
@@ -382,11 +390,14 @@ the implementation keeps the grammar in one module so a rename is local.
 
 ## 7. Test and benchmark log
 
-**CI status: green.** The final inspector CI run `43267372004` at `e9838c8`
+**CI status: green.** The final inspector CI run `45356788456` at `d18c387`
 passed every job: rustfmt, clippy (`--workspace --all-targets --locked -- -D
 warnings`), `cargo test --workspace --locked --jobs 1`, the Windows release
-build, editor (TypeScript, WASM corpus, VS Code host), Android (JVM unit tests,
-APKs) and Apple (Swift package). No local Rust build/test ran; CI is the
+build, editor (TypeScript, WASM corpus, VS Code host), proto (`buf lint` plus
+`buf breaking`), Android (JVM unit tests, APKs) and Apple (Swift package). The
+Apple Xcode run `45356788584` at the same commit passed the generated-wire job
+and the unsigned tvOS/iOS build, and its generated Swift sources are
+byte-identical to the committed files. No local Rust build/test ran; CI is the
 authority. New tests live next to their code:
 
 - `impresario-locator`: parser/printer round-trip, role map, matcher,
@@ -522,6 +533,60 @@ New coverage:
   workspace tests, Windows release build, editor, Android, Apple and the
   aggregate gate) with the INS-R2 lease code and its tests.
 
+INS-R4 native locator execution (2026-11-24): Android and Apple runners now
+execute canonical locator cells through the same resolver as the inspector and
+the web connector. New coverage:
+
+- `crates/impresario-master/src/exec.rs`: `resolve_native_locator` acquires one
+  viewport `Inspector.Snapshot` inside the step deadline, converts it with the
+  shared `snapshot_from_proto`, and resolves it with
+  `impresario_locator::resolve`. The outgoing command is rewritten to the
+  additive `NODE_REF` strategy (`snapshot_rev` + `node_id`). `Count` and
+  zero-match `Hidden` are answered from the snapshot; probes send node id `0`
+  as an explicit miss; a stale executor reference is re-resolved at most three
+  times inside the same deadline. The planner unit tests cover unique matches,
+  index selection, ambiguity, zero-match retry/expiry, `Count`, `Hidden` and
+  probe misses.
+- Android `UiAutomatorDriver` keeps the current and previous captures in a
+  revision registry, resolves `NODE_REF` by revision + id, answers
+  `STALE_ELEMENT` for an evicted revision, and drives click/long-click/set-text/
+  clear/visibility/enabled/focused/bounds/text through the captured node.
+  `SelectorSpecTest` pins revision validation and the explicit miss; the
+  instrumented `nodeRefDrivesACapturedNodeAndRejectsStaleRevisions` clicks a
+  captured home row into the Text screen and then rejects a vanished revision.
+- Apple `InspectorRevisionCache` keeps the same current/previous window;
+  `XCUIDriver.nodeRefMatches` resolves the captured element, and
+  `InspectorProvider.watch` answers `push=false` because Apple has no in-page
+  change source (the master's documented fps fallback). The committed
+  `impresario.pb.swift`/`impresario.grpc.swift` are the exact CI-generated
+  artifact (`A5C0CC7B…` / `7F1CD604…`), so the `NODE_REF` selector fields and
+  the async `Watch` conformance cannot drift.
+- The connector rejects `NODE_REF` as non-executable on web, so the
+  executor-internal strategy never leaks into the connector path.
+- CI run `45356788456` at `d18c387` passed all eight jobs; Apple Xcode
+  `45356788584` passed the wire job and the unsigned tvOS/iOS build. Local
+  Android JVM validation with JDK 21 and the cached Gradle 9.6.0:
+  `gradlew --no-daemon test` and `gradlew --no-daemon assembleDebug` both
+  succeeded (42 s / 25 s).
+- Android phone hardware (Galaxy A51, `192.168.93.76`, Android 13, fresh
+  agent install): three consecutive 16-step native-locator runs
+  `20261124-094207-f9bd`, `20261124-094224-7b37` and `20261124-094242-8168`
+  passed 16/16 steps each. The play uses canonical cells
+  (`role=text[name="stub badge"]`, `role=button[name="Basic controls"]`,
+  `testid=stub_button`, `testid=stub_counter`, `testid=stub_status`) for
+  visible/enabled/text/count/hidden checks, a `NODE_REF` click into the Basic
+  controls screen, then `NODE_REF` text assertions after the click. A legacy
+  `id:` comparison run (`20261124-093520-751a`) still passes on the same
+  device, and focused-row probes on the Text entry and Scroller rows
+  (`20261124-093645-f6da`) confirm `NODE_REF` clicks across rows.
+- Apple TV hardware: the inspector reaches the installation step but the TV
+  rejects `host.app` with `0xe8008015` (no valid provisioning profile); the
+  four profiles expired on 2026-11-23 and `apple signing provision` answers
+  developer error 1100 (Apple ID session expired), so renewal needs an
+  interactive `impresario account login`. The tvOS build, wire generation and
+  Swift tests are green; the tvOS hardware locator run remains pending that
+  login and is not claimed as observed.
+
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
 and emits JSON or a table with p50/p95/p99/mean for acquisition build, prune,
@@ -538,13 +603,15 @@ committed here only when observed.
 - **No shared device session with runs** (spec §3.2/§12.1.1): dedicated
   process; contention is possible. Mitigation: explicit read-only/busy
   errors, documented.
-- **Locator cells execute on the web family only** (spec requirement 3): the
-  connector run path resolves `LOCATOR` through the shared matcher and a unique
-  CSS handle (INS-R4), but the Android and Apple agents reject `LOCATOR`
-  because they have no snapshot-backed native resolver. Mitigation: the
-  grammar and matcher stay isolated in one crate; native execution needs
-  master-side snapshot + resolve + native rewrite (or a node-ref strategy) and
-  proto/agent changes.
+- **Locator cells execute on every shipped family** (spec requirement 3): the
+  connector resolves `LOCATOR` through the shared matcher and a unique CSS
+  handle, while Android/Apple resolve it in the master and send the additive
+  executor-internal `NODE_REF` strategy (revision + node id). Native drivers
+  cache the current and previous captures, validate the revision, and answer
+  `STALE_ELEMENT` when it is gone; the master re-resolves up to three times
+  inside the step deadline. Flutter still runs on Android/Apple semantics;
+  enrichment remains INS-R1. Mitigation: the grammar and matcher stay isolated
+  in one crate and both paths use the same resolver.
 - **Push binding is web-only and opt-in** (spec §6.2): the connector installs
   `Runtime.addBinding` only when the inspector session sends
   `inspector_push=true`, because CDP bindings are page-global and a runner
