@@ -380,7 +380,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Web family: yes** (INS-R3): `MutationObserver` plus scroll/resize/focus/transition/history/visibility listeners call a `Runtime.addBinding`, and the inspector re-acquires on the connector's change counter (still capped at `inspector.fps`, default 4), with post-input refresh. Android/Apple refresh at `inspector.fps`; old engines without the binding fall back to polling. |
 | Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector and through Android/Apple (`NODE_REF`, INS-R4). Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
-| Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
+| Graceful degradation + fuzz/property suites | **Yes** (2026-11-24): converters are total; malformed, duplicate, cyclic, missing-parent and over-depth nodes are skipped into `Snapshot.degraded[]` with a node path and reason; limits bound 5,000 nodes, depth 80, text/identifiers/`raw`/messages and 256 degraded entries; non-finite geometry is clamped and control characters are stripped while RTL/bidi text is preserved. A 128-case proptest fuzzes arbitrary agent snapshots through conversion, validation, JSON round-trip and compact rendering; delta/geometry property tests remain green. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; file-lease coordination is enforced (`readonly`/`exclusive`/`block_run`) with mode/owner surfaced in status and the SPA; shared device sessions remain out of scope. |
 | Anti-breakage gates | **Yes** (INS-R12): existing suites are untouched; CI `buf lint`/`buf breaking` compares `proto/` with the previous commit in a patched detached worktree; the connector executes `LOCATOR` cells through the shared matcher while `dispatch` routes every legacy selector exactly as before; `tests/handshake_matrix.rs` proves a `1.0.0` executor without `INSPECTOR` still runs, a future `1.x` with an unknown capability is tolerated and a `0.x` major mismatch is a `PROTOCOL` device error with exit 3; `run_path_locator_resolution_stays_within_budget` gates 2,000-node p95 resolution at 100 ms; the LSP and VS Code/WASM front ends complete and hover locator cells. |
@@ -586,6 +586,43 @@ the web connector. New coverage:
   interactive `impresario account login`. The tvOS build, wire generation and
   Swift tests are green; the tvOS hardware locator run remains pending that
   login and is not claimed as observed.
+
+Agent-payload hardening (2026-11-24): `snapshot_from_proto` in
+`crates/impresario-master/src/inspector/convert.rs` treats every agent
+snapshot as untrusted input. The converter is total: unknown roles and scroll
+axes fall back (`generic`, `vertical`), malformed nodes are skipped and
+recorded in `Snapshot.degraded[]` with `node_path: nodes[i]` and a reason, and
+the rest of the tree ships. Enforced limits and rules:
+
+- At most 5,000 retained nodes; excess keeps a parent-closed breadth-first
+  subset, restores input order and records a `PARTIAL` summary. Depth is
+  capped at 80 with the root at depth 0.
+- 4,096 characters per text/name/identifier field, 16,384 for `raw`, 1,024
+  for the device name and degraded messages. Truncated node text sets
+  `text_truncated`; identifier truncation records a `PARTIAL` entry.
+- Id `0`, duplicate ids, missing parents, parent cycles (including
+  descendants of a bad chain) and over-depth chains are skipped with per-node
+  degraded entries. Children may arrive before their parents.
+- Coordinates are clamped to ±1,000,000 logical units, sizes to
+  0..1,000,000, `visible_fraction` to 0..1, non-finite geometry to 0, pixel
+  ratio to (0, 100] and pixel dimensions to 100,000.
+- Control characters are stripped from every field; newlines/tabs survive
+  display text only. Bidi/format characters such as U+202E/U+202C/U+200F are
+  preserved so RTL labels keep their direction.
+- Degraded entries are capped at 256, including one summary for omissions.
+
+Tests cover malformed ids/duplicates/missing parents/cycles and their
+descendants, child-before-parent order, the depth limit, parent closure under
+the node cap, geometry/text/raw sanitization, large-coordinate clamps, RTL/bidi
+preservation and the degraded cap. The proptest
+`arbitrary_agent_payloads_are_total_and_well_formed` (128 cases) drives
+arbitrary ids/parents/roles/text/floats through conversion and asserts no panic,
+unique ids, retained parents with no cycles, depth/node caps, finite geometry,
+bounded strings, JSON round-trip equality and terminating compact rendering.
+Invalid UTF-8 cannot reach the converter because proto `string` fields are
+UTF-8 validated by prost at decode. CI run `45392866814` at `df13adb` passed
+all eight jobs; the cargo-test log shows all ten
+`inspector::convert::tests::*` tests and the proptest passing.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)

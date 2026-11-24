@@ -631,6 +631,17 @@ Rules for every agent change:
 - Protocol errors from agents (disconnect, runner crash, CDP detach, app backgrounded/killed): emit `Degraded`/`LeaseEvent`, attempt automatic re-attach with backoff, restore selection when possible. App not running → friendly state with "launch app" action.
 - Fuzz tests for every parser (web script output, Android node payload, Apple snapshot payload, Flutter payload) and property tests (id stability, delta apply == full snapshot).
 
+**Implemented (2026-11-24).** The master-side converter
+(`crates/impresario-master/src/inspector/convert.rs`) applies these rules to
+every agent snapshot, so all families share one hardened boundary: unknown
+roles/axes fall back, malformed/duplicate/cyclic/missing-parent/over-depth
+nodes are skipped into `degraded[]` with `nodes[i]` paths, and limits bound
+5,000 nodes, depth 80, text/identifiers/`raw`/messages and 256 degraded
+entries. Non-finite geometry is clamped, control characters are stripped and
+RTL/bidi text is preserved. A 128-case proptest drives arbitrary payloads
+through conversion, validation, JSON round-trip and compact rendering.
+Evidence: `INSPECTOR-NOTES.md` §7, CI run `45392866814` at `df13adb`.
+
 ### 13.2 Mixed/edge cases to handle explicitly
 
 Overlays/modals/popups/dialogs, keyboards, split screen, multiple windows, rotation mid-stream, iframes/cross-origin frames (mark opaque), shadow DOM, `<canvas>`/`<video>` opaque nodes, scroll containers with virtualization (recycled items), carousel/TV rails, lazy-loaded content, text scaling, RTL layouts, nodes with identical names (disambiguation by scope/nth with fragility flag).
@@ -668,6 +679,13 @@ When no tree exists (non-inspectable production TV apps, DRM surfaces, canvas/ga
 ### 15.1 Unit/property
 
 Locator matching, role map, name computation, synthesis ranking, stability scoring, id stability, delta correctness (`apply(delta, prev) == next`), pruning geometry (clip intersection, transforms), parsers (fuzz), selection re-resolution, scene edit round-trip (byte-preserving for untouched content), column resolution.
+
+**Parser fuzz status (2026-11-24).** The DSL has its own proptest suite
+(`crates/impresario-core/tests/parser_fuzz.rs`); delta/geometry keep their
+property tests; and the agent-snapshot boundary is now fuzzed through the
+master converter with a 128-case proptest that also round-trips JSON and
+renders the compact view. Evidence: `INSPECTOR-NOTES.md` §7, CI run
+`45392866814` at `df13adb`.
 
 ### 15.2 Integration
 
@@ -792,7 +810,7 @@ Each task: **Goal → Steps → Acceptance**. Do phases in order; tasks inside a
 - [ ] Only in-view elements are acquired, transported, and shown; scroll hints exist for off-view content.
 - [ ] Scroll, navigation, modal, and focus changes update both frontends automatically over the bidirectional stream.
 - [ ] A user or AI agent can select an element, get ranked Playwright-style locators, pick or create a `.scene`, and add it with the correct column auto-filled (or an explicit ambiguity resolution); the written locator is verified live and resolves identically in a real run.
-- [ ] Parsing/selection failures degrade gracefully; fuzz/property suites are green.
+- [x] Parsing/selection failures degrade gracefully; fuzz/property suites are green. *(2026-11-24: total agent-payload conversion with `degraded[]` node paths and defensive limits, plus a 128-case snapshot proptest; evidence in `INSPECTOR-NOTES.md` §7, CI run `45392866814` at `df13adb`.)*
 - [ ] Flutter apps are addressable via semantics identifiers/labels, with the diagnosis and visual fallback when not.
 - [ ] Master changes, leases, capability negotiation, config and CLI are in place; all agents implement or explicitly declare lack of the `inspector` capability.
 - [ ] All §12.4 anti-breakage gates are green; existing suites, scenes, DSL golden tests, and run-path benchmarks show no regression.
