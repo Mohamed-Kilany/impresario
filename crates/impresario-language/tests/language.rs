@@ -541,3 +541,164 @@ fn code_actions_include_create_missing_scene_and_extract_steps() {
         language.diagnostics_for(&theatre_path)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Canonical locator cells (INS-R12)
+// ---------------------------------------------------------------------------
+
+const LOCATOR_SCENE: &str = r#"Scene: LocatorScreen
+Platforms: cross-platform
+
+| Piece | web |
+|---|---|
+| Actor | role=button[name="Actor"][context=WEB] |
+| Broken | role=nope |
+"#;
+
+const LOCATOR_SCRATCH: &str = r#"Scene: LocatorScratch
+Platforms: cross-platform
+
+| Piece | web |
+|---|---|
+| Empty |  |
+| Partial | role=b |
+| Bracket | role=button[ |
+| Context | role=button[context= |
+| Quoted | " |
+"#;
+
+fn locator_scene() -> PathBuf {
+    PathBuf::from("scenes/LocatorScreen.scene")
+}
+
+fn locator_language(text: &str, path: &Path) -> Language {
+    Language::analyze(
+        &[SourceFile {
+            path: path.to_path_buf(),
+            text: text.to_string(),
+        }],
+        &[DeviceRef::new("web1", Platform::Web)],
+        &[],
+        Some(PathBuf::from(".")),
+    )
+}
+
+fn position_after(text: &str, marker: &str) -> Position {
+    let index = text.find(marker).expect("marker") + marker.len();
+    position_at(text, index)
+}
+
+fn completion_labels(language: &Language, path: &Path, position: Position) -> Vec<String> {
+    language
+        .completion(path, position)
+        .into_iter()
+        .map(|item| item.label)
+        .collect()
+}
+
+#[test]
+fn hover_explains_canonical_locator_cells() {
+    let language = locator_language(LOCATOR_SCENE, &locator_scene());
+    let hover = language
+        .hover(&locator_scene(), position_after(LOCATOR_SCENE, "role=butt"))
+        .expect("locator hover");
+    assert!(hover.markdown.contains("**Locator**"), "{}", hover.markdown);
+    assert!(
+        hover
+            .markdown
+            .contains("`role=button[name=\"Actor\"][context=WEB]`"),
+        "{}",
+        hover.markdown
+    );
+    assert!(
+        hover.markdown.contains("Context: `WEB`"),
+        "{}",
+        hover.markdown
+    );
+    let span = hover.span.expect("locator span");
+    assert_eq!(span.line, 6);
+    assert_eq!(
+        span.len,
+        "role=button[name=\"Actor\"][context=WEB]".chars().count()
+    );
+}
+
+#[test]
+fn hover_marks_invalid_locator_cells() {
+    let language = locator_language(LOCATOR_SCENE, &locator_scene());
+    let hover = language
+        .hover(&locator_scene(), position_after(LOCATOR_SCENE, "role=np"))
+        .expect("invalid locator hover");
+    assert!(
+        hover.markdown.contains("**Invalid locator**"),
+        "{}",
+        hover.markdown
+    );
+    assert!(
+        hover.markdown.contains("unknown role 'nope'"),
+        "{}",
+        hover.markdown
+    );
+}
+
+#[test]
+fn hover_leaves_legacy_selectors_alone() {
+    let language = language();
+    let position = Position::new(6, 20);
+    let hover = language.hover(&scene(), position);
+    assert!(
+        hover.is_none_or(|hover| !hover.markdown.contains("**Locator**")),
+        "legacy selector cells must not be reported as locators"
+    );
+}
+
+#[test]
+fn completion_offers_locator_vocabulary_in_scene_cells() {
+    let path = PathBuf::from("scenes/LocatorScratch.scene");
+    let language = locator_language(LOCATOR_SCRATCH, &path);
+
+    let empty = completion_labels(
+        &language,
+        &path,
+        position_after(LOCATOR_SCRATCH, "| Empty | "),
+    );
+    assert!(empty.contains(&"role=".to_string()), "{empty:?}");
+    assert!(
+        empty.contains(&"css:".to_string()),
+        "legacy prefixes stay: {empty:?}"
+    );
+
+    let roles = completion_labels(&language, &path, position_after(LOCATOR_SCRATCH, "role=b"));
+    assert!(roles.contains(&"button".to_string()), "{roles:?}");
+    assert!(roles.contains(&"textbox".to_string()), "{roles:?}");
+
+    let attributes = completion_labels(
+        &language,
+        &path,
+        position_after(LOCATOR_SCRATCH, "role=button["),
+    );
+    assert!(attributes.contains(&"name=".to_string()), "{attributes:?}");
+    assert!(
+        attributes.contains(&"context=".to_string()),
+        "{attributes:?}"
+    );
+    assert!(
+        attributes.contains(&"checked".to_string()),
+        "{attributes:?}"
+    );
+
+    let contexts = completion_labels(
+        &language,
+        &path,
+        position_after(LOCATOR_SCRATCH, "role=button[context="),
+    );
+    assert!(contexts.contains(&"WEB".to_string()), "{contexts:?}");
+    assert!(contexts.contains(&"NATIVE".to_string()), "{contexts:?}");
+
+    let quoted = completion_labels(
+        &language,
+        &path,
+        position_after(LOCATOR_SCRATCH, "| Quoted | \""),
+    );
+    assert!(!quoted.contains(&"role=".to_string()), "{quoted:?}");
+}

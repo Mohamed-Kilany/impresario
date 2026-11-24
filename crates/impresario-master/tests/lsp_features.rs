@@ -158,6 +158,107 @@ fn completions_cover_every_documented_context() {
     });
 }
 
+/// A scene with one canonical locator cell and one invalid locator cell.
+const LOCATOR_SCENE: &str = r#"Scene: Locators
+Platforms: cross-platform
+
+| Piece | web |
+|---|---|
+| Actor | role=button[name="Actor"][context=WEB] |
+| Broken | role=nope |
+"#;
+
+#[test]
+fn locator_cells_complete_and_hover_through_the_shared_engine() {
+    runtime().block_on(async {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base = temp.path();
+        lsp::standard_workspace(base, &[("web1", "web")]);
+        let locators = base.join("scenes/Locators.scene");
+
+        let mut server = TestLsp::start(base).await;
+        server.start_session(None).await;
+        let mark = server.mark();
+        server.open(&locators, LOCATOR_SCENE, 1).await;
+        server.wait_version(&locators, 1, mark).await;
+
+        // After `role=` the shared role vocabulary is offered.
+        let (line, start) = position_of(LOCATOR_SCENE, "role=");
+        let roles = server
+            .at(
+                "textDocument/completion",
+                &locators,
+                line,
+                start + "role=".len() as u64,
+            )
+            .await;
+        let roles = lsp::completion_labels(&roles);
+        assert!(roles.contains(&"button".to_string()), "{roles:?}");
+        assert!(roles.contains(&"textbox".to_string()), "{roles:?}");
+
+        // After `[` the attribute and state vocabulary is offered.
+        let (line, start) = position_of(LOCATOR_SCENE, "role=button[");
+        let attributes = server
+            .at(
+                "textDocument/completion",
+                &locators,
+                line,
+                start + "role=button[".len() as u64,
+            )
+            .await;
+        let attributes = lsp::completion_labels(&attributes);
+        assert!(attributes.contains(&"name=".to_string()), "{attributes:?}");
+        assert!(
+            attributes.contains(&"context=".to_string()),
+            "{attributes:?}"
+        );
+        assert!(
+            attributes.contains(&"checked".to_string()),
+            "{attributes:?}"
+        );
+
+        // After `[context=` the context values are offered.
+        let (line, start) = position_of(LOCATOR_SCENE, "[context=");
+        let contexts = server
+            .at(
+                "textDocument/completion",
+                &locators,
+                line,
+                start + "[context=".len() as u64,
+            )
+            .await;
+        let contexts = lsp::completion_labels(&contexts);
+        assert!(contexts.contains(&"WEB".to_string()), "{contexts:?}");
+        assert!(contexts.contains(&"NATIVE".to_string()), "{contexts:?}");
+
+        // Hover prints the canonical form and its details.
+        let (line, col) = position_of(LOCATOR_SCENE, "role=button[name");
+        let hover = server.at("textDocument/hover", &locators, line, col).await;
+        let value = hover["contents"]["value"]
+            .as_str()
+            .expect("markdown hover")
+            .to_string();
+        assert!(value.contains("**Locator**"), "{value}");
+        assert!(
+            value.contains("`role=button[name=\"Actor\"][context=WEB]`"),
+            "{value}"
+        );
+        assert!(value.contains("Context: `WEB`"), "{value}");
+
+        // An invalid locator cell explains the parse error instead of guessing.
+        let (line, start) = position_of(LOCATOR_SCENE, "role=nope");
+        let hover = server
+            .at("textDocument/hover", &locators, line, start + 5)
+            .await;
+        let value = hover["contents"]["value"]
+            .as_str()
+            .expect("markdown hover")
+            .to_string();
+        assert!(value.contains("**Invalid locator**"), "{value}");
+        assert!(value.contains("unknown role 'nope'"), "{value}");
+    });
+}
+
 #[test]
 fn hover_definitions_and_symbols_come_from_the_index() {
     runtime().block_on(async {

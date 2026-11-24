@@ -117,6 +117,42 @@ jobs:
         working-directory: editors/vscode
         run: npm run package
 
+  proto:
+    name: proto (buf lint, breaking)
+    runs-on: ubuntu-latest
+    steps:
+      # `buf breaking` compares against a git revision, so the checkout must
+      # contain the base commit (a shallow clone only has the head).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.47.2"
+      - name: Lint
+        run: buf lint
+      - name: Breaking
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            revision="$(git rev-parse "origin/${{ github.base_ref }}")"
+          elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            revision="$(git rev-parse HEAD~1)"
+          else
+            echo "No parent commit; skipping buf breaking on the initial commit"
+            exit 0
+          fi
+          # Early revisions shipped a v2 buf.yaml with a top-level `name`,
+          # which newer buf releases reject before comparing anything. Compare
+          # against a detached worktree with the current config so the gate
+          # measures proto compatibility, not historical config drift.
+          base_dir="$(mktemp -d)"
+          git worktree add --detach "$base_dir" "$revision" >/dev/null
+          trap 'git worktree remove --force "$base_dir" >/dev/null 2>&1 || true' EXIT
+          cp buf.yaml "$base_dir/buf.yaml"
+          echo "Comparing proto against $revision"
+          buf breaking --config buf.yaml --against "$base_dir"
+
   android:
     name: android (JVM unit tests, APKs)
     runs-on: ubuntu-latest
@@ -212,7 +248,7 @@ jobs:
   gate:
     name: all checks
     if: always()
-    needs: [fmt, clippy, test, windows, editor, android, apple]
+    needs: [fmt, clippy, test, windows, editor, proto, android, apple]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to pass
@@ -222,6 +258,7 @@ jobs:
           echo "test=${{ needs.test.result }}"
           echo "windows=${{ needs.windows.result }}"
           echo "editor=${{ needs.editor.result }}"
+          echo "proto=${{ needs.proto.result }}"
           echo "android=${{ needs.android.result }}"
           echo "apple=${{ needs.apple.result }}"
           test "${{ needs.fmt.result }}" = "success"
@@ -229,5 +266,6 @@ jobs:
           test "${{ needs.test.result }}" = "success"
           test "${{ needs.windows.result }}" = "success"
           test "${{ needs.editor.result }}" = "success"
+          test "${{ needs.proto.result }}" = "success"
           test "${{ needs.android.result }}" = "success"
           test "${{ needs.apple.result }}" = "success"

@@ -3483,6 +3483,7 @@ name = "impresario-language"
 version = "1.0.0"
 dependencies = [
  "impresario-core",
+ "impresario-locator",
  "serde",
  "serde_json",
  "tempfile",

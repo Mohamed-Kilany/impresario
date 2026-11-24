@@ -33,9 +33,42 @@ impl Language {
             .occurrence_at(path, position.line as usize, position.col as usize)
     }
 
+    /// The canonical locator cell (raw text and quoted span) under a position.
+    fn locator_cell_at(&self, path: &Path, position: Position) -> Option<(String, Span)> {
+        let line = position.line as usize;
+        let col = position.col as usize;
+        for scene in self.index.scenes.values() {
+            if scene.path.as_path() != path {
+                continue;
+            }
+            for piece in &scene.pieces {
+                for selector in &piece.selectors {
+                    let span = &selector.span;
+                    if span.line == line
+                        && col >= span.col
+                        && col <= span.col.saturating_add(span.len)
+                        && impresario_locator::is_locator_expression(&selector.raw)
+                    {
+                        return Some((selector.raw.clone(), span.clone()));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Hover at a position.
     #[must_use]
     pub fn hover(&self, path: &Path, position: Position) -> Option<HoverResult> {
+        // Canonical locator cells are not symbols, so they are checked first.
+        // Legacy `prefix:value` cells are left to the selector/diagnostic
+        // tooling exactly as before.
+        if let Some((raw, span)) = self.locator_cell_at(path, position) {
+            return Some(HoverResult {
+                markdown: locator_markdown(&raw),
+                span: Some(span),
+            });
+        }
         if let Some(occurrence) = self.symbol_at(path, position) {
             let markdown = match &occurrence.key {
                 SymbolKey::Actor(name) => self.actor_markdown(name, Some(&occurrence.span)),
@@ -1557,6 +1590,65 @@ fn config_diagnostics_error(
         format!("cannot parse {}", path.display())
     } else {
         format!("cannot rename in {}: {messages}", path.display())
+    }
+}
+
+fn locator_markdown(raw: &str) -> String {
+    match impresario_locator::parse(raw) {
+        Ok(locator) => {
+            let canonical = impresario_locator::print(&locator);
+            let mut out = format!("**Locator** — canonical form\n\n`{canonical}`\n\n");
+            out.push_str(&format!("- Steps: {}\n", locator.steps.len()));
+            if !locator.within.is_empty() {
+                let scopes = locator
+                    .within
+                    .iter()
+                    .map(impresario_locator::print)
+                    .collect::<Vec<_>>()
+                    .join("`, `");
+                out.push_str(&format!("- Scopes: `{scopes}`\n"));
+            }
+            if let Some(context) = locator.context {
+                out.push_str(&format!("- Context: `{}`\n", context.as_str()));
+            }
+            if let Some(nth) = locator.nth {
+                out.push_str(&format!("- Match index: `{nth}` (0-based)\n"));
+            }
+            if locator.first {
+                out.push_str("- Match: first\n");
+            }
+            if locator.last {
+                out.push_str("- Match: last\n");
+            }
+            if !locator.visible {
+                out.push_str("- Visibility: hidden elements are included\n");
+            }
+            let states = locator
+                .steps
+                .iter()
+                .flat_map(|step| step.states.iter())
+                .map(|state| {
+                    format!(
+                        "{}{}",
+                        state.state.as_str(),
+                        if state.value { "" } else { "=false" }
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !states.is_empty() {
+                out.push_str(&format!("- States: `{}`\n", states.join("`, `")));
+            }
+            out.push_str(
+                "\nThe inspector and the runner resolve this cell with the same \
+                 `impresario-locator` matcher. Legacy `prefix:value` selectors keep \
+                 their existing meaning.",
+            );
+            out
+        }
+        Err(error) => format!(
+            "**Invalid locator** — `{raw}`\n\n{error}\n\nLocator cells are detected by \
+             locator keywords (`role=`, `text=`, ...), `focused`, `>>` or `within(`."
+        ),
     }
 }
 

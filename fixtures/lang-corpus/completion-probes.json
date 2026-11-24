@@ -69,6 +69,34 @@
     ]
   },
   {
+    "path": "scenes/ActorScreen.scene",
+    "line": 6,
+    "col": 22,
+    "contains": [
+      "button",
+      "textbox"
+    ]
+  },
+  {
+    "path": "scenes/ActorScreen.scene",
+    "line": 6,
+    "col": 29,
+    "contains": [
+      "name=",
+      "context=",
+      "checked"
+    ]
+  },
+  {
+    "path": "scenes/ActorScreen.scene",
+    "line": 6,
+    "col": 51,
+    "contains": [
+      "WEB",
+      "NATIVE"
+    ]
+  },
+  {
     "path": "plays/examples.play",
     "line": 6,
     "col": 10,

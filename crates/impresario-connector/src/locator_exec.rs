@@ -734,4 +734,54 @@ mod tests {
         let found = match_snapshot(&snap, "role=button").expect("orphan");
         assert_eq!(found.len(), 1);
     }
+
+    /// INS-R12 run-path latency gate: a large viewport snapshot must resolve a
+    /// canonical locator well inside the per-command budget. This exercises
+    /// the exact path a `LOCATOR` selector takes (`wire_nodes` +
+    /// `impresario_locator::resolve`), not a synthetic matcher loop.
+    #[test]
+    fn run_path_locator_resolution_stays_within_budget() {
+        use std::time::Instant;
+
+        const NODES: u64 = 2_000;
+        const RUNS: usize = 40;
+        const BUDGET_MS: u128 = 100;
+
+        let mut nodes = Vec::with_capacity(usize::try_from(NODES).expect("capacity"));
+        nodes.push(node(1, 0, "generic", ""));
+        for id in 2..=NODES {
+            let name = if id == NODES {
+                "Target".to_string()
+            } else {
+                format!("Button {id}")
+            };
+            nodes.push(node(id, 1, "button", &name));
+        }
+        let snap = snapshot(nodes);
+
+        // Warm caches and prove the locator selects exactly the target.
+        let warm = match_snapshot(&snap, "role=button[name=\"Target\"]").expect("warmup");
+        assert_eq!(warm.len(), 1);
+        assert_eq!(warm[0].id, format!("e{NODES}"));
+
+        let mut samples = Vec::with_capacity(RUNS);
+        for _ in 0..RUNS {
+            let started = Instant::now();
+            let found =
+                match_snapshot(&snap, "role=button[name=\"Target\"]").expect("measured run");
+            samples.push(started.elapsed());
+            assert_eq!(found.len(), 1);
+        }
+        samples.sort_unstable();
+        let p95_index = samples.len().saturating_mul(95) / 100;
+        let p95 = samples
+            .get(p95_index.saturating_sub(1))
+            .copied()
+            .expect("p95 sample");
+        assert!(
+            p95.as_millis() <= BUDGET_MS,
+            "p95 run-path locator resolution was {p95:?} over {RUNS} runs of {NODES} nodes \
+             (budget {BUDGET_MS} ms)"
+        );
+    }
 }

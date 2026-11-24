@@ -351,12 +351,15 @@ the implementation keeps the grammar in one module so a rename is local.
       `?token=` (no cookie exchange yet).
 - [ ] INS-7.3 Full benchmark run — **deferred** with hardware; the mock
       pipeline benchmark is implemented.
-- [x] INS-7.4 Docs added (`CLI.md`, `WEB.md`, `MCP.md`, this file). The
-      anti-breakage gates are still **not** all enforced: CI has no `buf
-      breaking` step, no run-path latency gate, no old/new handshake matrix,
-      and the LSP/TS grammar does not yet complete/hover locator cells
-      (INS-R12). The existing fixture suite and the legacy selectors remain
-      untouched and run alongside the new locator suite.
+- [x] INS-7.4 Docs added (`CLI.md`, `WEB.md`, `MCP.md`, this file) and the
+      anti-breakage gates are enforced (INS-R12): CI has a `proto` job
+      (`buf lint` plus `buf breaking` against the previous commit in a patched
+      detached worktree), the connector has a 2,000-node p95 run-path latency
+      gate, `tests/handshake_matrix.rs` pins the old/new executor matrix, and
+      locator cells complete and hover through the shared
+      `impresario-locator` vocabulary in the pure service, the LSP and the
+      VS Code/WASM front end. The existing fixture suite and the legacy
+      selectors remain untouched and run alongside the new locator suite.
 - [x] INS-7.5 Final checklist updated honestly (§6).
 
 ---
@@ -372,7 +375,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | Graceful degradation + fuzz/property suites | **Partial**: tolerant parsers and property tests for delta/geometry; agent-payload fuzzing remains open. |
 | Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; file-lease coordination is enforced (`readonly`/`exclusive`/`block_run`) with mode/owner surfaced in status and the SPA; shared device sessions remain out of scope. |
-| Anti-breakage gates | Existing suites untouched; proto is append-only by inspection; legacy selectors preserved and still covered by `fixtures_suite.rs`. The connector run path now executes `LOCATOR` cells without changing the legacy path (`dispatch` still routes non-locator selectors exactly as before). `buf breaking`, run-path latency and handshake-matrix gates are **not** wired, and LSP/TS locator completion is absent (INS-R12). |
+| Anti-breakage gates | **Yes** (INS-R12): existing suites are untouched; CI `buf lint`/`buf breaking` compares `proto/` with the previous commit in a patched detached worktree; the connector executes `LOCATOR` cells through the shared matcher while `dispatch` routes every legacy selector exactly as before; `tests/handshake_matrix.rs` proves a `1.0.0` executor without `INSPECTOR` still runs, a future `1.x` with an unknown capability is tolerated and a `0.x` major mismatch is a `PROTOCOL` device error with exit 3; `run_path_locator_resolution_stays_within_budget` gates 2,000-node p95 resolution at 100 ms; the LSP and VS Code/WASM front ends complete and hover locator cells. |
 | Docs + notes reviewed | Docs added; owner review pending. |
 
 ---

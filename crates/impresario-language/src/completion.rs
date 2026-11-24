@@ -11,6 +11,7 @@ use impresario_core::keys::RemoteKey;
 use impresario_core::platforms::Platform;
 use impresario_core::probe::{self, DrmProvider, PlayerStatus, ProbeProperty};
 use impresario_core::support::{self, CheckVerb, Verb};
+use impresario_locator::{Context as LocatorContext, Role, State};
 
 use crate::service::{CompletionItem, Language};
 use crate::text::{Doc, Position};
@@ -781,7 +782,10 @@ impl Language {
                 .find(|p| p.as_str() == cell.trim())
         });
         if let Some(platform) = platform {
-            return Some(selector_prefix_items(platform));
+            let cell = cells.last().map_or("", String::as_str);
+            let mut items = selector_prefix_items(platform);
+            items.extend(locator_cell_items(cell));
+            return Some(items);
         }
         Some(Vec::new())
     }
@@ -1565,6 +1569,178 @@ fn selector_prefix_items(key: Platform) -> Vec<CompletionItem> {
     prefixes
         .iter()
         .map(|prefix| simple(*prefix, "enumMember"))
+        .collect()
+}
+
+/// Completion for canonical locator cells (INS-R12).
+///
+/// Legacy `prefix:value` cells keep their existing prefix list. Locator
+/// keywords are additive; a cell is only treated as a locator once it carries
+/// a locator keyword (the same conservative detector the parser and runner
+/// use). Starters are offered for an empty cell or a bare partial word.
+fn locator_cell_items(cell: &str) -> Vec<CompletionItem> {
+    let trimmed = cell.trim_start();
+    if trimmed.is_empty() {
+        return locator_starters();
+    }
+    // Legacy quoted selectors are left alone until a locator keyword appears.
+    if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+        return Vec::new();
+    }
+    if !impresario_locator::is_locator_expression(trimmed) {
+        let bare = !trimmed
+            .chars()
+            .any(|ch| matches!(ch, '=' | ':' | '[' | ']' | '>' | '<' | '(' | ')'));
+        return if bare { locator_starters() } else { Vec::new() };
+    }
+    locator_fragment_items(trimmed)
+}
+
+fn locator_fragment_items(fragment: &str) -> Vec<CompletionItem> {
+    let segment = fragment
+        .rsplit(">>")
+        .next()
+        .unwrap_or(fragment)
+        .trim_start();
+    if let Some(inner) = segment.strip_prefix("within(") {
+        if !segment.contains(')') {
+            return locator_step_items(inner.trim_start());
+        }
+        if segment.trim_end().ends_with(')') {
+            return vec![simple(">>", "operator")];
+        }
+    }
+    locator_step_items(segment)
+}
+
+fn locator_step_items(step: &str) -> Vec<CompletionItem> {
+    if let Some(bracket) = unmatched_bracket(step) {
+        return locator_attribute_items(bracket);
+    }
+    if step.is_empty() {
+        return locator_step_starters();
+    }
+    if let Some(value) = step.strip_prefix("role=") {
+        if !value.contains('[') {
+            return locator_role_items();
+        }
+    }
+    for kind in [
+        "text=",
+        "label=",
+        "placeholder=",
+        "alt=",
+        "title=",
+        "testid=",
+        "id=",
+        "css=",
+        "xpath=",
+        "region=",
+        "focused",
+    ] {
+        if step.starts_with(kind) {
+            return Vec::new();
+        }
+    }
+    if !step.chars().any(|ch| matches!(ch, '=' | '[' | '(')) {
+        return locator_step_starters();
+    }
+    Vec::new()
+}
+
+fn locator_attribute_items(rest: &str) -> Vec<CompletionItem> {
+    let rest = rest.trim_start();
+    if let Some(value) = rest.strip_prefix("context=") {
+        if !value.contains(']') {
+            return LocatorContext::ALL
+                .iter()
+                .map(|context| simple(context.as_str(), "enumMember"))
+                .collect();
+        }
+    }
+    if let Some((key, value)) = rest.split_once('=') {
+        if !value.contains(']') {
+            let key = key.trim();
+            if key == "has" || key == "has-not" {
+                return locator_step_starters();
+            }
+            if key == "visible" || State::ALL.iter().any(|state| state.as_str() == key) {
+                return ["true", "false"]
+                    .into_iter()
+                    .map(|value| simple(value, "enumMember"))
+                    .collect();
+            }
+            if matches!(key, "name" | "nth" | "region") {
+                return Vec::new();
+            }
+        }
+    }
+    if rest.contains('"') || rest.contains('\'') {
+        return Vec::new();
+    }
+    let mut items = vec![simple("name=", "property")];
+    for state in State::ALL {
+        items.push(simple(state.as_str(), "enumMember"));
+    }
+    items.extend(
+        [
+            "first",
+            "last",
+            "visible=",
+            "nth=",
+            "context=",
+            "has=(",
+            "has-not=(",
+        ]
+        .into_iter()
+        .map(|item| simple(item, "property")),
+    );
+    items
+}
+
+/// The text after an unmatched `[`, or `None` when every bracket is closed.
+fn unmatched_bracket(text: &str) -> Option<&str> {
+    let open = text.rfind('[')?;
+    let tail = text.get(open.saturating_add(1)..)?;
+    if tail.contains(']') {
+        None
+    } else {
+        Some(tail)
+    }
+}
+
+fn locator_starters() -> Vec<CompletionItem> {
+    let mut items = locator_step_starters();
+    let mut within = simple("within(", "keyword");
+    within.insert_text = Some("within()".to_string());
+    items.push(within);
+    items
+}
+
+fn locator_step_starters() -> Vec<CompletionItem> {
+    [
+        "role=",
+        "text=",
+        "label=",
+        "placeholder=",
+        "alt=",
+        "title=",
+        "testid=",
+        "id=",
+        "css=",
+        "xpath=",
+        "region=",
+        "focused",
+    ]
+    .into_iter()
+    .map(|item| simple(item, "keyword"))
+    .collect()
+}
+
+fn locator_role_items() -> Vec<CompletionItem> {
+    Role::ALL
+        .iter()
+        .map(|role| simple(role.as_str(), "enumMember"))
         .collect()
 }
 

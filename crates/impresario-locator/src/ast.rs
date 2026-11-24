@@ -16,6 +16,14 @@ pub enum Context {
 }
 
 impl Context {
+    /// Every context, in a stable order.
+    pub const ALL: &'static [Context] = &[
+        Context::Native,
+        Context::WebView,
+        Context::Flutter,
+        Context::Web,
+    ];
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -43,6 +51,19 @@ pub enum State {
 }
 
 impl State {
+    /// Every state, in a stable order.
+    pub const ALL: &'static [State] = &[
+        State::Enabled,
+        State::Disabled,
+        State::Focused,
+        State::Selected,
+        State::Checked,
+        State::Expanded,
+        State::Pressed,
+        State::ReadOnly,
+        State::Required,
+    ];
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {

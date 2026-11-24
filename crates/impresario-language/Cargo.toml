@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 impresario-core = { path = "../impresario-core" }
+impresario-locator = { path = "../impresario-locator" }
 serde.workspace = true
 serde_json.workspace = true
 yaml-edit.workspace = true

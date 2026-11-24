@@ -3,4 +3,4 @@ Platforms: cross-platform
 
 | Piece | web | android |
 |---|---|---|
-| ActorButton | #actor | id:actor |
+| ActorButton | role=button[name="Actor"][context=WEB] | id:actor |

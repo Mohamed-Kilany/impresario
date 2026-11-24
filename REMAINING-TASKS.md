@@ -37,7 +37,7 @@ Device inventory available for this pass:
 | INS-R9 | Android inspector hardware acceptance (snapshot, screenshot, input, detach/reattach) on phone and TV | STATUS component row | Yes | done 2026-11-15 (phone and TV) |
 | INS-R10 | tvOS inspector hardware acceptance (snapshot, screenshot, focus, input) | TASK-INSPECTOR Phase 5 | Yes (Apple TV) | done 2026-11-16 — snapshot, screenshot, focus/D-pad, scroll, Select and detach/reattach passed 2026-11-15; type and `keyboard hide` passed 2026-11-16 |
 | INS-R11 | INS-0.3 Appium Inspector baseline and INS-7.3 full benchmark; only the mock core benchmark exists | INS-0.3 / INS-7.3 | Appium baseline no; device timings yes | deferred |
-| INS-R12 | Anti-breakage gates: `buf breaking`, run-path latency gate, old/new handshake matrix, LSP/TS locator-cell completion and hover | INS-7.4 | CI/code | todo |
+| INS-R12 | Anti-breakage gates: `buf breaking`, run-path latency gate, old/new handshake matrix, LSP/TS locator-cell completion and hover | INS-7.4 | CI/code | done 2026-11-24 - new `proto` CI job (`buf lint` + `buf breaking` against the previous commit in a patched worktree), connector 2,000-node p95 run-path latency gate, `handshake_matrix.rs` (1.0.0 without `INSPECTOR`, future 1.x with an unknown capability, 0.x major mismatch), and locator completion/hover in the shared language service plus LSP and corpus probes |
 | INS-R13 | Owner review of `CLI.md`, `WEB.md`, `MCP.md` and `INSPECTOR-NOTES.md` | Definition-of-done table | Owner | deferred |
 
 ## 2. TASK-2 partials

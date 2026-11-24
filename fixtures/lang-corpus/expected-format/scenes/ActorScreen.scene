@@ -1,6 +1,6 @@
 Scene: ActorScreen
 Platforms: cross-platform
 
-| Piece       | web    | android  |
-|-------------|--------|----------|
-| ActorButton | #actor | id:actor |
+| Piece       | web                                    | android  |
+|-------------|----------------------------------------|----------|
+| ActorButton | role=button[name="Actor"][context=WEB] | id:actor |

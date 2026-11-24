@@ -28,6 +28,13 @@
     "contains": ["Evidence class", "authoritative", "corroborated"]
   },
   {
+    "op": "hover",
+    "path": "scenes/ActorScreen.scene",
+    "line": 6,
+    "col": 20,
+    "contains": ["**Locator**", "canonical form", "Context: `WEB`"]
+  },
+  {
     "op": "definition",
     "path": "plays/login.play",
     "line": 8,
