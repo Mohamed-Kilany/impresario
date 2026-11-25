@@ -1,0 +1,136 @@
+name: Release artifacts
+
+# Manual packaging for a clean host. The ordinary CI gate already builds and
+# tests the same sources; this workflow only turns the current ref into
+# copyable host binaries so a machine without a Rust toolchain can run
+# Impresario. Trigger it on `master` after a green CI run:
+#
+#   gh workflow run release.yml --ref master
+#
+# The Apple agent bundle is produced by `Apple Xcode` (unsigned; signing and
+# installation stay on the host, docs/DEVICES.md section 3.3).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 5
+
+jobs:
+  macos:
+    name: macOS CLI (universal)
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The archive is universal so the same download works on Apple
+          # Silicon and Intel Macs.
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build arm64
+        run: |
+          cargo build --locked --release \
+            -p impresario-master -p impresario-connector \
+            --target aarch64-apple-darwin
+
+      - name: Build x86_64
+        run: |
+          cargo build --locked --release \
+            -p impresario-master -p impresario-connector \
+            --target x86_64-apple-darwin
+
+      - name: Assemble archive
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/impresario \
+            target/x86_64-apple-darwin/release/impresario \
+            -output dist/impresario
+          lipo -create \
+            target/aarch64-apple-darwin/release/impresario-connector \
+            target/x86_64-apple-darwin/release/impresario-connector \
+            -output dist/impresario-connector
+          chmod +x dist/impresario dist/impresario-connector
+          # Ad-hoc signing keeps Gatekeeper from rejecting the freshly built
+          # Mach-O outright; downloaded archives may still need the quarantine
+          # attribute cleared (see INSTALL.txt).
+          codesign --force --sign - dist/impresario dist/impresario-connector
+          lipo -info dist/impresario
+          lipo -info dist/impresario-connector
+          ./dist/impresario --version
+          ./dist/impresario-connector --help >/dev/null
+          cp README.md dist/README.md
+          cat > dist/INSTALL.txt <<'EOF'
+          Impresario host binaries for macOS (universal: arm64 + x86_64)
+          ===============================================================
+
+          These binaries were built from the master branch by the `Release
+          artifacts` GitHub workflow. They are unsigned/adhoc-signed; they are
+          not notarized by Apple.
+
+          Install
+          -------
+
+            1. Unzip this archive.
+            2. Move both binaries to a directory on PATH, for example:
+
+                 mkdir -p ~/.local/bin
+                 mv impresario impresario-connector ~/.local/bin/
+                 chmod +x ~/.local/bin/impresario ~/.local/bin/impresario-connector
+
+            3. If macOS quarantined the download:
+
+                 xattr -d com.apple.quarantine ~/.local/bin/impresario
+                 xattr -d com.apple.quarantine ~/.local/bin/impresario-connector
+
+            4. Verify:
+
+                 impresario --version
+                 impresario doctor
+
+          `impresario` starts `impresario-connector` from the same directory
+          for web targets, so keep them together.
+
+          tvOS
+          ----
+
+          The Xcode agent bundle is uploaded by the separate `Apple Xcode`
+          workflow as `impresario-apple-unsigned` (tvOS/iOS .app products and
+          .xctestrun files). The unsigned apps cannot be installed directly.
+          On the Mac, import the products and provision signing first:
+
+            impresario account login
+            impresario apple signing provision --name default --platform tvos
+            impresario apple products import ./Debug-appletvos --name current
+            impresario apple pair --host <apple-tv-host>
+            impresario device check <device-name> --plain
+
+          Full commands and limitations: docs/DEVICES.md section 3.3.
+          EOF
+          (cd dist && zip -q -r ../impresario-macos-universal.zip .)
+          shasum -a 256 impresario-macos-universal.zip | tee impresario-macos-universal.zip.sha256
+
+      - name: Upload macOS archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: impresario-macos-universal
+          path: |
+            impresario-macos-universal.zip
+            impresario-macos-universal.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
