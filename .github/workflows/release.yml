@@ -15,10 +15,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -27,8 +23,8 @@ env:
 jobs:
   macos:
     name: macOS CLI (universal)
-    runs-on: macos-14
-    timeout-minutes: 90
+    runs-on: macos-15
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
