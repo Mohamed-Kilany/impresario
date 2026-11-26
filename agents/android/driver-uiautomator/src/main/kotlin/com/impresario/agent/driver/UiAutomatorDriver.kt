@@ -1,6 +1,7 @@
 package com.impresario.agent.driver
 
 import android.app.Instrumentation
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect as AndroidRect
@@ -90,6 +91,38 @@ internal fun scrollSwipePath(
 internal fun testIdFromResourceId(resourceId: String): String =
     resourceId.substringAfter("id/", resourceId)
 
+/**
+ * Flutter's Android embedding v2 declares `flutterEmbedding` in the app
+ * manifest. Presence is the release-build-safe marker; its value is the
+ * embedding version.
+ */
+internal const val FLUTTER_EMBEDDING_KEY: String = "flutterEmbedding"
+
+internal fun hasFlutterEmbedding(markers: Set<String>): Boolean =
+    markers.contains(FLUTTER_EMBEDDING_KEY)
+
+/**
+ * True when a detected Flutter app exposes at least one addressable semantics
+ * node. Flutter paints its own pixels; with semantics off, the platform tree
+ * is an unlabeled `FlutterView` with no name, role, test id or scroll/action
+ * information.
+ */
+internal fun hasUsableFlutterSemantics(nodes: List<InspectorNode>): Boolean =
+    nodes.any { node ->
+        node.name.isNotEmpty() ||
+            node.text.isNotEmpty() ||
+            node.description.isNotEmpty() ||
+            node.label.isNotEmpty() ||
+            node.placeholder.isNotEmpty() ||
+            node.value.isNotEmpty() ||
+            node.testId.isNotEmpty() ||
+            node.focused ||
+            node.scrollable ||
+            node.canScrollBackward ||
+            node.canScrollForward ||
+            (node.role.isNotEmpty() && node.role != "generic")
+    }
+
 private fun Direction.opposite(): Direction = when (this) {
     Direction.UP -> Direction.DOWN
     Direction.DOWN -> Direction.UP
@@ -166,6 +199,9 @@ class UiAutomatorDriver(
      * re-resolves.
      */
     private var inspectorHistory: LinkedHashMap<Long, InspectorRevision> = LinkedHashMap()
+
+    /** Flutter manifest-marker detection, cached per package for the session. */
+    private val flutterPackages = HashMap<String, Boolean>()
 
     @Volatile
     var lastLaunchedPackage: String = ""
@@ -853,6 +889,8 @@ class UiAutomatorDriver(
         val nativeNodes = HashMap<Long, AccessibilityNodeInfo>(256)
         val nativeRects = HashMap<Long, Rect>(256)
         var traversalTruncated = false
+        val packageName = options.appId.ifEmpty { device.currentPackageName.orEmpty() }
+        val flutter = isFlutterPackage(packageName)
 
         fun walk(node: AccessibilityNodeInfo?, parentId: Long, depth: Int, systemUi: Boolean) {
             if (node == null) return
@@ -963,6 +1001,7 @@ class UiAutomatorDriver(
                         .put("focusable", node.isFocusable)
                         .put("checkable", node.isCheckable)
                         .put("checked", checked)
+                        .put("framework", if (flutter) "flutter" else "native")
                         .put("bounds", pixelRect.toString())
                         .toString(),
                 )
@@ -1010,6 +1049,11 @@ class UiAutomatorDriver(
         val degraded = ArrayList<String>()
         if (nodes.isEmpty()) {
             degraded += "UNAVAILABLE: the active window has no accessibility root"
+        }
+        if (flutter && !hasUsableFlutterSemantics(nodes.filter { !it.systemUi })) {
+            degraded += "FLUTTER_SEMANTICS_OFF: this Flutter app exposes no usable semantics; " +
+                "add the impresario_flutter package and call Impresario.ensureSemantics() " +
+                "in a QA/debug build"
         }
         if (traversalTruncated) {
             degraded += "PARTIAL: the accessibility tree hit the traversal budget; some nodes may be missing"
@@ -1131,6 +1175,37 @@ class UiAutomatorDriver(
             SWIPE_STEPS
         }
         device.swipe(start.first, start.second, end.first, end.second, steps)
+    }
+
+    /**
+     * Release-build-safe Flutter detection: the app manifest carries
+     * `flutterEmbedding` when the Flutter Android embedding is used. Cached per
+     * package; a reinstall during one agent lifetime keeps the first answer.
+     */
+    private fun isFlutterPackage(packageName: String): Boolean {
+        if (packageName.isEmpty()) return false
+        synchronized(flutterPackages) {
+            flutterPackages[packageName]?.let { return it }
+        }
+        val detected = try {
+            val manager = instrumentation.targetContext.packageManager
+            // `metaData` is only populated when GET_META_DATA is requested.
+            val flags = PackageManager.GET_META_DATA
+            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                manager.getApplicationInfo(
+                    packageName,
+                    PackageManager.ApplicationInfoFlags.of(flags.toLong()),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                manager.getApplicationInfo(packageName, flags)
+            }
+            info.metaData?.let { hasFlutterEmbedding(it.keySet()) } ?: false
+        } catch (_: Exception) {
+            false
+        }
+        synchronized(flutterPackages) { flutterPackages[packageName] = detected }
+        return detected
     }
 
     /** Roots to traverse: the app window, plus system windows when opted in. */

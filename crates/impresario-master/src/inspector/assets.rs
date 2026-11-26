@@ -30,4 +30,18 @@ mod tests {
         assert!(APP_JS.contains("sendKey(event.key.slice(5).toLowerCase())"));
         assert!(APP_JS.contains("FALLBACK_KEYS"));
     }
+
+    #[test]
+    fn flutter_banner_starts_hidden() {
+        assert!(INDEX_HTML.contains("id=\"flutter-banner\""));
+        assert!(INDEX_HTML.contains("class=\"banner warn\" role=\"status\" hidden"));
+    }
+
+    #[test]
+    fn flutter_banner_is_driven_by_snapshot_degradations() {
+        assert!(APP_JS.contains("state.snapshot.degraded"));
+        assert!(APP_JS.contains("'FLUTTER_SEMANTICS_OFF'"));
+        assert!(APP_JS.contains("byId('flutter-banner')"));
+        assert!(APP_JS.contains("Impresario.ensureSemantics()"));
+    }
 }

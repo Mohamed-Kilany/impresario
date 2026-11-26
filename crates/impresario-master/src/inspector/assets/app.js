@@ -195,6 +195,13 @@ function applyStatus(status) {
   if (!wasAttached && status && status.attached) scheduleScreenshot();
 }
 
+function degradedEntry(reason) {
+  const entries = state.snapshot && Array.isArray(state.snapshot.degraded)
+    ? state.snapshot.degraded
+    : [];
+  return entries.find((entry) => entry && entry.reason === reason) || null;
+}
+
 function renderStatus() {
   const status = state.status;
   const meta = state.meta;
@@ -237,6 +244,19 @@ function renderStatus() {
   } else {
     banner.hidden = true;
     banner.textContent = '';
+  }
+
+  const flutterBanner = byId('flutter-banner');
+  const flutterOff = degradedEntry('FLUTTER_SEMANTICS_OFF');
+  if (flutterOff) {
+    flutterBanner.hidden = false;
+    flutterBanner.textContent = flutterOff.message ||
+      'Flutter semantics are off: this app exposes no usable accessibility ' +
+      'nodes. Labels, roles and test ids are unavailable until a QA/debug ' +
+      'build calls Impresario.ensureSemantics().';
+  } else {
+    flutterBanner.hidden = true;
+    flutterBanner.textContent = '';
   }
 
   const summary = [];
