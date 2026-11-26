@@ -663,13 +663,13 @@ fn validate_group_candidate(
     let target_is_workspace = path == workspace_path;
     let mut merged = DevicesConfig::default();
     if target_is_workspace {
-        if let Some(layer) = read_group_layer(&home.devices_path())? {
+        if let Some(layer) = read_devices_layer(&home.devices_path())? {
             merge_group_layer(&mut merged, layer);
         }
         merge_group_layer(&mut merged, target);
     } else {
         merge_group_layer(&mut merged, target);
-        if let Some(layer) = read_group_layer(workspace_path)? {
+        if let Some(layer) = read_devices_layer(workspace_path)? {
             merge_group_layer(&mut merged, layer);
         }
     }
