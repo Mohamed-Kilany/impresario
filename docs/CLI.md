@@ -93,6 +93,7 @@ each play still intersects the selected devices with its effective actors.
 
 ```powershell
 impresario device add --name phone --type android --ip 10.0.0.5
+impresario device add --workspace --name phone2 --type android --ip 10.0.0.6 --port 38103
 impresario device add --workspace --name web1 --type web --ip 127.0.0.1
 impresario device list --json
 impresario group add phones phone tv
@@ -103,7 +104,10 @@ impresario group remove screens --workspace
 ```
 
 `device` and `group` write the global layer by default; `--workspace` targets
-the workspace file. `group add` refuses a name that already exists in the
+the workspace file. `--port` is the Android/Android TV wireless-debugging ADB
+port: an integer in `1..=65535` (default `5555`), rejected for every other
+device type. The implicit `5555` is never written to YAML; only a non-default
+port is stored. `group add` refuses a name that already exists in the
 target layer, `group set` creates or replaces it, and `group remove` deletes it.
 Every edit preserves the existing file text so comments and ordering survive
 (an existing `groups:` block is edited in place; a missing one is appended),
@@ -721,12 +725,30 @@ process, so validation and comment-preserving YAML edits have one
 implementation. Group names cannot be renamed in place (see above).
 
 **Devices/Apps/Config screens** (menu → the section, or `/devices`, `/apps`,
-`/config`): `j`/`k` scroll, `Enter` opens the
-relevant file in `$VISUAL`/`$EDITOR`, `r` reloads from disk. The Config screen
-shows the effective setting, its value and its winning layer, plus the typed
-`impresario.config` values. These three screens are viewers: add/edit/remove is
-the matching CLI command typed at the prompt (or `device wizard`), not a
-dedicated in-TUI form (recorded as a partial in `docs/STATUS.md` gap 19).
+`/config`): `j`/`k` move, `g`/`G` jump, `a` adds, `Enter`/`e` edits, `x` or
+`Delete` removes after confirmation (`Enter`/`y`; `Esc`/`n` cancels), `o` opens
+the owning file in `$VISUAL`/`$EDITOR`, and `r` reloads from disk. Add forms
+target the workspace layer; edit and remove target the selected row's winning
+layer. Every save runs the matching validated child command (`device
+add|edit|remove`, `app add|edit|remove`, `config set|unset`) with the same
+`--workspace`/`--global` scope, so validation and comment-preserving YAML edits
+have one implementation; a rejected command leaves the form open and reports
+the child's error in the status line.
+
+The Devices form edits name (add only), type, IP and port; the port is the
+Android/Android TV ADB port and stays blank when the implicit `5555` applies.
+Device `edit` keeps the CLI's replacement semantics: auth, labels and other
+options not shown in the form are reset, so use `o` for definitions that carry
+them. The Apps form edits name (add only), description, comma-separated
+`platform=value` lists for platforms, packages and launch activities,
+`key=value` launch params, and a Space-toggled clear-data flag. The Config
+screen shows each effective setting, its value and winning layer: `Enter`/`e`
+opens a value form for a schema setting, `x` confirms an unset, and `a` adds a
+key. Add writes the workspace layer unless the key is global-only; edit and
+unset target the winning layer, and global-only keys always use `--global`.
+Derived `typed` rows (`project`, `plays_dir`, `config.path`) and keys unknown
+to the settings schema are file-only: `Enter`/`o` opens the file and `x` says
+to edit it there. Names and keys are locked while editing.
 
 ### Slash commands
 

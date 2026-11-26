@@ -129,6 +129,9 @@ pub struct DeviceAddArgs {
     /// Device IPv4 or IPv6 address (127.0.0.1 for the local web).
     #[arg(long)]
     pub ip: String,
+    /// ADB port for android/androidtv devices (default 5555).
+    #[arg(long)]
+    pub port: Option<u16>,
     #[command(flatten)]
     pub scope: DefinitionScope,
 }
@@ -289,12 +292,12 @@ pub fn run_group(command: &GroupCommand, home: &Home, workspace_path: &Path) -> 
 
 /// One effective group row shared by `group list` and the TUI Groups screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GroupSource {
+pub(crate) enum DefinitionSource {
     Global,
     Workspace,
 }
 
-impl GroupSource {
+impl DefinitionSource {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Global => "global",
@@ -314,12 +317,12 @@ pub(crate) struct GroupInfo {
     pub name: String,
     pub members: Vec<String>,
     pub devices: Vec<ResolvedDevice>,
-    pub source: GroupSource,
+    pub source: DefinitionSource,
     pub error: Option<String>,
 }
 
 /// Read one devices layer, returning `None` when the file is absent or empty.
-fn read_group_layer(path: &Path) -> Result<Option<DevicesConfig>, String> {
+fn read_devices_layer(path: &Path) -> Result<Option<DevicesConfig>, String> {
     let source = match std::fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -356,11 +359,11 @@ fn merge_group_layer(merged: &mut DevicesConfig, layer: DevicesConfig) {
 pub(crate) fn group_rows(home: &Home, workspace_path: &Path) -> Result<Vec<GroupInfo>, String> {
     let global_path = home.devices_path();
     let mut merged = DevicesConfig::default();
-    if let Some(layer) = read_group_layer(&global_path)? {
+    if let Some(layer) = read_devices_layer(&global_path)? {
         merge_group_layer(&mut merged, layer);
     }
     let workspace_groups: std::collections::BTreeSet<String> =
-        match read_group_layer(workspace_path)? {
+        match read_devices_layer(workspace_path)? {
             Some(layer) => {
                 let names = layer.groups.keys().cloned().collect();
                 merge_group_layer(&mut merged, layer);
@@ -371,9 +374,9 @@ pub(crate) fn group_rows(home: &Home, workspace_path: &Path) -> Result<Vec<Group
     let mut rows = Vec::with_capacity(merged.groups.len());
     for (name, members) in &merged.groups {
         let source = if workspace_groups.contains(name) {
-            GroupSource::Workspace
+            DefinitionSource::Workspace
         } else {
-            GroupSource::Global
+            DefinitionSource::Global
         };
         let mut devices = Vec::new();
         let mut error = None;
@@ -404,6 +407,95 @@ pub(crate) fn group_rows(home: &Home, workspace_path: &Path) -> Result<Vec<Group
         });
     }
     Ok(rows)
+}
+
+/// One effective device definition plus the layer that won.
+#[derive(Debug, Clone)]
+pub(crate) struct DeviceEntry {
+    pub source: DefinitionSource,
+    pub device: DeviceConfig,
+}
+
+/// One effective app definition plus the layer that won.
+#[derive(Debug, Clone)]
+pub(crate) struct AppEntry {
+    pub source: DefinitionSource,
+    pub app: AppConfig,
+}
+
+/// Read both device layers and merge them by name (workspace wins). The TUI
+/// device form edits the winning layer, so a global-only device is editable
+/// instead of being mistaken for a missing one.
+pub(crate) fn device_entries(
+    home: &Home,
+    workspace_path: &Path,
+) -> Result<Vec<DeviceEntry>, String> {
+    let mut merged: Vec<DeviceEntry> = Vec::new();
+    if let Some(layer) = read_devices_layer(&home.devices_path())? {
+        merge_device_entries(&mut merged, layer, DefinitionSource::Global);
+    }
+    if let Some(layer) = read_devices_layer(workspace_path)? {
+        merge_device_entries(&mut merged, layer, DefinitionSource::Workspace);
+    }
+    Ok(merged)
+}
+
+fn merge_device_entries(
+    merged: &mut Vec<DeviceEntry>,
+    layer: DevicesConfig,
+    source: DefinitionSource,
+) {
+    for device in layer.devices {
+        let entry = DeviceEntry { source, device };
+        match merged
+            .iter_mut()
+            .find(|existing| existing.device.name == entry.device.name)
+        {
+            Some(existing) => *existing = entry,
+            None => merged.push(entry),
+        }
+    }
+}
+
+/// Read both apps layers and merge them by name (workspace wins).
+pub(crate) fn app_entries(home: &Home, workspace_path: &Path) -> Result<Vec<AppEntry>, String> {
+    let mut merged: Vec<AppEntry> = Vec::new();
+    if let Some(layer) = read_apps_layer(&home.apps_path())? {
+        merge_app_entries(&mut merged, layer, DefinitionSource::Global);
+    }
+    if let Some(layer) = read_apps_layer(workspace_path)? {
+        merge_app_entries(&mut merged, layer, DefinitionSource::Workspace);
+    }
+    Ok(merged)
+}
+
+fn merge_app_entries(merged: &mut Vec<AppEntry>, layer: AppsConfig, source: DefinitionSource) {
+    for app in layer.apps {
+        let entry = AppEntry { source, app };
+        match merged
+            .iter_mut()
+            .find(|existing| existing.app.name == entry.app.name)
+        {
+            Some(existing) => *existing = entry,
+            None => merged.push(entry),
+        }
+    }
+}
+
+fn read_apps_layer(path: &Path) -> Result<Option<AppsConfig>, String> {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    if source.trim().is_empty() {
+        return Ok(None);
+    }
+    let outcome = apps::parse_apps(&source, path);
+    match outcome.config {
+        Some(config) => Ok(Some(config)),
+        None => Err(render_diagnostics(&outcome.diagnostics)),
+    }
 }
 
 fn normalize_members(members: &[String]) -> Result<Vec<String>, String> {
@@ -804,12 +896,25 @@ fn add_device(args: &DeviceAddArgs, home: &Home, workspace_path: &Path, replace:
         }
     };
     let platform = device_type.platform();
+    if let Some(port) = args.port {
+        if !matches!(device_type, DeviceType::Android | DeviceType::AndroidTv) {
+            eprintln!("device add: --port is only valid for android and androidtv devices");
+            return EXIT_USAGE;
+        }
+        if port == 0 {
+            eprintln!("device add: --port must be between 1 and 65535");
+            return EXIT_USAGE;
+        }
+    }
     let name = args
         .name
         .clone()
         .unwrap_or_else(|| format!("{}-{}", device_type.slug(), ip.replace([':', '.'], "-")));
     let mut device = DeviceConfig::new(name, platform, ip);
     device.device_type = device_type;
+    if let Some(port) = args.port {
+        device.connection.port = Some(port);
+    }
     let path = layer_path(home, workspace_path, !args.scope.workspace, true);
     match mutate_devices(&path, |source| {
         let outcome = config::parse_devices(source, &path);

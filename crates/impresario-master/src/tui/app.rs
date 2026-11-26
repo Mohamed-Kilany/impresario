@@ -7,15 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use impresario_core::apps;
-use impresario_core::config;
 use impresario_core::platforms::Platform;
 use impresario_core::probe;
 use impresario_core::settings::{self, SettingValue};
 use impresario_core::workspace;
 
 use crate::cli;
-use crate::definitions::{GroupInfo, GroupSource};
+use crate::definitions::{AppEntry, DefinitionSource, GroupInfo};
 use crate::exec::ExecEvent;
 use crate::jobs::{self, JobRecord, JobStatus, JobStore};
 use crate::report::Status;
@@ -101,7 +99,81 @@ pub(super) struct GroupEditor {
     pub name: String,
     pub members: String,
     pub members_focus: bool,
-    pub source: GroupSource,
+    pub source: DefinitionSource,
+}
+
+/// Shared shape of the definition forms (the Groups form predates it and stays
+/// on its own state to avoid changing its key handling).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FormKind {
+    Add,
+    Edit,
+    Remove,
+}
+
+impl FormKind {
+    fn verb(self, add: &'static str, edit: &'static str) -> &'static str {
+        match self {
+            Self::Add => add,
+            Self::Edit => edit,
+            Self::Remove => "remove",
+        }
+    }
+}
+
+/// Modal state for the Devices screen.
+#[derive(Debug, Clone)]
+pub(super) struct DeviceEditor {
+    pub kind: FormKind,
+    pub name: String,
+    pub device_type: String,
+    pub ip: String,
+    pub port: String,
+    pub field: usize,
+    pub source: DefinitionSource,
+}
+
+/// Modal state for the Apps screen.
+#[derive(Debug, Clone)]
+pub(super) struct AppEditor {
+    pub kind: FormKind,
+    pub name: String,
+    pub description: String,
+    pub platforms: String,
+    pub packages: String,
+    pub launch_activities: String,
+    pub launch_params: String,
+    pub clear_data: bool,
+    pub field: usize,
+    pub source: DefinitionSource,
+}
+
+/// Modal state for the Config screen.
+#[derive(Debug, Clone)]
+pub(super) struct ConfigEditor {
+    pub kind: FormKind,
+    pub key: String,
+    pub value: String,
+    pub field: usize,
+    pub source: DefinitionSource,
+}
+
+/// The definition form open on the current screen.
+#[derive(Debug, Clone)]
+pub(super) enum DefinitionEditor {
+    Device(DeviceEditor),
+    App(AppEditor),
+    Config(ConfigEditor),
+}
+
+impl DefinitionEditor {
+    pub(super) fn kind(&self) -> FormKind {
+        match self {
+            Self::Device(editor) => editor.kind,
+            Self::App(editor) => editor.kind,
+            Self::Config(editor) => editor.kind,
+        }
+    }
 }
 
 /// One evidence source in a device's probe matrix.
@@ -137,6 +209,10 @@ pub(super) struct DeviceRow {
     pub name: String,
     pub platform: String,
     pub connection: String,
+    pub device_type: String,
+    pub ip: String,
+    pub port: Option<u16>,
+    pub source: DefinitionSource,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +220,7 @@ pub(super) struct AppRow {
     pub name: String,
     pub description: String,
     pub platforms: String,
+    pub source: DefinitionSource,
 }
 
 #[derive(Debug, Clone)]
@@ -529,8 +606,12 @@ pub(super) struct App {
     pub test_marks: BTreeSet<usize>,
     pub test_error: Option<String>,
     pub devices: Vec<DeviceRow>,
+    pub device_index: usize,
     pub apps: Vec<AppRow>,
+    pub app_index: usize,
     pub config_rows: Vec<ConfigRow>,
+    pub config_index: usize,
+    pub form: Option<DefinitionEditor>,
     pub resident: Option<ResidentStatus>,
     pub resident_dumps: Vec<DumpEntry>,
     pub resident_error: Option<String>,
@@ -597,8 +678,12 @@ impl App {
             test_marks: BTreeSet::new(),
             test_error: None,
             devices: Vec::new(),
+            device_index: 0,
             apps: Vec::new(),
+            app_index: 0,
             config_rows: Vec::new(),
+            config_index: 0,
+            form: None,
             resident: None,
             resident_dumps: Vec::new(),
             resident_error: None,
@@ -1307,24 +1392,27 @@ impl App {
 
     pub(super) fn load_devices(&mut self) {
         self.devices.clear();
-        let outcome = config::load_devices(&self.ctx.devices_path);
-        if let Some(devices) = outcome.config {
-            for device in devices.devices {
-                let connection = device.effective_transport().as_str().to_string();
-                let platform = device.platform.as_str().to_string();
-                self.devices.push(DeviceRow {
-                    name: device.name,
-                    platform,
-                    connection,
-                });
+        match crate::definitions::device_entries(&self.ctx.home, &self.ctx.devices_path) {
+            Ok(entries) => {
+                for entry in entries {
+                    let connection = entry.device.effective_transport().as_str().to_string();
+                    let platform = entry.device.platform.as_str().to_string();
+                    self.devices.push(DeviceRow {
+                        name: entry.device.name,
+                        platform,
+                        connection,
+                        device_type: entry.device.device_type.as_str().to_string(),
+                        ip: entry.device.ip,
+                        port: entry.device.connection.port,
+                        source: entry.source,
+                    });
+                }
+                self.device_index = self.device_index.min(self.devices.len().saturating_sub(1));
             }
-        }
-        if outcome.diagnostics.has_errors() {
-            self.push_activity(format!(
-                "devices: {} error(s) in {}",
-                outcome.diagnostics.errors().count(),
-                self.ctx.devices_path.display()
-            ));
+            Err(message) => {
+                self.push_activity(format!("devices: {message}"));
+                self.device_index = 0;
+            }
         }
     }
 
@@ -1349,26 +1437,28 @@ impl App {
     pub(super) fn load_apps(&mut self) {
         self.apps.clear();
         let apps_path = self.ctx.base.join("impresario.apps.config");
-        let outcome = apps::load_apps_merged(&apps_path);
-        if let Some(apps) = outcome.config {
-            for app in apps.apps {
-                self.apps.push(AppRow {
-                    name: app.name,
-                    description: app.description.unwrap_or_default(),
-                    platforms: app
-                        .platforms
-                        .keys()
-                        .map(|platform| platform.as_str())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                });
+        match crate::definitions::app_entries(&self.ctx.home, &apps_path) {
+            Ok(entries) => {
+                for entry in entries {
+                    self.apps.push(AppRow {
+                        name: entry.app.name,
+                        description: entry.app.description.unwrap_or_default(),
+                        platforms: entry
+                            .app
+                            .platforms
+                            .keys()
+                            .map(|platform| platform.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        source: entry.source,
+                    });
+                }
+                self.app_index = self.app_index.min(self.apps.len().saturating_sub(1));
             }
-        }
-        if outcome.diagnostics.has_errors() {
-            self.push_activity(format!(
-                "apps: {} error(s)",
-                outcome.diagnostics.errors().count()
-            ));
+            Err(message) => {
+                self.push_activity(format!("apps: {message}"));
+                self.app_index = 0;
+            }
         }
     }
 
@@ -1439,6 +1529,9 @@ impl App {
                 .join(","),
             source: "typed".to_string(),
         });
+        self.config_index = self
+            .config_index
+            .min(self.config_rows.len().saturating_sub(1));
     }
 
     pub(super) fn load_resident(&mut self) {
@@ -1503,7 +1596,7 @@ impl App {
                 name: String::new(),
                 members: String::new(),
                 members_focus: false,
-                source: GroupSource::Workspace,
+                source: DefinitionSource::Workspace,
             });
             return;
         }
@@ -1617,6 +1710,348 @@ impl App {
         if let Some(index) = self.groups.iter().position(|group| group.name == name) {
             self.group_index = index;
             self.group_scroll = self.group_scroll_for_index();
+        }
+    }
+
+    pub(super) fn open_device_form(&mut self, add: bool) {
+        if add {
+            self.form = Some(DefinitionEditor::Device(DeviceEditor {
+                kind: FormKind::Add,
+                name: String::new(),
+                device_type: String::new(),
+                ip: String::new(),
+                port: String::new(),
+                field: 0,
+                source: DefinitionSource::Workspace,
+            }));
+            return;
+        }
+        let Some(row) = self.devices.get(self.device_index) else {
+            self.push_activity("No device selected; press `a` to add one.".to_string());
+            return;
+        };
+        self.form = Some(DefinitionEditor::Device(DeviceEditor {
+            kind: FormKind::Edit,
+            name: row.name.clone(),
+            device_type: row.device_type.clone(),
+            ip: row.ip.clone(),
+            port: device_display_port(row),
+            field: 1,
+            source: row.source,
+        }));
+    }
+
+    pub(super) fn confirm_remove_device(&mut self) {
+        let Some(row) = self.devices.get(self.device_index) else {
+            self.push_activity("No device selected.".to_string());
+            return;
+        };
+        self.form = Some(DefinitionEditor::Device(DeviceEditor {
+            kind: FormKind::Remove,
+            name: row.name.clone(),
+            device_type: row.device_type.clone(),
+            ip: row.ip.clone(),
+            port: device_display_port(row),
+            field: 0,
+            source: row.source,
+        }));
+    }
+
+    pub(super) fn open_app_form(&mut self, add: bool) {
+        if add {
+            self.form = Some(DefinitionEditor::App(AppEditor {
+                kind: FormKind::Add,
+                name: String::new(),
+                description: String::new(),
+                platforms: String::new(),
+                packages: String::new(),
+                launch_activities: String::new(),
+                launch_params: String::new(),
+                clear_data: false,
+                field: 0,
+                source: DefinitionSource::Workspace,
+            }));
+            return;
+        }
+        let Some(row) = self.apps.get(self.app_index) else {
+            self.push_activity("No app selected; press `a` to add one.".to_string());
+            return;
+        };
+        let apps_path = self.ctx.base.join("impresario.apps.config");
+        let entry = crate::definitions::app_entries(&self.ctx.home, &apps_path)
+            .ok()
+            .and_then(|entries| entries.into_iter().find(|entry| entry.app.name == row.name));
+        let Some(entry) = entry else {
+            self.push_activity(format!(
+                "app '{}' is no longer in the definitions.",
+                row.name
+            ));
+            return;
+        };
+        self.form = Some(DefinitionEditor::App(app_editor_from(
+            FormKind::Edit,
+            &entry,
+        )));
+    }
+
+    pub(super) fn confirm_remove_app(&mut self) {
+        let Some(row) = self.apps.get(self.app_index) else {
+            self.push_activity("No app selected.".to_string());
+            return;
+        };
+        self.form = Some(DefinitionEditor::App(AppEditor {
+            kind: FormKind::Remove,
+            name: row.name.clone(),
+            description: String::new(),
+            platforms: String::new(),
+            packages: String::new(),
+            launch_activities: String::new(),
+            launch_params: String::new(),
+            clear_data: false,
+            field: 0,
+            source: row.source,
+        }));
+    }
+
+    /// Enter on a Config row: open a value form for a schema setting, or the
+    /// file for derived (`typed`) rows such as relative directories.
+    pub(super) fn edit_config_setting(&mut self) -> Action {
+        let Some(row) = self.config_rows.get(self.config_index).cloned() else {
+            self.push_activity("No setting selected; press `a` to add one.".to_string());
+            return Action::None;
+        };
+        if row.source == "typed" {
+            return Action::OpenEditor(self.ctx.config_path.clone());
+        }
+        if settings::definition(&row.key).is_none() {
+            return Action::OpenEditor(self.ctx.config_path.clone());
+        }
+        let source = config_target_source(&row.key, config_row_source(&row));
+        self.form = Some(DefinitionEditor::Config(ConfigEditor {
+            kind: FormKind::Edit,
+            key: row.key,
+            value: row.value,
+            field: 0,
+            source,
+        }));
+        Action::None
+    }
+
+    pub(super) fn open_config_add(&mut self) {
+        self.form = Some(DefinitionEditor::Config(ConfigEditor {
+            kind: FormKind::Add,
+            key: String::new(),
+            value: String::new(),
+            field: 0,
+            source: DefinitionSource::Workspace,
+        }));
+    }
+
+    pub(super) fn confirm_unset_config(&mut self) {
+        let Some(row) = self.config_rows.get(self.config_index) else {
+            self.push_activity("No setting selected.".to_string());
+            return;
+        };
+        if row.source == "typed" || settings::definition(&row.key).is_none() {
+            let key = row.key.clone();
+            self.push_activity(format!(
+                "`{key}` is derived; edit the file with `o` instead."
+            ));
+            return;
+        }
+        self.form = Some(DefinitionEditor::Config(ConfigEditor {
+            kind: FormKind::Remove,
+            key: row.key.clone(),
+            value: String::new(),
+            field: 0,
+            source: config_target_source(&row.key, config_row_source(row)),
+        }));
+    }
+
+    pub(super) fn handle_form_key(&mut self, key: KeyEvent) -> Action {
+        let kind = match self.form.as_ref() {
+            Some(form) => form.kind(),
+            None => return Action::None,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.form = None;
+                return Action::None;
+            }
+            KeyCode::Enter => {
+                self.submit_form();
+                return Action::None;
+            }
+            KeyCode::Char('y' | 'Y') if kind == FormKind::Remove => {
+                self.submit_form();
+                return Action::None;
+            }
+            KeyCode::Char('n' | 'N') if kind == FormKind::Remove => {
+                self.form = None;
+                return Action::None;
+            }
+            KeyCode::Tab => {
+                self.form_cycle_field(false);
+                return Action::None;
+            }
+            KeyCode::BackTab => {
+                self.form_cycle_field(true);
+                return Action::None;
+            }
+            KeyCode::Backspace => {
+                if let Some(field) = self.form_field_mut() {
+                    field.pop();
+                }
+                return Action::None;
+            }
+            _ => {}
+        }
+        if key.code == KeyCode::Char(' ') && self.form_clear_data_focused() {
+            if let Some(DefinitionEditor::App(editor)) = self.form.as_mut() {
+                editor.clear_data = !editor.clear_data;
+            }
+            return Action::None;
+        }
+        if let KeyCode::Char(character) = key.code {
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                if let Some(field) = self.form_field_mut() {
+                    field.push(character);
+                }
+            }
+        }
+        Action::None
+    }
+
+    fn form_field_mut(&mut self) -> Option<&mut String> {
+        match self.form.as_mut()? {
+            DefinitionEditor::Device(editor) => match editor.field {
+                0 if editor.kind == FormKind::Add => Some(&mut editor.name),
+                1 => Some(&mut editor.device_type),
+                2 => Some(&mut editor.ip),
+                3 => Some(&mut editor.port),
+                _ => None,
+            },
+            DefinitionEditor::App(editor) => match editor.field {
+                0 if editor.kind == FormKind::Add => Some(&mut editor.name),
+                1 => Some(&mut editor.description),
+                2 => Some(&mut editor.platforms),
+                3 => Some(&mut editor.packages),
+                4 => Some(&mut editor.launch_activities),
+                5 => Some(&mut editor.launch_params),
+                _ => None,
+            },
+            DefinitionEditor::Config(editor) => match (editor.kind, editor.field) {
+                (FormKind::Add, 0) => Some(&mut editor.key),
+                (FormKind::Add | FormKind::Edit, 1) | (FormKind::Edit, 0) => {
+                    Some(&mut editor.value)
+                }
+                _ => None,
+            },
+        }
+    }
+
+    fn form_clear_data_focused(&self) -> bool {
+        matches!(
+            &self.form,
+            Some(DefinitionEditor::App(editor))
+                if editor.kind != FormKind::Remove && editor.field == 6
+        )
+    }
+
+    fn form_cycle_field(&mut self, backwards: bool) {
+        if let Some(form) = self.form.as_mut() {
+            match form {
+                DefinitionEditor::Device(editor) => {
+                    let fields: &[usize] = if editor.kind == FormKind::Add {
+                        &[0, 1, 2, 3]
+                    } else {
+                        &[1, 2, 3]
+                    };
+                    cycle_field(&mut editor.field, fields, backwards);
+                }
+                DefinitionEditor::App(editor) => {
+                    let fields: &[usize] = if editor.kind == FormKind::Add {
+                        &[0, 1, 2, 3, 4, 5, 6]
+                    } else {
+                        &[1, 2, 3, 4, 5, 6]
+                    };
+                    cycle_field(&mut editor.field, fields, backwards);
+                }
+                DefinitionEditor::Config(editor) => {
+                    let fields: &[usize] = match editor.kind {
+                        FormKind::Add => &[0, 1],
+                        FormKind::Edit => &[0],
+                        FormKind::Remove => &[],
+                    };
+                    cycle_field(&mut editor.field, fields, backwards);
+                }
+            }
+        }
+    }
+
+    fn submit_form(&mut self) {
+        let Some(form) = self.form.take() else {
+            return;
+        };
+        match form {
+            DefinitionEditor::Device(editor) => {
+                if let Err(message) = validate_device_form(&editor) {
+                    self.push_activity(message);
+                    self.form = Some(DefinitionEditor::Device(editor));
+                    return;
+                }
+                let args = device_form_command(&editor);
+                if self.run_and_report_status(&args) {
+                    let name = editor.name.trim().to_string();
+                    let added = editor.kind == FormKind::Add;
+                    self.load_devices();
+                    self.load_groups();
+                    if let Some(index) = self.devices.iter().position(|row| row.name == name) {
+                        self.device_index = index;
+                    } else if added && name.is_empty() {
+                        self.device_index = self.devices.len().saturating_sub(1);
+                    }
+                } else {
+                    self.form = Some(DefinitionEditor::Device(editor));
+                }
+            }
+            DefinitionEditor::App(editor) => {
+                if let Err(message) = validate_app_form(&editor) {
+                    self.push_activity(message);
+                    self.form = Some(DefinitionEditor::App(editor));
+                    return;
+                }
+                let args = app_form_command(&editor);
+                if self.run_and_report_status(&args) {
+                    let name = editor.name.trim().to_string();
+                    self.load_apps();
+                    if let Some(index) = self.apps.iter().position(|row| row.name == name) {
+                        self.app_index = index;
+                    }
+                } else {
+                    self.form = Some(DefinitionEditor::App(editor));
+                }
+            }
+            DefinitionEditor::Config(editor) => {
+                if editor.kind == FormKind::Add && editor.key.trim().is_empty() {
+                    self.push_activity("A setting key is required.".to_string());
+                    self.form = Some(DefinitionEditor::Config(editor));
+                    return;
+                }
+                let key = editor.key.trim().to_string();
+                let args = config_form_command(&editor);
+                if self.run_and_report_status(&args) {
+                    self.load_config();
+                    if let Some(index) = self.config_rows.iter().position(|row| row.key == key) {
+                        self.config_index = index;
+                    }
+                } else {
+                    self.form = Some(DefinitionEditor::Config(editor));
+                }
+            }
         }
     }
 
@@ -2321,10 +2756,6 @@ impl App {
             .map_or(Action::None, Action::OpenEditor)
     }
 
-    pub(super) fn open_config(&mut self) -> Action {
-        Action::OpenEditor(self.ctx.config_path.clone())
-    }
-
     pub(super) fn execute_prompt(&mut self) -> Action {
         if let Some(search) = self.search.take() {
             if let Some(current) = search.current().cloned() {
@@ -2561,6 +2992,10 @@ impl App {
     }
 
     fn run_and_report(&mut self, args: &[String]) {
+        self.run_and_report_status(args);
+    }
+
+    fn run_and_report_status(&mut self, args: &[String]) -> bool {
         match self.run_child(args) {
             Ok(output) => {
                 let mut text = trim_output(&output.stdout);
@@ -2575,8 +3010,12 @@ impl App {
                     text = format!("command exited with {}", output.status);
                 }
                 self.push_activity(text);
+                output.status.success()
             }
-            Err(message) => self.push_activity(message),
+            Err(message) => {
+                self.push_activity(message);
+                false
+            }
         }
     }
 
@@ -2674,6 +3113,7 @@ impl App {
     pub(super) fn set_screen(&mut self, screen: Screen) {
         self.screen = screen;
         self.focus = Focus::Content;
+        self.form = None;
         if screen == Screen::Resident {
             self.resident_scroll = 0;
         }
@@ -2687,6 +3127,15 @@ impl App {
             self.group_index = 0;
             self.group_scroll = 0;
             self.group_editor = None;
+        }
+        if screen == Screen::Devices {
+            self.device_index = 0;
+        }
+        if screen == Screen::Apps {
+            self.app_index = 0;
+        }
+        if screen == Screen::Config {
+            self.config_index = 0;
         }
         self.reload_screen();
     }
@@ -2746,8 +3195,23 @@ impl App {
                 }
                 self.group_scroll = self.group_scroll_for_index();
             }
-            Screen::Home | Screen::Devices | Screen::Apps | Screen::Config => {}
+            Screen::Devices => move_index(&mut self.device_index, self.devices.len(), delta),
+            Screen::Apps => move_index(&mut self.app_index, self.apps.len(), delta),
+            Screen::Config => move_index(&mut self.config_index, self.config_rows.len(), delta),
+            Screen::Home => {}
         }
+    }
+}
+
+fn move_index(index: &mut usize, len: usize, delta: i32) {
+    if len == 0 {
+        *index = 0;
+        return;
+    }
+    if delta < 0 {
+        *index = index.saturating_sub(1);
+    } else {
+        *index = index.saturating_add(1).min(len.saturating_sub(1));
     }
 }
 
@@ -3224,12 +3688,261 @@ fn split_group_members(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn group_command(action: &str, name: &str, members: &[String], source: GroupSource) -> Vec<String> {
-    let mut args = vec!["group".to_string(), action.to_string(), name.to_string()];
-    args.extend(members.iter().cloned());
-    if source == GroupSource::Workspace {
+/// Comma/newline-separated form values; spaces stay inside a value (a launch
+/// parameter or a path may contain them).
+fn split_form_list(text: &str) -> Vec<String> {
+    text.split(|character: char| character == ',' || character == '\n')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn push_scope(args: &mut Vec<String>, source: DefinitionSource) {
+    if source == DefinitionSource::Workspace {
         args.push("--workspace".to_string());
     }
+}
+
+fn push_pair(args: &mut Vec<String>, flag: &str, value: &str) {
+    args.push(flag.to_string());
+    args.push(value.to_string());
+}
+
+fn cycle_field(field: &mut usize, fields: &[usize], backwards: bool) {
+    if fields.is_empty() {
+        return;
+    }
+    let position = fields
+        .iter()
+        .position(|candidate| candidate == field)
+        .unwrap_or(0);
+    let next = if backwards {
+        (position + fields.len() - 1) % fields.len()
+    } else {
+        (position + 1) % fields.len()
+    };
+    *field = fields[next];
+}
+
+fn display_port(port: Option<u16>) -> String {
+    port.filter(|port| *port != 5555)
+        .map(|port| port.to_string())
+        .unwrap_or_default()
+}
+
+fn device_display_port(row: &DeviceRow) -> String {
+    if row.port.is_some() && matches!(row.platform.as_str(), "android" | "androidtv") {
+        display_port(row.port)
+    } else {
+        String::new()
+    }
+}
+
+fn form_port(text: &str) -> Option<u16> {
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        text.parse().ok()
+    }
+}
+
+fn device_form_command(editor: &DeviceEditor) -> Vec<String> {
+    let verb = editor.kind.verb("add", "edit");
+    let mut args = vec!["device".to_string(), verb.to_string()];
+    if editor.kind == FormKind::Remove {
+        args.push(editor.name.trim().to_string());
+    } else {
+        push_pair(&mut args, "--type", editor.device_type.trim());
+        push_pair(&mut args, "--ip", editor.ip.trim());
+        if !editor.name.trim().is_empty() {
+            push_pair(&mut args, "--name", editor.name.trim());
+        }
+        if let Some(port) = form_port(&editor.port) {
+            push_pair(&mut args, "--port", &port.to_string());
+        }
+    }
+    push_scope(&mut args, editor.source);
+    args
+}
+
+fn validate_device_form(editor: &DeviceEditor) -> Result<(), String> {
+    if editor.kind == FormKind::Remove {
+        return Ok(());
+    }
+    if editor.device_type.trim().is_empty() {
+        return Err(
+            "A device type is required (web, webOS, tizenOS, android, androidtv, iOS or tvOS)."
+                .to_string(),
+        );
+    }
+    if editor.ip.trim().is_empty() {
+        return Err("An IP address is required.".to_string());
+    }
+    if !editor.port.trim().is_empty() {
+        match form_port(&editor.port) {
+            Some(port) if port > 0 => {}
+            _ => return Err("The port must be a number between 1 and 65535.".to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn app_editor_from(kind: FormKind, entry: &AppEntry) -> AppEditor {
+    let app = &entry.app;
+    let platforms = app
+        .platforms
+        .iter()
+        .filter_map(|(platform, spec)| {
+            if *platform == Platform::Web {
+                spec.url
+                    .as_ref()
+                    .map(|url| format!("{}={url}", platform.as_str()))
+            } else {
+                spec.id
+                    .as_ref()
+                    .map(|id| format!("{}={id}", platform.as_str()))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let packages = app
+        .platforms
+        .iter()
+        .filter_map(|(platform, spec)| {
+            spec.package
+                .as_ref()
+                .map(|package| format!("{}={package}", platform.as_str()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let launch_activities = app
+        .platforms
+        .iter()
+        .filter_map(|(platform, spec)| {
+            spec.launch_activity
+                .as_ref()
+                .map(|activity| format!("{}={activity}", platform.as_str()))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let launch_params = app
+        .options
+        .launch_params
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    AppEditor {
+        kind,
+        name: app.name.clone(),
+        description: app.description.clone().unwrap_or_default(),
+        platforms,
+        packages,
+        launch_activities,
+        launch_params,
+        clear_data: app.options.clear_data,
+        field: if kind == FormKind::Add { 0 } else { 1 },
+        source: entry.source,
+    }
+}
+
+fn app_form_command(editor: &AppEditor) -> Vec<String> {
+    let verb = editor.kind.verb("add", "edit");
+    let mut args = vec!["app".to_string(), verb.to_string()];
+    if editor.kind == FormKind::Remove {
+        args.push(editor.name.trim().to_string());
+    } else {
+        push_pair(&mut args, "--name", editor.name.trim());
+        if !editor.description.trim().is_empty() {
+            push_pair(&mut args, "--description", editor.description.trim());
+        }
+        for spec in split_form_list(&editor.platforms) {
+            push_pair(&mut args, "--platform", &spec);
+        }
+        for spec in split_form_list(&editor.packages) {
+            push_pair(&mut args, "--package", &spec);
+        }
+        for spec in split_form_list(&editor.launch_activities) {
+            push_pair(&mut args, "--launch-activity", &spec);
+        }
+        for spec in split_form_list(&editor.launch_params) {
+            push_pair(&mut args, "--launch-param", &spec);
+        }
+        if editor.clear_data {
+            args.push("--clear-data".to_string());
+        }
+    }
+    push_scope(&mut args, editor.source);
+    args
+}
+
+fn validate_app_form(editor: &AppEditor) -> Result<(), String> {
+    if editor.kind == FormKind::Remove {
+        return Ok(());
+    }
+    if editor.name.trim().is_empty() {
+        return Err("An app name is required.".to_string());
+    }
+    if editor.platforms.trim().is_empty() {
+        return Err(
+            "At least one platform is required, for example android=com.acme.shop or web=https://shop.example."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn config_row_source(row: &ConfigRow) -> DefinitionSource {
+    if row.source.starts_with("global") {
+        DefinitionSource::Global
+    } else {
+        DefinitionSource::Workspace
+    }
+}
+
+/// A global-only setting cannot be written to the workspace layer, even when
+/// its winning value is a built-in default.
+fn config_target_source(key: &str, preferred: DefinitionSource) -> DefinitionSource {
+    match settings::definition(key) {
+        Some(def) if def.scope == settings::Scope::GlobalOnly => DefinitionSource::Global,
+        _ => preferred,
+    }
+}
+
+fn config_form_command(editor: &ConfigEditor) -> Vec<String> {
+    let key = editor.key.trim();
+    let mut args = match editor.kind {
+        FormKind::Add | FormKind::Edit => vec![
+            "config".to_string(),
+            "set".to_string(),
+            key.to_string(),
+            editor.value.clone(),
+        ],
+        FormKind::Remove => vec!["config".to_string(), "unset".to_string(), key.to_string()],
+    };
+    let source = config_target_source(key, editor.source);
+    args.push(
+        if source == DefinitionSource::Global {
+            "--global"
+        } else {
+            "--workspace"
+        }
+        .to_string(),
+    );
+    args
+}
+
+fn group_command(
+    action: &str,
+    name: &str,
+    members: &[String],
+    source: DefinitionSource,
+) -> Vec<String> {
+    let mut args = vec!["group".to_string(), action.to_string(), name.to_string()];
+    args.extend(members.iter().cloned());
+    push_scope(&mut args, source);
     args
 }
 
@@ -3303,7 +4016,7 @@ pub(super) fn help_text() -> String {
         "Tests · Enter edit · Space mark · r run · d dry-run · j/k move",
         "Coverage / Probe · j/k scroll · g/G top/bottom · r reload",
         "Groups · j/k move · a add · Enter/e edit · x remove · r reload",
-        "Devices / Apps / Config · j/k move · Enter open · r reload",
+        "Devices / Apps / Config · j/k · a add · e edit/set · x remove/unset · o file · r reload",
         "Resident · j/k scroll · g/G top/bottom · r reload",
         "",
         "Commands · /run /jobs /devices /apps /config /resident /coverage /probe /tests /open /doctor",
@@ -3377,16 +4090,21 @@ mod tests {
                 "add",
                 "phones",
                 &["phone".to_string()],
-                GroupSource::Workspace
+                DefinitionSource::Workspace
             ),
             vec!["group", "add", "phones", "phone", "--workspace"]
         );
         assert_eq!(
-            group_command("set", "phones", &["phone".to_string()], GroupSource::Global),
+            group_command(
+                "set",
+                "phones",
+                &["phone".to_string()],
+                DefinitionSource::Global
+            ),
             vec!["group", "set", "phones", "phone"]
         );
         assert_eq!(
-            group_command("remove", "phones", &[], GroupSource::Global),
+            group_command("remove", "phones", &[], DefinitionSource::Global),
             vec!["group", "remove", "phones"]
         );
     }
@@ -3398,6 +4116,307 @@ mod tests {
             vec!["phone", "@tv", "web1"]
         );
         assert!(split_group_members("  ,  ").is_empty());
+    }
+
+    #[test]
+    fn definition_form_keys_edit_fields_and_skip_locked_names() {
+        let context = Context::new(
+            impresario_core::home::Home::at("demo-home"),
+            PathBuf::from("demo"),
+            PathBuf::from("demo/impresario.config"),
+            PathBuf::from("demo/impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.form = Some(DefinitionEditor::Device(DeviceEditor {
+            kind: FormKind::Add,
+            name: String::new(),
+            device_type: String::new(),
+            ip: String::new(),
+            port: String::new(),
+            field: 0,
+            source: DefinitionSource::Workspace,
+        }));
+        app.handle_form_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        app.handle_form_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(
+            app.form.as_ref().map(DefinitionEditor::kind),
+            Some(FormKind::Add)
+        );
+        let Some(DefinitionEditor::Device(editor)) = &app.form else {
+            panic!("device form");
+        };
+        assert_eq!(editor.name, "p");
+        assert_eq!(editor.field, 1);
+
+        app.form = Some(DefinitionEditor::Device(DeviceEditor {
+            kind: FormKind::Edit,
+            name: "phone".to_string(),
+            device_type: "android".to_string(),
+            ip: "10.0.0.5".to_string(),
+            port: String::new(),
+            field: 1,
+            source: DefinitionSource::Workspace,
+        }));
+        app.handle_form_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        let Some(DefinitionEditor::Device(editor)) = &app.form else {
+            panic!("device form");
+        };
+        assert_eq!(editor.field, 3, "edit mode never focuses the locked name");
+        app.handle_form_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let Some(DefinitionEditor::Device(editor)) = &app.form else {
+            panic!("device form");
+        };
+        assert_eq!(editor.field, 1);
+    }
+
+    #[test]
+    fn app_form_toggles_clear_data_with_space() {
+        let context = Context::new(
+            impresario_core::home::Home::at("demo-home"),
+            PathBuf::from("demo"),
+            PathBuf::from("demo/impresario.config"),
+            PathBuf::from("demo/impresario.devices.config"),
+            false,
+        );
+        let mut app = App::empty(context);
+        app.form = Some(DefinitionEditor::App(AppEditor {
+            kind: FormKind::Add,
+            name: "shop".to_string(),
+            description: String::new(),
+            platforms: "web=https://shop.example".to_string(),
+            packages: String::new(),
+            launch_activities: String::new(),
+            launch_params: String::new(),
+            clear_data: false,
+            field: 6,
+            source: DefinitionSource::Workspace,
+        }));
+        app.handle_form_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        app.handle_form_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        let Some(DefinitionEditor::App(editor)) = &app.form else {
+            panic!("app form");
+        };
+        assert!(!editor.clear_data);
+        assert_eq!(editor.platforms, "web=https://shop.example");
+    }
+
+    #[test]
+    fn device_form_command_carries_scope_and_port() {
+        let editor = DeviceEditor {
+            kind: FormKind::Add,
+            name: "phone".to_string(),
+            device_type: "android".to_string(),
+            ip: "10.0.0.5".to_string(),
+            port: "38103".to_string(),
+            field: 0,
+            source: DefinitionSource::Workspace,
+        };
+        assert_eq!(
+            device_form_command(&editor),
+            vec![
+                "device",
+                "add",
+                "--type",
+                "android",
+                "--ip",
+                "10.0.0.5",
+                "--name",
+                "phone",
+                "--port",
+                "38103",
+                "--workspace"
+            ]
+        );
+        let edit = DeviceEditor {
+            kind: FormKind::Edit,
+            source: DefinitionSource::Global,
+            ..editor.clone()
+        };
+        assert_eq!(
+            device_form_command(&edit),
+            vec![
+                "device", "edit", "--type", "android", "--ip", "10.0.0.5", "--name", "phone",
+                "--port", "38103"
+            ]
+        );
+        let remove = DeviceEditor {
+            kind: FormKind::Remove,
+            port: String::new(),
+            ..edit
+        };
+        assert_eq!(
+            device_form_command(&remove),
+            vec!["device", "remove", "phone"]
+        );
+    }
+
+    #[test]
+    fn app_form_command_round_trips_every_option() {
+        let editor = AppEditor {
+            kind: FormKind::Add,
+            name: "shop".to_string(),
+            description: "Storefront".to_string(),
+            platforms: "web=https://shop.example, android=com.acme.shop".to_string(),
+            packages: "android=dist/app.apk".to_string(),
+            launch_activities: "android=com.acme.MainActivity".to_string(),
+            launch_params: "env=staging, locale=en-US".to_string(),
+            clear_data: true,
+            field: 0,
+            source: DefinitionSource::Workspace,
+        };
+        assert_eq!(
+            app_form_command(&editor),
+            vec![
+                "app",
+                "add",
+                "--name",
+                "shop",
+                "--description",
+                "Storefront",
+                "--platform",
+                "web=https://shop.example",
+                "--platform",
+                "android=com.acme.shop",
+                "--package",
+                "android=dist/app.apk",
+                "--launch-activity",
+                "android=com.acme.MainActivity",
+                "--launch-param",
+                "env=staging",
+                "--launch-param",
+                "locale=en-US",
+                "--clear-data",
+                "--workspace",
+            ]
+        );
+    }
+
+    #[test]
+    fn app_editor_prefills_platforms_and_options() {
+        use impresario_core::apps::{AppConfig, AppOptions, AppPlatform};
+        let app = AppConfig {
+            name: "shop".to_string(),
+            description: Some("Storefront".to_string()),
+            platforms: BTreeMap::from([
+                (
+                    Platform::Web,
+                    AppPlatform {
+                        url: Some("https://shop.example".to_string()),
+                        ..AppPlatform::default()
+                    },
+                ),
+                (
+                    Platform::Android,
+                    AppPlatform {
+                        id: Some("com.acme.shop".to_string()),
+                        package: Some("dist/app.apk".to_string()),
+                        launch_activity: Some("com.acme.MainActivity".to_string()),
+                        ..AppPlatform::default()
+                    },
+                ),
+            ]),
+            options: AppOptions {
+                clear_data: true,
+                launch_params: BTreeMap::from([("env".to_string(), "staging".to_string())]),
+            },
+        };
+        let editor = app_editor_from(
+            FormKind::Edit,
+            &AppEntry {
+                source: DefinitionSource::Global,
+                app,
+            },
+        );
+        assert_eq!(editor.field, 1);
+        assert_eq!(editor.source, DefinitionSource::Global);
+        assert_eq!(
+            editor.platforms,
+            "web=https://shop.example, android=com.acme.shop"
+        );
+        assert_eq!(editor.packages, "android=dist/app.apk");
+        assert_eq!(editor.launch_activities, "android=com.acme.MainActivity");
+        assert_eq!(editor.launch_params, "env=staging");
+        assert!(editor.clear_data);
+    }
+
+    #[test]
+    fn config_form_command_targets_the_right_layer() {
+        let workspace = ConfigEditor {
+            kind: FormKind::Edit,
+            key: "timeout_default_ms".to_string(),
+            value: "5000".to_string(),
+            field: 0,
+            source: DefinitionSource::Workspace,
+        };
+        assert_eq!(
+            config_form_command(&workspace),
+            vec!["config", "set", "timeout_default_ms", "5000", "--workspace"]
+        );
+        let global_only = ConfigEditor {
+            kind: FormKind::Add,
+            key: "workspace".to_string(),
+            value: "/work".to_string(),
+            field: 0,
+            source: DefinitionSource::Workspace,
+        };
+        assert_eq!(
+            config_form_command(&global_only),
+            vec!["config", "set", "workspace", "/work", "--global"]
+        );
+        let unset = ConfigEditor {
+            kind: FormKind::Remove,
+            key: "ui.theme".to_string(),
+            value: String::new(),
+            field: 0,
+            source: DefinitionSource::Global,
+        };
+        assert_eq!(
+            config_form_command(&unset),
+            vec!["config", "unset", "ui.theme", "--global"]
+        );
+    }
+
+    #[test]
+    fn split_form_list_keeps_spaces_inside_values() {
+        assert_eq!(
+            split_form_list("env=staging, path=/tmp/my app\n locale=en-US"),
+            vec!["env=staging", "path=/tmp/my app", "locale=en-US"]
+        );
+        assert!(split_form_list(" , \n").is_empty());
+    }
+
+    #[test]
+    fn device_entries_merge_layers_and_track_the_winner() {
+        let dir = tempfile::tempdir().expect("temp workspace");
+        let home = impresario_core::home::Home::at(dir.path().join("home"));
+        std::fs::create_dir_all(home.root()).expect("home");
+        std::fs::write(
+            home.devices_path(),
+            "devices:\n  - name: phone\n    type: android\n    ip: 10.0.0.5\n    port: 38103\n  - name: web1\n    type: web\n    ip: 127.0.0.1\n",
+        )
+        .expect("global devices");
+        let workspace_path = dir.path().join("impresario.devices.config");
+        std::fs::write(
+            &workspace_path,
+            "devices:\n  - name: phone\n    type: android\n    ip: 10.0.0.6\n",
+        )
+        .expect("workspace devices");
+        let entries =
+            crate::definitions::device_entries(&home, &workspace_path).expect("device entries");
+        assert_eq!(entries.len(), 2);
+        let phone = entries
+            .iter()
+            .find(|entry| entry.device.name == "phone")
+            .expect("phone");
+        assert_eq!(phone.source, DefinitionSource::Workspace);
+        assert_eq!(phone.device.ip, "10.0.0.6");
+        assert_eq!(phone.device.connection.port, None);
+        let web = entries
+            .iter()
+            .find(|entry| entry.device.name == "web1")
+            .expect("web1");
+        assert_eq!(web.source, DefinitionSource::Global);
     }
 
     #[test]
@@ -3430,7 +4449,7 @@ mod tests {
             .iter()
             .find(|group| group.name == "phones")
             .expect("phones");
-        assert_eq!(phones.source, GroupSource::Global);
+        assert_eq!(phones.source, DefinitionSource::Global);
         assert_eq!(
             phones.devices,
             vec![ResolvedDevice {
@@ -3443,7 +4462,7 @@ mod tests {
             .iter()
             .find(|group| group.name == "screens")
             .expect("screens");
-        assert_eq!(screens.source, GroupSource::Workspace);
+        assert_eq!(screens.source, DefinitionSource::Workspace);
         assert_eq!(screens.devices.len(), 2, "{:?}", screens.error);
         assert!(screens.error.is_none());
         assert_eq!(screens.members, vec!["@phones", "web1"]);
@@ -3464,14 +4483,14 @@ mod tests {
                 name: "a".to_string(),
                 members: Vec::new(),
                 devices: Vec::new(),
-                source: GroupSource::Global,
+                source: DefinitionSource::Global,
                 error: None,
             },
             GroupInfo {
                 name: "b".to_string(),
                 members: Vec::new(),
                 devices: Vec::new(),
-                source: GroupSource::Workspace,
+                source: DefinitionSource::Workspace,
                 error: None,
             },
         ];
@@ -3525,16 +4544,28 @@ mod tests {
                 name: "web1".to_string(),
                 platform: "web".to_string(),
                 connection: "launch".to_string(),
+                device_type: "web".to_string(),
+                ip: String::new(),
+                port: None,
+                source: DefinitionSource::Global,
             },
             DeviceRow {
                 name: "phone".to_string(),
                 platform: "android".to_string(),
                 connection: "adb".to_string(),
+                device_type: "android".to_string(),
+                ip: String::new(),
+                port: None,
+                source: DefinitionSource::Global,
             },
             DeviceRow {
                 name: "living".to_string(),
                 platform: "webOS".to_string(),
                 connection: "cdp".to_string(),
+                device_type: "webOS".to_string(),
+                ip: String::new(),
+                port: None,
+                source: DefinitionSource::Global,
             },
         ];
         app.tests = vec![
@@ -3666,6 +4697,10 @@ mod tests {
             name: "web1".to_string(),
             platform: "web".to_string(),
             connection: "launch".to_string(),
+            device_type: "web".to_string(),
+            ip: String::new(),
+            port: None,
+            source: DefinitionSource::Global,
         });
         assert_eq!(web.error, None);
         assert!(web.showing && web.player && web.drm);
@@ -3691,6 +4726,10 @@ mod tests {
             name: "living".to_string(),
             platform: "tvOS".to_string(),
             connection: "apple".to_string(),
+            device_type: "tvOS".to_string(),
+            ip: String::new(),
+            port: None,
+            source: DefinitionSource::Global,
         });
         assert_eq!(apple.providers, vec!["FairPlay".to_string()]);
         assert!(apple
@@ -3702,6 +4741,10 @@ mod tests {
             name: "x".to_string(),
             platform: "bogus".to_string(),
             connection: "adb".to_string(),
+            device_type: "bogus".to_string(),
+            ip: String::new(),
+            port: None,
+            source: DefinitionSource::Global,
         });
         assert!(unknown.error.is_some());
         assert!(unknown.sources.is_empty());

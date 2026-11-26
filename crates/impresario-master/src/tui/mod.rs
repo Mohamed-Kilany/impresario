@@ -378,6 +378,9 @@ impl App {
             }
             return Action::None;
         }
+        if self.form.is_some() {
+            return self.handle_form_key(key);
+        }
         if self.group_editor.is_some() {
             return self.handle_group_editor_key(key);
         }
@@ -584,6 +587,9 @@ impl App {
                     Screen::Coverage => self.coverage_scroll = 0,
                     Screen::Probe => self.probe_scroll = 0,
                     Screen::Groups => self.select_first_group(),
+                    Screen::Devices => self.device_index = 0,
+                    Screen::Apps => self.app_index = 0,
+                    Screen::Config => self.config_index = 0,
                     Screen::Resident => self.resident_scroll = 0,
                     _ => {}
                 }
@@ -602,6 +608,15 @@ impl App {
                     Screen::Coverage => self.coverage_scroll = self.coverage_max_scroll(),
                     Screen::Probe => self.probe_scroll = self.probe_max_scroll(),
                     Screen::Groups => self.select_last_group(),
+                    Screen::Devices => {
+                        self.device_index = self.devices.len().saturating_sub(1);
+                    }
+                    Screen::Apps => {
+                        self.app_index = self.apps.len().saturating_sub(1);
+                    }
+                    Screen::Config => {
+                        self.config_index = self.config_rows.len().saturating_sub(1);
+                    }
                     Screen::Resident => self.resident_scroll = self.resident_max_scroll(),
                     _ => {}
                 }
@@ -633,15 +648,21 @@ impl App {
                     Action::None
                 }
                 Screen::Tests => self.open_selected_test(),
-                Screen::Config => self.open_config(),
+                Screen::Config => self.edit_config_setting(),
                 Screen::Coverage => Action::None,
                 Screen::Probe => Action::None,
                 Screen::Groups => {
                     self.open_group_editor(false);
                     Action::None
                 }
-                Screen::Devices => Action::OpenEditor(self.ctx.devices_path.clone()),
-                Screen::Apps => Action::OpenEditor(self.ctx.base.join("impresario.apps.config")),
+                Screen::Devices => {
+                    self.open_device_form(false);
+                    Action::None
+                }
+                Screen::Apps => {
+                    self.open_app_form(false);
+                    Action::None
+                }
                 Screen::Resident => Action::None,
                 Screen::Landing | Screen::Menu | Screen::Home => Action::None,
             },
@@ -703,6 +724,49 @@ impl App {
             KeyCode::Char('x' | 'X') | KeyCode::Delete if self.screen == Screen::Groups => {
                 self.confirm_remove_group();
                 Action::None
+            }
+            KeyCode::Char('a') if self.screen == Screen::Devices => {
+                self.open_device_form(true);
+                Action::None
+            }
+            KeyCode::Char('e') if self.screen == Screen::Devices => {
+                self.open_device_form(false);
+                Action::None
+            }
+            KeyCode::Char('x' | 'X') | KeyCode::Delete if self.screen == Screen::Devices => {
+                self.confirm_remove_device();
+                Action::None
+            }
+            KeyCode::Char('a') if self.screen == Screen::Apps => {
+                self.open_app_form(true);
+                Action::None
+            }
+            KeyCode::Char('e') if self.screen == Screen::Apps => {
+                self.open_app_form(false);
+                Action::None
+            }
+            KeyCode::Char('x' | 'X') | KeyCode::Delete if self.screen == Screen::Apps => {
+                self.confirm_remove_app();
+                Action::None
+            }
+            KeyCode::Char('a') if self.screen == Screen::Config => {
+                self.open_config_add();
+                Action::None
+            }
+            KeyCode::Char('e') if self.screen == Screen::Config => self.edit_config_setting(),
+            KeyCode::Char('x' | 'X') | KeyCode::Delete if self.screen == Screen::Config => {
+                self.confirm_unset_config();
+                Action::None
+            }
+            KeyCode::Char('o')
+                if matches!(self.screen, Screen::Devices | Screen::Apps | Screen::Config) =>
+            {
+                let path = match self.screen {
+                    Screen::Devices => self.ctx.devices_path.clone(),
+                    Screen::Apps => self.ctx.base.join("impresario.apps.config"),
+                    _ => self.ctx.config_path.clone(),
+                };
+                Action::OpenEditor(path)
             }
             KeyCode::Char('q') => Action::Quit,
             _ => Action::None,

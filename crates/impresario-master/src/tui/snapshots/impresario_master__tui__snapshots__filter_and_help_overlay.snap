@@ -23,7 +23,7 @@ expression: "render(&app, 100, 34)"
 │ │ Tests · Enter edit · Space mark · r run · d dry-run · j/k move                               │─┐
 │ │ Coverage / Probe · j/k scroll · g/G top/bottom · r reload                                    │ │
 │ │ Groups · j/k move · a add · Enter/e edit · x remove · r reload                               │ │
-│ │ Devices / Apps / Config · j/k move · Enter open · r reload                                   │ │
+│ │ Devices / Apps / Config · j/k · a add · e edit/set · x remove/unset · o file · r reload      │ │
 │ │ Resident · j/k scroll · g/G top/bottom · r reload                                            │ │
 │ │                                                                                              │ │
 │ │ Commands · /run /jobs /devices /apps /config /resident /coverage /probe /tests /open /doctor │ │

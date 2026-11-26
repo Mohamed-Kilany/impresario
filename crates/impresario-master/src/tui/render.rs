@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
-use super::app::{App, GroupEditorKind, LineStatus, TestKind};
+use super::app::{App, DefinitionEditor, FormKind, GroupEditorKind, LineStatus, TestKind};
 use super::{Focus, Screen};
 
 pub(super) fn draw(frame: &mut Frame, app: &App) {
@@ -1322,27 +1322,116 @@ fn draw_groups(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
-            format!("{} configured", app.devices.len()),
+            format!(
+                "{} · workspace definitions override global definitions by name",
+                count_label(app.devices.len(), "device", "devices")
+            ),
             secondary(app),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            format!("{:<24} {:<12} {}", "NAME", "PLATFORM", "TRANSPORT"),
-            title_style(app),
-        )),
     ];
+    if let Some(DefinitionEditor::Device(editor)) = &app.form {
+        match editor.kind {
+            FormKind::Remove => lines.push(Line::from(Span::styled(
+                format!(
+                    "Remove device '{}' from the {} layer? Enter/y confirm · Esc cancel",
+                    editor.name,
+                    editor.source.as_str()
+                ),
+                error_style(app),
+            ))),
+            FormKind::Add | FormKind::Edit => {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "{} device in the {} layer",
+                        if editor.kind == FormKind::Add {
+                            "Add"
+                        } else {
+                            "Edit"
+                        },
+                        editor.source.as_str()
+                    ),
+                    title_style(app),
+                )));
+                let name_focused = editor.kind == FormKind::Add && editor.field == 0;
+                lines.push(form_field(
+                    app,
+                    "name",
+                    &editor.name,
+                    name_focused,
+                    "<optional>",
+                ));
+                lines.push(form_field(
+                    app,
+                    "type",
+                    &editor.device_type,
+                    editor.field == 1,
+                    "web | webOS | tizenOS | android | androidtv | iOS | tvOS",
+                ));
+                lines.push(form_field(
+                    app,
+                    "ip",
+                    &editor.ip,
+                    editor.field == 2,
+                    "192.168.1.10",
+                ));
+                lines.push(form_field(
+                    app,
+                    "port",
+                    &editor.port,
+                    editor.field == 3,
+                    "default 5555",
+                ));
+                lines.push(Line::from(Span::styled(
+                    "Enter save · Tab switch field · Esc cancel",
+                    secondary(app),
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
     if app.devices.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No devices configured. Enter opens the devices file.",
+            "No devices configured. Press `a` to add one, or `o` to open the file.",
             secondary(app),
         )));
-    }
-    for device in &app.devices {
-        lines.push(Line::from(format!(
-            "{:<24} {:<12} {}",
-            device.name, device.platform, device.connection
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{:<24} {:<12} {:<10} {}",
+                "NAME", "PLATFORM", "LAYER", "TRANSPORT"
+            ),
+            title_style(app),
         )));
+        for (index, device) in app.devices.iter().enumerate() {
+            let selected = index == app.device_index;
+            let pointer = if selected {
+                if app.ctx.ascii {
+                    ">"
+                } else {
+                    "›"
+                }
+            } else {
+                " "
+            };
+            let style = if selected && app.focus == Focus::Content {
+                selected_style(app)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{pointer} {:<24} {:<12} {:<10} {}",
+                    elide(&device.name, 24),
+                    device.platform,
+                    device.source.as_str(),
+                    device.connection
+                ),
+                style,
+            )));
+        }
     }
+    let scroll = definition_scroll(app.form.is_some(), app.device_index);
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel(
@@ -1350,6 +1439,7 @@ fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
                 "Devices",
                 app.focus == Focus::Content && app.screen == Screen::Devices,
             ))
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -1358,31 +1448,134 @@ fn draw_devices(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_apps(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
-            format!("{} configured", app.apps.len()),
+            format!(
+                "{} · workspace definitions override global definitions by name",
+                count_label(app.apps.len(), "app", "apps")
+            ),
             secondary(app),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            format!("{:<22} {:<22} {}", "NAME", "PLATFORMS", "DESCRIPTION"),
-            title_style(app),
-        )),
     ];
+    if let Some(DefinitionEditor::App(editor)) = &app.form {
+        match editor.kind {
+            FormKind::Remove => lines.push(Line::from(Span::styled(
+                format!(
+                    "Remove app '{}' from the {} layer? Enter/y confirm · Esc cancel",
+                    editor.name,
+                    editor.source.as_str()
+                ),
+                error_style(app),
+            ))),
+            FormKind::Add | FormKind::Edit => {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "{} app in the {} layer",
+                        if editor.kind == FormKind::Add {
+                            "Add"
+                        } else {
+                            "Edit"
+                        },
+                        editor.source.as_str()
+                    ),
+                    title_style(app),
+                )));
+                let name_focused = editor.kind == FormKind::Add && editor.field == 0;
+                lines.push(form_field(app, "name", &editor.name, name_focused, "shop"));
+                lines.push(form_field(
+                    app,
+                    "description",
+                    &editor.description,
+                    editor.field == 1,
+                    "<optional>",
+                ));
+                lines.push(form_field(
+                    app,
+                    "platforms",
+                    &editor.platforms,
+                    editor.field == 2,
+                    "android=com.acme.shop, web=https://shop.example",
+                ));
+                lines.push(form_field(
+                    app,
+                    "packages",
+                    &editor.packages,
+                    editor.field == 3,
+                    "android=dist/app.apk, ios=build/App.ipa",
+                ));
+                lines.push(form_field(
+                    app,
+                    "launch activities",
+                    &editor.launch_activities,
+                    editor.field == 4,
+                    "android=com.acme.MainActivity",
+                ));
+                lines.push(form_field(
+                    app,
+                    "launch params",
+                    &editor.launch_params,
+                    editor.field == 5,
+                    "env=staging, locale=en-US",
+                ));
+                let toggle_style = if editor.field == 6 {
+                    active_border(app)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("  clear data: ", title_style(app)),
+                    Span::styled(if editor.clear_data { "yes" } else { "no" }, toggle_style),
+                    Span::styled("  (Space toggles)", secondary(app)),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    "Comma-separated lists · Enter save · Tab switch field · Esc cancel",
+                    secondary(app),
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
     if app.apps.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No apps configured. Enter opens impresario.apps.config.",
+            "No apps configured. Press `a` to add one, or `o` to open impresario.apps.config.",
             secondary(app),
         )));
-    }
-    for app_row in &app.apps {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<22}", app_row.name),
-                Style::default().add_modifier(Modifier::BOLD),
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{:<22} {:<22} {:<10} {}",
+                "NAME", "PLATFORMS", "LAYER", "DESCRIPTION"
             ),
-            Span::raw(format!("{:<22}", app_row.platforms)),
-            Span::styled(app_row.description.clone(), secondary(app)),
-        ]));
+            title_style(app),
+        )));
+        for (index, app_row) in app.apps.iter().enumerate() {
+            let selected = index == app.app_index;
+            let pointer = if selected {
+                if app.ctx.ascii {
+                    ">"
+                } else {
+                    "›"
+                }
+            } else {
+                " "
+            };
+            let style = if selected && app.focus == Focus::Content {
+                selected_style(app)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{pointer} {:<22} {:<22} {:<10} {}",
+                    elide(&app_row.name, 22),
+                    elide(&app_row.platforms, 22),
+                    app_row.source.as_str(),
+                    elide(&app_row.description, 40)
+                ),
+                style,
+            )));
+        }
     }
+    let scroll = definition_scroll(app.form.is_some(), app.app_index);
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel(
@@ -1390,6 +1583,7 @@ fn draw_apps(frame: &mut Frame, app: &App, area: Rect) {
                 "Apps",
                 app.focus == Focus::Content && app.screen == Screen::Apps,
             ))
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -1402,27 +1596,101 @@ fn draw_config(frame: &mut Frame, app: &App, area: Rect) {
             secondary(app),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            format!("{:<24} {:<28} {}", "KEY", "VALUE", "SOURCE"),
-            title_style(app),
-        )),
     ];
+    if let Some(DefinitionEditor::Config(editor)) = &app.form {
+        match editor.kind {
+            FormKind::Remove => lines.push(Line::from(Span::styled(
+                format!(
+                    "Remove '{}' from the {} layer? Enter/y confirm · Esc cancel",
+                    editor.key,
+                    editor.source.as_str()
+                ),
+                error_style(app),
+            ))),
+            FormKind::Add => {
+                lines.push(Line::from(Span::styled(
+                    "Add a setting (workspace unless it is global-only)",
+                    title_style(app),
+                )));
+                lines.push(form_field(
+                    app,
+                    "key",
+                    &editor.key,
+                    editor.field == 0,
+                    "timeout_default_ms",
+                ));
+                lines.push(form_field(
+                    app,
+                    "value",
+                    &editor.value,
+                    editor.field == 1,
+                    "5000",
+                ));
+                lines.push(Line::from(Span::styled(
+                    "Enter save · Tab switch field · Esc cancel",
+                    secondary(app),
+                )));
+            }
+            FormKind::Edit => {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "Set '{}' in the {} layer",
+                        editor.key,
+                        editor.source.as_str()
+                    ),
+                    title_style(app),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled("  key: ", title_style(app)),
+                    Span::styled(editor.key.clone(), Style::default()),
+                ]));
+                lines.push(form_field(app, "value", &editor.value, true, ""));
+                lines.push(Line::from(Span::styled(
+                    "Enter save · Esc cancel · press x to unset instead",
+                    secondary(app),
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
     if app.config_rows.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No configuration rows. Enter opens the workspace config.",
+            "No configuration rows. Press `a` to add a setting, or `o` to open the file.",
             secondary(app),
         )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("{:<24} {:<28} {}", "KEY", "VALUE", "SOURCE"),
+            title_style(app),
+        )));
+        for (index, row) in app.config_rows.iter().enumerate() {
+            let selected = index == app.config_index;
+            let pointer = if selected {
+                if app.ctx.ascii {
+                    ">"
+                } else {
+                    "›"
+                }
+            } else {
+                " "
+            };
+            let style = if selected && app.focus == Focus::Content {
+                selected_style(app)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{pointer} {:<24} {:<28} {}",
+                    elide(&row.key, 24),
+                    elide(&row.value, 28),
+                    row.source
+                ),
+                style,
+            )));
+        }
     }
-    for row in &app.config_rows {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<24}", row.key),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("{:<28}", row.value)),
-            Span::styled(row.source.clone(), secondary(app)),
-        ]));
-    }
+    let scroll = definition_scroll(app.form.is_some(), app.config_index);
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel(
@@ -1430,9 +1698,41 @@ fn draw_config(frame: &mut Frame, app: &App, area: Rect) {
                 "Configuration",
                 app.focus == Focus::Content && app.screen == Screen::Config,
             ))
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn definition_scroll(form_open: bool, index: usize) -> u16 {
+    if form_open {
+        0
+    } else {
+        u16::try_from(index).unwrap_or(u16::MAX)
+    }
+}
+
+fn form_field(
+    app: &App,
+    label: &str,
+    value: &str,
+    focused: bool,
+    placeholder: &str,
+) -> Line<'static> {
+    let shown = if value.is_empty() {
+        placeholder.to_string()
+    } else {
+        value.to_string()
+    };
+    let style = if focused {
+        active_border(app)
+    } else {
+        Style::default()
+    };
+    Line::from(vec![
+        Span::styled(format!("  {label}: "), title_style(app)),
+        Span::styled(if focused { format!("{shown}_") } else { shown }, style),
+    ])
 }
 
 fn draw_resident(frame: &mut Frame, app: &App, area: Rect) {
@@ -1749,35 +2049,48 @@ fn draw_completions(frame: &mut Frame, app: &App, prompt: Rect) {
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let keys = match app.screen {
-        Screen::Menu => "↑↓ move · Enter open · Esc workspaces · Tab prompt · ? help",
-        Screen::Runs if app.focus == Focus::Content => {
-            if area.width < 100 {
-                "Enter follow · b detach · x stop · Esc menu · Tab prompt"
-            } else {
-                "Enter follow · b detach · x stop · f log tail · t device · / filter · Esc menu · Tab prompt"
+    let keys = if app
+        .form
+        .as_ref()
+        .is_some_and(|form| form.kind() == FormKind::Remove)
+    {
+        "Enter/y confirm · Esc cancel"
+    } else if app.form.is_some() {
+        "Enter save · Tab switch field · Esc cancel"
+    } else {
+        match app.screen {
+            Screen::Menu => "↑↓ move · Enter open · Esc workspaces · Tab prompt · ? help",
+            Screen::Runs if app.focus == Focus::Content => {
+                if area.width < 100 {
+                    "Enter follow · b detach · x stop · Esc menu · Tab prompt"
+                } else {
+                    "Enter follow · b detach · x stop · f log tail · t device · / filter · Esc menu · Tab prompt"
+                }
             }
+            Screen::Tests if app.focus == Focus::Content => {
+                "Enter edit · Space mark · r run · d dry-run · Esc menu · Tab prompt"
+            }
+            Screen::Coverage if app.focus == Focus::Content => {
+                "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+            }
+            Screen::Probe if app.focus == Focus::Content => {
+                "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+            }
+            Screen::Groups if app.focus == Focus::Content => {
+                "j/k move · a add · Enter/e edit · x remove · r reload · Esc menu · Tab prompt"
+            }
+            Screen::Devices | Screen::Apps if app.focus == Focus::Content => {
+                "j/k move · a add · Enter/e edit · x remove · o open file · r reload · Esc menu"
+            }
+            Screen::Config if app.focus == Focus::Content => {
+                "j/k move · a add · Enter/e set · x unset · o open file · r reload · Esc menu"
+            }
+            Screen::Resident if app.focus == Focus::Content => {
+                "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
+            }
+            Screen::Home if app.focus == Focus::Content => "Esc menu · Tab prompt · ? help",
+            _ => "Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help",
         }
-        Screen::Tests if app.focus == Focus::Content => {
-            "Enter edit · Space mark · r run · d dry-run · Esc menu · Tab prompt"
-        }
-        Screen::Coverage if app.focus == Focus::Content => {
-            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
-        }
-        Screen::Probe if app.focus == Focus::Content => {
-            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
-        }
-        Screen::Groups if app.focus == Focus::Content => {
-            "j/k move · a add · Enter/e edit · x remove · r reload · Esc menu · Tab prompt"
-        }
-        Screen::Devices | Screen::Apps | Screen::Config if app.focus == Focus::Content => {
-            "Enter open · r reload · Esc menu · Tab prompt"
-        }
-        Screen::Resident if app.focus == Focus::Content => {
-            "j/k scroll · g/G top/bottom · r reload · Esc menu · Tab prompt"
-        }
-        Screen::Home if app.focus == Focus::Content => "Esc menu · Tab prompt · ? help",
-        _ => "Enter run · Tab completes · ↑↓ history · Ctrl-R search · ? help",
     };
     let active = app
         .jobs

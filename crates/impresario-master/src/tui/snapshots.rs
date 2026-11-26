@@ -11,11 +11,12 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
 use super::app::{
-    probe_row, App, AppRow, ConfigRow, DeviceRow, GroupEditor, GroupEditorKind, LineStatus,
-    TestKind, TestRow, TreeLine, WorkspaceRow,
+    probe_row, App, AppEditor, AppRow, ConfigEditor, ConfigRow, DefinitionEditor, DeviceEditor,
+    DeviceRow, FormKind, GroupEditor, GroupEditorKind, LineStatus, TestKind, TestRow, TreeLine,
+    WorkspaceRow,
 };
 use super::{Context, Focus, Screen};
-use crate::definitions::{GroupInfo, GroupSource, ResolvedDevice};
+use crate::definitions::{DefinitionSource, GroupInfo, ResolvedDevice};
 use crate::jobs::{JobRecord, JobStatus};
 use crate::resident::service::ServiceState;
 use crate::resident::status::{DumpEntry, ResidentStatus, ScheduleStatus, WatcherStatus};
@@ -57,17 +58,26 @@ fn populated() -> App {
             name: "web1".to_string(),
             platform: "web".to_string(),
             connection: "launch".to_string(),
+            device_type: "web".to_string(),
+            ip: "127.0.0.1".to_string(),
+            port: None,
+            source: DefinitionSource::Global,
         },
         DeviceRow {
             name: "phone".to_string(),
             platform: "android".to_string(),
             connection: "adb".to_string(),
+            device_type: "android".to_string(),
+            ip: "10.0.0.5".to_string(),
+            port: Some(5555),
+            source: DefinitionSource::Workspace,
         },
     ];
     app.apps = vec![AppRow {
         name: "shop".to_string(),
         description: "Storefront".to_string(),
         platforms: "web, android".to_string(),
+        source: DefinitionSource::Workspace,
     }];
     app.config_rows = vec![
         ConfigRow {
@@ -272,11 +282,19 @@ fn probe_support_frame() {
             name: "web1".to_string(),
             platform: "web".to_string(),
             connection: "launch".to_string(),
+            device_type: "web".to_string(),
+            ip: String::new(),
+            port: None,
+            source: DefinitionSource::Global,
         }),
         probe_row(&DeviceRow {
             name: "living".to_string(),
             platform: "tvOS".to_string(),
             connection: "apple".to_string(),
+            device_type: "tvOS".to_string(),
+            ip: String::new(),
+            port: None,
+            source: DefinitionSource::Global,
         }),
     ];
     let output = render(&app, 120, 40);
@@ -300,7 +318,7 @@ fn groups_frame() {
                 name: "phone".to_string(),
                 platform: "android".to_string(),
             }],
-            source: GroupSource::Workspace,
+            source: DefinitionSource::Workspace,
             error: None,
         },
         GroupInfo {
@@ -316,14 +334,14 @@ fn groups_frame() {
                     platform: "web".to_string(),
                 },
             ],
-            source: GroupSource::Global,
+            source: DefinitionSource::Global,
             error: None,
         },
         GroupInfo {
             name: "broken".to_string(),
             members: vec!["@missing".to_string()],
             devices: Vec::new(),
-            source: GroupSource::Workspace,
+            source: DefinitionSource::Workspace,
             error: Some("unknown actor '@missing'".to_string()),
         },
     ];
@@ -343,7 +361,7 @@ fn groups_frame() {
         name: "newgroup".to_string(),
         members: "phone".to_string(),
         members_focus: true,
-        source: GroupSource::Workspace,
+        source: DefinitionSource::Workspace,
     });
     let output = render(&app, 120, 30);
     assert!(output.contains("name: newgroup_"), "{output}");
@@ -355,13 +373,87 @@ fn groups_frame() {
         name: "screens".to_string(),
         members: String::new(),
         members_focus: false,
-        source: GroupSource::Global,
+        source: DefinitionSource::Global,
     });
     let output = render(&app, 120, 30);
     assert!(
         output.contains("Remove group 'screens' from the global layer?"),
         "{output}"
     );
+}
+
+#[test]
+fn definition_forms_frame() {
+    let mut app = populated();
+    app.screen = Screen::Devices;
+    app.focus = Focus::Content;
+    app.form = Some(DefinitionEditor::Device(DeviceEditor {
+        kind: FormKind::Add,
+        name: "phone".to_string(),
+        device_type: "android".to_string(),
+        ip: "10.0.0.5".to_string(),
+        port: "38103".to_string(),
+        field: 1,
+        source: DefinitionSource::Workspace,
+    }));
+    let output = render(&app, 120, 40);
+    assert!(
+        output.contains("Add device in the workspace layer"),
+        "{output}"
+    );
+    assert!(output.contains("name: phone"), "{output}");
+    assert!(output.contains("type: android_"), "{output}");
+    assert!(output.contains("port: 38103"), "{output}");
+    assert!(
+        output.contains("Enter save · Tab switch field · Esc cancel"),
+        "{output}"
+    );
+
+    app.screen = Screen::Apps;
+    app.form = Some(DefinitionEditor::App(AppEditor {
+        kind: FormKind::Edit,
+        name: "shop".to_string(),
+        description: "Storefront".to_string(),
+        platforms: "web=https://shop.example".to_string(),
+        packages: String::new(),
+        launch_activities: String::new(),
+        launch_params: "env=staging".to_string(),
+        clear_data: true,
+        field: 6,
+        source: DefinitionSource::Workspace,
+    }));
+    let output = render(&app, 120, 40);
+    assert!(
+        output.contains("Edit app in the workspace layer"),
+        "{output}"
+    );
+    assert!(
+        output.contains("platforms: web=https://shop.example"),
+        "{output}"
+    );
+    assert!(output.contains("clear data: yes"), "{output}");
+
+    app.screen = Screen::Config;
+    app.form = Some(DefinitionEditor::Config(ConfigEditor {
+        kind: FormKind::Edit,
+        key: "timeout_default_ms".to_string(),
+        value: "5000".to_string(),
+        field: 0,
+        source: DefinitionSource::Workspace,
+    }));
+    let output = render(&app, 120, 40);
+    assert!(
+        output.contains("Set 'timeout_default_ms' in the workspace layer"),
+        "{output}"
+    );
+    assert!(output.contains("value: 5000_"), "{output}");
+
+    app.form = None;
+    app.screen = Screen::Devices;
+    let output = render(&app, 120, 40);
+    assert!(output.contains("LAYER"), "{output}");
+    assert!(output.contains("workspace"), "{output}");
+    assert!(output.contains("global"), "{output}");
 }
 
 #[test]

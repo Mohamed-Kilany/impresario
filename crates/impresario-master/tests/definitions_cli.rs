@@ -106,6 +106,77 @@ fn device_lifecycle_merges_global_and_workspace_layers() {
 }
 
 #[test]
+fn device_port_is_written_edited_and_restricted_to_android() {
+    let (_guard, home, workspace) = temp();
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &[
+            "device",
+            "add",
+            "--workspace",
+            "--name",
+            "phone",
+            "--type",
+            "android",
+            "--ip",
+            "10.0.0.5",
+            "--port",
+            "38103",
+        ],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let local = workspace.join("impresario.devices.config");
+    let text = std::fs::read_to_string(&local).expect("workspace devices");
+    assert!(text.contains("port: 38103"), "{text}");
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &[
+            "device",
+            "edit",
+            "--workspace",
+            "--name",
+            "phone",
+            "--type",
+            "android",
+            "--ip",
+            "10.0.0.6",
+            "--port",
+            "5555",
+        ],
+    );
+    assert_eq!(code, EXIT_OK, "stderr={stderr}");
+    let text = std::fs::read_to_string(&local).expect("workspace devices");
+    assert!(text.contains("ip: 10.0.0.6"), "{text}");
+    assert!(
+        !text.contains("port:"),
+        "the default 5555 stays implicit: {text}"
+    );
+
+    let (code, _stdout, stderr) = run(
+        &home,
+        &workspace,
+        &[
+            "device",
+            "add",
+            "--workspace",
+            "--name",
+            "web1",
+            "--type",
+            "web",
+            "--ip",
+            "127.0.0.1",
+            "--port",
+            "5555",
+        ],
+    );
+    assert_eq!(code, EXIT_USAGE, "web devices have no ADB port");
+    assert!(stderr.contains("only valid for android"), "{stderr}");
+}
+
+#[test]
 fn duplicate_devices_and_bad_fields_are_rejected() {
     let (_guard, home, workspace) = temp();
     let args = [
