@@ -2304,7 +2304,7 @@ devices:
         }
         assert!(errors
             .iter()
-            .all(|d| d.help.as_deref().unwrap_or("").contains("type and ip")));
+            .all(|d| d.help.as_deref().unwrap_or("").contains("type, ip")));
     }
 
     #[test]
