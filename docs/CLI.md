@@ -735,17 +735,17 @@ add|edit|remove`, `app add|edit|remove`, `config set|unset`) with the same
 have one implementation; a rejected command leaves the form open and reports
 the child's error in the status line.
 
-The Devices form edits name (add only), type, IP and port; the port is the
-Android/Android TV ADB port and stays blank when the implicit `5555` applies.
-Device `edit` keeps the CLI's replacement semantics: auth, labels and other
-options not shown in the form are reset, so use `o` for definitions that carry
-them. The Apps form edits name (add only), description, comma-separated
+The Devices form edits name (add only), type, IP and port, which is the whole
+persisted device record; device `edit` rebuilds the definition exactly like the
+CLI. The port is the Android/Android TV ADB port and stays blank when the
+implicit `5555` applies. The Apps form edits name (add only), description, comma-separated
 `platform=value` lists for platforms, packages and launch activities,
 `key=value` launch params, and a Space-toggled clear-data flag. The Config
 screen shows each effective setting, its value and winning layer: `Enter`/`e`
 opens a value form for a schema setting, `x` confirms an unset, and `a` adds a
 key. Add writes the workspace layer unless the key is global-only; edit and
-unset target the winning layer, and global-only keys always use `--global`.
+unset target the winning layer (a built-in default is written to the
+workspace), and global-only keys always use `--global`.
 Derived `typed` rows (`project`, `plays_dir`, `config.path`) and keys unknown
 to the settings schema are file-only: `Enter`/`o` opens the file and `x` says
 to edit it there. Names and keys are locked while editing.
