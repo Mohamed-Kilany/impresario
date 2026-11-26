@@ -1417,7 +1417,7 @@ async fn run_frame_suite(backend: &str) {
     .await;
     web.run_ok(
         pb::command::Body::KeyPress(pb::KeyPress {
-            key: pb::RemoteKey::Num5 as i32,
+            key: pb::RemoteKey::KeyNum5 as i32,
             repeat: 1,
             interval_ms: 100,
         }),

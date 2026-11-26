@@ -71,13 +71,17 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     return out;
   }
   function xpathList(value) {
-    var out = [];
     var docs = allDocuments();
-    for (var d = 0; d < docs.length; d++) {
+    var out = [];
+    // Evaluate on the top document first without catching, so an invalid
+    // XPath still surfaces as an error exactly as it did before frames.
+    var first = docs[0].evaluate(value, docs[0], null, 7, null);
+    for (var i = 0; i < first.snapshotLength; i++) { out.push(first.snapshotItem(i)); }
+    for (var d = 1; d < docs.length; d++) {
       var result = null;
       try { result = docs[d].evaluate(value, docs[d], null, 7, null); }
       catch (error) { continue; }
-      for (var i = 0; i < result.snapshotLength; i++) { out.push(result.snapshotItem(i)); }
+      for (var j = 0; j < result.snapshotLength; j++) { out.push(result.snapshotItem(j)); }
     }
     return out;
   }
@@ -239,6 +243,16 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     var doc = ownerDocument(el);
     return intersectRect(mapRectToTop(doc, info.clip), topViewportClip(doc));
   }
+  function visibilityClip(el) {
+    // Keep the pre-frame behaviour for top-level documents: an element only
+    // has to intersect the viewport. Frame content additionally has to
+    // intersect its frame chain and the frame-local clips.
+    var doc = ownerDocument(el);
+    if (doc === document) {
+      return { x: 0, y: 0, w: window.innerWidth || 0, h: window.innerHeight || 0 };
+    }
+    return topClipForElement(el);
+  }
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) { return false; }
     var style = styleOf(el);
@@ -249,7 +263,7 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     if (r.width <= 0 || r.height <= 0) { return false; }
     var top = topRect(el);
     if (top.w <= 0 || top.h <= 0) { return false; }
-    var clipped = intersectRect(top, topClipForElement(el));
+    var clipped = intersectRect(top, visibilityClip(el));
     return clipped.w > 0 && clipped.h > 0;
   }
   function isEnabled(el) {
@@ -905,9 +919,14 @@ mod tests {
                 "frame support is missing {token}"
             );
         }
+        assert!(HELPER_SCRIPT.contains("visibilityClip"));
         assert!(
-            HELPER_SCRIPT.contains("intersectRect(top, topClipForElement(el))"),
-            "visibility must require the element rect to intersect its clip"
+            HELPER_SCRIPT.contains("var clipped = intersectRect(top, visibilityClip(el))"),
+            "visibility must intersect the top-level rect with the frame-aware clip"
+        );
+        assert!(
+            HELPER_SCRIPT.contains("function visibilityClip(el)"),
+            "top-level elements keep viewport-only visibility"
         );
     }
 
