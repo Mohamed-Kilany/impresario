@@ -644,7 +644,8 @@ coordinate-only tap descends with `deepElementFromPoint`. `file://` fixtures
 need `--allow-file-access-from-files`, which the test launcher now passes.
 Tests: `fixture_suite_raw_backend` is joined by `frame_suite_raw_backend` and a
 feature-gated chromiumoxide entry (eight integration tests without the feature,
-eleven with it). `fixtures/web/frames.html` nests `frames-inner.html`, which
+eleven with it; the connector now has 74 unit tests by default and 79 with the
+feature). `fixtures/web/frames.html` nests `frames-inner.html`, which
 nests `frames-deep.html`; the suite asserts the parent chain
 (`deep-frame` before `outer-frame`), top-level geometry
 (inner `(155,125)`, deep `(169,279)` ±2 px), `raw.frame`, pruning of frame
@@ -653,10 +654,18 @@ offscreen content, `Hidden` for the offscreen node, locator click on
 `key_dispatch=js` `Num5` producing `key-53` in the deep document, the focused
 snapshot naming `deep-input`, and a coordinate tap through both frames. Unit
 tests pin the required frame helper surface and the top-level-clip visibility
-rule. Limitations: cross-origin frames remain opaque (no CDP target
-auto-attach), and Android WebView / Apple WKWebView content is covered only by
-the platform accessibility tree — there is no WebView devtools DOM bridge.
-Frame geometry assumes axis-aligned translation/scale, not rotation or skew.
+rule. CI run `45776126562` at `4dd3464` passed all eight jobs; the cargo-test
+log shows `frame_suite_raw_backend ... ok`, the 74 connector unit tests and all
+eight default integration tests. `daadf52` corrected stale proto key naming and
+kept invalid-XPath errors and top-level visibility behaviour stable; the
+coordinate tap derives `deep-tap`'s centre from the post-action focused snapshot
+because locator actions scroll the inner frame (`57272b0`), and the fixture
+smoke check waits on `#top-button` because the body is intentionally zero-height
+(`4dd3464`). Limitations: cross-origin frames
+remain opaque (no CDP target auto-attach), and Android WebView / Apple WKWebView
+content is covered only by the platform accessibility tree — there is no
+WebView devtools DOM bridge. Frame geometry assumes axis-aligned
+translation/scale, not rotation or skew.
 
 INS-R8 is implemented in code (2026-11-25): the Android CI job assembles and
 uploads all three APKs with `gradle assembleDebug`, while the runtime
@@ -669,8 +678,11 @@ webOS/Tizen/Android TV/tvOS and `Both` for Android/iOS (converter test). Real
 Android phone/TV and Apple TV re-validation of these code paths is pending
 hardware.
 
-CI is authoritative for INS-R7/R8; only `cargo fmt --all`, `git diff --check`
-and a Node parse of both embedded ES5 scripts ran locally.
+CI is authoritative for INS-R7/R8: run `45776126562` at `4dd3464` passed all
+eight jobs, including `frame_suite_raw_backend` against real Chromium on Linux,
+the Android JVM tests/APK assembly and the Apple Swift package. Locally only
+`cargo fmt --all`, `git diff --check` and Node parses of both embedded ES5
+scripts ran.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)
