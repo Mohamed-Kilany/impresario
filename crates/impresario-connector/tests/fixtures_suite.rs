@@ -1445,16 +1445,28 @@ async fn run_frame_suite(backend: &str) {
         focused.raw_id
     );
 
+    // The completed locator actions scroll the inner frame, so take the
+    // current top-level centre from this snapshot instead of hard-coding the
+    // pre-action coordinates.
+    let tap_node = focused_snapshot
+        .nodes
+        .iter()
+        .find(|node| node.raw_id == "deep-tap")
+        .expect("deep-tap in focused snapshot");
+    let tap_bounds = tap_node.bounds.as_ref().expect("deep-tap bounds");
+    let tap_x = tap_bounds.x + tap_bounds.w / 2.0;
+    let tap_y = tap_bounds.y + tap_bounds.h / 2.0;
+
     // --- coordinate tap descends through both frames ---------------------
-    // `deep-tap` is the second deep-frame button: its top-level centre is
-    // (369, 297), and only it writes `tap-clicked`, so this is a positive
-    // control rather than observing the earlier locator click.
+    // `deep-tap` is the second deep-frame button: only it writes
+    // `tap-clicked`, so this is a positive control rather than observing the
+    // earlier locator click.
     let request = harness.request_with_session(
         &session_id,
         pb::InspectorInputRequest {
             kind: pb::InspectorInputKind::Tap as i32,
-            x: 369.0,
-            y: 297.0,
+            x: tap_x,
+            y: tap_y,
             ..pb::InspectorInputRequest::default()
         },
     );
