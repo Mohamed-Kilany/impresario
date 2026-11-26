@@ -1270,7 +1270,9 @@ async fn run_frame_suite(backend: &str) {
     );
     let session_id = response.session_id.clone();
     let mut web = Driver::open(&mut harness.client, &session_id).await;
-    web.check_visible(css("body"), 5_000).await;
+    // The fixture body holds only absolutely-positioned content, so it has
+    // zero height; wait on a real top-level control instead.
+    web.check_visible(css("#top-button"), 5_000).await;
     // Wait for both nested frame documents to load before snapshotting.
     web.check_visible(css("#deep-button"), 5_000).await;
 
