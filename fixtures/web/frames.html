@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Impresario same-origin frame fixture</title>
+<style>
+  html, body { margin: 0; padding: 0; font: 16px sans-serif; }
+  #top-button { position: absolute; left: 20px; top: 20px; width: 120px; height: 36px; }
+  #top-result { position: absolute; left: 20px; top: 60px; }
+  #outer-frame {
+    position: absolute;
+    left: 100px;
+    top: 80px;
+    width: 420px;
+    height: 300px;
+    border: 10px solid #333333;
+    padding: 5px;
+    box-sizing: content-box;
+  }
+</style>
+</head>
+<body>
+  <button id="top-button" onclick="document.getElementById('top-result').textContent = 'top-clicked'">Top</button>
+  <div id="top-result">idle</div>
+  <iframe id="outer-frame" src="frames-inner.html" title="outer frame"></iframe>
+</body>
+</html>

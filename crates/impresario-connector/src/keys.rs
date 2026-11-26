@@ -56,8 +56,10 @@ pub fn require_web_key(platform: Platform, key: RemoteKey) -> Result<DispatchKey
 }
 
 /// A JS expression that dispatches synthetic `keyDown`/`keyUp` events for the
-/// key on `document.activeElement` (or `document.body`) with overridden
-/// `keyCode`/`which` (spec 10.3). ES5 only.
+/// key on the focused element (or `document.body`) with overridden
+/// `keyCode`/`which` (spec 10.3). The helper's frame-aware active element is
+/// preferred so a focused control inside a same-origin iframe receives the
+/// key even when the top document has focus. ES5 only.
 #[must_use]
 pub fn js_dispatch_expression(key: &DispatchKey) -> String {
     let body = format!(
@@ -66,9 +68,16 @@ var override = function (event, name, value) {{
   try {{ Object.defineProperty(event, name, {{ get: function () {{ return value; }} }}); }}
   catch (e) {{ try {{ event[name] = value; }} catch (e2) {{ }} }}
 }};
-var target = document.activeElement || document.body;
+var target = null;
+try {{
+  if (window.__impresario && window.__impresario.activeElement) {{
+    target = window.__impresario.activeElement();
+  }}
+}} catch (e) {{ target = null; }}
+if (!target) {{ target = document.activeElement || document.body; }}
+var doc = (target && target.ownerDocument) || document;
 var dispatch = function (type) {{
-  var event = document.createEvent('Event');
+  var event = doc.createEvent('Event');
   event.initEvent(type, true, true);
   override(event, 'key', {key});
   override(event, 'code', {code});
@@ -164,6 +173,14 @@ mod tests {
         assert!(expression.contains("13"));
         assert!(expression.contains("keydown"));
         assert!(expression.contains("keyup"));
+        assert!(
+            expression.contains("__impresario.activeElement"),
+            "JS key dispatch must use the frame-aware active element"
+        );
+        assert!(
+            expression.contains("target.ownerDocument"),
+            "the event must belong to the target's document"
+        );
         assert!(!expression.contains("=>"), "ES5 required");
     }
 }

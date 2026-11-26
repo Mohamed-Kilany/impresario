@@ -1364,7 +1364,7 @@ return {ok:true, complete:(info.max - info.top) <= 1};
     ) -> Result<CommandOutput, ConnectorError> {
         if self.platform == Platform::Web {
             self.evaluate_value(
-                "(function(){var e=document.activeElement;if(e&&e.blur){e.blur();}return true;})()",
+                "(function(){var e=null;try{if(window.__impresario&&window.__impresario.activeElement){e=window.__impresario.activeElement();}}catch(x){}if(!e){e=document.activeElement;}if(e&&e.blur){e.blur();}return true;})()",
                 cancel,
             )
             .await?;
@@ -2896,7 +2896,7 @@ window.__impresario.scrollIntoView(el);
 var visible = window.__impresario.isVisible(el);
 var enabled = window.__impresario.isEnabled(el);
 if (!visible || !enabled) {{ return {{ok:true, found:true, visible:visible, enabled:enabled}}; }}
-var rect = window.__impresario.rectOf(el);
+var rect = window.__impresario.topRect(el);
 if (!rect) {{ return {{ok:true, found:true, visible:visible, enabled:enabled}}; }}
 var hit = window.__impresario.hitTest(el);
 return {{ok:true, found:true, visible:visible, enabled:enabled, x:(rect.x + rect.w / 2), y:(rect.y + rect.h / 2), hit:hit.ok, obscured_by:hit.obscured_by}};
@@ -3247,7 +3247,7 @@ var r = {find};
 if (r.error) {{ return {{ok:false, invalid_selector:true, error:r.error}}; }}
 var el = r.el;
 if (!el || !window.__impresario.isVisible(el)) {{ return {{ok:true, frame:null}}; }}
-return {{ok:true, frame:window.__impresario.rectOf(el)}};
+return {{ok:true, frame:window.__impresario.topRect(el)}};
 "#,
             find = self.sel.find_call()
         );

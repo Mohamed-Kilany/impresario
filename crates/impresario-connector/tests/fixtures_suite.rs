@@ -476,6 +476,8 @@ async fn start_chrome(page: &str) -> Option<LaunchedBrowser> {
         "--disable-background-timer-throttling".to_string(),
         "--disable-backgrounding-occluded-windows".to_string(),
         "--disable-renderer-backgrounding".to_string(),
+        // INS-R7: file:// fixtures nest same-origin iframes.
+        "--allow-file-access-from-files".to_string(),
     ];
     Some(
         launch_chromium_at(true, &fixture_url(page), &args)
@@ -1235,6 +1237,241 @@ async fn run_locator_suite(backend: &str) {
     chrome.kill().await;
 }
 
+/// INS-R7: same-origin iframe content is part of the one viewport snapshot.
+/// Nested geometry is mapped into top-level coordinates, frame-local nodes
+/// hang under their `<iframe>` element, locators/clicks/typing/focus work
+/// across frames, and a coordinate tap descends into nested frames.
+async fn run_frame_suite(backend: &str) {
+    let Some(mut chrome) = start_chrome("frames.html").await else {
+        eprintln!("skipping frame suite ({backend}): no Chromium found (set CHROME_BIN)");
+        return;
+    };
+    let endpoint = format!("ws://{}:{}", chrome.host, chrome.port);
+    let mut harness = Harness::start(None).await;
+    let mut options = suite_options(backend, "frames.html");
+    // Exercise the JS key fallback, which must target the helper's
+    // frame-aware active element rather than the top document.
+    options.push(("key_dispatch".to_string(), "js".to_string()));
+    let response = harness
+        .handshake(Handshake {
+            platform: pb::Platform::Web as i32,
+            endpoint: endpoint.clone(),
+            app_url: String::new(),
+            options,
+            token: None,
+            protocol: "1.0.0".to_string(),
+        })
+        .await
+        .expect("frame handshake rpc");
+    assert!(
+        response.accepted,
+        "[{backend}] frame handshake rejected: {:?}",
+        response.error
+    );
+    let session_id = response.session_id.clone();
+    let mut web = Driver::open(&mut harness.client, &session_id).await;
+    web.check_visible(css("body"), 5_000).await;
+    // Wait for both nested frame documents to load before snapshotting.
+    web.check_visible(css("#deep-button"), 5_000).await;
+
+    // --- snapshot: nesting, top-level geometry and raw.frame -------------
+    let mut inspector = harness.inspector.clone();
+    let request = harness.request_with_session(
+        &session_id,
+        pb::InspectorSnapshotRequest {
+            include_raw: true,
+            min_visible_fraction: 0.0,
+            ..pb::InspectorSnapshotRequest::default()
+        },
+    );
+    let snapshot = inspector
+        .snapshot(request)
+        .await
+        .expect("frame snapshot rpc")
+        .into_inner();
+    assert!(!snapshot.truncated, "[{backend}] frame snapshot truncated");
+    let by_id: std::collections::HashMap<u64, &pb::InspectorNode> =
+        snapshot.nodes.iter().map(|node| (node.id, node)).collect();
+    let find = |raw_id: &str| {
+        snapshot
+            .nodes
+            .iter()
+            .find(|node| node.raw_id == raw_id)
+            .unwrap_or_else(|| panic!("[{backend}] snapshot is missing #{raw_id}"))
+    };
+
+    let deep = find("deep-button");
+    let bounds = deep.bounds.as_ref().expect("deep bounds");
+    // Outer content box starts at (115, 95); the nested frame content box
+    // starts at (149, 269); the deep button sits at (20, 10) inside it.
+    assert!(
+        (bounds.x - 169.0).abs() < 2.0 && (bounds.y - 279.0).abs() < 2.0,
+        "[{backend}] deep button mapped to ({}, {}), expected (169, 279)",
+        bounds.x,
+        bounds.y
+    );
+    assert!(
+        (bounds.w - 120.0).abs() < 2.0 && (bounds.h - 36.0).abs() < 2.0,
+        "[{backend}] deep button size {:?}",
+        (bounds.w, bounds.h)
+    );
+    let inner = find("inner-button");
+    let inner_bounds = inner.bounds.as_ref().expect("inner bounds");
+    assert!(
+        (inner_bounds.x - 155.0).abs() < 2.0 && (inner_bounds.y - 125.0).abs() < 2.0,
+        "[{backend}] inner button mapped to ({}, {}), expected (155, 125)",
+        inner_bounds.x,
+        inner_bounds.y
+    );
+
+    let raw_of = |node: &pb::InspectorNode| -> serde_json::Value {
+        serde_json::from_str(&node.raw)
+            .unwrap_or_else(|error| panic!("[{backend}] raw payload for {}: {error}", node.raw_id))
+    };
+    assert_eq!(raw_of(find("deep-button"))["frame"].as_str(), Some("0/0"));
+    assert_eq!(raw_of(find("inner-button"))["frame"].as_str(), Some("0"));
+    assert!(
+        raw_of(find("outer-frame")).get("frame").is_none(),
+        "[{backend}] top-level iframe must not report a frame path"
+    );
+
+    // Frame-local nodes hang under their iframe element, and the ancestor
+    // chain reaches the nested frame before the top-level frame.
+    let mut parents = Vec::new();
+    let mut parent_id = deep.parent_id;
+    for _ in 0..32 {
+        if parent_id == 0 {
+            break;
+        }
+        let parent = by_id
+            .get(&parent_id)
+            .unwrap_or_else(|| panic!("[{backend}] deep button parent {parent_id} is missing"));
+        parents.push(parent.raw_id.clone());
+        parent_id = parent.parent_id;
+    }
+    let nested = parents
+        .iter()
+        .position(|id| id == "deep-frame")
+        .unwrap_or_else(|| panic!("[{backend}] deep-frame missing from {parents:?}"));
+    let outer = parents
+        .iter()
+        .position(|id| id == "outer-frame")
+        .unwrap_or_else(|| panic!("[{backend}] outer-frame missing from {parents:?}"));
+    assert!(
+        nested < outer,
+        "[{backend}] frame ancestry out of order: {parents:?}"
+    );
+    assert!(
+        snapshot
+            .nodes
+            .iter()
+            .all(|node| node.raw_id != "inner-offscreen"),
+        "[{backend}] a frame viewport must prune its offscreen children"
+    );
+
+    // --- visibility, locator actions, focus and key dispatch -------------
+    web.check_visible(css("#deep-button"), 5_000).await;
+    web.run_ok(
+        check_body(pb::CheckKind::Hidden, css("#inner-offscreen"), "", 0),
+        2_000,
+    )
+    .await;
+
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("id=inner-button")),
+        )),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#inner-result"), "inner-clicked").await;
+
+    web.run_ok(
+        body(action(
+            pb::ActionType::Click,
+            Some(locator("id=deep-button")),
+        )),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#deep-result"), "deep-clicked").await;
+
+    let mut typed = action(pb::ActionType::Type, Some(locator("id=deep-input")));
+    typed.text = "framed".to_string();
+    web.run_ok(body(typed), 5_000).await;
+    web.text_is(css("#deep-input"), "framed").await;
+
+    web.run_ok(
+        body(action(
+            pb::ActionType::Focus,
+            Some(locator("id=deep-input")),
+        )),
+        5_000,
+    )
+    .await;
+    web.run_ok(
+        check_body(pb::CheckKind::Focused, locator("id=deep-input"), "", 0),
+        2_000,
+    )
+    .await;
+    web.run_ok(
+        pb::command::Body::KeyPress(pb::KeyPress {
+            key: pb::RemoteKey::Num5 as i32,
+            repeat: 1,
+            interval_ms: 100,
+        }),
+        5_000,
+    )
+    .await;
+    web.text_is(css("#deep-result"), "key-53").await;
+
+    // The inspector snapshot reports the deeply focused control.
+    let request =
+        harness.request_with_session(&session_id, pb::InspectorSnapshotRequest::default());
+    let focused_snapshot = inspector
+        .snapshot(request)
+        .await
+        .expect("focused frame snapshot")
+        .into_inner();
+    let focused = focused_snapshot
+        .nodes
+        .iter()
+        .find(|node| node.focused)
+        .expect("focused node");
+    assert_eq!(
+        focused.raw_id, "deep-input",
+        "[{backend}] focused node {:?}",
+        focused.raw_id
+    );
+
+    // --- coordinate tap descends through both frames ---------------------
+    // `deep-tap` is the second deep-frame button: its top-level centre is
+    // (369, 297), and only it writes `tap-clicked`, so this is a positive
+    // control rather than observing the earlier locator click.
+    let request = harness.request_with_session(
+        &session_id,
+        pb::InspectorInputRequest {
+            kind: pb::InspectorInputKind::Tap as i32,
+            x: 369.0,
+            y: 297.0,
+            ..pb::InspectorInputRequest::default()
+        },
+    );
+    let tapped = inspector
+        .input(request)
+        .await
+        .expect("frame coordinate tap")
+        .into_inner();
+    assert!(tapped.ok, "[{backend}] coordinate tap failed: {tapped:?}");
+    web.text_is(css("#deep-result"), "tap-clicked").await;
+
+    harness.shutdown(&session_id).await;
+    let closed = web.await_closed().await;
+    assert_eq!(closed.reason, "shutdown");
+    chrome.kill().await;
+}
+
 /// INS-R3: the connector installs a CDP page binding and answers
 /// `Inspector.Watch` from a connector-owned counter, without traversing the
 /// DOM. A DOM mutation wakes the long-poll; an idle page times out.
@@ -1739,6 +1976,17 @@ async fn locator_suite_raw_backend() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn locator_suite_chromiumoxide_backend() {
     run_locator_suite("chromiumoxide").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn frame_suite_raw_backend() {
+    run_frame_suite("raw").await;
+}
+
+#[cfg(feature = "chromiumoxide-backend")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn frame_suite_chromiumoxide_backend() {
+    run_frame_suite("chromiumoxide").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

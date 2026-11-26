@@ -281,7 +281,11 @@ the implementation keeps the grammar in one module so a rename is local.
 
 - [x] INS-2.1 Injected viewport script (ES5): pruning, roles, names, stable
       ids, composed/shadow DOM, ancestor clip geometry, scroll hints.
-      Same-origin iframe subtrees are **not** traversed.
+      Same-origin iframe subtrees are traversed (INS-R7): the tree nests frame
+      content under its `<iframe>`, frame-local geometry is mapped to top-level
+      coordinates, and locators, checks, input and coordinate taps reach into
+      nested frames. Cross-origin frames remain opaque, and Android/Apple
+      WebView content is covered only through the platform accessibility tree.
 - [x] INS-2.2 Pushed refresh (INS-R3): the ES5 observer calls a
       `Runtime.addBinding` callback on DOM mutations, scroll, resize, focus,
       transitions, history and visibility changes; the connector exposes a
@@ -322,9 +326,11 @@ the implementation keeps the grammar in one module so a rename is local.
 - [x] INS-4.1 Android agent inspector: UiAutomator capture, viewport pruning,
       screenshot, tap/type/scroll/focus/Select/keyboard hide and
       detach/reattach. Hardware-verified on the Galaxy A51 and Android TV on
-      2026-11-15/16. Helper APK packaging and the TV D-pad UI remain INS-R8;
-      native `LOCATOR` execution is implemented through master-side snapshots
-      + `NODE_REF` (INS-R4, §7).
+      2026-11-15/16. INS-R8 is complete in code: Gradle packages all three APKs
+      in CI, Compose `testTag` values surface as `resource-id` only when the app
+      opts into `testTagsAsResourceId`, and the SPA exposes a remote D-pad plus
+      keyboard bindings. Native `LOCATOR` execution is implemented through
+      master-side snapshots + `NODE_REF` (INS-R4, §7).
 
 ### Phase 5 — Apple (iOS, tvOS)
 
@@ -623,6 +629,48 @@ Invalid UTF-8 cannot reach the converter because proto `string` fields are
 UTF-8 validated by prost at decode. CI run `45392866814` at `df13adb` passed
 all eight jobs; the cargo-test log shows all ten
 `inspector::convert::tests::*` tests and the proptest passing.
+
+INS-R7 same-origin frames (2026-11-25): the ES5 inspector and helper now walk
+nested same-origin frames. The snapshot keeps one viewport: frame nodes nest
+under their owning `<iframe>`, frame-local bounds are translated/scaled into
+top-level coordinates through every ancestor frame, and `raw.frame` carries the
+document-order path (`0`, `0/0`) while top-level nodes omit it. A frame's own
+offscreen content is pruned, visibility intersects the top-level rect with the
+frame clip, and the focused element is resolved through the frame chain once
+per snapshot (`activeElementDeep`). Locator cells, ordinary CSS/XPath checks,
+focus, hide-keyboard and the JS key fallback resolve the deep active element /
+owner document, so a focused control inside a frame still receives keys. A
+coordinate-only tap descends with `deepElementFromPoint`. `file://` fixtures
+need `--allow-file-access-from-files`, which the test launcher now passes.
+Tests: `fixture_suite_raw_backend` is joined by `frame_suite_raw_backend` and a
+feature-gated chromiumoxide entry (eight integration tests without the feature,
+eleven with it). `fixtures/web/frames.html` nests `frames-inner.html`, which
+nests `frames-deep.html`; the suite asserts the parent chain
+(`deep-frame` before `outer-frame`), top-level geometry
+(inner `(155,125)`, deep `(169,279)` ±2 px), `raw.frame`, pruning of frame
+offscreen content, `Hidden` for the offscreen node, locator click on
+`inner-button` and `deep-button`, typing and focus in `deep-input`, a
+`key_dispatch=js` `Num5` producing `key-53` in the deep document, the focused
+snapshot naming `deep-input`, and a coordinate tap through both frames. Unit
+tests pin the required frame helper surface and the top-level-clip visibility
+rule. Limitations: cross-origin frames remain opaque (no CDP target
+auto-attach), and Android WebView / Apple WKWebView content is covered only by
+the platform accessibility tree — there is no WebView devtools DOM bridge.
+Frame geometry assumes axis-aligned translation/scale, not rotation or skew.
+
+INS-R8 is implemented in code (2026-11-25): the Android CI job assembles and
+uploads all three APKs with `gradle assembleDebug`, while the runtime
+`resolve_android_apks` locates them; `testIdFromResourceId` keeps the segment
+after `id/` only when the app opts into `testTagsAsResourceId`
+(`InspectorNodeTest` covers prefixed, plain and absent ids); the SPA ships a
+`div.dpad` with up/down/left/right/ok/back/home plus arrow/Enter/Back keyboard
+bindings, pinned by the `assets.rs` tests; and `focus_model` is `Dpad` for
+webOS/Tizen/Android TV/tvOS and `Both` for Android/iOS (converter test). Real
+Android phone/TV and Apple TV re-validation of these code paths is pending
+hardware.
+
+CI is authoritative for INS-R7/R8; only `cargo fmt --all`, `git diff --check`
+and a Node parse of both embedded ES5 scripts ran locally.
 
 Benchmark harness: `impresario inspector bench` runs the hardware-free core
 pipeline over deterministic synthetic snapshots (`scroll`, `navigate`, `modal`)

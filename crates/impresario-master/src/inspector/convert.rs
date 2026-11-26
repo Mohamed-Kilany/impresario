@@ -651,6 +651,25 @@ mod tests {
     }
 
     #[test]
+    fn focus_model_tracks_each_platform_interaction_style() {
+        for (platform, expected) in [
+            (Platform::Web, FocusModel::Pointer),
+            (Platform::WebOs, FocusModel::Dpad),
+            (Platform::Tizen, FocusModel::Dpad),
+            (Platform::AndroidTv, FocusModel::Dpad),
+            (Platform::Tvos, FocusModel::Dpad),
+            (Platform::Android, FocusModel::Both),
+            (Platform::Ios, FocusModel::Both),
+        ] {
+            assert_eq!(
+                focus_model(platform),
+                expected,
+                "unexpected focus model for {platform}"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_roles_and_axes_are_total() {
         let response = pb::InspectorSnapshotResponse {
             platform: pb::Platform::Android as i32,

@@ -50,7 +50,7 @@ pub const MAX_WATCH_TIMEOUT_MS: u32 = 30_000;
 /// block scoping, template strings, `async`/`await`, optional chaining or
 /// spread. `inspector_script_is_es5` enforces this in CI.
 pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function () {
-  if (window.__impresarioInspector && window.__impresarioInspector.version >= 4) {
+  if (window.__impresarioInspector && window.__impresarioInspector.version >= 5) {
     return window.__impresarioInspector;
   }
   var state = {
@@ -60,14 +60,114 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     includeRaw: false,
     changeSeq: 0,
     changeScheduled: false,
-    changeObserver: null,
+    changeObservers: [],
     pushInstalled: false
   };
 
   function trim(value) { return String(value == null ? '' : value).replace(/^\s+|\s+$/g, ''); }
   function lower(value) { return String(value == null ? '' : value).toLowerCase(); }
   function num(value) { var n = Number(value); return isFinite(n) ? n : 0; }
-  function styleOf(el) { try { return window.getComputedStyle(el); } catch (error) { return null; } }
+  function isFrame(el) {
+    var tag = lower(el && el.tagName);
+    return tag === 'iframe' || tag === 'frame';
+  }
+  function frameDocument(el) {
+    if (!isFrame(el)) { return null; }
+    try {
+      if (el.contentDocument) { return el.contentDocument; }
+    } catch (error) { }
+    try {
+      var win = el.contentWindow;
+      return win ? win.document : null;
+    } catch (error) { return null; }
+  }
+  function ownerDocument(el) {
+    try { return (el && el.ownerDocument) || document; } catch (error) { return document; }
+  }
+  function ownerWindow(el) {
+    try { return ownerDocument(el).defaultView || window; } catch (error) { return window; }
+  }
+  function documentFrames(doc) {
+    var target = doc || document;
+    var out = [];
+    function walk(root) {
+      if (!root || !root.querySelectorAll) { return; }
+      var nodes = null;
+      try { nodes = root.querySelectorAll('*'); } catch (error) { return; }
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (isFrame(node)) { out.push(node); }
+        if (node.shadowRoot) { walk(node.shadowRoot); }
+      }
+    }
+    try { walk(target.body || target.documentElement); } catch (error) { }
+    return out;
+  }
+  function framePathOf(doc) {
+    if (!doc || doc === document) { return ''; }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return ''; }
+    var parentDoc = frame.ownerDocument;
+    var frames = documentFrames(parentDoc);
+    var index = 0;
+    for (var i = 0; i < frames.length; i++) {
+      if (frames[i] === frame) { index = i; break; }
+    }
+    var parent = framePathOf(parentDoc);
+    return parent ? parent + '/' + String(index) : String(index);
+  }
+  function frameContentRect(frame) {
+    var win = ownerWindow(frame);
+    var r = frame.getBoundingClientRect();
+    var style = null;
+    try { style = win.getComputedStyle(frame); } catch (error) { style = null; }
+    var bl = style ? parseFloat(style.borderLeftWidth) || 0 : 0;
+    var bt = style ? parseFloat(style.borderTopWidth) || 0 : 0;
+    var pl = style ? parseFloat(style.paddingLeft) || 0 : 0;
+    var pt = style ? parseFloat(style.paddingTop) || 0 : 0;
+    var pr = style ? parseFloat(style.paddingRight) || 0 : 0;
+    var pb = style ? parseFloat(style.paddingBottom) || 0 : 0;
+    var ow = frame.offsetWidth || r.width || 0;
+    var oh = frame.offsetHeight || r.height || 0;
+    var sx = ow > 0 && r.width > 0 ? r.width / ow : 1;
+    var sy = oh > 0 && r.height > 0 ? r.height / oh : 1;
+    return {
+      x: r.left + (bl + pl) * sx,
+      y: r.top + (bt + pt) * sy,
+      w: Math.max(0, (frame.clientWidth || 0) - pl - pr) * sx,
+      h: Math.max(0, (frame.clientHeight || 0) - pt - pb) * sy,
+      sx: sx,
+      sy: sy
+    };
+  }
+  function mapPointToTop(doc, x, y) {
+    if (!doc || doc === document) { return { x: x, y: y }; }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return { x: 0, y: 0 }; }
+    var content = frameContentRect(frame);
+    return mapPointToTop(
+      frame.ownerDocument,
+      content.x + x * content.sx,
+      content.y + y * content.sy
+    );
+  }
+  function mapScaleToTop(doc) {
+    if (!doc || doc === document) { return { x: 1, y: 1 }; }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return { x: 0, y: 0 }; }
+    var content = frameContentRect(frame);
+    var parent = mapScaleToTop(frame.ownerDocument);
+    return { x: content.sx * parent.x, y: content.sy * parent.y };
+  }
+  function mapRectToTop(doc, rect) {
+    var point = mapPointToTop(doc, rect.x, rect.y);
+    var scale = mapScaleToTop(doc);
+    return { x: point.x, y: point.y, w: rect.w * scale.x, h: rect.h * scale.y };
+  }
+  function styleOf(el) { try { return ownerWindow(el).getComputedStyle(el); } catch (error) { return null; } }
   function rectOf(el) {
     if (!el || !el.getBoundingClientRect) { return { x: 0, y: 0, w: 0, h: 0 }; }
     var r = el.getBoundingClientRect();
@@ -99,9 +199,25 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     return el.__impresarioInspectorId;
   }
   function activeElementDeep() {
-    var el = document.activeElement;
-    while (el && el.shadowRoot && el.shadowRoot.activeElement) {
-      el = el.shadowRoot.activeElement;
+    var doc = document;
+    var el = doc.activeElement;
+    var guard = 0;
+    while (el && guard < 64) {
+      guard += 1;
+      if (el.shadowRoot && el.shadowRoot.activeElement) {
+        el = el.shadowRoot.activeElement;
+        continue;
+      }
+      if (isFrame(el)) {
+        var child = frameDocument(el);
+        var inner = child ? child.activeElement : null;
+        if (inner && inner !== child.body) {
+          doc = child;
+          el = inner;
+          continue;
+        }
+      }
+      break;
     }
     return el || document.body;
   }
@@ -159,7 +275,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     if (id) {
       var labels = null;
       try {
-        labels = document.querySelectorAll('label[for="' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
+        labels = ownerDocument(el).querySelectorAll('label[for="' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
       } catch (error) { labels = null; }
       if (labels && labels.length) {
         var parts = [];
@@ -186,7 +302,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     var list = ids.split(/\s+/);
     var parts = [];
     for (var i = 0; i < list.length; i++) {
-      var target = document.getElementById(list[i]);
+      var target = ownerDocument(el).getElementById(list[i]);
       if (target) { parts.push(trim(target.textContent)); }
     }
     return trim(parts.join(' '));
@@ -252,8 +368,10 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
   }
   function cssOf(el) {
     if (!el || !el.tagName) { return ''; }
+    var doc = ownerDocument(el);
+    if (doc !== document) { return ''; }
     try {
-      if (el.getRootNode && el.getRootNode() !== document) { return ''; }
+      if (el.getRootNode && el.getRootNode() !== doc) { return ''; }
     } catch (error) { return ''; }
     var id = el.id;
     if (id) {
@@ -281,8 +399,10 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
   }
   function xpathOf(el) {
     if (!el || !el.tagName) { return ''; }
+    var doc = ownerDocument(el);
+    if (doc !== document) { return ''; }
     try {
-      if (el.getRootNode && el.getRootNode() !== document) { return ''; }
+      if (el.getRootNode && el.getRootNode() !== doc) { return ''; }
     } catch (error) { return ''; }
     var parts = [];
     var current = el;
@@ -318,13 +438,15 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     };
   }
   function clipOf(el) {
-    var clip = { x: 0, y: 0, w: window.innerWidth || 0, h: window.innerHeight || 0 };
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
+    var clip = { x: 0, y: 0, w: win.innerWidth || 0, h: win.innerHeight || 0 };
     var escapes = false;
     var own = styleOf(el);
     if (own && (own.position === 'fixed' || own.position === 'sticky')) { escapes = true; }
     var current = composedParent(el);
     var guard = 0;
-    while (current && current !== document.documentElement && guard < 256) {
+    while (current && current !== doc.documentElement && guard < 256) {
       if (current.nodeType === 1) {
         var s = styleOf(current);
         if (s) {
@@ -338,6 +460,14 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
       }
       current = composedParent(current);
       guard += 1;
+    }
+    if (doc !== document) {
+      var frame = doc.defaultView && doc.defaultView.frameElement;
+      if (frame) {
+        var parent = clipOf(frame);
+        clip = intersect(mapRectToTop(doc, clip), parent.clip);
+        escapes = escapes || parent.escapes;
+      }
     }
     return { clip: clip, escapes: escapes };
   }
@@ -356,12 +486,14 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
       var aria = trim(el.getAttribute('role'));
       if (aria) { raw.ariaRole = aria; }
     }
+    var frame = framePathOf(ownerDocument(el));
+    if (frame) { raw.frame = frame; }
     return raw;
   }
-  function buildEntry(el, parentId, depth) {
+  function buildEntry(el, parentId, depth, active) {
     var tag = lower(el.tagName);
     var inputType = tag === 'input' ? lower(el.type || 'text') : '';
-    var rect = rectOf(el);
+    var rect = mapRectToTop(ownerDocument(el), rectOf(el));
     var clipInfo = clipOf(el);
     var textInfo = textOf(el);
     var scroll = scrollOf(el);
@@ -390,7 +522,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
       w: rect.w,
       h: rect.h,
       fraction: fractionOf(rect, clipInfo.clip),
-      focused: activeElementDeep() === el,
+      focused: active === el,
       enabled: isEnabled(el),
       selected: ariaBool(el, 'aria-selected') === true,
       checked: checkedOf(el),
@@ -436,11 +568,34 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     } catch (error) { }
     setTimeout(run, 30);
   }
-  function observeRoot(root) {
-    if (!root || !state.changeObserver) { return; }
+  function observerFor(doc) {
+    if (!doc) { return null; }
+    if (doc.__impresarioInspectorObserver) { return doc.__impresarioInspectorObserver; }
+    var win = null;
+    try { win = doc.defaultView; } catch (error) { win = null; }
+    var Ctor = win && win.MutationObserver;
+    if (!Ctor) { return null; }
+    var observer = new Ctor(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var mutation = mutations[i];
+        if (mutation.type === 'attributes' && mutation.attributeName === 'data-impresario-locator') {
+          continue;
+        }
+        scheduleChange();
+        return;
+      }
+    });
+    try { doc.__impresarioInspectorObserver = observer; } catch (error) { }
+    state.changeObservers.push(observer);
+    return observer;
+  }
+  function observeRoot(root, doc) {
+    if (!root) { return; }
+    var observer = observerFor(doc || ownerDocument(root));
+    if (!observer) { return; }
     if (root.__impresarioInspectorObserved) { return; }
     try {
-      state.changeObserver.observe(root, {
+      observer.observe(root, {
         childList: true,
         subtree: true,
         attributes: true,
@@ -449,52 +604,55 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
       root.__impresarioInspectorObserved = true;
     } catch (error) { }
   }
+  function installDocumentWatch(doc) {
+    if (!doc || doc.__impresarioInspectorWatched) { return; }
+    try { doc.__impresarioInspectorWatched = true; } catch (error) { }
+    var win = null;
+    try { win = doc.defaultView; } catch (error) { win = null; }
+    if (!win) { return; }
+    var events = ['scroll', 'resize', 'focusin', 'focusout', 'transitionend', 'animationend',
+      'popstate', 'hashchange', 'visibilitychange', 'fullscreenchange'];
+    for (var e = 0; e < events.length; e++) {
+      try { win.addEventListener(events[e], scheduleChange, true); } catch (error) { }
+    }
+    try {
+      var push = win.history && win.history.pushState;
+      if (push) {
+        win.history.pushState = function () {
+          var result = push.apply(win.history, arguments);
+          scheduleChange();
+          return result;
+        };
+      }
+      var replace = win.history && win.history.replaceState;
+      if (replace) {
+        win.history.replaceState = function () {
+          var result = replace.apply(win.history, arguments);
+          scheduleChange();
+          return result;
+        };
+      }
+    } catch (error) { }
+    observeRoot(doc.documentElement, doc);
+    var frames = documentFrames(doc);
+    for (var i = 0; i < frames.length; i++) {
+      var child = frameDocument(frames[i]);
+      if (child) { installDocumentWatch(child); }
+    }
+  }
   function installChangeWatch() {
     if (typeof MutationObserver === 'undefined') { return false; }
-    if (!state.changeObserver) {
-      state.changeObserver = new MutationObserver(function (mutations) {
-        for (var i = 0; i < mutations.length; i++) {
-          var mutation = mutations[i];
-          if (mutation.type === 'attributes' && mutation.attributeName === 'data-impresario-locator') {
-            continue;
-          }
-          scheduleChange();
-          return;
-        }
-      });
-      var events = ['scroll', 'resize', 'focusin', 'focusout', 'transitionend', 'animationend',
-        'popstate', 'hashchange', 'visibilitychange', 'fullscreenchange'];
-      for (var e = 0; e < events.length; e++) {
-        try { window.addEventListener(events[e], scheduleChange, true); } catch (error) { }
-      }
-      try {
-        var push = window.history && window.history.pushState;
-        if (push) {
-          window.history.pushState = function () {
-            var result = push.apply(window.history, arguments);
-            scheduleChange();
-            return result;
-          };
-        }
-        var replace = window.history && window.history.replaceState;
-        if (replace) {
-          window.history.replaceState = function () {
-            var result = replace.apply(window.history, arguments);
-            scheduleChange();
-            return result;
-          };
-        }
-      } catch (error) { }
-    }
-    observeRoot(document.documentElement);
+    installDocumentWatch(document);
     return true;
   }
   function collect(maxDepth) {
     var entries = [];
     var visited = 0;
     var truncated = false;
+    var docs = [document];
     state.byId = {};
-    function walk(root, parentId, depth) {
+    var active = activeElementDeep();
+    function walk(root, parentId, depth, doc) {
       if (depth > maxDepth) { return; }
       var children = root.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -503,18 +661,37 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
         var tag = lower(el.tagName);
         if (skipTag(tag)) { continue; }
         visited += 1;
-        var entry = buildEntry(el, parentId, depth);
+        var entry = buildEntry(el, parentId, depth, active);
         entries.push(entry);
         state.byId[entry.id] = el;
+        var descended = false;
         if (el.shadowRoot) {
-          observeRoot(el.shadowRoot);
-          walk(el.shadowRoot, entry.id, depth + 1);
-        } else {
-          walk(el, entry.id, depth + 1);
+          observeRoot(el.shadowRoot, doc);
+          walk(el.shadowRoot, entry.id, depth + 1, doc);
+          descended = true;
+        }
+        if (isFrame(el)) {
+          var child = frameDocument(el);
+          if (child && child.documentElement) {
+            var known = false;
+            for (var d = 0; d < docs.length; d++) {
+              if (docs[d] === child) { known = true; break; }
+            }
+            if (!known) {
+              docs.push(child);
+              installDocumentWatch(child);
+              observeRoot(child.documentElement, child);
+              walk(child.documentElement, entry.id, depth + 1, child);
+            }
+            descended = true;
+          }
+        }
+        if (!descended) {
+          walk(el, entry.id, depth + 1, doc);
         }
       }
     }
-    walk(document.documentElement, 0, 0);
+    walk(document.documentElement, 0, 0, document);
     return { entries: entries, truncated: truncated };
   }
   function snapshot(options) {
@@ -581,6 +758,17 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
   function elementById(id) { return state.byId[id] || null; }
   function scrollIntoView(el) {
     if (!el || !el.scrollIntoView) { return false; }
+    var doc = ownerDocument(el);
+    var guard = 0;
+    while (doc !== document && guard < 16) {
+      guard += 1;
+      var win = doc.defaultView;
+      var frame = win && win.frameElement;
+      if (!frame) { break; }
+      try { frame.scrollIntoView({ block: 'center', inline: 'center' }); }
+      catch (error) { try { frame.scrollIntoView(); } catch (error2) { } }
+      doc = frame.ownerDocument;
+    }
     try { el.scrollIntoView({ block: 'center', inline: 'center' }); }
     catch (error) { try { el.scrollIntoView(); } catch (error2) { return false; } }
     return true;
@@ -593,17 +781,43 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
       if (el.click) { el.click(); return { ok: true }; }
     } catch (error) { }
     try {
+      var doc = ownerDocument(el);
+      var win = ownerWindow(el);
       var event = null;
-      try { event = new MouseEvent('click', { bubbles: true, cancelable: true, view: window }); }
-      catch (error) { event = document.createEvent('MouseEvents'); event.initEvent('click', true, true); }
+      try { event = new win.MouseEvent('click', { bubbles: true, cancelable: true, view: win }); }
+      catch (error) { event = doc.createEvent('MouseEvents'); event.initEvent('click', true, true); }
       el.dispatchEvent(event);
       return { ok: true };
     } catch (error) { return { ok: false, error: String(error) }; }
   }
+  function deepElementFromPoint(x, y) {
+    var doc = document;
+    var px = x;
+    var py = y;
+    var guard = 0;
+    while (doc && guard < 16) {
+      guard += 1;
+      var hit = null;
+      try { hit = doc.elementFromPoint(px, py); } catch (error) { return null; }
+      if (!hit || !isFrame(hit)) { return hit; }
+      var child = frameDocument(hit);
+      if (!child || !child.documentElement) { return hit; }
+      var content = frameContentRect(hit);
+      if (content.w <= 0 || content.h <= 0) { return hit; }
+      if (px < content.x || py < content.y ||
+          px >= content.x + content.w || py >= content.y + content.h) {
+        return hit;
+      }
+      px = (px - content.x) / (content.sx || 1);
+      py = (py - content.y) / (content.sy || 1);
+      doc = child;
+    }
+    return null;
+  }
   function tap(id, x, y) {
     var el = null;
     if (id) { el = elementById(id); }
-    if (!el && x !== null && y !== null) { el = document.elementFromPoint(x, y); }
+    if (!el && x !== null && y !== null) { el = deepElementFromPoint(x, y); }
     return clickElement(el);
   }
   function scroll(direction, id) {
@@ -638,10 +852,12 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
         var length = String(el.value).length;
         el.setSelectionRange(length, length);
       } else if (el.isContentEditable) {
-        var range = document.createRange();
+        var doc = ownerDocument(el);
+        var win = ownerWindow(el);
+        var range = doc.createRange();
         range.selectNodeContents(el);
         range.collapse(false);
-        var selection = window.getSelection();
+        var selection = win.getSelection();
         if (selection) {
           selection.removeAllRanges();
           selection.addRange(range);
@@ -659,16 +875,31 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
   }
   function allElements() {
     var out = [];
-    function walk(root) {
+    var docs = [document];
+    function walk(root, doc) {
       if (!root) { return; }
       if (root.nodeType === 1) { out.push(root); }
       var nodes = root.querySelectorAll('*');
       for (var i = 0; i < nodes.length; i++) {
-        out.push(nodes[i]);
-        if (nodes[i].shadowRoot) { walk(nodes[i].shadowRoot); }
+        var node = nodes[i];
+        out.push(node);
+        if (node.shadowRoot) { walk(node.shadowRoot, doc); }
+        if (isFrame(node)) {
+          var child = frameDocument(node);
+          if (child && child.documentElement) {
+            var known = false;
+            for (var d = 0; d < docs.length; d++) {
+              if (docs[d] === child) { known = true; break; }
+            }
+            if (!known) {
+              docs.push(child);
+              walk(child.documentElement, child);
+            }
+          }
+        }
       }
     }
-    walk(document.documentElement);
+    walk(document.documentElement, document);
     return out;
   }
   function matchesAll(selector) {
@@ -727,7 +958,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
     return { ok: true };
   }
   return {
-    version: 4,
+    version: 5,
     snapshot: snapshot,
     tap: tap,
     scroll: scroll,
@@ -744,7 +975,7 @@ pub const INSPECTOR_SCRIPT: &str = r##"window.__impresarioInspector = (function 
 #[must_use]
 pub fn inject_expression() -> String {
     format!(
-        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 4) {{ {INSPECTOR_SCRIPT} }} \
+        "if (!window.__impresarioInspector || window.__impresarioInspector.version < 5) {{ {INSPECTOR_SCRIPT} }} \
          if (window.__impresarioInspector && window.__impresarioInspector.installChangeWatch) \
          {{ window.__impresarioInspector.installChangeWatch(); }} true"
     )
@@ -1789,6 +2020,27 @@ mod tests {
         assert!(
             INSPECTOR_SCRIPT.contains(INSPECTOR_BINDING),
             "the script must call the installed binding"
+        );
+    }
+
+    #[test]
+    fn inspector_script_traverses_same_origin_frames() {
+        for token in [
+            "frameDocument",
+            "framePathOf",
+            "mapRectToTop",
+            "deepElementFromPoint",
+            "changeObservers",
+        ] {
+            assert!(
+                INSPECTOR_SCRIPT.contains(token),
+                "frame support is missing {token}"
+            );
+        }
+        assert!(INSPECTOR_SCRIPT.contains("raw.frame"));
+        assert!(
+            INSPECTOR_SCRIPT.contains("child && child.documentElement"),
+            "the tree walk must descend into a frame document"
         );
     }
 

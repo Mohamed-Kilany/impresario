@@ -13,17 +13,55 @@
 /// The helper object. Assigns `window.__impresario` exactly once.
 pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
   function trim(value) { return String(value == null ? '' : value).replace(/^\s+|\s+$/g, ''); }
-  function collect(root, out) {
-    if (root && root.nodeType === 1) { out.push(root); }
+  function isFrame(el) {
+    var tag = String(el && el.tagName || '').toLowerCase();
+    return tag === 'iframe' || tag === 'frame';
+  }
+  function frameDocument(el) {
+    if (!isFrame(el)) { return null; }
+    try {
+      if (el.contentDocument) { return el.contentDocument; }
+    } catch (error) { }
+    try {
+      var win = el.contentWindow;
+      return win ? win.document : null;
+    } catch (error) { return null; }
+  }
+  function ownerDocument(el) {
+    try { return (el && el.ownerDocument) || document; } catch (error) { return document; }
+  }
+  function ownerWindow(el) {
+    try { return ownerDocument(el).defaultView || window; } catch (error) { return window; }
+  }
+  function allDocuments() {
+    var out = [document];
+    var found = elements();
+    for (var i = 0; i < found.length; i++) {
+      if (!isFrame(found[i])) { continue; }
+      var doc = frameDocument(found[i]);
+      if (doc && out.indexOf(doc) === -1) { out.push(doc); }
+    }
+    return out;
+  }
+  function collect(root, out, docs) {
+    if (!root) { return out; }
+    if (root.nodeType === 1) { out.push(root); }
     var nodes = root.querySelectorAll('*');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       out.push(node);
-      if (node.shadowRoot) { collect(node.shadowRoot, out); }
+      if (node.shadowRoot) { collect(node.shadowRoot, out, docs); }
+      if (isFrame(node)) {
+        var doc = frameDocument(node);
+        if (doc && docs.indexOf(doc) === -1) {
+          docs.push(doc);
+          if (doc.documentElement) { collect(doc.documentElement, out, docs); }
+        }
+      }
     }
     return out;
   }
-  function elements() { return collect(document.body || document.documentElement, []); }
+  function elements() { return collect(document.body || document.documentElement, [], [document]); }
   function cssList(value) {
     var all = elements();
     var out = [];
@@ -33,9 +71,14 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     return out;
   }
   function xpathList(value) {
-    var result = document.evaluate(value, document, null, 7, null);
     var out = [];
-    for (var i = 0; i < result.snapshotLength; i++) { out.push(result.snapshotItem(i)); }
+    var docs = allDocuments();
+    for (var d = 0; d < docs.length; d++) {
+      var result = null;
+      try { result = docs[d].evaluate(value, docs[d], null, 7, null); }
+      catch (error) { continue; }
+      for (var i = 0; i < result.snapshotLength; i++) { out.push(result.snapshotItem(i)); }
+    }
     return out;
   }
   function textList(value, contains) {
@@ -77,12 +120,124 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     catch (error) { return { count: -1, error: messageOf(error) }; }
   }
   function styleOf(el) {
-    try { return window.getComputedStyle(el); } catch (error) { return null; }
+    try { return ownerWindow(el).getComputedStyle(el); } catch (error) { return null; }
   }
   function rectOf(el) {
     if (!el || !el.getBoundingClientRect) { return null; }
     var r = el.getBoundingClientRect();
     return { x: r.left, y: r.top, w: r.width, h: r.height };
+  }
+  function frameContentRect(frame) {
+    var win = ownerWindow(frame);
+    var r = frame.getBoundingClientRect();
+    var style = null;
+    try { style = win.getComputedStyle(frame); } catch (error) { style = null; }
+    var bl = style ? parseFloat(style.borderLeftWidth) || 0 : 0;
+    var bt = style ? parseFloat(style.borderTopWidth) || 0 : 0;
+    var pl = style ? parseFloat(style.paddingLeft) || 0 : 0;
+    var pt = style ? parseFloat(style.paddingTop) || 0 : 0;
+    var pr = style ? parseFloat(style.paddingRight) || 0 : 0;
+    var pb = style ? parseFloat(style.paddingBottom) || 0 : 0;
+    var ow = frame.offsetWidth || r.width || 0;
+    var oh = frame.offsetHeight || r.height || 0;
+    var sx = ow > 0 && r.width > 0 ? r.width / ow : 1;
+    var sy = oh > 0 && r.height > 0 ? r.height / oh : 1;
+    return {
+      x: r.left + (bl + pl) * sx,
+      y: r.top + (bt + pt) * sy,
+      w: Math.max(0, (frame.clientWidth || 0) - pl - pr) * sx,
+      h: Math.max(0, (frame.clientHeight || 0) - pt - pb) * sy,
+      sx: sx,
+      sy: sy
+    };
+  }
+  function mapPointToTop(doc, x, y) {
+    if (!doc || doc === document) { return { x: x, y: y }; }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return { x: 0, y: 0 }; }
+    var content = frameContentRect(frame);
+    return mapPointToTop(
+      frame.ownerDocument,
+      content.x + x * content.sx,
+      content.y + y * content.sy
+    );
+  }
+  function mapScaleToTop(doc) {
+    if (!doc || doc === document) { return { x: 1, y: 1 }; }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return { x: 0, y: 0 }; }
+    var content = frameContentRect(frame);
+    var parent = mapScaleToTop(frame.ownerDocument);
+    return { x: content.sx * parent.x, y: content.sy * parent.y };
+  }
+  function mapRectToTop(doc, rect) {
+    var point = mapPointToTop(doc, rect.x, rect.y);
+    var scale = mapScaleToTop(doc);
+    return { x: point.x, y: point.y, w: rect.w * scale.x, h: rect.h * scale.y };
+  }
+  function topRect(el) {
+    var rect = rectOf(el);
+    if (!rect) { return { x: 0, y: 0, w: 0, h: 0 }; }
+    return mapRectToTop(ownerDocument(el), rect);
+  }
+  function intersectRect(a, b) {
+    var x1 = Math.max(a.x, b.x);
+    var y1 = Math.max(a.y, b.y);
+    var x2 = Math.min(a.x + a.w, b.x + b.w);
+    var y2 = Math.min(a.y + a.h, b.y + b.h);
+    return { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
+  }
+  function clipsForElement(el) {
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
+    var clip = { x: 0, y: 0, w: win.innerWidth || 0, h: win.innerHeight || 0 };
+    var escapes = false;
+    var own = styleOf(el);
+    if (own && (own.position === 'fixed' || own.position === 'sticky')) { escapes = true; }
+    var current = composedParent(el);
+    var guard = 0;
+    while (current && current !== doc.documentElement && guard < 256) {
+      if (current.nodeType === 1) {
+        var style = styleOf(current);
+        if (style) {
+          if (style.position === 'fixed' || style.position === 'sticky') { escapes = true; }
+          if (style.transform && style.transform !== 'none') { escapes = true; }
+          if (!escapes && style.overflow && style.overflow !== 'visible') {
+            var r = current.getBoundingClientRect();
+            clip = intersectRect(clip, {
+              x: r.left,
+              y: r.top,
+              w: r.width,
+              h: r.height
+            });
+          }
+        }
+      }
+      current = composedParent(current);
+      guard += 1;
+    }
+    return { clip: clip, escapes: escapes };
+  }
+  function topViewportClip(doc) {
+    if (!doc || doc === document) {
+      return { x: 0, y: 0, w: window.innerWidth || 0, h: window.innerHeight || 0 };
+    }
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return { x: 0, y: 0, w: 0, h: 0 }; }
+    var parentDoc = frame.ownerDocument;
+    var content = mapRectToTop(parentDoc, frameContentRect(frame));
+    return intersectRect(
+      intersectRect(content, topViewportClip(parentDoc)),
+      topClipForElement(frame)
+    );
+  }
+  function topClipForElement(el) {
+    var info = clipsForElement(el);
+    var doc = ownerDocument(el);
+    return intersectRect(mapRectToTop(doc, info.clip), topViewportClip(doc));
   }
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) { return false; }
@@ -92,10 +247,10 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     if (parseFloat(style.opacity) <= 0) { return false; }
     var r = el.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) { return false; }
-    var vw = window.innerWidth || 0;
-    var vh = window.innerHeight || 0;
-    if (r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh) { return false; }
-    return true;
+    var top = topRect(el);
+    if (top.w <= 0 || top.h <= 0) { return false; }
+    var clipped = intersectRect(top, topClipForElement(el));
+    return clipped.w > 0 && clipped.h > 0;
   }
   function isEnabled(el) {
     if (!el) { return false; }
@@ -104,8 +259,26 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     return true;
   }
   function activeElementDeep() {
-    var el = document.activeElement;
-    while (el && el.shadowRoot && el.shadowRoot.activeElement) { el = el.shadowRoot.activeElement; }
+    var doc = document;
+    var el = doc.activeElement;
+    var guard = 0;
+    while (el && guard < 64) {
+      guard += 1;
+      if (el.shadowRoot && el.shadowRoot.activeElement) {
+        el = el.shadowRoot.activeElement;
+        continue;
+      }
+      if (isFrame(el)) {
+        var child = frameDocument(el);
+        var inner = child ? child.activeElement : null;
+        if (inner && inner !== child.body) {
+          doc = child;
+          el = inner;
+          continue;
+        }
+      }
+      break;
+    }
     return el || document.body;
   }
   function isFocused(el) { return !!el && activeElementDeep() === el; }
@@ -128,18 +301,51 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     }
     return tag + id + cls;
   }
+  function mapPointToParent(doc, x, y) {
+    var win = doc.defaultView;
+    var frame = win && win.frameElement;
+    if (!frame) { return null; }
+    var content = frameContentRect(frame);
+    return {
+      x: content.x + x * content.sx,
+      y: content.y + y * content.sy,
+      frame: frame,
+      doc: frame.ownerDocument
+    };
+  }
   function hitTest(el) {
     if (!el || !el.getBoundingClientRect) { return { ok: false, obscured_by: '' }; }
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
     var r = el.getBoundingClientRect();
     var x = r.left + r.width / 2;
     var y = r.top + r.height / 2;
-    var vw = window.innerWidth || 0;
-    var vh = window.innerHeight || 0;
+    var vw = win.innerWidth || 0;
+    var vh = win.innerHeight || 0;
     if (x < 0 || y < 0 || x > vw || y > vh) { return { ok: false, obscured_by: 'viewport' }; }
-    var hit = document.elementFromPoint(x, y);
+    var hit = doc.elementFromPoint(x, y);
     if (!hit) { return { ok: false, obscured_by: '' }; }
-    if (hit === el || el.contains(hit) || isComposedAncestor(hit, el)) { return { ok: true, obscured_by: '' }; }
-    return { ok: false, obscured_by: describe(hit) };
+    if (!(hit === el || el.contains(hit) || isComposedAncestor(hit, el))) {
+      return { ok: false, obscured_by: describe(hit) };
+    }
+    var currentDoc = doc;
+    var currentX = x;
+    var currentY = y;
+    var guard = 0;
+    while (currentDoc !== document && guard < 16) {
+      guard += 1;
+      var parent = mapPointToParent(currentDoc, currentX, currentY);
+      if (!parent) { return { ok: false, obscured_by: '' }; }
+      var parentHit = parent.doc.elementFromPoint(parent.x, parent.y);
+      if (!parentHit) { return { ok: false, obscured_by: '' }; }
+      if (!(parentHit === parent.frame || parent.frame.contains(parentHit))) {
+        return { ok: false, obscured_by: describe(parentHit) };
+      }
+      currentDoc = parent.doc;
+      currentX = parent.x;
+      currentY = parent.y;
+    }
+    return { ok: true, obscured_by: '' };
   }
   function composedParent(node) {
     if (!node) { return null; }
@@ -157,6 +363,17 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
   }
   function scrollIntoView(el) {
     if (!el || !el.scrollIntoView) { return false; }
+    var doc = ownerDocument(el);
+    var guard = 0;
+    while (doc !== document && guard < 16) {
+      guard += 1;
+      var win = doc.defaultView;
+      var frame = win && win.frameElement;
+      if (!frame) { break; }
+      try { frame.scrollIntoView({ block: 'center', inline: 'center' }); }
+      catch (error) { try { frame.scrollIntoView(); } catch (error2) { } }
+      doc = frame.ownerDocument;
+    }
     try { el.scrollIntoView({ block: 'center', inline: 'center' }); }
     catch (error) { try { el.scrollIntoView(); } catch (error2) { return false; } }
     return true;
@@ -167,18 +384,24 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     return isFocused(el);
   }
   function fire(el, type) {
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
     var event = null;
-    try { event = new Event(type, { bubbles: true }); }
-    catch (error) { event = document.createEvent('Event'); event.initEvent(type, true, false); }
+    try { event = new win.Event(type, { bubbles: true }); }
+    catch (error) {
+      try { event = doc.createEvent('Event'); event.initEvent(type, true, false); }
+      catch (error2) { return; }
+    }
     el.dispatchEvent(event);
   }
   function setValue(el, value, mode) {
     if (!el) { return null; }
+    var win = ownerWindow(el);
     var current = el.value == null ? '' : String(el.value);
     var next = mode === 'append' ? current + value : (mode === 'clear' ? '' : value);
     var proto = null;
-    if (window.HTMLInputElement && el instanceof window.HTMLInputElement) { proto = window.HTMLInputElement.prototype; }
-    else if (window.HTMLTextAreaElement && el instanceof window.HTMLTextAreaElement) { proto = window.HTMLTextAreaElement.prototype; }
+    if (win.HTMLInputElement && el instanceof win.HTMLInputElement) { proto = win.HTMLInputElement.prototype; }
+    else if (win.HTMLTextAreaElement && el instanceof win.HTMLTextAreaElement) { proto = win.HTMLTextAreaElement.prototype; }
     var descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
     if (descriptor && descriptor.set) { descriptor.set.call(el, next); } else { el.value = next; }
     fire(el, 'input');
@@ -188,19 +411,23 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
   function selectAll(el) {
     if (!el) { return false; }
     if (el.select) { try { el.select(); return true; } catch (error) { } }
-    var range = document.createRange();
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
+    var range = doc.createRange();
     range.selectNodeContents(el);
-    var selection = window.getSelection();
+    var selection = win.getSelection();
     if (!selection) { return false; }
     selection.removeAllRanges();
     selection.addRange(range);
     return true;
   }
   function collapseToEnd(el) {
-    var range = document.createRange();
+    var doc = ownerDocument(el);
+    var win = ownerWindow(el);
+    var range = doc.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
-    var selection = window.getSelection();
+    var selection = win.getSelection();
     if (!selection) { return false; }
     selection.removeAllRanges();
     selection.addRange(range);
@@ -296,7 +523,7 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
   function describeActive() {
     var el = activeElementDeep();
     if (!el || el === document.body) { return { present: false, label: '', frame: null }; }
-    return { present: true, label: describe(el), frame: rectOf(el) };
+    return { present: true, label: describe(el), frame: topRect(el) };
   }
   return {
     find: find,
@@ -308,6 +535,7 @@ pub const HELPER_SCRIPT: &str = r##"window.__impresario = (function () {
     isFocused: isFocused,
     textOf: textOf,
     rectOf: rectOf,
+    topRect: topRect,
     hitTest: hitTest,
     scrollIntoView: scrollIntoView,
     focus: focus,
@@ -458,10 +686,10 @@ if (!media && el.closest) {{ media = el.closest('video,audio'); }}
 var image = null;
 if (tag === 'img') {{ image = el; }}
 else if (el.querySelector) {{ image = el.querySelector('img'); }}
-var rect = window.__impresario.rectOf(el);
+var rect = window.__impresario.topRect(el);
 var hit = window.__impresario.hitTest(el);
 var background = '';
-try {{ background = String(window.getComputedStyle(el).backgroundImage || ''); }} catch (error) {{ }}
+try {{ background = String((el.ownerDocument.defaultView || window).getComputedStyle(el).backgroundImage || ''); }} catch (error) {{ }}
 var mediaOut = null;
 if (media) {{
   var bufferedEnd = 0;
@@ -513,7 +741,7 @@ if (media) {{
     error: (media.error ? String(media.error.code || '') + ':' + String(media.error.message || '') : ''),
     mediaKeys: media.mediaKeys != null,
     looping: media.loop === true,
-    fullscreen: !!(document.fullscreenElement && (document.fullscreenElement === media || (document.fullscreenElement.contains && document.fullscreenElement.contains(media)))),
+    fullscreen: !!(function (doc) {{ return doc.fullscreenElement && (doc.fullscreenElement === media || (doc.fullscreenElement.contains && doc.fullscreenElement.contains(media))); }})(media.ownerDocument || document),
     objectFit: String(media.style && media.style.objectFit || '')
   }};
 }}
@@ -663,6 +891,27 @@ mod tests {
     }
 
     #[test]
+    fn helper_traverses_and_maps_same_origin_frames() {
+        for token in [
+            "frameDocument",
+            "allDocuments",
+            "mapPointToTop",
+            "mapRectToTop",
+            "topClipForElement",
+            "activeElementDeep",
+        ] {
+            assert!(
+                HELPER_SCRIPT.contains(token),
+                "frame support is missing {token}"
+            );
+        }
+        assert!(
+            HELPER_SCRIPT.contains("intersectRect(top, topClipForElement(el))"),
+            "visibility must require the element rect to intersect its clip"
+        );
+    }
+
+    #[test]
     fn injection_is_conditional() {
         let expression = inject_expression();
         assert!(expression.contains("if (!window.__impresario)"));
@@ -675,6 +924,11 @@ mod tests {
         assert!(body.contains("window.__impresarioHook"));
         assert!(body.contains("app_hook:appHookOut"));
         assert!(body.contains("window.__impresarioProbeHook"));
+        assert!(
+            body.contains("window.__impresario.topRect(el)"),
+            "probe geometry must be in top-level coordinates for frames"
+        );
+        assert!(!body.contains("window.__impresario.rectOf(el)"));
     }
 
     #[test]

@@ -82,6 +82,14 @@ internal fun scrollSwipePath(
     fraction: Float,
 ): SwipePath = fingerSwipePath(direction.opposite(), width, height, fraction)
 
+/**
+ * Compose exposes `Modifier.testTag` through `resource-id` only when the app
+ * enables `testTagsAsResourceId`. The segment after `id/` is the test id;
+ * plain resource ids (or an absent id) keep their whole value.
+ */
+internal fun testIdFromResourceId(resourceId: String): String =
+    resourceId.substringAfter("id/", resourceId)
+
 private fun Direction.opposite(): Direction = when (this) {
     Direction.UP -> Direction.DOWN
     Direction.DOWN -> Direction.UP
@@ -913,7 +921,7 @@ class UiAutomatorDriver(
                 .setLabel(hint)
                 .setDescription(description)
                 .setPlaceholder(hint)
-                .setTestId(resourceId.substringAfter("id/", resourceId))
+                .setTestId(testIdFromResourceId(resourceId))
                 .setRawId(resourceId)
                 .setBounds(
                     InspectorRect.newBuilder()
