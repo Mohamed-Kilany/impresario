@@ -20,16 +20,16 @@ Device inventory available for this pass:
 | `android-tv` | Android TV (G03_4K_GB, Android 11) | `192.168.93.84` | ready; 10-act suite complete 2026-11-16 |
 | `iphone` | iPhone13,2, iOS 18.7.8 (22H352) | `192.168.93.14` | ready over Wi-Fi; 10-act suite complete 2026-11-16 |
 | `appletv` | AppleTV5,3, tvOS 26.1 (23J582) | `192.168.93.19` | ready over Wi-Fi; inspector and 10-act suite complete 2026-11-16 |
-| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.55:38103` | reachable over ADB; schema `port` support added 2026-11-26; staged app is release (no VM service) |
+| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.55:38103` | reachable over ADB; schema `port` support added 2026-11-26; Flutter detection verified 2026-11-26; staged app is release (no VM service) |
 
 ## 1. Element Inspector (TASK-INSPECTOR)
 
 | ID | Remaining item | Source | Device-feasible now | Status |
 |---|---|---|---|---|
-| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; Flutter SDK available locally; installed build is release (no VM service) | in progress — Layer A semantics and keyboard-hide validated; detection/role/banner/Dart-package work remains |
+| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; Flutter SDK available locally; installed build is release (no VM service) | partial — Layer A semantics, keyboard-hide and Flutter detection verified 2026-11-26 (`framework=flutter`, usable-semantics check, `FLUTTER_SEMANTICS_OFF` banner; the staging build exposes semantics, so the banner stays hidden there); the `impresario_flutter` Dart package, `ImpresarioTag`/identifier testids and VM-service/widget-inspector enrichment remain (the installed release build is not debuggable and will not be rebuilt) |
 | INS-R2 | Shared inspector sessions, leases and scheduler preemption; `inspector.run_conflict` was advisory | INS-7.1 / STATUS | Code; device regression possible | done 2026-11-24 for the file-lease layer (`633c780` + `c6ae5b0`): the inspector holds `jobs/leases/inspector.<device>.json` while runs keep `<device>.json`; `readonly` (default) keeps inspection live and rejects input with `LEASE_READONLY` (HTTP 409), `exclusive` detaches the inspector on its next tick, and `block_run` makes `lease::available` false and refuses `lease::acquire` (exit 3). Mode/owner appears in `/api/status`, `/healthz`, `/api/devices`, `inspector status` and the SPA banner. CI run `45338868848` at `c6ae5b0` passed all eight jobs. Shared device sessions and a resident scheduler remain out of scope. |
 | INS-R3 | In-page push binding (`Runtime.addBinding` / `MutationObserver`) instead of polling at `inspector.fps` | INS-2.2 / STATUS | Code; web fixtures only | done 2026-11-24 (`371f117`; scoped to the inspector session in `ce00739`): the injected ES5 script installs a `MutationObserver` plus scroll/resize/focus/transition/popstate/hashchange/visibility/fullscreen listeners and patched `history.pushState`/`replaceState`; each calls a `Runtime.addBinding` callback, the connector keeps a monotonic counter and the master long-polls `Inspector.Watch` (5 s idle heartbeat), so an idle page costs no DOM traversal. Binding install is opt-in (`inspector_push=true`) so a runner sharing the page never clobbers it; engines without the binding fall back to `inspector.fps` polling. CI run `45336056795` at `ce00739` passed all eight jobs, including `push_watch_reports_page_changes` against real Chromium and `inspector_push_is_opt_in` |
-| INS-R4 | Runner execution of canonical `LOCATOR` cells (native Android/Apple agents still reject them) | INS-1.2 deviation 7 / STATUS | Code + device regression | partial — web/webOS/Tizen done 2026-11-23 (`cabd15d`): the connector resolves locators against the inspector snapshot with the shared `impresario-locator` matcher and rewrites to a unique CSS handle; `locators.html` fixtures cover role/name, id, testid, shadow DOM, ambiguity, `index`, `Count`, `Hidden`, ordinary checks and probes on raw (CI-verified) with a feature-gated chromiumoxide entry. Native Android/Apple agents still reject `LOCATOR` (no snapshot-backed native resolver), so native execution remains open |
+| INS-R4 | Runner execution of canonical `LOCATOR` cells | INS-1.2 deviation 7 / STATUS | Code + device regression | done — web/webOS/Tizen 2026-11-23 (`cabd15d`): the connector resolves locators against the inspector snapshot with the shared `impresario-locator` matcher and rewrites to a unique CSS handle; `locators.html` covers role/name, id, testid, shadow DOM, ambiguity, `index`, `Count`, `Hidden`, ordinary checks and probes. Native Android/Apple execution landed 2026-11-24 (I-211): the master resolves the cell against the executor's snapshot and rewrites it to an additive `NODE_REF`; Android is hardware-accepted with three consecutive 16-step runs (`20261124-094207-f9bd`, `20261124-094224-7b37`, `20261124-094242-8168`), while tvOS hardware execution awaits profile renewal. CI `45356788456` and Apple Xcode `45356788584` green at `d18c387` |
 | INS-R5 | MCP inspector view resource/subscription (`notifications/resources/updated`) | INS-3.5 | Code | done 2026-11-23 (`7d5fba5`; watcher handoff fix `d8d27e3`; CI run `45229626731` passed all eight jobs): an attached inspector view is listed as `impresario://inspector/{device}/view` and readable with `resources/read`; `resources/subscribe` starts one per-URI watcher that long-polls `/api/wait` and emits `notifications/resources/updated`; `resources/unsubscribe` is idempotent; a racing resubscribe keeps exactly one watcher; static docs and other devices are refused |
 | INS-R6 | Post-commit locator verification and scene file watching; stale revisions are refused but nothing watches files | INS-3.3/3.4 | Code | done 2026-11-23: commit re-resolves each written locator cell against the live snapshot (`verified`/`warning`/`invalid`/`unavailable`) and returns it in `verification`; open scenes are polled by SHA-256 and external changes arrive as SSE `update` events with `kind: "scene"` (idle scene auto-reloads, pending preview warns) |
 | INS-R7 | Same-origin iframe traversal, Android WebView bridge and Apple WKWebView bridge | INS-2.1 / TASK-INSPECTOR 5.5 | Code + device fixtures | partial — same-origin web iframes CI-verified in run `45776126562` at `4dd3464`: the ES5 script walks nested frames, nests their nodes under the owning `<iframe>`, maps geometry into top-level coordinates, reports `raw.frame`, and routes locators, checks, focus, JS keys, hide-keyboard and coordinate taps through the frames; `frames.html`/`frames-inner.html`/`frames-deep.html` cover it, with the raw entry running in CI and the chromiumoxide entry feature-gated (74 unit and eight integration tests by default, 79 and eleven with the feature). Android WebView / Apple WKWebView devtools DOM bridging is **not** implemented: their content is covered only through the platform accessibility tree. Cross-origin frames stay opaque. Hardware re-validation is pending devices |
@@ -96,36 +96,65 @@ What worked with the existing Layer A path:
 | Scroll | The home content exposed `scroll: more below (3)` and horizontal carousels (`more right`) |
 | Detach/reattach | Works; the form and typed value survived the reattach |
 
-Observed gaps for INS-R1:
+Observed gaps for INS-R1 (after the 2026-11-26 detection work):
 
 - Roles are only as good as the app's `Semantics`: bottom-nav labels are
   `generic`, not buttons; the app's image nodes have no labels. Flutter buttons
   that set `Semantics(button: true)` (Login/Signup/Explore) correctly arrive as
   `button`.
-- No Flutter detection or `FLUTTER_SEMANTICS_OFF` diagnosis is produced; the app
-  is treated as an ordinary Android app.
 - No `testid` for untagged widgets (the app does not ship `ImpresarioTag` or
   `Semantics(identifier:)`), and the release build exposes no VM service for
-  widget-inspector enrichment.
+  widget-inspector enrichment. This is the remaining Layer B/C work; it needs
+  the app source and a QA/debug build, so it is deferred.
 - On this Honor device the agent is **force-stopped by an OEM power manager**
   roughly every 60-90 seconds (`am_kill ... stop com.impresario.agent due to
-  from pid ... by app`), so inspector commands must run in short bursts or the
-  agent must be exempted in the phone's App launch management.
+  from pid ... by app`). Granting `POST_NOTIFICATIONS` is required for the
+  foreground service to be honored; `cmd deviceidle whitelist`, the active
+  standby bucket, `appops` background allowances and `settings put secure
+  hsm_powermanager 0` reduce the pressure, but PowerGenie still hibernates the
+  agent after roughly 60-90 seconds, so inspector commands run in short bursts
+  or the inspector is reattached to reset the timer.
 - Android's `uiautomator dump` is killed (`exit 137`) on this Flutter tree, so
   raw-attribute dumps through the platform tool are unavailable; Impresario's
   own capture still succeeds.
 
-Requested acceptance performed: tapped `Login` from the welcome screen, typed
-`flutter-kb` into the username field, and invoked `keyboard hide` through the
-inspector. The IME screenshot fell from 173,401 to 120,161 bytes, the value stayed
-`flutter-kb`, and the next snapshot still exposed the Login submit button. A second
-round typed the password, checked the terms box, hid the keyboard again (121,363
-bytes), tapped Login (ref 27) and reached the validation state (`Invalid format`,
-144,390 bytes), proving submit was reachable after the hide. On 2026-11-16 the
-device was refreshed first with `device check --refresh android-flutter` after an
-initial check failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`; the acceptance then
-ran on `9ec8196` APKs. No success is claimed for Flutter detection/enrichment,
-which remains INS-R1 work.
+Flutter detection (2026-11-26): the Android driver reads the `flutterEmbedding`
+marker from the installed app manifest, so a release build needs no
+instrumentation. `PackageManager.GET_META_DATA` is required - `getApplicationInfo`
+without it returns a null `metaData` and silently reports `native`. Opt-in raw
+nodes now carry `framework: "flutter" | "native"`, and a detected Flutter tree
+with no addressable semantics (no name/text/description/label/placeholder/value/
+test id/focus/scroll/role) emits a `FLUTTER_SEMANTICS_OFF` entry in
+`degraded[]`; the SPA shows a banner for that reason and nothing for a native
+app. Doo Staging exposes usable semantics, so its snapshots carry no degradation
+and the banner must stay hidden there; the banner path is covered by asset
+tests, not by an on-device degradation. The CI-built Windows artifact from run
+`45813887017` served `flutter-banner` and the `FLUTTER_SEMANTICS_OFF` logic, and
+reported `framework=flutter` on all 29 Doo Staging nodes with no degradation.
+
+Requested acceptance performed (2026-11-26, `192.168.93.55:38103`): the welcome
+screen returned 16 nodes; tapping `Login` produced the 29-node form (username
+and password text boxes, secure password value `***`, terms checkbox, Login
+submit); `type` set the username to `flutter-user`; `keyboard hide` reduced the
+screenshot from 166,669 to 121,146 bytes with the value retained. Raw nodes
+reported `framework=flutter` with `class=android.widget.*` (the platform views
+Flutter creates), confirming detection on the real release build. Tapping Login
+with only a username and no password/terms produced no visible validation text,
+so submit validation is not claimed for this round. Evidence is saved under
+`target/device-setup/doo-evidence/`.
+
+Earlier acceptance on 2026-11-16 tapped `Login` from the welcome screen, typed
+`flutter-kb`, and invoked `keyboard hide`; the IME screenshot fell from 173,401
+to 120,161 bytes, the value stayed `flutter-kb`, and the next snapshot still
+exposed the Login submit button. A second round typed the password, checked the
+terms box, hid the keyboard again (121,363 bytes), tapped Login (ref 27) and
+reached the validation state (`Invalid format`, 144,390 bytes), proving submit
+was reachable after the hide. On 2026-11-16 the device was refreshed first with
+`device check --refresh android-flutter` after an initial check failed with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`; that round ran on `9ec8196` APKs. The
+2026-11-26 probe repeated only the username-only submit and did not reproduce a
+visible validation state, so it is recorded as not demonstrated rather than as a
+regression.
 
 ## 6. Standalone local agent stack (`ai/`)
 
@@ -192,3 +221,8 @@ only available as a `.scene` action, not an MCP call.
 - 2026-11-16: the standalone `ai/` stack verified its bundle and the exact 41-tool partition. The rendered authoring prompt fell from 6,205 to about 4,100 tokens after the compact catalog and constant `call_tool` dispatcher replaced the full schemas; the CPU profile is 131k context, q8_0 KV, 8 threads, `-fa on`, thinking off, 5.08 GiB at full window.
 - 2026-11-16: offline toolset exercise passed. Authoring listed devices and validated the workspace; automation read service status, schedules and watchers; inspector-read, inspector-act and scenes each reported `blocked` with the exact no-inspector error. The evidence gate passed 18/18 cases, including overclaim, `not-run`, keyboard-hide, device-name and misspelling cases. The repeated multi-step workspace task that previously claimed a device check ended with `DEVICES: none contacted` and only `impresario_validate` evidence.
 - 2026-11-16: inspector lifecycle start/status/stop passed locally with `device: (none)`; no device was attached and no device evidence was produced. Device acceptance remains deferred to the device network (AI-D1 to AI-D6).
+- 2026-11-26: `android-flutter` moved to `192.168.93.55:38103`. `8ec85d0` added the optional per-device Android ADB `port`, the Windows artifact was refreshed, `device check android-flutter --plain` passed, and `device list` shows `tcp 192.168.93.55:38103` without `adb tcpip 5555`.
+- 2026-11-26: Flutter detection was added to the Android driver and the debug APKs were rebuilt and installed with `device check --refresh android-flutter`. The first run still reported `framework=native`: `getApplicationInfo(pkg, 0)` does not populate `metaData`. Adding `PackageManager.GET_META_DATA` fixed it; Doo Staging raw nodes then reported `framework=flutter` (16 nodes, no `degraded[]`).
+- 2026-11-26: Layer A re-acceptance on Doo Staging: tap `Login` produced the 29-node form (username/password text boxes, secure value `***`, terms checkbox, Login submit); `type` set `flutter-user`; `keyboard hide` cut the screenshot from 166,669 to 121,146 bytes with the value retained. A Login tap with only the username and no password/terms left the form unchanged and produced no validation text, so that probe is recorded as not demonstrated for this round. Evidence is saved under `target/device-setup/doo-evidence/`.
+- 2026-11-26: Honor freeze workaround: granting `POST_NOTIFICATIONS` made the foreground service effective (`isForeground=true`); the deviceidle whitelist, active standby bucket, background appops allowances and `settings put secure hsm_powermanager 0` were applied as well. PowerGenie still hibernated the agent after roughly 60-90 seconds, after which a snapshot timed out until the inspector was reattached; work on this device stays in short bursts.
+- 2026-11-26: Flutter detection and the `FLUTTER_SEMANTICS_OFF` SPA banner committed as `d3235ec`; CI run `45813887017` passed all eight jobs (rustfmt, clippy, workspace tests, Windows release build, editor, Android JVM/APKs, proto, Apple). The Windows artifact from that run served `flutter-banner` on `/` and the `FLUTTER_SEMANTICS_OFF` logic on `/assets/app.js`, and its snapshot of Doo Staging reported `framework=flutter` on all 29 nodes with an empty `degraded[]` (semantics are on, so the banner correctly stays hidden). Doo Staging evidence is in `target/device-setup/doo-evidence/` (`08`-`11` are from the CI artifact).
