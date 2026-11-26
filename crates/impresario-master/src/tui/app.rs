@@ -3691,7 +3691,7 @@ fn split_group_members(text: &str) -> Vec<String> {
 /// Comma/newline-separated form values; spaces stay inside a value (a launch
 /// parameter or a path may contain them).
 fn split_form_list(text: &str) -> Vec<String> {
-    text.split(|character: char| character == ',' || character == '\n')
+    text.split([',', '\n'])
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(str::to_string)
@@ -3722,7 +3722,9 @@ fn cycle_field(field: &mut usize, fields: &[usize], backwards: bool) {
     } else {
         (position + 1) % fields.len()
     };
-    *field = fields[next];
+    if let Some(next) = fields.get(next) {
+        *field = *next;
+    }
 }
 
 fn display_port(port: Option<u16>) -> String {
