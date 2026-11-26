@@ -20,13 +20,13 @@ Device inventory available for this pass:
 | `android-tv` | Android TV (G03_4K_GB, Android 11) | `192.168.93.84` | ready; 10-act suite complete 2026-11-16 |
 | `iphone` | iPhone13,2, iOS 18.7.8 (22H352) | `192.168.93.14` | ready over Wi-Fi; 10-act suite complete 2026-11-16 |
 | `appletv` | AppleTV5,3, tvOS 26.1 (23J582) | `192.168.93.19` | ready over Wi-Fi; inspector and 10-act suite complete 2026-11-16 |
-| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.112` | ready; `device check --refresh` passed; inspector keyboard-hide acceptance complete 2026-11-16 |
+| `android-flutter` | Android 15 (ALI-NX1) with `com.dooticketseg.app.staging` | `192.168.93.55:38103` | reachable over ADB; schema `port` support added 2026-11-26; staged app is release (no VM service) |
 
 ## 1. Element Inspector (TASK-INSPECTOR)
 
 | ID | Remaining item | Source | Device-feasible now | Status |
 |---|---|---|---|---|
-| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; no Flutter SDK for the Dart package | in progress — Layer A semantics and keyboard-hide validated; detection/role/VM-service work remains |
+| INS-R1 | Flutter acquisition: Dart package, `ensureSemantics`, `ImpresarioTag`, semantics extension, host adapter, widget-inspector enrichment, visual fallback | TASK-INSPECTOR Phase 6 / STATUS component row | Yes: real staging app (`com.dooticketseg.app.staging`) on `android-flutter`; Flutter SDK available locally; installed build is release (no VM service) | in progress — Layer A semantics and keyboard-hide validated; detection/role/banner/Dart-package work remains |
 | INS-R2 | Shared inspector sessions, leases and scheduler preemption; `inspector.run_conflict` was advisory | INS-7.1 / STATUS | Code; device regression possible | done 2026-11-24 for the file-lease layer (`633c780` + `c6ae5b0`): the inspector holds `jobs/leases/inspector.<device>.json` while runs keep `<device>.json`; `readonly` (default) keeps inspection live and rejects input with `LEASE_READONLY` (HTTP 409), `exclusive` detaches the inspector on its next tick, and `block_run` makes `lease::available` false and refuses `lease::acquire` (exit 3). Mode/owner appears in `/api/status`, `/healthz`, `/api/devices`, `inspector status` and the SPA banner. CI run `45338868848` at `c6ae5b0` passed all eight jobs. Shared device sessions and a resident scheduler remain out of scope. |
 | INS-R3 | In-page push binding (`Runtime.addBinding` / `MutationObserver`) instead of polling at `inspector.fps` | INS-2.2 / STATUS | Code; web fixtures only | done 2026-11-24 (`371f117`; scoped to the inspector session in `ce00739`): the injected ES5 script installs a `MutationObserver` plus scroll/resize/focus/transition/popstate/hashchange/visibility/fullscreen listeners and patched `history.pushState`/`replaceState`; each calls a `Runtime.addBinding` callback, the connector keeps a monotonic counter and the master long-polls `Inspector.Watch` (5 s idle heartbeat), so an idle page costs no DOM traversal. Binding install is opt-in (`inspector_push=true`) so a runner sharing the page never clobbers it; engines without the binding fall back to `inspector.fps` polling. CI run `45336056795` at `ce00739` passed all eight jobs, including `push_watch_reports_page_changes` against real Chromium and `inspector_push_is_opt_in` |
 | INS-R4 | Runner execution of canonical `LOCATOR` cells (native Android/Apple agents still reject them) | INS-1.2 deviation 7 / STATUS | Code + device regression | partial — web/webOS/Tizen done 2026-11-23 (`cabd15d`): the connector resolves locators against the inspector snapshot with the shared `impresario-locator` matcher and rewrites to a unique CSS handle; `locators.html` fixtures cover role/name, id, testid, shadow DOM, ambiguity, `index`, `Count`, `Hidden`, ordinary checks and probes on raw (CI-verified) with a feature-gated chromiumoxide entry. Native Android/Apple agents still reject `LOCATOR` (no snapshot-backed native resolver), so native execution remains open |
@@ -72,12 +72,18 @@ Device inventory available for this pass:
 | A-R2 | Import the working personalized tvOS DDI (build 27A9269) into the `23J582` store so future runs do not need `IMPRESARIO_APPLE_DDI` | docs/DEVICES.md / I-202 | Yes (local files) | done 2026-11-16 — `apple ddi import` completed `23J582`; tvOS doctor and suite ran without the env override |
 | A-R3 | tvOS inspector acceptance (also INS-R10) | TASK-INSPECTOR Phase 5 | Yes | done 2026-11-16 |
 
-## 5. Flutter device findings (2026-11-16)
+## 5. Flutter device findings
 
-The Android 15 `ALI-NX1` at `192.168.93.112` runs a release Flutter build
-(`com.dooticketseg.app.staging`, version `0.1.0`, no debuggable flag and no Dart
-VM service). Impresario reaches it through its own native ADB on port `5555`;
-the phone was paired with `impresario device pair`.
+The Flutter acceptance device is an Android 15 `ALI-NX1` running a release
+Flutter build (`com.dooticketseg.app.staging`, version `0.1.0`, no debuggable
+flag and no Dart VM service). It moved from `192.168.93.112:5555` to
+`192.168.93.55:38103` on 2026-11-26. The 1.0.0 schema hardcoded ADB port `5555`;
+an optional per-device `port` for `android`/`androidtv` is now supported, so the
+dynamic wireless-debugging port no longer needs `adb tcpip 5555`.
+
+History from the original `192.168.93.112` device (paired with
+`impresario device pair`; port switched to `5555` with platform-tools because
+the schema had no `port` field):
 
 What worked with the existing Layer A path:
 

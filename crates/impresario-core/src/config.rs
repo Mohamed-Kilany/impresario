@@ -370,8 +370,8 @@ impl TransportKind {
 }
 
 /// Internal connection overrides used only by tests and the interactive
-/// wizard. They are deliberately not part of the serialized devices file: the
-/// public schema is `name?`, `type` and `ip`.
+/// wizard. They are deliberately not serialized as a block: the public schema
+/// is `name?`, `type`, `ip` and an optional Android `port`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceConnection {
@@ -457,38 +457,58 @@ fn is_false(value: &bool) -> bool {
 }
 
 /// One device entry of a devices file. The only public fields are an optional
-/// label (`name`), the exact product `type`, and its `ip`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// label (`name`), the exact product `type`, its `ip`, and the optional
+/// Android/Android TV ADB `port` (which defaults to 5555).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceConfig {
     /// Optional label used by actors. When omitted it is derived from type+IP.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
     /// The exact product type (`web`, `webOS`, `tizenOS`, ...).
-    #[serde(rename = "type")]
     pub device_type: DeviceType,
     /// The device's IP address. `127.0.0.1` means the local host.
     pub ip: String,
     /// Internal platform family, derived from `device_type`.
-    #[serde(skip)]
     pub platform: Platform,
-    #[serde(skip)]
     pub connection: DeviceConnection,
-    #[serde(skip)]
     pub auth: DeviceAuth,
-    #[serde(skip)]
     pub labels: Vec<String>,
-    #[serde(skip)]
     pub options: DeviceOptions,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct DeviceConfigWire {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     name: String,
     #[serde(rename = "type")]
     device_type: DeviceType,
     ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+}
+
+impl Serialize for DeviceConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Only Android wireless debugging has a file-level port override, and
+        // the default 5555 stays implicit so existing files round-trip
+        // byte-for-byte in shape.
+        let port = match self.platform {
+            Platform::Android | Platform::AndroidTv => {
+                self.connection.port.filter(|port| *port != 5555)
+            }
+            _ => None,
+        };
+        DeviceConfigWire {
+            name: self.name.clone(),
+            device_type: self.device_type,
+            ip: self.ip.clone(),
+            port,
+        }
+        .serialize(serializer)
+    }
 }
 
 impl<'de> Deserialize<'de> for DeviceConfig {
@@ -502,7 +522,10 @@ impl<'de> Deserialize<'de> for DeviceConfig {
             device_type: wire.device_type,
             ip: wire.ip,
             platform: wire.device_type.platform(),
-            connection: DeviceConnection::default(),
+            connection: DeviceConnection {
+                port: wire.port,
+                ..DeviceConnection::default()
+            },
             auth: DeviceAuth::default(),
             labels: Vec::new(),
             options: DeviceOptions::default(),
@@ -585,7 +608,8 @@ impl DeviceConfig {
             Platform::Web => format!("ws://{}:9222", self.socket_host()),
             Platform::WebOs | Platform::Tizen => String::new(),
             Platform::Android | Platform::AndroidTv => {
-                format!("{}:5555", self.socket_host())
+                let port = self.protocol_port().unwrap_or(5555);
+                format!("{}:{port}", self.socket_host())
             }
             Platform::Ios | Platform::Tvos => self.ip.clone(),
         }
@@ -618,7 +642,8 @@ impl DeviceConfig {
                 format!("{transport} {}:{port}", self.socket_host())
             }
             Platform::Android | Platform::AndroidTv => {
-                format!("{transport} {}:5555", self.socket_host())
+                let port = self.protocol_port().unwrap_or(5555);
+                format!("{transport} {}:{port}", self.socket_host())
             }
             Platform::Ios | Platform::Tvos => {
                 format!("{transport} {}", self.ip)
@@ -785,7 +810,7 @@ const CONFIG_KEYS: &[&str] = &[
     "inspector",
 ];
 
-const DEVICE_KEYS: &[&str] = &["name", "type", "ip"];
+const DEVICE_KEYS: &[&str] = &["name", "type", "ip", "port"];
 
 const DEVICE_TYPES: &[&str] = &[
     "web",
@@ -1455,10 +1480,10 @@ pub fn parse_devices(source: &str, path: &Path) -> ConfigOutcome<DevicesConfig> 
                 }
                 // The public schema has no connection block. These fields are
                 // private defaults used by transports that still accept a
-                // test-only override.
+                // test-only override. The optional public ADB port survives in
+                // `connection.port`.
                 device.connection.host = Some(device.ip.clone());
                 device.connection.transport = TransportKind::Auto;
-                device.connection.port = None;
                 device.connection.serial = None;
                 device.connection.udid = None;
                 device.connection.endpoint = None;
@@ -1658,12 +1683,12 @@ fn validate_device(
                     "use 'type' with one of: web, webOS, tizenOS, android, androidtv, iOS, tvOS"
                 }
                 "connection" | "auth" | "options" | "labels" => {
-                    "device files only take name (optional), type and ip; transport, ports and credentials are discovered from the IP"
+                    "device files only take name (optional), type, ip and an optional android/androidtv port; transport and credentials are discovered from the IP"
                 }
                 "target_endpoint" | "app_id" | "app_url" | "agent_address" | "connector" => {
-                    "the legacy device schema was removed; use name, type and ip"
+                    "the legacy device schema was removed; use name, type, ip and an optional port"
                 }
-                _ => "the devices file accepts name (optional), type and ip",
+                _ => "the devices file accepts name (optional), type, ip and an optional android/androidtv port",
             });
             if let Some(hint) = suggest(key, DEVICE_KEYS) {
                 diag = diag.with_help(hint);
@@ -1722,6 +1747,29 @@ fn validate_device(
             Diagnostic::error(Code::CfgMissingField, "missing required key 'ip'")
                 .with_span(key_span("ip")),
         ),
+    }
+
+    // port (optional; only Android wireless debugging uses a non-default ADB port)
+    if let Some(value) = map.get("port") {
+        let valid = value
+            .as_u64()
+            .filter(|port| (1..=u64::from(u16::MAX)).contains(port));
+        match valid {
+            Some(_) => {
+                if parsed_type.is_some_and(|device_type| {
+                    !matches!(device_type, DeviceType::Android | DeviceType::AndroidTv)
+                }) {
+                    diagnostics.push(invalid_here(
+                        "port",
+                        "only android and androidtv devices can set an ADB port".to_string(),
+                    ));
+                }
+            }
+            None => diagnostics.push(invalid_here(
+                "port",
+                "expected an integer between 1 and 65535".to_string(),
+            )),
+        }
     }
 
     if let (Some(device_type), Some(ip)) = (parsed_type, parsed_ip) {
@@ -2056,6 +2104,7 @@ devices:
         assert_eq!(android.name, "android-192-168-1-60");
         assert_eq!(android.effective_transport(), TransportKind::Tcp);
         assert_eq!(android.target_endpoint(), "192.168.1.60:5555");
+        assert_eq!(android.connection_summary(), "tcp 192.168.1.60:5555");
 
         let tizen = &devices.devices[5];
         assert_eq!(tizen.protocol_port(), Some(26101));
@@ -2070,6 +2119,71 @@ devices:
         let web = &devices.devices[6];
         assert_eq!(web.effective_transport(), TransportKind::Launch);
         assert_eq!(web.target_endpoint(), "launch");
+    }
+
+    #[test]
+    fn android_device_accepts_an_explicit_adb_port() {
+        let source = "\
+devices:
+  - name: android-flutter
+    type: android
+    ip: 192.168.93.55
+    port: 38103
+";
+        let outcome = parse_devices(source, devices_path());
+        assert!(
+            !outcome.diagnostics.has_errors(),
+            "{:?}",
+            outcome.diagnostics
+        );
+        let device = &outcome.config.expect("devices").devices[0];
+        assert_eq!(device.connection.port, Some(38103));
+        assert_eq!(device.protocol_port(), Some(38103));
+        assert_eq!(device.target_endpoint(), "192.168.93.55:38103");
+        assert_eq!(device.connection_summary(), "tcp 192.168.93.55:38103");
+
+        let serialized = serde_yaml_ng::to_string(&DevicesConfig {
+            devices: vec![device.clone()],
+            groups: BTreeMap::new(),
+        })
+        .expect("serialize");
+        assert!(serialized.contains("port: 38103"), "{serialized}");
+        let reparsed = parse_devices(&serialized, devices_path())
+            .config
+            .expect("reparsed");
+        assert_eq!(reparsed.devices[0].connection.port, Some(38103));
+        assert_eq!(reparsed.devices[0].target_endpoint(), "192.168.93.55:38103");
+    }
+
+    #[test]
+    fn explicit_adb_port_is_android_only_and_in_range() {
+        for source in [
+            "devices:\n  - type: android\n    ip: 192.168.1.60\n    port: 0\n",
+            "devices:\n  - type: android\n    ip: 192.168.1.60\n    port: 65536\n",
+            "devices:\n  - type: android\n    ip: 192.168.1.60\n    port: -1\n",
+            "devices:\n  - type: android\n    ip: 192.168.1.60\n    port: '5555'\n",
+        ] {
+            let outcome = parse_devices(source, devices_path());
+            assert!(
+                outcome
+                    .diagnostics
+                    .errors()
+                    .any(|d| d.message.contains("integer between 1 and 65535")),
+                "{source:?}: {:?}",
+                outcome.diagnostics
+            );
+        }
+
+        let source = "devices:\n  - type: webOS\n    ip: 192.168.1.50\n    port: 5555\n";
+        let outcome = parse_devices(source, devices_path());
+        assert!(
+            outcome
+                .diagnostics
+                .errors()
+                .any(|d| d.message.contains("only android")),
+            "{:?}",
+            outcome.diagnostics
+        );
     }
 
     #[test]

@@ -24,8 +24,8 @@ handshake → `Shutdown` (no `Session` stream). `devices check` remains an alias
 **Devices and apps are separate** (D-21, TASK-2 §5). A device owns how to reach
 the hardware; an app owns what runs on it.
 
-The public device schema has exactly three fields per device: an optional
-`name`, the exact product `type`, and the device `ip`.
+The public device schema has four fields per device: an optional `name`, the
+exact product `type`, the device `ip`, and an optional Android ADB `port`.
 
 ```yaml
 # impresario.devices.config (workspace) / ~/.impresario/devices.yaml (global)
@@ -36,6 +36,10 @@ devices:
   - name: pocket_phone
     type: android
     ip: 192.168.1.61
+  - name: flutter_phone
+    type: android
+    ip: 192.168.1.63
+    port: 38103            # Android/Android TV wireless-debugging port
   - type: android
     ip: 192.168.1.62
 
@@ -48,7 +52,12 @@ groups:
   all_screens: [@living_room, @phones]
 ```
 
-`groups:` is separate from the three-field device entries. Group names use the
+Android wireless debugging may publish ADB on a per-boot dynamic port. Set
+`port` to that port for `android` and `androidtv` devices; the value must be an
+integer from 1 to 65535. Omitting it keeps the historical default `5555`. Other
+device types reject `port` because their protocol ports are fixed.
+
+`groups:` is separate from the device entries. Group names use the
 same rule as device names (`[a-z0-9][a-z0-9_-]{0,62}`). Expansion is recursive
 and de-duplicated; an unknown member is `IMP-CFG-007` and a membership cycle is
 `IMP-CFG-008`. Global and workspace layers merge group-by-group (workspace
@@ -77,15 +86,16 @@ winning layer and resolved devices; `a` adds, `Enter`/`e` edits members,
 need to rewrite references in both layers.
 
 Transport, protocol ports, pairing, signing and credential references are
-derived during planning; they are not part of the file:
+derived during planning; the optional Android `port` is the one file-level
+override:
 
-| Type | Derived transport | Fixed protocol port |
+| Type | Derived transport | Default protocol port |
 |---|---|---|
 | `web` on `127.0.0.1` | launch managed Chromium | — |
 | `web` on another IP | CDP | `9222` |
 | `webOS` | SSH | `9922` |
 | `tizenOS` | SDB | `26101` |
-| `android`, `androidtv` | native ADB over TCP | `5555` |
+| `android`, `androidtv` | native ADB over TCP | `5555` (override with `port`) |
 | `iOS`, `tvOS` | RemotePairing/RSD | discovered |
 
 Connector and native-agent gRPC listeners are allocated on fresh loopback
