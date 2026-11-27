@@ -138,6 +138,42 @@ device and prints the act × device matrix, parameter bindings (secrets masked)
 and every skipped act with its reason (platform filter, unsupported action,
 selection).
 
+### App definitions and device-aware shortcuts
+
+`app add|edit|remove|list|show|export` edit the merged app layers exactly like
+the device commands. `app check` without `--device` validates ids and package
+paths and accepts optional positional app names; an unknown name is
+`IMP-APP-001`.
+
+```powershell
+impresario app add --workspace --name shop --platform android=com.acme.shop `
+  --package android=./build/app-release.apk
+impresario app check
+impresario app check shop
+impresario app check shop --device phone
+impresario app install shop --device phone
+impresario app uninstall shop --device @phones
+```
+
+`--device` takes a configured name, `@group` or `all` and is repeatable; it is
+required for `install`/`uninstall`. `app check --device` adds the installed
+state and the strongest signature evidence the platform can provide. The
+shortcut resolves the app's exact platform entry (an `androidtv` device needs an
+`androidtv` entry, not `android`), resolves a relative package against the
+workspace file's directory, and rejects a `web` device because it has a URL, not
+a package (`IMP-APP-005`). `install` requires a configured package
+(`IMP-APP-006`); `uninstall` does not need the artifact to still exist.
+Definition problems exit 2 before any device is contacted; device-operation
+failures exit 3.
+
+Tizen uses the same signing profile/DUID check as a run and reports whether the
+configured `.wgt` verifies. Android, Apple and webOS report installed-signature
+verification as unsupported because no native installed-signature reader
+exists. The Apple shortcut connects to the paired device and uses
+InstallationProxy; it does not mount a DDI or sign the app, so a full run
+remains the path for unsigned builds. See `docs/DEVICES.md` for the
+per-platform details.
+
 ### Live probe inspection
 
 `impresario probe` runs one probe family (`showing`, `player` or `drm`) against

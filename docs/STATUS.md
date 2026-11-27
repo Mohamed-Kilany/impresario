@@ -706,7 +706,7 @@ carries the physical-tvOS work.
 |---|---|---|
 | `proto/impresario/v1` + `crates/impresario-proto` | done | codegen verified via `cargo build` (vendored protoc fallback exercised) |
 | `impresario-core` config (`config.rs`) and apps (`apps.rs`) | done | unit tests: minimal device schema (`name?`, exact `type`, `ip`), unknown-key rejection (including `connection`/`auth`/`options`/`labels`), derived names, ranges, duplicate devices and apps, app platform entries, global + workspace merging; the real workspace tests consume the merged layers |
-| `impresario device` / `app` | done (TASK-2 phases 1B + 3; wizard/discovery/pairing I-124) | global-by-default definitions with `--workspace` scope, append-preserving edits (I-103), list/show/check/edit/rename/remove/import/export; `tests/definitions_cli.rs` covers both layers, duplicate/bad fields, app check failures and the minimal `--type/--ip` device add. Phase 3 adds `device discover`, `device pair`, the interactive `device wizard` (scope/type/name/ip/check/preview, back/cancel with no writes), Android phone/TV role detection, and scripted wizard tests (including physical tvOS). The wizard's post-IP webOS passphrase and Tizen profile create/import/keep steps landed 2026-11-27 (I-216). `app check` still verifies ids/package existence only; installed state, install/uninstall and signatures remain later work. The wizard does not probe tvOS while writing the definition, and points at `impresario device check` after the machine-global Apple setup. `device check` itself passed on the physical Apple TV through the pure-Rust transport (I-152) |
+| `impresario device` / `app` | done (TASK-2 phases 1B + 3; wizard/discovery/pairing I-124) | global-by-default definitions with `--workspace` scope, append-preserving edits (I-103), list/show/check/edit/rename/remove/import/export; `tests/definitions_cli.rs` covers both layers, duplicate/bad fields, app check failures and the minimal `--type/--ip` device add. Phase 3 adds `device discover`, `device pair`, the interactive `device wizard` (scope/type/name/ip/check/preview, back/cancel with no writes), Android phone/TV role detection, and scripted wizard tests (including physical tvOS). The wizard's post-IP webOS passphrase and Tizen profile create/import/keep steps landed 2026-11-27 (I-216). `app check` keeps the definition-only validation and, with `--device`, adds the installed state and the strongest signature evidence available; `app install`/`app uninstall` reuse the runner paths (T2-R3, I-217). Hardware acceptance of those shortcuts is pending. The wizard does not probe tvOS while writing the definition, and points at `impresario device check` after the machine-global Apple setup. `device check` itself passed on the physical Apple TV through the pure-Rust transport (I-152) |
 | `impresario-core` scanner/parser/AST | done | core library suite; negative matrix (`tests/negative_cases.rs`) plus dedicated theatrical fixtures for 030..050; table-form scenes, `.theatre` stages and `Examples:` tables only; `Pieces:` scenes and inline play `Stage:` blocks are rejected; proptest never-panics suite (3 generators + nasty corpus); `insta` snapshots of the example ASTs, theatre AST and a multi-error file |
 | `impresario-core` semantic validation | done | unit tests: 008/009/012/013/014/017/019/020/021 with device awareness, plus theatrical resolution (031/032/034/036/037/040/041) and workspace lints 042..050 (unused scene/piece/stage/theatre/var/example column, duplicate `Var:`, Act platform coverage, required parameter never supplied) |
 | `impresario-core` workspace loader | done | unit tests incl. duplicate scenes 006 |
@@ -953,9 +953,12 @@ marked, so the numbers used elsewhere remain stable.
    those fields. Live sessions wrote phone,
    TV and web definitions, and a fresh-key Android pairing passed `device
    check`. The ratatui device screen is part of the Phase 4 TUI, not this CLI
-   wizard. `app check` still verifies ids and package existence only:
-   `app install`/`uninstall`, installed state, code signature and re-signing
-   remain later work.
+   wizard. The remaining installed-state part of gap 9 is closed as T2-R3
+   (I-217): `app install`/`app uninstall` reuse the runner paths,
+   `app check --device` adds installed-state and explicit signature evidence,
+   and definition-only `app check` is unchanged. Commit `e08dcb0` + `68fd846`,
+   CI run `46020952833` passed all eight jobs; no phone or TV was reachable, so
+   the shortcuts still need hardware acceptance.
 10. D-19 is **applied to Android, web, webOS, Tizen and Apple as of
     2026-10-27**. Android no longer starts `adb` (I-121); web uses the managed
     Chromium lookup (I-123); webOS uses native SSH/SFTP/luna, deterministic IPK

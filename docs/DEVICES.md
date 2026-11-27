@@ -121,6 +121,31 @@ workspace wins. `impresario device add`/`app add` default to the global layer;
 pass `--workspace` to edit the workspace file. Secrets stay in the OS
 credential store; no passphrase or private key is written to a device file.
 
+### App install, uninstall and check shortcuts (T2-R3)
+
+`impresario app install <app> --device <d>` and `app uninstall <app> --device
+<d>` are scriptable shortcuts over the same transport install/remove paths a
+run uses; `app check <app> --device <d>` adds the installed state and the
+strongest signature evidence each platform can provide. `--device` accepts a
+name, `@group` or `all` and is repeatable; the app's exact platform entry is
+required (no family fallback), relative packages resolve against the workspace
+file, and `web` devices are rejected. Definition problems fail before hardware
+with exit 2; device failures exit 3.
+
+| Platform | install | uninstall | check `--device` |
+|---|---|---|---|
+| Android / Android TV | `AdbClient::install_apk` over the native ADB transport, then `pm list packages` confirms the id | `uninstall_package`, idempotent | `pm list packages`; installed signature not checked (no native reader) |
+| webOS | deterministic IPK packaging + `dev/install` + `listApps` verification, as a run | `dev/remove` + `listApps` verification, idempotent | `dev/listApps`; installed signature not checked (no native reader) |
+| Tizen | same signing profile/DUID + `vd_appinstall` path as a run | `vd_appuninstall <app-id>` + `vd_applist` verification, idempotent | `vd_applist`; the configured `.wgt` is inspected, and the profile must be unexpired and cover the TV's DUID. An unsigned source `.wgt` is reported as re-signed by the runner, not failed |
+| iOS / tvOS | pairing lookup + RSD tunnel + `InstallationProxy`; no DDI mount or signing | `InstallationProxy` uninstall, idempotent | `InstallationProxy` app lookup; installed signature not checked (no native reader) |
+
+`app install` requires a configured `platforms.<platform>.package`
+(`IMP-APP-006`); `app uninstall` does not need the artifact to still exist.
+The Apple shortcut is a convenience over an already-signed package; a run still
+mounts the DDI and signs when needed, so use the run path for unsigned builds.
+Hardware validation of these shortcuts is pending: no phone or TV was reachable
+on the current network.
+
 ---
 
 ## 1. Web / Chromium — platforms `web`, `webos`, `tizen` (connector)

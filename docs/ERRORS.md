@@ -21,10 +21,22 @@ codes are appended. Rendered with `miette` (file, line, caret, help hint);
 
 | Code | Meaning | Emitted by |
 |---|---|---|
-| `IMP-APP-001` | a play's `App:` (or `--app`) names an app that is not defined | planner, `validate`, LSP |
-| `IMP-APP-002` | the app has no entry (or no id) for a selected device's platform | planner, `app check` |
-| `IMP-APP-003` | the app's `package` artifact does not exist at the resolved path | planner, `app check` |
+| `IMP-APP-001` | a play's `App:` (or `--app`, or an `app check` name) names an app that is not defined | planner, `validate`, LSP, `app check` |
+| `IMP-APP-002` | the app has no entry (or no id) for a selected device's platform | planner, `app check`, `app install`, `app uninstall` |
+| `IMP-APP-003` | the app's `package` artifact does not exist at the resolved path | planner, `app check`, `app install` |
 | `IMP-APP-004` | selected plays bind different apps without `--app` | planner |
+| `IMP-APP-005` | a selected device is `web`; it has a URL, not an installable package | `app install`, `app uninstall`, `app check --device` |
+| `IMP-APP-006` | `app install` needs a configured `platforms.<platform>.package` | `app install` |
+| `IMP-APP-007` | device selection or the device operation failed | `app install`, `app uninstall`, `app check --device` |
+
+`app check --device` reports the installed state and the strongest signature
+evidence the platform can provide. Tizen inspects the configured `.wgt`, reports
+whether its signature verifies, and requires the selected profile to be
+unexpired and to cover the TV's DUID; an unsigned source `.wgt` is reported as
+re-signed by the runner instead of failing the check. Android, Apple and webOS
+report installed-signature verification as unsupported because no native
+installed-signature reader exists; install success is still enforced by the
+platform install service.
 
 ## Signing and packaging (`IMP-SIGN-*`)
 
