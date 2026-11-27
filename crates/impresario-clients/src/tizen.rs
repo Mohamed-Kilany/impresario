@@ -52,8 +52,9 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Tizen signing profile selection. Device files no longer carry a profile;
 /// the Samsung-issued DUID-bound profile is the default, with an environment
-/// override for other teams.
-fn tizen_profile_name() -> String {
+/// override for other teams. The wizard uses the same lookup so its status
+/// messages name the profile the transport will actually select.
+pub fn tizen_profile_name() -> String {
     std::env::var("IMPRESARIO_TIZEN_PROFILE")
         .ok()
         .filter(|value| !value.trim().is_empty())

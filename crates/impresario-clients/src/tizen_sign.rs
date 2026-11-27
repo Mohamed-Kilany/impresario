@@ -1176,7 +1176,9 @@ pub fn profile_dir(home: &Home, name: &str) -> PathBuf {
     home.signing_dir().join("tizen").join(sanitize(name))
 }
 
-fn validate_profile_name(name: &str) -> Result<(), SignError> {
+/// Validate a profile name before any browser or keychain work starts.
+/// Names use 1-64 ASCII letters, digits, `.`, `-` or `_`.
+pub fn validate_profile_name(name: &str) -> Result<(), SignError> {
     if name.is_empty()
         || name.len() > 64
         || !name.chars().all(|character| {

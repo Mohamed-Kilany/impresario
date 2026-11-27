@@ -5,15 +5,19 @@
 //! `impresario-clients`; nothing here spawns `adb` or any other platform tool
 //! (D-19). Every prompt has a default, validates immediately, and supports
 //! `b` (back) and `q` (cancel). The configuration is written only after the
-//! final YAML/scope preview is accepted.
+//! final YAML/scope preview is accepted. After the IP step, webOS offers to
+//! save the Developer Mode passphrase and Tizen shows/creates/imports its
+//! native signing profile (I-216); neither adds a secret or profile field to
+//! the device file.
 
 use std::collections::HashSet;
-use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::io::{self, BufRead, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::Args;
 use impresario_clients::adb::{self, AdbClient, AdbTarget, MdnsAndroidDevice, UsbAndroidDevice};
+use impresario_clients::{tizen_cert, tizen_sign, webos};
 use impresario_core::config::{
     self, DeviceAuth, DeviceConfig, DeviceConnection, DeviceOptions, TransportKind,
 };
@@ -239,6 +243,8 @@ enum Stage {
     Platform,
     Name,
     Ip,
+    WebOsSetup,
+    TizenSetup,
     AndroidRoute,
     AndroidManual,
     AndroidPairTarget,
@@ -262,9 +268,18 @@ enum Answer<T> {
     Cancel,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SecretMode {
+    /// The wizard owns a terminal: read without echoing through `rpassword`.
+    Hidden,
+    /// The wizard input is a pipe or a test script: read the line from it.
+    Plain,
+}
+
 struct Ui<R: BufRead, W: Write> {
     reader: R,
     writer: W,
+    secrets: SecretMode,
 }
 
 impl<R: BufRead, W: Write> Ui<R, W> {
@@ -348,6 +363,62 @@ impl<R: BufRead, W: Write> Ui<R, W> {
         };
         let display = |value: &bool| if *value { "Y/n" } else { "y/N" }.to_string();
         self.ask_value(label, Some(&default), parse, display)
+    }
+
+    /// Read one secret. On a terminal the input is hidden; with a pipe or a
+    /// test script it is read from the same stream as the other answers. `b`
+    /// and `q` keep their wizard meaning, so they cannot be secrets.
+    fn ask_secret(&mut self, label: &str) -> io::Result<Answer<zeroize::Zeroizing<String>>> {
+        loop {
+            let value = match self.secrets {
+                SecretMode::Hidden => {
+                    rpassword::prompt_password(format!("{label}: ")).map_err(|error| {
+                        io::Error::other(format!("cannot read the secret: {error}"))
+                    })?
+                }
+                SecretMode::Plain => {
+                    write!(self.writer, "{label} (input is not hidden): ")?;
+                    self.writer.flush()?;
+                    let mut line = String::new();
+                    let read = self.reader.read_line(&mut line)?;
+                    if read == 0 {
+                        return Ok(Answer::Cancel);
+                    }
+                    line.trim_end_matches(['\r', '\n']).to_string()
+                }
+            };
+            if value.eq_ignore_ascii_case("q") || value.eq_ignore_ascii_case("quit") {
+                return Ok(Answer::Cancel);
+            }
+            if value.eq_ignore_ascii_case("b") {
+                return Ok(Answer::Back);
+            }
+            if value.is_empty() {
+                writeln!(self.writer, "! a value is required")?;
+                continue;
+            }
+            return Ok(Answer::Value(zeroize::Zeroizing::new(value)));
+        }
+    }
+
+    /// Ask for a secret twice so a typo cannot be stored.
+    fn ask_secret_pair(&mut self, label: &str) -> io::Result<Answer<zeroize::Zeroizing<String>>> {
+        loop {
+            let first = match self.ask_secret(label)? {
+                Answer::Value(value) => value,
+                Answer::Back => return Ok(Answer::Back),
+                Answer::Cancel => return Ok(Answer::Cancel),
+            };
+            let second = match self.ask_secret("Confirm passphrase")? {
+                Answer::Value(value) => value,
+                Answer::Back => return Ok(Answer::Back),
+                Answer::Cancel => return Ok(Answer::Cancel),
+            };
+            if first.as_str() == second.as_str() {
+                return Ok(Answer::Value(first));
+            }
+            writeln!(self.writer, "! the passphrases do not match")?;
+        }
     }
 }
 
@@ -433,12 +504,31 @@ struct Session<'a, R: BufRead, W: Write> {
     discovery: Option<Discovery>,
 }
 
+#[cfg(test)]
 fn run_wizard_io<R: BufRead, W: Write>(
     args: &WizardArgs,
     home: &Home,
     workspace_path: &Path,
     reader: R,
     writer: &mut W,
+) -> i32 {
+    run_wizard_io_with(
+        args,
+        home,
+        workspace_path,
+        reader,
+        writer,
+        SecretMode::Plain,
+    )
+}
+
+fn run_wizard_io_with<R: BufRead, W: Write>(
+    args: &WizardArgs,
+    home: &Home,
+    workspace_path: &Path,
+    reader: R,
+    writer: &mut W,
+    secrets: SecretMode,
 ) -> i32 {
     let outcome = config::load_devices_merged(workspace_path);
     if outcome.diagnostics.has_errors() {
@@ -530,7 +620,11 @@ fn run_wizard_io<R: BufRead, W: Write>(
         args.workspace
     };
     let mut session = Session {
-        ui: Ui { reader, writer },
+        ui: Ui {
+            reader,
+            writer,
+            secrets,
+        },
         home,
         workspace_path,
         args,
@@ -562,6 +656,8 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
                 Stage::Platform => self.platform(),
                 Stage::Name => self.name(),
                 Stage::Ip => self.ip(),
+                Stage::WebOsSetup => self.webos_setup(),
+                Stage::TizenSetup => self.tizen_setup(),
                 Stage::AndroidRoute => self.android_route(),
                 Stage::AndroidManual => self.android_manual(),
                 Stage::AndroidPairTarget => self.android_pair_target(),
@@ -721,14 +817,384 @@ impl<R: BufRead, W: Write> Session<'_, R, W> {
         {
             Answer::Value(ip) => {
                 self.answers.ip = ip;
-                Ok(Step::Next(if self.args.no_check {
-                    Stage::Review
-                } else {
-                    Stage::Check
-                }))
+                Ok(Step::Next(self.after_ip()))
             }
             Answer::Back => Ok(Step::Back),
             Answer::Cancel => Ok(self.cancel()),
+        }
+    }
+
+    fn check_or_review(&self) -> Stage {
+        if self.args.no_check {
+            Stage::Review
+        } else {
+            Stage::Check
+        }
+    }
+
+    fn after_ip(&self) -> Stage {
+        match self.answers.platform {
+            Some(Platform::WebOs) => Stage::WebOsSetup,
+            Some(Platform::Tizen) => Stage::TizenSetup,
+            _ => self.check_or_review(),
+        }
+    }
+
+    /// Save the webOS Developer Mode passphrase while the user is already in
+    /// the wizard. The secret goes straight to the OS credential store; the
+    /// device file still contains only type and IP.
+    fn webos_setup(&mut self) -> Result<Step, String> {
+        let name = self.answers.name.clone();
+        let _ = self.ui.say("");
+        let _ = self.ui.say("webOS Developer Mode setup");
+        match self.ui.secrets {
+            // A piped script must not depend on, or prompt through, the host
+            // credential store just to report its state.
+            SecretMode::Plain => {
+                let _ = self.ui.say(
+                    "The saved passphrase state is not checked in scripted input; use \
+                     `impresario device passphrase <name> --status`.",
+                );
+            }
+            SecretMode::Hidden => match webos::webos_passphrase_saved(&name) {
+                Ok(true) => {
+                    let _ = self.ui.say(format!(
+                        "A Developer Mode passphrase is saved for '{name}' in the OS credential \
+                         store."
+                    ));
+                }
+                Ok(false) => {
+                    let _ = self.ui.say(format!(
+                        "No Developer Mode passphrase is saved for '{name}'."
+                    ));
+                }
+                Err(error) => {
+                    let _ = self.ui.say(format!(
+                        "The saved passphrase state cannot be read: {error}"
+                    ));
+                }
+            },
+        }
+        if std::env::var("IMPRESARIO_WEBOS_PASSPHRASE").is_ok_and(|value| !value.is_empty()) {
+            let _ = self.ui.say(
+                "IMPRESARIO_WEBOS_PASSPHRASE is set for this session and takes precedence over \
+                 the saved entry.",
+            );
+        }
+        let _ = self.ui.say(
+            "Enable Developer Mode on the TV (Developer Mode app > Dev Mode Status and Key \
+             Server), then use the six-character passphrase the TV shows.",
+        );
+        match self
+            .ui
+            .confirm("Save the Developer Mode passphrase now?", false)
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(true) => {}
+            Answer::Value(false) => return Ok(Step::Next(self.check_or_review())),
+            Answer::Back => return Ok(Step::Back),
+            Answer::Cancel => return Ok(self.cancel()),
+        }
+        let passphrase = match self
+            .ui
+            .ask_secret_pair("Developer Mode passphrase")
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(passphrase) => passphrase,
+            Answer::Back => return Ok(Step::Back),
+            Answer::Cancel => return Ok(self.cancel()),
+        };
+        match webos::store_webos_passphrase(&name, passphrase.as_str()) {
+            Ok(()) => {
+                let _ = self.ui.say(format!(
+                    "saved the webOS passphrase for '{name}' in the OS credential store"
+                ));
+            }
+            Err(error) => {
+                let _ = self
+                    .ui
+                    .say(format!("could not save the passphrase: {error}"));
+                let _ = self.ui.say(
+                    "the definition can still be written; retry later with `impresario device \
+                     passphrase <name>` or set IMPRESARIO_WEBOS_PASSPHRASE for one session",
+                );
+            }
+        }
+        Ok(Step::Next(self.check_or_review()))
+    }
+
+    /// Show the imported Tizen profiles and offer the native create/import
+    /// flows. Selection stays machine-global (`IMPRESARIO_TIZEN_PROFILE`,
+    /// default `samsung`), so nothing extra is written to the device file.
+    fn tizen_setup(&mut self) -> Result<Step, String> {
+        loop {
+            self.show_tizen_profiles();
+            let default = "keep".to_string();
+            let parse = |text: &str| match text.to_ascii_lowercase().as_str() {
+                "c" | "create" => Ok("create".to_string()),
+                "i" | "import" => Ok("import".to_string()),
+                "k" | "keep" => Ok("keep".to_string()),
+                _ => {
+                    Err("choose c (create), i (import) or k (keep the current profile)".to_string())
+                }
+            };
+            let choice = match self
+                .ui
+                .ask_value(
+                    "Tizen setup (c create/i import/k keep)",
+                    Some(&default),
+                    parse,
+                    Clone::clone,
+                )
+                .map_err(|error| error.to_string())?
+            {
+                Answer::Value(choice) => choice,
+                Answer::Back => return Ok(Step::Back),
+                Answer::Cancel => return Ok(self.cancel()),
+            };
+            match choice.as_str() {
+                "create" => match self.create_tizen_profile()? {
+                    Some(step) => return Ok(step),
+                    None => continue,
+                },
+                "import" => match self.import_tizen_profile()? {
+                    Some(step) => return Ok(step),
+                    None => continue,
+                },
+                _ => return Ok(Step::Next(self.check_or_review())),
+            }
+        }
+    }
+
+    fn show_tizen_profiles(&mut self) {
+        let selected = impresario_clients::tizen::tizen_profile_name();
+        let _ = self.ui.say("");
+        match tizen_sign::list_profiles(self.home) {
+            Ok(profiles) if profiles.is_empty() => {
+                let _ = self.ui.say("No Tizen signing profile is imported.");
+            }
+            Ok(profiles) => {
+                let _ = self.ui.say(format!(
+                    "Tizen signing profiles (the transport uses '{selected}'):"
+                ));
+                for profile in &profiles {
+                    let marker = if profile.name == selected {
+                        " (selected)"
+                    } else {
+                        ""
+                    };
+                    let _ = self.ui.say(format!(
+                        "  {}{marker} - {} DUID(s), author until {}, distributor until {}",
+                        profile.name,
+                        profile.duids.len(),
+                        profile.author_not_after,
+                        profile.distributor_not_after
+                    ));
+                }
+                if !profiles.iter().any(|profile| profile.name == selected) {
+                    let _ = self.ui.say(format!(
+                        "profile '{selected}' is not imported yet; create or import it below, or \
+                         set IMPRESARIO_TIZEN_PROFILE to another name"
+                    ));
+                }
+            }
+            Err(error) => {
+                let _ = self
+                    .ui
+                    .say(format!("cannot list the Tizen profiles: {error}"));
+            }
+        }
+        let _ = self.ui.say(
+            "A retail TV needs a Samsung-issued, DUID-bound profile. Creating one uses Samsung's \
+             normal browser login; Impresario never sees or stores the Samsung password.",
+        );
+    }
+
+    fn create_tizen_profile(&mut self) -> Result<Option<Step>, String> {
+        let selected = impresario_clients::tizen::tizen_profile_name();
+        let name = match self
+            .ui
+            .ask_value(
+                "Profile name",
+                Some(&selected),
+                parse_tizen_profile_name,
+                Clone::clone,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(name) => name,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let duids = match self
+            .ui
+            .ask_value(
+                "TV DUID(s), comma separated (from device check or the TV's Developer Mode screen)",
+                None::<&Vec<String>>,
+                |text| {
+                    let duids: Vec<String> = text
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    if duids.is_empty() {
+                        Err("at least one TV DUID is required".to_string())
+                    } else {
+                        Ok(duids)
+                    }
+                },
+                |duids: &Vec<String>| duids.join(", "),
+            )
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(duids) => duids,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let email = match self
+            .ui
+            .ask_optional("Samsung account email (optional, - for none)", None)
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(email) => email,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let _ = self.ui.say(
+            "opening Samsung's login page in the browser; complete it there (up to five minutes)",
+        );
+        let options = tizen_cert::CreateOptions {
+            profile_name: name.clone(),
+            duids,
+            email,
+            refresh: false,
+            open_browser: true,
+            extension_url: None,
+            login_timeout: Duration::from_secs(300),
+        };
+        match tizen_cert::create_profile(self.home, &options) {
+            Ok(record) => {
+                let _ = self.ui.say(format!(
+                    "created Tizen profile '{}' ({} DUID(s), distributor valid until {})",
+                    record.name,
+                    record.duids.len(),
+                    record.distributor_not_after
+                ));
+                self.warn_tizen_selection(&record.name);
+                Ok(Some(Step::Next(self.check_or_review())))
+            }
+            Err(error) => {
+                let _ = self
+                    .ui
+                    .say(format!("could not create the Tizen profile: {error}"));
+                Ok(None)
+            }
+        }
+    }
+
+    fn import_tizen_profile(&mut self) -> Result<Option<Step>, String> {
+        let selected = impresario_clients::tizen::tizen_profile_name();
+        let name = match self
+            .ui
+            .ask_value(
+                "Profile name",
+                Some(&selected),
+                parse_tizen_profile_name,
+                Clone::clone,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(name) => name,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let author = match self.ask_existing_path("Author PKCS#12 path")? {
+            Answer::Value(path) => path,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let distributor = match self.ask_existing_path("Distributor PKCS#12 path")? {
+            Answer::Value(path) => path,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let author_password = match self
+            .ui
+            .ask_secret("Author PKCS#12 password")
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(password) => password,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        let distributor_password = match self
+            .ui
+            .ask_secret("Distributor PKCS#12 password")
+            .map_err(|error| error.to_string())?
+        {
+            Answer::Value(password) => password,
+            Answer::Back => return Ok(Some(Step::Back)),
+            Answer::Cancel => return Ok(Some(self.cancel())),
+        };
+        match tizen_sign::import_profile(
+            self.home,
+            &name,
+            &author,
+            author_password.as_str(),
+            &distributor,
+            distributor_password.as_str(),
+        ) {
+            Ok(record) => {
+                let _ = self.ui.say(format!(
+                    "imported Tizen profile '{}' ({} DUID(s), distributor valid until {})",
+                    record.name,
+                    record.duids.len(),
+                    record.distributor_not_after
+                ));
+                if record.duids.is_empty() {
+                    let _ = self.ui.say(
+                        "warning: the distributor certificate has no TV DUID; it will not sign \
+                         for a TV",
+                    );
+                }
+                self.warn_tizen_selection(&record.name);
+                Ok(Some(Step::Next(self.check_or_review())))
+            }
+            Err(error) => {
+                let _ = self
+                    .ui
+                    .say(format!("could not import the Tizen profile: {error}"));
+                Ok(None)
+            }
+        }
+    }
+
+    fn ask_existing_path(&mut self, label: &str) -> Result<Answer<PathBuf>, String> {
+        self.ui
+            .ask_value(
+                label,
+                None::<&PathBuf>,
+                |text| {
+                    let path = PathBuf::from(text);
+                    if path.is_file() {
+                        Ok(path)
+                    } else {
+                        Err(format!("{} is not a file", path.display()))
+                    }
+                },
+                |path: &PathBuf| path.display().to_string(),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    fn warn_tizen_selection(&mut self, profile: &str) {
+        let selected = impresario_clients::tizen::tizen_profile_name();
+        if profile != selected {
+            let _ = self.ui.say(format!(
+                "the transport still selects '{selected}'; set IMPRESARIO_TIZEN_PROFILE={profile} \
+                 to use the new profile"
+            ));
         }
     }
 
@@ -1536,6 +2002,12 @@ enum Step {
     Done(i32),
 }
 
+fn parse_tizen_profile_name(text: &str) -> Result<String, String> {
+    let name = text.trim();
+    tizen_sign::validate_profile_name(name).map_err(|error| error.to_string())?;
+    Ok(name.to_string())
+}
+
 fn previous_stage(stage: Stage, answers: &Answers) -> Option<Stage> {
     let platform = answers.platform.unwrap_or(Platform::Android);
     Some(match stage {
@@ -1565,8 +2037,14 @@ fn previous_stage(stage: Stage, answers: &Answers) -> Option<Stage> {
             _ => Stage::AndroidRoute,
         },
         Stage::Labels => Stage::AgentPort,
-        Stage::Check => Stage::Ip,
+        Stage::Check => match platform {
+            Platform::WebOs => Stage::WebOsSetup,
+            Platform::Tizen => Stage::TizenSetup,
+            _ => Stage::Ip,
+        },
         Stage::Review => Stage::Ip,
+        Stage::WebOsSetup => Stage::Ip,
+        Stage::TizenSetup => Stage::Ip,
     })
 }
 
@@ -1822,9 +2300,21 @@ fn layer_has(path: &Path, name: &str) -> Result<bool, String> {
 /// Entry point used by the CLI (stdin/stdout).
 pub fn run(args: &WizardArgs, home: &Home, workspace_path: &Path) -> i32 {
     let stdin = io::stdin();
+    let secrets = if stdin.is_terminal() {
+        SecretMode::Hidden
+    } else {
+        SecretMode::Plain
+    };
     let stdout = io::stdout();
     let mut writer = stdout.lock();
-    run_wizard_io(args, home, workspace_path, stdin.lock(), &mut writer)
+    run_wizard_io_with(
+        args,
+        home,
+        workspace_path,
+        stdin.lock(),
+        &mut writer,
+        secrets,
+    )
 }
 
 #[cfg(test)]
@@ -1838,15 +2328,28 @@ mod tests {
         (dir, home)
     }
 
-    fn run_script(args: &WizardArgs, home: &Home, workspace: &Path, input: &str) -> i32 {
+    fn run_script_with_output(
+        args: &WizardArgs,
+        home: &Home,
+        workspace: &Path,
+        input: &str,
+    ) -> (i32, String) {
         let mut output = Vec::new();
-        run_wizard_io(
+        let code = run_wizard_io(
             args,
             home,
             workspace,
             Cursor::new(input.as_bytes()),
             &mut output,
+        );
+        (
+            code,
+            String::from_utf8(output).expect("utf-8 wizard output"),
         )
+    }
+
+    fn run_script(args: &WizardArgs, home: &Home, workspace: &Path, input: &str) -> i32 {
+        run_script_with_output(args, home, workspace, input).0
     }
 
     #[test]
@@ -1862,6 +2365,17 @@ mod tests {
         assert!(matches!(usb, AndroidAddress::Usb { .. }));
         assert!(parse_android_address("usb:").is_err());
         assert!(parse_android_address("host:0").is_err());
+    }
+
+    #[test]
+    fn tizen_profile_names_are_validated_before_any_browser_or_keychain_work() {
+        assert_eq!(
+            parse_tizen_profile_name(" samsung ").expect("valid profile name"),
+            "samsung"
+        );
+        assert!(parse_tizen_profile_name("").is_err());
+        assert!(parse_tizen_profile_name("bad/name").is_err());
+        assert!(parse_tizen_profile_name(&"a".repeat(65)).is_err());
     }
 
     #[test]
@@ -1991,5 +2505,144 @@ mod tests {
         assert!(source.contains("name: web"));
         assert!(source.contains("type: web"));
         assert!(source.contains("ip: 127.0.0.1"));
+    }
+
+    #[test]
+    fn scripted_webos_add_offers_the_passphrase_and_writes() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\nwebOS\nliving_room\n10.0.0.7\nn\ny\n";
+        let (code, output) = run_script_with_output(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("webOS Developer Mode setup"));
+        assert!(output.contains("not checked in scripted input"));
+        assert!(output.contains("Save the Developer Mode passphrase now?"));
+        let source = std::fs::read_to_string(&workspace).expect("workspace devices");
+        assert!(source.contains("name: living_room"));
+        assert!(source.contains("type: webOS"));
+        assert!(source.contains("ip: 10.0.0.7"));
+        assert!(!source.contains("passphrase"));
+    }
+
+    #[test]
+    fn webos_setup_back_returns_to_the_ip_step_without_writing() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\nwebOS\nliving_room\n10.0.0.7\ny\nb\nq\n";
+        let (code, output) = run_script_with_output(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("not checked in scripted input"));
+        assert!(output.contains("input is not hidden"));
+        assert!(output.contains("cancelled; no changes were written"));
+        assert!(!home.devices_path().exists());
+        assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn scripted_tizen_keep_writes_without_a_profile() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\ntizenOS\nliving_room\n10.0.0.8\nk\ny\n";
+        let (code, output) = run_script_with_output(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("No Tizen signing profile is imported."));
+        assert!(output.contains("Tizen setup (c create/i import/k keep)"));
+        let source = std::fs::read_to_string(&workspace).expect("workspace devices");
+        assert!(source.contains("name: living_room"));
+        assert!(source.contains("type: tizenOS"));
+        assert!(source.contains("ip: 10.0.0.8"));
+    }
+
+    #[test]
+    fn tizen_setup_lists_imported_profiles() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let profile = home.signing_dir().join("tizen").join("samsung");
+        std::fs::create_dir_all(&profile).expect("profile directory");
+        std::fs::write(
+            profile.join("profile.json"),
+            serde_json::to_vec(&tizen_sign::ProfileRecord {
+                name: "samsung".to_string(),
+                author_subject: "CN=author".to_string(),
+                distributor_subject: "CN=distributor".to_string(),
+                author_not_after: "Dec 31 23:59:59 2027 +0000".to_string(),
+                distributor_not_after: "Dec 31 23:59:59 2027 +0000".to_string(),
+                author_not_after_unix: 1_830_297_599,
+                distributor_not_after_unix: 1_830_297_599,
+                duids: vec!["DUID-1".to_string()],
+                created_unix_ms: 1,
+            })
+            .expect("profile json"),
+        )
+        .expect("profile record");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\ntizenOS\nliving_room\n10.0.0.8\nk\ny\n";
+        let (code, output) = run_script_with_output(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("Tizen signing profiles"));
+        assert!(output.contains("samsung"));
+        assert!(output.contains("1 DUID(s)"));
+    }
+
+    #[test]
+    fn tizen_import_rejects_a_missing_pkcs12_path() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = "workspace\ntizenOS\nliving_room\n10.0.0.8\ni\n\nmissing-author.p12\nb\nq\n";
+        let (code, output) = run_script_with_output(&args, &home, &workspace, input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("missing-author.p12 is not a file"));
+        assert!(output.contains("cancelled; no changes were written"));
+        assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn tizen_import_failure_returns_to_the_setup_menu() {
+        let (dir, home) = test_home();
+        let workspace = dir.path().join("impresario.devices.config");
+        let author = dir.path().join("author.p12");
+        let distributor = dir.path().join("distributor.p12");
+        std::fs::write(&author, b"not a pkcs12").expect("author file");
+        std::fs::write(&distributor, b"not a pkcs12").expect("distributor file");
+        let args = WizardArgs {
+            edit: None,
+            workspace: true,
+            no_check: true,
+        };
+        let input = format!(
+            "workspace\ntizenOS\nliving_room\n10.0.0.8\ni\n\n{}\n{}\nsecret\nsecret\nk\ny\n",
+            author.display(),
+            distributor.display()
+        );
+        let (code, output) = run_script_with_output(&args, &home, &workspace, &input);
+        assert_eq!(code, EXIT_OK);
+        assert!(output.contains("could not import the Tizen profile"));
+        assert!(output.contains("Tizen setup (c create/i import/k keep)"));
+        let source = std::fs::read_to_string(&workspace).expect("workspace devices");
+        assert!(source.contains("type: tizenOS"));
     }
 }
