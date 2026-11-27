@@ -629,7 +629,7 @@ fn app_device_commands_fail_before_hardware() {
     }
 
     // Definition-only checks still work and never touch the devices.
-    let (code, stdout, stderr) = run(&home, &workspace, &["app", "check"]);
+    let (code, _stdout, stderr) = run(&home, &workspace, &["app", "check"]);
     assert_eq!(code, EXIT_USAGE, "the missing package must fail");
     assert!(stderr.contains("IMP-APP-003"), "{stderr}");
     let (code, stdout, stderr) = run(&home, &workspace, &["app", "check", "shop", "tvonly"]);
