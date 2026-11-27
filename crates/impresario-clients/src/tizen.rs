@@ -49,6 +49,7 @@ const MAX_DATA: u32 = 4096;
 const REMOTE_STAGING_FALLBACK: &str = "/home/owner/share/tmp/sdk_tools/tmp";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(20);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+const UNINSTALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Tizen signing profile selection. Device files no longer carry a profile;
 /// the Samsung-issued DUID-bound profile is the default, with an environment
@@ -82,6 +83,8 @@ pub enum TizenError {
     Command { command: String, reply: String },
     #[error("Tizen install did not make '{0}' appear in 0 vd_applist")]
     InstallUnverified(String),
+    #[error("Tizen uninstall did not remove '{0}' from 0 vd_applist")]
+    UninstallUnverified(String),
     #[error("Tizen debug launch returned no inspector port: {0}")]
     NoInspectorPort(String),
     #[error("Tizen DUID lookup failed after 3 attempts: {0}")]
@@ -764,6 +767,16 @@ fn base64_encode(bytes: &[u8]) -> String {
 // transport
 // ---------------------------------------------------------------------------
 
+/// Result of one package install through the runner's signing path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TizenInstallReport {
+    pub app_id: String,
+    pub package_id: String,
+    pub package: PathBuf,
+    /// True when the package was re-signed for this TV's DUID.
+    pub signed: bool,
+}
+
 pub struct TizenTransport {
     connector: ConnectorTransport,
     host: Option<String>,
@@ -817,6 +830,148 @@ impl TizenTransport {
         });
     }
 
+    /// Point the transport at a Tizen device without spawning the connector.
+    /// The caller uses `capabilities`/`app_list`/`install_app` afterwards.
+    pub fn bind(&mut self, device: &DeviceConfig, home: &Home) -> Result<(), TizenError> {
+        if device.platform != Platform::Tizen {
+            return Err(TizenError::Protocol(format!(
+                "TizenTransport cannot prepare {}",
+                device.platform
+            )));
+        }
+        home.ensure_dirs()
+            .map_err(|error| TizenError::Protocol(format!("cannot initialise home: {error}")))?;
+        self.host = Some(device.host().to_string());
+        self.port = device.protocol_port().unwrap_or(DEFAULT_SDB_PORT);
+        self.home = Some(home.clone());
+        self.explicit_endpoint = device.connection.endpoint.clone();
+        Ok(())
+    }
+
+    /// Install the app's `platforms.tizen.package` through the same signing
+    /// and `vd_appinstall` path a run uses. `None` means the definition has no
+    /// package and only attaches to an already-installed app.
+    pub async fn install_app(
+        &mut self,
+        device: &DeviceConfig,
+        home: &Home,
+        app: &AppConfig,
+    ) -> Result<Option<TizenInstallReport>, TizenError> {
+        self.bind(device, home)?;
+        let capabilities = self.capabilities().await?;
+        self.install_configured_app(home, app, &capabilities).await
+    }
+
+    async fn install_configured_app(
+        &mut self,
+        home: &Home,
+        app: &AppConfig,
+        capabilities: &TizenCapabilities,
+    ) -> Result<Option<TizenInstallReport>, TizenError> {
+        let entry = app.platform(Platform::Tizen).ok_or(TizenError::NoApp)?;
+        let app_id = entry
+            .id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or(TizenError::NoAppId)?
+            .to_string();
+        let Some(package) = entry.package.as_deref().filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+        let package = Path::new(package);
+        if !package.is_file() {
+            return Err(TizenError::Protocol(format!(
+                "Tizen package {} is not a file",
+                package.display()
+            )));
+        }
+        let package_id = crate::tizen_sign::inspect_wgt(package)
+            .map_err(|error| TizenError::Signing(error.to_string()))?
+            .package;
+        self.push_log(LogLevel::Info, format!("package id {package_id}"));
+        let staging = capabilities.sdk_toolpath().to_string();
+        let platform_version = capabilities.platform_version().to_string();
+        let requires_signing = capabilities.requires_signing();
+        if requires_signing {
+            let profile = tizen_profile_name();
+            // The profile check needs the TV's DUID; failure here is a real
+            // device/signing failure, not a reason to install an unsigned
+            // artifact.
+            let duid = self.duid().await?;
+            self.push_log(LogLevel::Info, format!("DUID {duid}"));
+            let signed = crate::tizen_sign::sign_package_for_device(home, &profile, package, &duid)
+                .map_err(|error| TizenError::Signing(error.to_string()))?;
+            self.push_log(
+                LogLevel::Info,
+                format!("signed package cached at {}", signed.display()),
+            );
+            self.install(&package_id, &app_id, &signed, &staging)
+                .await?;
+            Ok(Some(TizenInstallReport {
+                app_id,
+                package_id,
+                package: signed,
+                signed: true,
+            }))
+        } else {
+            self.push_log(
+                LogLevel::Info,
+                format!(
+                    "Tizen {platform_version} does not require re-signing; installing {}",
+                    package.display()
+                ),
+            );
+            self.install(&package_id, &app_id, package, &staging)
+                .await?;
+            Ok(Some(TizenInstallReport {
+                app_id,
+                package_id,
+                package: package.to_path_buf(),
+                signed: false,
+            }))
+        }
+    }
+
+    /// The installed application ids reported by `0 vd_applist`.
+    pub async fn app_list(&self) -> Result<String, TizenError> {
+        self.shell("0 vd_applist").await
+    }
+
+    /// Whether `app_id` is present in `0 vd_applist`.
+    pub async fn app_installed(&self, app_id: &str) -> Result<bool, TizenError> {
+        Ok(app_list_contains(&self.app_list().await?, app_id, None))
+    }
+
+    /// Uninstall one app through `0 vd_appuninstall` and verify it disappears
+    /// from `0 vd_applist`. Returns `false` when it was not installed.
+    ///
+    /// The TV accepts either the package id or the dotted app id; use the app
+    /// id from the definition so package ids that contain dots are not split
+    /// incorrectly.
+    pub async fn uninstall_app(&self, app_id: &str) -> Result<bool, TizenError> {
+        if !self.app_installed(app_id).await? {
+            return Ok(false);
+        }
+        let reply = self.shell(&format!("0 vd_appuninstall {app_id}")).await?;
+        self.push_log(LogLevel::Info, format!("vd_appuninstall: {}", reply.trim()));
+        if reply_reports_failure(&reply) {
+            return Err(TizenError::Command {
+                command: "0 vd_appuninstall".to_string(),
+                reply: reply.trim().to_string(),
+            });
+        }
+        let deadline = tokio::time::Instant::now() + UNINSTALL_TIMEOUT;
+        loop {
+            if !self.app_installed(app_id).await? {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(TizenError::UninstallUnverified(app_id.to_string()));
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
     async fn shell(&self, command: &str) -> Result<String, TizenError> {
         let host = self.host.as_deref().ok_or(TizenError::NoHost)?;
         let home = self
@@ -861,10 +1016,6 @@ impl TizenTransport {
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
         Err(TizenError::Duid(last))
-    }
-
-    async fn app_list(&self) -> Result<String, TizenError> {
-        self.shell("0 vd_applist").await
     }
 
     async fn install(
@@ -915,7 +1066,7 @@ impl TizenTransport {
         let deadline = tokio::time::Instant::now() + INSTALL_TIMEOUT;
         loop {
             let list = self.app_list().await.unwrap_or_default();
-            if app_list_contains(&list, app_id, package_id) {
+            if app_list_contains(&list, app_id, Some(package_id)) {
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1117,27 +1268,20 @@ impl DeviceTransport for TizenTransport {
             )));
         }
         let app = app.ok_or_else(|| TransportError::from(TizenError::NoApp))?;
-        let entry = app
+        let app_id = app
             .platform(Platform::Tizen)
-            .ok_or_else(|| TransportError::from(TizenError::NoApp))?;
-        let app_id = entry
-            .id
-            .as_deref()
+            .and_then(|entry| entry.id.as_deref())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| TransportError::from(TizenError::NoAppId))?
             .to_string();
-        let host = device.host().to_string();
         let home = Home::resolve().map_err(|error| {
             TransportError::Transport(format!("cannot resolve IMPRESARIO home: {error}"))
         })?;
-        home.ensure_dirs().map_err(|error| {
-            TransportError::Transport(format!("cannot initialise IMPRESARIO home: {error}"))
+        self.bind(device, &home).map_err(|error| {
+            self.push_log(LogLevel::Error, error.to_string());
+            TransportError::from(error)
         })?;
-        self.host = Some(host.clone());
-        self.port = device.protocol_port().unwrap_or(DEFAULT_SDB_PORT);
-        self.home = Some(home.clone());
         self.app_id = Some(app_id.clone());
-        self.explicit_endpoint = device.connection.endpoint.clone();
 
         // Read capabilities before spawning the executor: Tizen < 7 installs
         // the original package and must not require a signing profile.
@@ -1164,61 +1308,18 @@ impl DeviceTransport for TizenTransport {
         let endpoint = self.connector.prepare(device, Some(app)).await?;
         tracing::debug!("Tizen prepare: connector ready");
 
-        if let Some(package) = entry.package.as_deref().filter(|value| !value.is_empty()) {
-            let package = Path::new(package);
-            if !package.is_file() {
-                return Err(TransportError::Transport(format!(
-                    "Tizen package {} is not a file",
-                    package.display()
-                )));
-            }
-            let package_id = crate::tizen_sign::inspect_wgt(package)
-                .map_err(|error| TransportError::Transport(error.to_string()))?
-                .package;
-            self.push_log(LogLevel::Info, format!("package id {package_id}"));
-            if requires_signing {
-                let profile = tizen_profile_name();
-                // The profile check needs the TV's DUID; failure here is a
-                // real device/signing failure, not a reason to install an
-                // unsigned artifact.
-                let duid = self.duid().await.map_err(|error| {
-                    self.push_log(LogLevel::Error, error.to_string());
-                    TransportError::from(error)
-                })?;
-                self.push_log(LogLevel::Info, format!("DUID {duid}"));
-                let signed =
-                    crate::tizen_sign::sign_package_for_device(&home, &profile, package, &duid)
-                        .map_err(|error| {
-                            self.push_log(LogLevel::Error, error.to_string());
-                            TransportError::Transport(error.to_string())
-                        })?;
-                self.push_log(
-                    LogLevel::Info,
-                    format!("signed package cached at {}", signed.display()),
-                );
-                tracing::debug!(package = %signed.display(), "Tizen prepare: installing signed package");
-                self.install(&package_id, &app_id, &signed, &staging)
-                    .await
-                    .map_err(|error| {
-                        self.push_log(LogLevel::Error, error.to_string());
-                        TransportError::from(error)
-                    })?;
-            } else {
-                self.push_log(
-                    LogLevel::Info,
-                    format!(
-                        "Tizen {platform_version} does not require re-signing; installing {}",
-                        package.display()
-                    ),
-                );
-                self.install(&package_id, &app_id, package, &staging)
-                    .await
-                    .map_err(|error| {
-                        self.push_log(LogLevel::Error, error.to_string());
-                        TransportError::from(error)
-                    })?;
-            }
-            self.push_log(LogLevel::Info, format!("installed {app_id}"));
+        let install = self
+            .install_configured_app(&home, app, &capabilities)
+            .await
+            .map_err(|error| {
+                self.push_log(LogLevel::Error, error.to_string());
+                TransportError::from(error)
+            })?;
+        if let Some(report) = install {
+            self.push_log(
+                LogLevel::Info,
+                format!("installed {} ({})", report.app_id, report.package.display()),
+            );
             tracing::debug!("Tizen prepare: install verified");
         }
 
@@ -1349,8 +1450,10 @@ fn reply_reports_failure(reply: &str) -> bool {
 ///
 /// A Tizen 9.0 TV prints labelled fields such as
 /// `--------------app_tizen_id =Impresario.TV-------------`; fake/replay
-/// devices return one id per line. Match either shape exactly.
-fn app_list_contains(list: &str, app_id: &str, package_id: &str) -> bool {
+/// devices return one id per line. Match either shape exactly. The package id
+/// is optional: without it, the app id is also accepted in the package field
+/// for definitions that name the package rather than the application.
+fn app_list_contains(list: &str, app_id: &str, package_id: Option<&str>) -> bool {
     let field = |line: &str, key: &str| -> Option<String> {
         let (name, value) = line.split_once('=')?;
         (name.trim_matches('-').trim() == key).then(|| {
@@ -1366,7 +1469,10 @@ fn app_list_contains(list: &str, app_id: &str, package_id: &str) -> bool {
     };
     let mut structured = false;
     for line in list.lines() {
-        for (key, wanted) in [("app_tizen_id", app_id), ("app_package_name", package_id)] {
+        for (key, wanted) in [
+            ("app_tizen_id", app_id),
+            ("app_package_name", package_id.unwrap_or(app_id)),
+        ] {
             if let Some(value) = field(line, key) {
                 structured = true;
                 if value == wanted {
@@ -1379,8 +1485,10 @@ fn app_list_contains(list: &str, app_id: &str, package_id: &str) -> bool {
         return false;
     }
     list.lines().any(|line| {
-        line.split_whitespace()
-            .any(|token| token.trim_matches(['"', '\'']) == app_id)
+        line.split_whitespace().any(|token| {
+            let token = token.trim_matches(['"', '\'']);
+            token == app_id || package_id.is_some_and(|package_id| token == package_id)
+        })
     })
 }
 
@@ -1455,19 +1563,21 @@ mod tests {
     fn app_list_matches_both_tv_and_replay_shapes() {
         let real = "--------------app_tizen_id                      =Impresario.TV-------------\n\
                     --------------app_package_name                  =Impresario-------------";
-        assert!(app_list_contains(real, "Impresario.TV", "Impresario"));
-        assert!(app_list_contains(real, "Other.TV", "Impresario"));
-        assert!(!app_list_contains(real, "Other.TV", "Other"));
+        assert!(app_list_contains(real, "Impresario.TV", Some("Impresario")));
+        assert!(app_list_contains(real, "Other.TV", Some("Impresario")));
+        assert!(!app_list_contains(real, "Other.TV", Some("Other")));
+        assert!(app_list_contains(real, "Impresario.TV", None));
+        assert!(app_list_contains(real, "Impresario", None));
 
         assert!(app_list_contains(
             "com.example.test\ncom.example.other\n",
             "com.example.test",
-            "com.example"
+            Some("com.example")
         ));
         assert!(!app_list_contains(
             "com.example.test\n",
             "com.example.tes",
-            "com.example"
+            Some("com.example")
         ));
     }
 
@@ -1592,6 +1702,19 @@ mod tests {
                 apps.push(app_id);
             }
             return "[100] install completed\n".to_string();
+        }
+        if command.contains("0 vd_appuninstall ") {
+            let Some(package_id) = command.split_whitespace().nth(2) else {
+                return "uninstall failed: missing package id\n".to_string();
+            };
+            let package_id = package_id.trim_matches(['"', '\'']).to_string();
+            let prefix = format!("{package_id}.");
+            let mut apps = state.apps.lock().await;
+            apps.retain(|app| app != &package_id && !app.starts_with(&prefix));
+            return "[100] uninstall completed\n".to_string();
+        }
+        if command.contains("0 vd_appuninstall") {
+            return "uninstall failed: malformed command\n".to_string();
         }
         if command.contains("0 debug ") {
             return "successfully launched pid = 1257 with debug 1 port: 48105\n".to_string();
@@ -1857,6 +1980,18 @@ mod tests {
             .shell("0 vd_applist")
             .await?
             .contains("com.example.fail"));
+
+        assert!(transport.app_installed("com.example.test").await?);
+        assert!(transport.uninstall_app("com.example.test").await?);
+        assert!(!transport.app_installed("com.example.test").await?);
+        assert!(
+            !transport.uninstall_app("com.example.test").await?,
+            "uninstalling an absent app is a no-op"
+        );
+        let services = server.state.services.lock().await.clone();
+        assert!(services
+            .iter()
+            .any(|service| service == "shell:0 vd_appuninstall com.example.test"));
         Ok(())
     }
 }

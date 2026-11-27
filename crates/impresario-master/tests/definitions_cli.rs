@@ -486,3 +486,152 @@ fn app_lifecycle_and_check() {
         "{stdout}{stderr}"
     );
 }
+
+#[test]
+fn app_check_filters_by_name_without_hardware() {
+    let (_guard, home, workspace) = temp();
+    for (name, package) in [("shop", None), ("broken", Some("./missing.apk"))] {
+        let mut args = vec![
+            "app".to_string(),
+            "add".to_string(),
+            "--workspace".to_string(),
+            "--name".to_string(),
+            name.to_string(),
+            "--platform".to_string(),
+            "android=com.example.demo".to_string(),
+        ];
+        if let Some(package) = package {
+            args.push("--package".to_string());
+            args.push(format!("android={package}"));
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = run(&home, &workspace, &refs);
+        assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    }
+
+    let (code, stdout, stderr) = run(&home, &workspace, &["app", "check", "shop"]);
+    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    let (code, _stdout, stderr) = run(&home, &workspace, &["app", "check", "broken"]);
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("IMP-APP-003"), "{stderr}");
+    let (code, _stdout, stderr) = run(&home, &workspace, &["app", "check", "missing"]);
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("IMP-APP-001"), "{stderr}");
+}
+
+#[test]
+fn app_device_commands_fail_before_hardware() {
+    let (_guard, home, workspace) = temp();
+    for (name, platform, ip) in [
+        ("phone", "android", "127.0.0.1"),
+        ("tv", "androidtv", "127.0.0.1"),
+        ("browser", "web", "127.0.0.1"),
+    ] {
+        let (code, stdout, stderr) = run(
+            &home,
+            &workspace,
+            &[
+                "device",
+                "add",
+                "--workspace",
+                "--name",
+                name,
+                "--type",
+                platform,
+                "--ip",
+                ip,
+            ],
+        );
+        assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    }
+    for (name, platform) in [
+        ("shop", "android=com.example.shop"),
+        ("tvonly", "androidtv=com.example.tv"),
+        ("packaged", "android=com.example.packaged"),
+        ("webapp", "web=http://localhost:8080/index.html"),
+    ] {
+        let mut args = vec![
+            "app",
+            "add",
+            "--workspace",
+            "--name",
+            name,
+            "--platform",
+            platform,
+        ];
+        if name == "packaged" {
+            args.extend(["--package", "android=./missing.apk"]);
+        }
+        let (code, stdout, stderr) = run(&home, &workspace, &args);
+        assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+    }
+
+    // --device is required for install/uninstall.
+    let (code, _stdout, stderr) = run(&home, &workspace, &["app", "install", "shop"]);
+    assert_eq!(code, EXIT_USAGE);
+    assert!(stderr.contains("--device"), "{stderr}");
+
+    for (args, code) in [
+        (
+            vec!["app", "install", "missing", "--device", "phone"],
+            "IMP-APP-001",
+        ),
+        (
+            vec!["app", "install", "shop", "--device", "nope"],
+            "IMP-APP-007",
+        ),
+        (
+            vec!["app", "install", "tvonly", "--device", "phone"],
+            "IMP-APP-002",
+        ),
+        (
+            vec!["app", "install", "packaged", "--device", "phone"],
+            "IMP-APP-003",
+        ),
+        (
+            vec!["app", "install", "shop", "--device", "phone"],
+            "IMP-APP-006",
+        ),
+        (
+            vec!["app", "install", "webapp", "--device", "browser"],
+            "IMP-APP-005",
+        ),
+        (
+            vec!["app", "uninstall", "tvonly", "--device", "phone"],
+            "IMP-APP-002",
+        ),
+        (
+            vec!["app", "uninstall", "webapp", "--device", "browser"],
+            "IMP-APP-005",
+        ),
+        (
+            vec!["app", "check", "missing", "--device", "phone"],
+            "IMP-APP-001",
+        ),
+        (
+            vec!["app", "check", "tvonly", "--device", "phone"],
+            "IMP-APP-002",
+        ),
+        (
+            vec!["app", "check", "shop", "--device", "browser"],
+            "IMP-APP-005",
+        ),
+    ] {
+        let (actual, stdout, stderr) = run(&home, &workspace, &args);
+        assert_eq!(
+            actual, EXIT_USAGE,
+            "args={args:?} stdout={stdout} stderr={stderr}"
+        );
+        assert!(
+            stderr.contains(code),
+            "args={args:?} expected {code}: stdout={stdout} stderr={stderr}"
+        );
+    }
+
+    // Definition-only checks still work and never touch the devices.
+    let (code, stdout, stderr) = run(&home, &workspace, &["app", "check"]);
+    assert_eq!(code, EXIT_USAGE, "the missing package must fail");
+    assert!(stderr.contains("IMP-APP-003"), "{stderr}");
+    let (code, stdout, stderr) = run(&home, &workspace, &["app", "check", "shop", "tvonly"]);
+    assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
+}

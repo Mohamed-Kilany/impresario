@@ -51,6 +51,9 @@ const INSTALL_ACK_GRACE: Duration = Duration::from_secs(60);
 /// completed install. The install service can report `installed` before the
 /// application manager has refreshed its catalogue.
 const INSTALL_VERIFY_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long `listApps` is given to drop a package after the remove service
+/// accepted the request.
+const UNINSTALL_VERIFY_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_KEY_BYTES: usize = 1024 * 1024;
 
 /// webOS-specific failures. Every path that claims success performs the
@@ -664,6 +667,35 @@ impl WebOsSession {
             .map(|(_, version)| version))
     }
 
+    /// Remove one installed app through the app install service and verify
+    /// that `listApps` no longer reports it. Returns `false` when the app was
+    /// not installed, so the command is idempotent.
+    pub async fn uninstall(&self, app_id: &str) -> Result<bool, WebOsError> {
+        if self.app_version(app_id).await?.is_none() {
+            return Ok(false);
+        }
+        let payload = serde_json::json!({ "id": app_id }).to_string();
+        let value = self
+            .luna(
+                "com.webos.appInstallService",
+                Some("dev"),
+                "remove",
+                &payload,
+            )
+            .await?;
+        require_luna_success(&value, "remove")?;
+        let deadline = tokio::time::Instant::now() + UNINSTALL_VERIFY_TIMEOUT;
+        loop {
+            if self.app_version(app_id).await?.is_none() {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(WebOsError::Timeout("uninstall", UNINSTALL_VERIFY_TIMEOUT));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     /// Launch an app by id.
     pub async fn launch(&self, app_id: &str) -> Result<(), WebOsError> {
         let value = self
@@ -788,6 +820,48 @@ impl Drop for Forward {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// Result of installing an app's configured package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebOsInstallReport {
+    pub app_id: String,
+    /// Cached `.ipk` used for the install; `None` when the definition only
+    /// attaches to an already-installed app.
+    pub package: Option<PathBuf>,
+}
+
+/// The app id resolution shared by the transport and `app install|check`.
+pub fn app_id_for(app: &AppConfig) -> Result<&str, WebOsError> {
+    let entry = app.platform(Platform::WebOs).ok_or(WebOsError::NoApp)?;
+    entry
+        .id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or(WebOsError::NoAppId)
+}
+
+/// Package and install `platforms.webos.package` through the same service the
+/// runner uses. No package means the caller attaches to an installed app.
+pub async fn install_configured_app(
+    session: &WebOsSession,
+    home: &Home,
+    app: &AppConfig,
+) -> Result<WebOsInstallReport, WebOsError> {
+    let app_id = app_id_for(app)?.to_string();
+    let entry = app.platform(Platform::WebOs).ok_or(WebOsError::NoApp)?;
+    let package = match entry.package.as_deref().filter(|value| !value.is_empty()) {
+        Some(source) => {
+            let source = PathBuf::from(source);
+            let cache = home.cache_dir().join("webos-packages");
+            let path = crate::webos_package::prepare_package(&source, &cache)
+                .map_err(|error| WebOsError::Package(error.to_string()))?;
+            session.install(&app_id, &path).await?;
+            Some(path)
+        }
+        None => None,
+    };
+    Ok(WebOsInstallReport { app_id, package })
 }
 
 /// The webOS transport. It owns the connector process (rung 1 sidecar),
@@ -941,15 +1015,7 @@ impl DeviceTransport for WebOsTransport {
             )));
         }
         let app = app.ok_or_else(|| TransportError::from(WebOsError::NoApp))?;
-        let entry = app
-            .platform(Platform::WebOs)
-            .ok_or_else(|| TransportError::from(WebOsError::NoApp))?;
-        let app_id = entry
-            .id
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| TransportError::from(WebOsError::NoAppId))?
-            .to_string();
+        let app_id = app_id_for(app).map_err(TransportError::from)?.to_string();
         let home = Home::resolve().map_err(|error| {
             TransportError::Transport(format!("cannot resolve IMPRESARIO home: {error}"))
         })?;
@@ -967,22 +1033,24 @@ impl DeviceTransport for WebOsTransport {
             .await
             .map_err(TransportError::from)?;
         self.push_log(LogLevel::Info, "SSH connected");
-        if let Some(package) = entry.package.as_deref().filter(|value| !value.is_empty()) {
-            let source = PathBuf::from(package);
-            let cache = home.cache_dir().join("webos-packages");
-            let path = crate::webos_package::prepare_package(&source, &cache).map_err(|error| {
-                self.push_log(LogLevel::Error, error.to_string());
-                TransportError::from(WebOsError::Package(error.to_string()))
-            })?;
-            self.push_log(
-                LogLevel::Info,
-                format!("installing {} (from {})", path.display(), source.display()),
-            );
-            session.install(&app_id, &path).await.map_err(|error| {
+        let install = install_configured_app(&session, &home, app)
+            .await
+            .map_err(|error| {
                 self.push_log(LogLevel::Error, error.to_string());
                 TransportError::from(error)
             })?;
-            self.push_log(LogLevel::Info, format!("installed {app_id}"));
+        if let Some(path) = &install.package {
+            let source = app
+                .platform(Platform::WebOs)
+                .and_then(|entry| entry.package.as_deref())
+                .unwrap_or_default();
+            self.push_log(
+                LogLevel::Info,
+                format!(
+                    "installed {app_id} from {source} (cached {})",
+                    path.display()
+                ),
+            );
         }
         if let Err(first) = session.launch(&app_id).await {
             // A running app may refuse a second launch; close and retry once.
@@ -2081,6 +2149,13 @@ mod tests {
                 // The LG TV acknowledges the subscription but sends no
                 // terminal state; install() must verify through listApps.
                 "{\"returnValue\":true,\"subscribed\":true}\n".to_string()
+            } else if command.contains("com.webos.appInstallService/dev/remove") {
+                self.state
+                    .apps
+                    .lock()
+                    .await
+                    .retain(|app| app != "com.example.test");
+                "{\"returnValue\":true}\n".to_string()
             } else if command.contains("applicationManager/dev/listApps") {
                 let apps = self.state.apps.lock().await;
                 let entries = apps
@@ -2380,10 +2455,17 @@ mod tests {
         assert_eq!(&greeting, b"inspector-ok");
         forward.stop();
 
+        assert!(session.uninstall("com.example.test").await?);
+        assert!(!session.uninstall("com.example.test").await?);
+        assert!(server.state.apps.lock().await.is_empty());
+
         let commands = server.state.commands.lock().await.clone();
         assert!(commands
             .iter()
             .any(|command| command.contains("luna://com.webos.appInstallService/dev/install")));
+        assert!(commands
+            .iter()
+            .any(|command| command.contains("com.webos.appInstallService/dev/remove")));
         assert!(commands
             .iter()
             .any(|command| command.contains("com.webos.appInstallService/dev/install")));

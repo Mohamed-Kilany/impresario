@@ -578,7 +578,7 @@ pub fn run_with(argv: &[String]) -> i32 {
         Command::Group { command } => crate::definitions::run_group(command, &home, &devices_path),
         Command::App { command } => {
             let apps_path = base.join("impresario.apps.config");
-            crate::definitions::run_app(command, &home, &apps_path)
+            crate::definitions::run_app(command, &home, &apps_path, &devices_path)
         }
         Command::Doctor { json } => {
             crate::doctor::run(&home, &base, &config_path, &devices_path, *json)

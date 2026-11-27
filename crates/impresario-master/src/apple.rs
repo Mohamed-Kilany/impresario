@@ -1722,7 +1722,7 @@ fn free_loopback_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn load_pairing(
+pub(crate) fn load_pairing(
     paths: &ApplePaths,
     udid: Option<&str>,
     host: &str,

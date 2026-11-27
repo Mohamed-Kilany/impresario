@@ -265,11 +265,29 @@ pub async fn uninstall_bundle(tunnel: &mut AppleTunnel, bundle_id: &str) -> Resu
         .map_err(|error| Error::Device(format!("uninstall {bundle_id}: {error}")))
 }
 
+/// Query whether a bundle is installed.
+pub async fn installed_app(tunnel: &mut AppleTunnel, bundle_id: &str) -> Result<bool> {
+    Ok(lookup_installed(tunnel, bundle_id).await?.is_some())
+}
+
 /// Query whether a bundle is installed and return its short version.
 pub async fn installed_version(
     tunnel: &mut AppleTunnel,
     bundle_id: &str,
 ) -> Result<Option<String>> {
+    let info = lookup_installed(tunnel, bundle_id).await?;
+    Ok(info.and_then(|info| {
+        info.as_dictionary()
+            .and_then(|dict| dict.get("CFBundleShortVersionString"))
+            .and_then(plist::Value::as_string)
+            .map(str::to_string)
+    }))
+}
+
+async fn lookup_installed(
+    tunnel: &mut AppleTunnel,
+    bundle_id: &str,
+) -> Result<Option<plist::Value>> {
     let mut installation: InstallationProxyClient = tunnel
         .handshake
         .connect(&mut tunnel.handle)
@@ -279,12 +297,7 @@ pub async fn installed_version(
         .get_apps(Some("Any"), Some(vec![bundle_id.to_string()]))
         .await
         .map_err(|error| Error::Device(format!("lookup {bundle_id}: {error}")))?;
-    Ok(apps.get(bundle_id).and_then(|info| {
-        info.as_dictionary()
-            .and_then(|dict| dict.get("CFBundleShortVersionString"))
-            .and_then(plist::Value::as_string)
-            .map(str::to_string)
-    }))
+    Ok(apps.get(bundle_id).cloned())
 }
 
 fn unique_ipa_path(app: &Path) -> Result<PathBuf> {

@@ -193,8 +193,20 @@ pub enum AppCommand {
     },
     /// Show one effective app as YAML.
     Show { name: String },
-    /// Validate app references and package paths.
-    Check,
+    /// Validate app references and package paths; with --device also check
+    /// the installed state on each device.
+    Check {
+        /// Apps to check (default: every app).
+        apps: Vec<String>,
+        /// Device name or @group (repeatable). Without --device no hardware is
+        /// touched.
+        #[arg(long, value_name = "DEVICE")]
+        device: Vec<String>,
+    },
+    /// Install the app's configured package on a device.
+    Install(AppTargetArgs),
+    /// Uninstall the app from a device.
+    Uninstall(AppTargetArgs),
     /// Print one layer (or the merged view) as YAML.
     Export {
         #[command(flatten)]
@@ -202,6 +214,16 @@ pub enum AppCommand {
         #[arg(long, conflicts_with = "workspace")]
         merged: bool,
     },
+}
+
+/// One app plus the device selection for `app install|uninstall`.
+#[derive(Debug, Args)]
+pub struct AppTargetArgs {
+    /// App name.
+    pub app: String,
+    /// Device name or @group (repeatable).
+    #[arg(long, value_name = "DEVICE", required = true)]
+    pub device: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1294,7 +1316,12 @@ fn export_devices(home: &Home, workspace_path: &Path, global: bool, merged: bool
 // App commands
 // ---------------------------------------------------------------------------
 
-pub fn run_app(command: &AppCommand, home: &Home, workspace_path: &Path) -> i32 {
+pub fn run_app(
+    command: &AppCommand,
+    home: &Home,
+    workspace_path: &Path,
+    devices_path: &Path,
+) -> i32 {
     match command {
         AppCommand::Add(args) => add_app(args, home, workspace_path, false),
         AppCommand::Edit(args) => add_app(args, home, workspace_path, true),
@@ -1308,7 +1335,27 @@ pub fn run_app(command: &AppCommand, home: &Home, workspace_path: &Path) -> i32 
         } => rename_app(name, new_name, home, workspace_path, !scope.workspace),
         AppCommand::List { json } => list_apps(home, workspace_path, *json),
         AppCommand::Show { name } => show_app(name, home, workspace_path),
-        AppCommand::Check => check_apps(home, workspace_path),
+        AppCommand::Check { apps, device } => {
+            if device.is_empty() {
+                check_apps(home, workspace_path, apps)
+            } else {
+                crate::app_device::check(home, workspace_path, devices_path, apps, device)
+            }
+        }
+        AppCommand::Install(target) => crate::app_device::install(
+            home,
+            workspace_path,
+            devices_path,
+            &target.app,
+            &target.device,
+        ),
+        AppCommand::Uninstall(target) => crate::app_device::uninstall(
+            home,
+            workspace_path,
+            devices_path,
+            &target.app,
+            &target.device,
+        ),
         AppCommand::Export { scope, merged } => {
             export_apps(home, workspace_path, !scope.workspace, *merged)
         }
@@ -1608,7 +1655,7 @@ fn show_app(name: &str, _home: &Home, workspace_path: &Path) -> i32 {
     }
 }
 
-fn check_apps(_home: &Home, workspace_path: &Path) -> i32 {
+fn check_apps(_home: &Home, workspace_path: &Path, names: &[String]) -> i32 {
     let outcome = apps::load_apps_merged(workspace_path);
     render_all(&outcome.diagnostics);
     let Some(app_list) = outcome.config else {
@@ -1617,7 +1664,26 @@ fn check_apps(_home: &Home, workspace_path: &Path) -> i32 {
     };
     let base = workspace_path.parent().unwrap_or(Path::new("."));
     let mut failures = 0usize;
-    for app in &app_list.apps {
+    let selected: Vec<&AppConfig> = if names.is_empty() {
+        app_list.apps.iter().collect()
+    } else {
+        let mut selected = Vec::new();
+        for name in names {
+            match app_list
+                .apps
+                .iter()
+                .find(|app| app.name.as_str() == name.as_str())
+            {
+                Some(app) => selected.push(app),
+                None => {
+                    failures += 1;
+                    eprintln!("IMP-APP-001: no app named '{name}'");
+                }
+            }
+        }
+        selected
+    };
+    for app in &selected {
         for (platform, entry) in &app.platforms {
             if let Some(package) = &entry.package {
                 let path = PathBuf::from(package);
@@ -1646,7 +1712,7 @@ fn check_apps(_home: &Home, workspace_path: &Path) -> i32 {
         eprintln!("app check: {failures} problem(s)");
         EXIT_USAGE
     } else {
-        println!("app check: {} app(s) ok", app_list.apps.len());
+        println!("app check: {} app(s) ok", selected.len());
         EXIT_OK
     }
 }
