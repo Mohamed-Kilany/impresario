@@ -344,9 +344,10 @@ package now supplies the app-side pieces (`sdk/flutter/impresario_flutter`):
 `ext.impresario.snapshot` and an optional loopback bridge. It requires Flutter
 3.38/Dart 3.10; older versions use Layer A identifiers or the QA-only label
 fallback. The package has an example, unit/widget tests and a `flutter` CI job
-on Flutter 3.47.5; the Rust host adapter (INS-6.2), widget enrichment (INS-6.3)
-and visual fallback (INS-6.4) are still pending, and no on-device Layer B
-result is claimed. Roles are limited to what the app's `Semantics` declares
+on Flutter 3.47.5; CI run `46049803499` at `feb54ce` passed all nine jobs. The
+Rust host adapter (INS-6.2), widget enrichment (INS-6.3) and visual fallback
+(INS-6.4) are still pending, and no on-device Layer B result is claimed. Roles
+are limited to what the app's `Semantics` declares
 (bottom-nav labels arrive `generic`). That Honor device
 force-stops the instrumented agent every 60-90 seconds even with notifications,
 the deviceidle whitelist, the active standby bucket, background appops and

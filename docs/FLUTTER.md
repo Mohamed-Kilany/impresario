@@ -199,10 +199,11 @@ flutter analyze
 flutter test
 ```
 
-CI runs the same commands in the `flutter` job on Flutter `3.47.5`. Hardware
-acceptance is still pending: the Android Flutter device was unreachable on the
-last attempt, and there is no iOS/web app available for Layer B. No on-device
-Layer B result is claimed here.
+CI runs the same commands in the `flutter` job on Flutter `3.47.5`; run
+`46049803499` at `feb54ce` passed all nine jobs. Hardware acceptance is still
+pending: the Android Flutter device was unreachable on the last attempt, and
+there is no iOS/web app available for Layer B. No on-device Layer B result is
+claimed here.
 
 ## Remaining work
 

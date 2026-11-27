@@ -354,9 +354,10 @@ the implementation keeps the grammar in one module so a rename is local.
       `ImpresarioTag`/`labelFallback`, viewport-pruned snapshots, the
       `ext.impresario.snapshot` extension and the optional loopback bridge,
       with an example app, unit/widget tests and a CI `flutter` job on Flutter
-      `3.47.5`. Minimum versions are Flutter `3.38.0` / Dart `3.10.0`; older
-      versions use Layer A identifiers or the QA-only label fallback. No
-      hardware run is claimed (I-218).
+      `3.47.5` (run `46049803499` at `feb54ce` passed all nine jobs). Minimum
+      versions are Flutter `3.38.0` / Dart `3.10.0`; older versions use Layer A
+      identifiers or the QA-only label fallback. No hardware run is claimed
+      (I-218).
 - [ ] **INS-6.2 Host adapter + normalizer.** Layer A detection and the
       `FLUTTER_SEMANTICS_OFF` diagnosis are wired; the package's Layer B
       snapshot still needs the master-side adapter and on-device validation.
