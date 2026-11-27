@@ -249,8 +249,10 @@ inspector keeps a separate lease and `inspector.run_conflict` downgrades it to
 read-only, detaches it or refuses the run. Flutter Layer A detection landed on
 2026-11-26 (the manifest `flutterEmbedding` marker, opt-in raw `framework`, and
 a `FLUTTER_SEMANTICS_OFF` degradation when a detected tree has no usable
-semantics; the SPA shows a banner for that reason). Layer B enrichment remains a
-documented gap (it needs a staging app/VM service). Native Android/Apple locator
+semantics; the SPA shows a banner for that reason). The opt-in Dart package
+that supplies the Layer B in-app side landed on 2026-11-27
+(`sdk/flutter/impresario_flutter`); the Rust host adapter and on-device
+acceptance remain pending (INS-6.2). Native Android/Apple locator
 execution is implemented (INS-R4): the master resolves canonical cells against
 the executor's inspector snapshot with the shared matcher and rewrites them to
 the additive `NODE_REF`, which the agents resolve from their current/previous
@@ -334,10 +336,18 @@ degradation and the banner is not shown there; the banner path is pinned by
 asset tests. The downloaded CI Windows artifact from run `45813887017` at
 `d3235ec` served `flutter-banner` and the `FLUTTER_SEMANTICS_OFF` logic and
 reported `framework=flutter` for all 29 Doo Staging nodes with no degradation.
-Those remaining Flutter gaps are limited to what needs app code:
-no `ImpresarioTag`/identifier testids, and no VM-service/widget-inspector
-enrichment for the release build. Roles are limited to what the app's
-`Semantics` declares (bottom-nav labels arrive `generic`). That Honor device
+Those remaining Flutter gaps are limited to what needs app code: the installed
+Doo Staging build does not ship `ImpresarioTag`/identifier testids, and its
+release build has no VM service for widget-inspector enrichment. The opt-in
+package now supplies the app-side pieces (`sdk/flutter/impresario_flutter`):
+`Impresario.ensureSemantics()`, `ImpresarioTag`, viewport-pruned snapshots,
+`ext.impresario.snapshot` and an optional loopback bridge. It requires Flutter
+3.38/Dart 3.10; older versions use Layer A identifiers or the QA-only label
+fallback. The package has an example, unit/widget tests and a `flutter` CI job
+on Flutter 3.47.5; the Rust host adapter (INS-6.2), widget enrichment (INS-6.3)
+and visual fallback (INS-6.4) are still pending, and no on-device Layer B
+result is claimed. Roles are limited to what the app's `Semantics` declares
+(bottom-nav labels arrive `generic`). That Honor device
 force-stops the instrumented agent every 60-90 seconds even with notifications,
 the deviceidle whitelist, the active standby bucket, background appops and
 `hsm_powermanager 0`; short bursts or a reattach are required. Android's

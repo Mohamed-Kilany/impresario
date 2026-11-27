@@ -756,7 +756,7 @@ Each task: **Goal → Steps → Acceptance**. Do phases in order; tasks inside a
 
 ### Phase 6 — Flutter
 
-- [ ] **INS-6.1 Dart package** (`ensureSemantics`, `ImpresarioTag`, service extension, `SemanticsOwner` push) with example app and docs.
+- [x] **INS-6.1 Dart package** (`ensureSemantics`, `ImpresarioTag`, service extension, `SemanticsOwner` push) with example app and docs. Implemented at `sdk/flutter/impresario_flutter` with a CI `flutter` job (I-218); the Rust host adapter (INS-6.2) and on-device Layer B acceptance remain pending.
 - [ ] **INS-6.2 Host adapter + normalizer** for Layer B on Android/iOS/web; Layer A auto-detection and `FLUTTER_SEMANTICS_OFF` diagnosis; Flutter web placeholder activation.
 - [ ] **INS-6.3 Widget inspector enrichment** (debug/profile): widget type, key, source location.
 - [ ] **INS-6.4 Visual fallback** (§13.5) end-to-end.

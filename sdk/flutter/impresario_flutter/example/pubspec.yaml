@@ -1,0 +1,18 @@
+name: impresario_flutter_example
+description: Example app for the opt-in Impresario Flutter package.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.38.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  impresario_flutter:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

@@ -122,11 +122,17 @@ Why this deviates from §3.1:
    inspector attached read-only while a run owns the device, `exclusive`
    detaches the inspector, and `block_run` refuses the run. Runs and the
    inspector still connect independently, which some agents may refuse.
-6. **Flutter enrichment is not claimed in v1.** Android and Apple acquisition
-   are implemented by their own agents and hardware-verified; web/webOS/Tizen
-   use the connector snapshot. Flutter uses the Android agent's Layer A
-   semantics only: there is no Dart package, `ImpresarioTag`, detection/
-   `FLUTTER_SEMANTICS_OFF` diagnosis or VM-service enrichment.
+6. **Flutter support is layered and only Layer A is wired into the inspector.**
+   Android and Apple acquisition are implemented by their own agents and
+   hardware-verified; web/webOS/Tizen use the connector snapshot. Layer A
+   detection, `framework` raw data and the `FLUTTER_SEMANTICS_OFF` diagnosis
+   landed on 2026-11-26 (I-212/I-213). The opt-in `impresario_flutter` package
+   (I-218) now supplies `ensureSemantics`, `ImpresarioTag`, the
+   `ext.impresario.snapshot` extension and a loopback bridge, but the Rust host
+   adapter (INS-6.2), widget-inspector enrichment (INS-6.3), visual fallback
+   (INS-6.4) and on-device Layer B acceptance are still missing. The package
+   JSON is shaped for the adapter; the inspector continues to read Layer A
+   today.
 7. **Runner execution is shared for the web family only.** The inspector,
    `impresario-inspector-core` and the connector run path all use
    `impresario-locator` for matching and synthesis. `Session::execute`
@@ -240,7 +246,7 @@ the implementation keeps the grammar in one module so a rename is local.
 | 3 | Column keys / same-platform devices | Platform keys; duplicates rejected by the parser. Same-platform devices return `AMBIGUOUS_COLUMN`. Actor-qualified columns deferred to the owner. |
 | 4 | Run-vs-inspector conflict default | `readonly` (default) is enforced: a run proceeds, inspection continues and input is refused with `LEASE_READONLY`; `exclusive` detaches the inspector and `block_run` refuses the run. |
 | 5 | Start UI automatically? | Only on `impresario inspector`. `inspector.enabled` defaults to false and is currently reserved (the resident service does not auto-start the inspector). |
-| 6 | Dart package acceptable? | Deferred with Flutter (Phase 6); not claimed in v1. |
+| 6 | Dart package acceptable? | Yes: `sdk/flutter/impresario_flutter` (INS-6.1, I-218), opt-in, dependency-free and version-gated at Flutter `3.38.0` / Dart `3.10.0`. The host adapter is still pending. |
 | 7 | Minimum OS/engine versions | Web: Chromium/WebKit with ES5 + `MutationObserver` (webOS/Tizen dev builds). Android/Apple inherit their existing agents' targets; inspector hardware acceptance used Android 11/15, iOS 18.7.8 and tvOS 26.1. |
 | 8 | OCR for visual fallback | Template-only is the default; OCR is not implemented/claimed. `region` locators are always marked fragile. |
 | 9 | Allow input actions? | Yes when the device session is interactive; the UI shows a read-only banner when input is refused. Scene writes are always explicit. |
@@ -343,12 +349,25 @@ the implementation keeps the grammar in one module so a rename is local.
 
 ### Phase 6 — Flutter
 
-- [ ] **Partial (Layer A).** The existing Android inspector sees Flutter
-      semantics on a real release app (29 nodes at home; Login/Signup arrive as
-      `button`), and keyboard hide passed on the staging app. The Dart package,
-      `ImpresarioTag`, VM-service enrichment, Flutter detection/
-      `FLUTTER_SEMANTICS_OFF` diagnosis and the visual fallback are not shipped
-      (INS-R1).
+- [x] **INS-6.1 Dart package — implemented, on-device acceptance pending.**
+      `sdk/flutter/impresario_flutter` provides `Impresario.ensureSemantics`,
+      `ImpresarioTag`/`labelFallback`, viewport-pruned snapshots, the
+      `ext.impresario.snapshot` extension and the optional loopback bridge,
+      with an example app, unit/widget tests and a CI `flutter` job on Flutter
+      `3.47.5`. Minimum versions are Flutter `3.38.0` / Dart `3.10.0`; older
+      versions use Layer A identifiers or the QA-only label fallback. No
+      hardware run is claimed (I-218).
+- [ ] **INS-6.2 Host adapter + normalizer.** Layer A detection and the
+      `FLUTTER_SEMANTICS_OFF` diagnosis are wired; the package's Layer B
+      snapshot still needs the master-side adapter and on-device validation.
+- [ ] **INS-6.3 Widget-inspector enrichment** (debug/profile): widget type, key,
+      source location.
+- [ ] **INS-6.4 Visual fallback** (§13.5) end-to-end.
+- [ ] *Acceptance:* in the sample Flutter app, every interactive widget tagged
+      with `ImpresarioTag` is selectable and produces a unique `testid` locator
+      on Android, iOS and web; untagged widgets with labels produce
+      `role`/`label` locators; a deliberately untagged, unlabeled widget
+      triggers the diagnostic and visual fallback.
 
 ### Phase 7 — Hardening and release
 
@@ -382,12 +401,12 @@ the implementation keeps the grammar in one module so a rename is local.
 
 | Item | Status |
 |---|---|
-| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics without enrichment. The live view is a subscribable MCP resource (INS-R5). |
+| Web UI + MCP on all seven families + Flutter | **Partial**: web/webOS/Tizen through the connector, Android through UiAutomator, Apple through XCUITest; Flutter uses Layer A semantics, while the opt-in package supplies Layer B snapshots but the host adapter is pending (INS-6.2). The live view is a subscribable MCP resource (INS-R5). |
 | Viewport-only acquisition/transport/UI | **Yes**: the web script clips before returning; Android and Apple prune to the viewport in their agents. |
 | Auto-update on scroll/navigation/modal/focus | **Web family: yes** (INS-R3): `MutationObserver` plus scroll/resize/focus/transition/history/visibility listeners call a `Runtime.addBinding`, and the inspector re-acquires on the connector's change counter (still capped at `inspector.fps`, default 4), with post-input refresh. Android/Apple refresh at `inspector.fps`; old engines without the binding fall back to polling. |
 | Select → ranked locators → scene add with column auto-fill → verify | **Partial**: select/suggest/add/fill/replace/validate/undo work for web; column ambiguity/missing cases are tested. Written locator cells execute through the web connector and through Android/Apple (`NODE_REF`, INS-R4). Commit re-resolves the written cell against the live snapshot and the UI surfaces the result (INS-R6). |
 | Graceful degradation + fuzz/property suites | **Yes** (2026-11-24): converters are total; malformed, duplicate, cyclic, missing-parent and over-depth nodes are skipped into `Snapshot.degraded[]` with a node path and reason; limits bound 5,000 nodes, depth 80, text/identifiers/`raw`/messages and 256 degraded entries; non-finite geometry is clamped and control characters are stripped while RTL/bidi text is preserved. A 128-case proptest fuzzes arbitrary agent snapshots through conversion, validation, JSON round-trip and compact rendering; delta/geometry property tests remain green. |
-| Flutter addressability + fallback | **Deferred**: Layer A semantics only; no Dart package, `ImpresarioTag`, detection/diagnosis or visual fallback (INS-R1). |
+| Flutter addressability + fallback | **Partial**: Layer A semantics with detection and `FLUTTER_SEMANTICS_OFF` diagnosis are wired; the opt-in package provides `ImpresarioTag`/identifiers and Layer B snapshots, but the host adapter (INS-6.2) and visual fallback (INS-6.4) remain. No on-device Layer B result is claimed. |
 | Master changes, leases, capability negotiation, config/CLI | Capability/config/CLI done; file-lease coordination is enforced (`readonly`/`exclusive`/`block_run`) with mode/owner surfaced in status and the SPA; shared device sessions remain out of scope. |
 | Anti-breakage gates | **Yes** (INS-R12): existing suites are untouched; CI `buf lint`/`buf breaking` compares `proto/` with the previous commit in a patched detached worktree; the connector executes `LOCATOR` cells through the shared matcher while `dispatch` routes every legacy selector exactly as before; `tests/handshake_matrix.rs` proves a `1.0.0` executor without `INSPECTOR` still runs, a future `1.x` with an unknown capability is tolerated and a `0.x` major mismatch is a `PROTOCOL` device error with exit 3; `run_path_locator_resolution_stays_within_budget` gates 2,000-node p95 resolution at 100 ms; the LSP and VS Code/WASM front ends complete and hover locator cells. |
 | Docs + notes reviewed | Docs added; owner review pending. |
@@ -706,9 +725,10 @@ committed here only when observed.
   executor-internal `NODE_REF` strategy (revision + node id). Native drivers
   cache the current and previous captures, validate the revision, and answer
   `STALE_ELEMENT` when it is gone; the master re-resolves up to three times
-  inside the step deadline. Flutter still runs on Android/Apple semantics;
-  enrichment remains INS-R1. Mitigation: the grammar and matcher stay isolated
-  in one crate and both paths use the same resolver.
+  inside the step deadline. Flutter still runs on Android/Apple semantics; the
+  package's Layer B path awaits the host adapter (INS-6.2). Mitigation: the
+  grammar and matcher stay isolated in one crate and both paths use the same
+  resolver.
 - **Push binding is web-only and opt-in** (spec §6.2): the connector installs
   `Runtime.addBinding` only when the inspector session sends
   `inspector_push=true`, because CDP bindings are page-global and a runner
@@ -717,11 +737,14 @@ committed here only when observed.
   to polling.
 - **No bidi protobuf stream** (spec §4.2): unary RPCs + SSE; append-only
   proto leaves room.
-- **Flutter Layer A only**: Android/Apple acquisition is implemented and
-  hardware-verified, but Flutter has no Dart package, `ImpresarioTag`,
-  detection/`FLUTTER_SEMANTICS_OFF` diagnosis or VM-service enrichment; its
-  roles are limited to what the app's `Semantics` declares (INS-R1). No result
-  is fabricated when a platform lacks a capability.
+- **Flutter Layer A is wired; the Layer B package is ready but not consumed**:
+  Android/Apple acquisition is implemented and hardware-verified, Layer A
+  detection and `FLUTTER_SEMANTICS_OFF` diagnosis landed, and
+  `sdk/flutter/impresario_flutter` supplies `ImpresarioTag`, the service
+  extension and the loopback bridge (I-218). The Rust host adapter (INS-6.2),
+  widget enrichment (INS-6.3), visual fallback (INS-6.4) and on-device Layer B
+  acceptance are pending; roles remain limited to what the app's `Semantics`
+  declares. No result is fabricated when a platform lacks a capability.
 - **Scene grammar extension**: additive and isolated; owner may veto. The LSP
   and TypeScript grammar do not yet complete/hover locator cells.
 - **Same-platform actors**: not representable in the current table; explicit

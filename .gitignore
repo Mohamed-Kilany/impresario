@@ -21,6 +21,10 @@ agents/apple/build-*/
 *.xcuserstate
 *.xcresult
 
+# Flutter / Dart
+sdk/flutter/**/.dart_tool/
+sdk/flutter/**/build/
+
 # Node / editors
 editors/vscode/node_modules/
 editors/vscode/out/

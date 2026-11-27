@@ -245,10 +245,45 @@ jobs:
         working-directory: agents/apple
         run: swift test
 
+  flutter:
+    name: flutter (package + example)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.5"
+          channel: stable
+          cache: true
+      - name: Package dependencies
+        working-directory: sdk/flutter/impresario_flutter
+        run: flutter pub get
+      - name: Package format
+        working-directory: sdk/flutter/impresario_flutter
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Package analyze
+        working-directory: sdk/flutter/impresario_flutter
+        run: flutter analyze
+      - name: Package tests
+        working-directory: sdk/flutter/impresario_flutter
+        run: flutter test
+      - name: Example dependencies
+        working-directory: sdk/flutter/impresario_flutter/example
+        run: flutter pub get
+      - name: Example format
+        working-directory: sdk/flutter/impresario_flutter/example
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Example analyze
+        working-directory: sdk/flutter/impresario_flutter/example
+        run: flutter analyze
+      - name: Example tests
+        working-directory: sdk/flutter/impresario_flutter/example
+        run: flutter test
+
   gate:
     name: all checks
     if: always()
-    needs: [fmt, clippy, test, windows, editor, proto, android, apple]
+    needs: [fmt, clippy, test, windows, editor, proto, android, apple, flutter]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to pass
@@ -261,6 +296,7 @@ jobs:
           echo "proto=${{ needs.proto.result }}"
           echo "android=${{ needs.android.result }}"
           echo "apple=${{ needs.apple.result }}"
+          echo "flutter=${{ needs.flutter.result }}"
           test "${{ needs.fmt.result }}" = "success"
           test "${{ needs.clippy.result }}" = "success"
           test "${{ needs.test.result }}" = "success"
@@ -269,3 +305,4 @@ jobs:
           test "${{ needs.proto.result }}" = "success"
           test "${{ needs.android.result }}" = "success"
           test "${{ needs.apple.result }}" = "success"
+          test "${{ needs.flutter.result }}" = "success"
