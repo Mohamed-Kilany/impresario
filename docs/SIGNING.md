@@ -43,7 +43,10 @@ created through Samsung's certificate service with the guided
 `impresario sign tizen profile create` flow. That flow discovers Samsung's
 current Certificate Extension endpoints, opens the normal Samsung account
 login in a browser, and does the certificate work natively; Tizen Studio, Java,
-`openssl` and the Samsung password are not used. Import validates:
+`openssl` and the Samsung password are not used. The same import and create
+operations are available from the post-IP step of `impresario device wizard`;
+the wizard never writes a profile name to the device file, and the transport
+still selects `IMPRESARIO_TIZEN_PROFILE` (default `samsung`). Import validates:
 
 - the PKCS#12 password and private-key chain;
 - that each private key matches its leaf certificate;
@@ -236,6 +239,15 @@ reply until a terminal state, then verifies the app through
 as proof of an update: if the subscription ends without a terminal state and
 the app was already installed, the install fails. The remote upload is cleaned
 up best-effort after the result is known.
+
+The Developer Mode passphrase is not package signing: it unlocks the TV's key
+server. The post-IP step of `impresario device wizard` offers to save it in the
+OS credential store keyed by the device name, and `impresario device passphrase
+<name>` can save, inspect or clear it later. The secret is never written to a
+device or workspace YAML file; `IMPRESARIO_WEBOS_PASSPHRASE` overrides the saved
+entry for one process. On a terminal the wizard reads it hidden, while piped
+input is read as a plain line with an explicit warning and does not query the
+store.
 
 webOS `.ipk` signing is not implemented in this phase: the Developer Mode
 install flow used by Impresario is the one described above, and no `ares-*`

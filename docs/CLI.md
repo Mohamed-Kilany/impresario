@@ -118,6 +118,14 @@ written.
 expanded device/platform list; `--json` is the stable machine shape. There is
 no group rename yet because it would have to rewrite references in both layers.
 
+`impresario device wizard [--edit NAME] [--workspace] [--no-check]` is the
+interactive form. After the IP step it runs the platform setup before the
+connection check: for `webOS` it offers to save or replace the Developer Mode
+passphrase in the OS credential store, and for `tizenOS` it lists the imported
+signing profiles and offers native create, PKCS#12 import or keep. Neither adds
+a secret or profile field to YAML. `--no-check` skips only the connectivity
+check, not this setup.
+
 `--unverifiable` overrides `unverifiable_policy` for one run. Probes (`Check:
 Showing`, `Check: Player`) are tri-state: a claim that cannot reach the required
 confidence is `unverifiable`. The default `fail` makes the step fail; `warn`
@@ -418,7 +426,9 @@ normal Samsung account login, and generates the author/distributor profile
 natively. It uses the browser callback on `localhost:4794`; close Tizen Studio's
 Certificate Manager if that port is in use. `--no-browser`, `--refresh`,
 `--extension-url` and `--timeout` control the flow; see `docs/SIGNING.md`.
-`profile add` remains the route for an existing PKCS#12 pair.
+`profile add` remains the route for an existing PKCS#12 pair. The same create
+and import operations are available from `impresario device wizard` after the
+IP step; selection still comes from `IMPRESARIO_TIZEN_PROFILE`.
 
 `package inspect` accepts `.ipk` and `.wgt`; `--json` is the stable machine
 shape. Errors are `IMP-SIGN-*` (see `docs/ERRORS.md`), and the full pipeline,

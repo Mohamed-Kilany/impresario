@@ -220,6 +220,12 @@ work is Impresario's own SSH/SFTP/luna client. No `ares-*`, `ssh`, `scp`,
 
 1. Install/enable the **Developer Mode** app, turn on Dev Mode Status and the
    Key Server, and note the six-character passphrase.
+2. Add the device with `impresario device wizard`. After the IP step the wizard
+   reports whether a passphrase is already saved (on a terminal) and always
+   asks whether to save or replace one. A terminal reads the passphrase hidden
+   and stores it in the OS credential store under the chosen device name;
+   piped/scripted input reads a plain line with an explicit warning and does not
+   query the store. The definition still contains only `name`, `type` and `ip`.
 
 **Device definition**
 
@@ -336,6 +342,15 @@ runs on the host (D-19/I-140...I-142).
 1. On the TV enable **Developer mode** (Apps panel) and enter the host PC's IP.
 2. Reboot the TV so the developer-mode daemon accepts connections on TCP
    `26101`.
+3. Add the device with `impresario device wizard`. After the IP step the wizard
+   lists the imported signing profiles, marks the machine-global selection
+   (`IMPRESARIO_TIZEN_PROFILE`, default `samsung`), and offers `c` create,
+   `i` import or `k` keep. Create uses the same native Samsung browser login as
+   `sign tizen profile create`; import asks for the author/distributor PKCS#12
+   paths and their passwords (hidden on a terminal). A failed create/import
+   returns to this menu; `b` returns to the IP step and `q` cancels without
+   writing. Selection stays machine-global, so the device file still contains
+   only `name`, `type` and `ip`.
 
 **Device definition**
 
@@ -365,6 +380,11 @@ impresario sign tizen profile create --name samsung --duid <DUID> `
   --email you@example.com
 impresario sign tizen profile show samsung
 ```
+
+The same create flow is available from `impresario device wizard` after the
+IP step, together with a PKCS#12 import flow and a keep option. The wizard does
+not write a profile name to the device file; the transport still selects the
+machine-global `IMPRESARIO_TIZEN_PROFILE` (default `samsung`).
 
 The browser opens Samsung's normal account login; complete the login and any
 2FA there. Impresario does not read or store the Samsung password. The
@@ -1055,7 +1075,10 @@ apps:
   without writing. On a phone it detects the real form factor and offers to
   switch `android`/`androidtv` if the declaration disagrees. For `iOS`/`tvOS`
   the UDID is learned from the RSD tunnel; the file still contains only type
-  and IP.
+  and IP. For `webOS` the wizard then offers to save the Developer Mode
+  passphrase, and for `tizenOS` it shows the imported signing profiles and
+  offers native create/import/keep (I-216); neither adds a YAML field.
+  `--no-check` skips the connectivity check, not these TV setup steps.
 - The device-side agent port is allocated dynamically; the host-side TCP
   forwarding fallback is used only when the device has no reachable network
   address.
